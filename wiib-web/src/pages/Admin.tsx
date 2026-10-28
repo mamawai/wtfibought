@@ -471,7 +471,7 @@ export function Admin() {
                   </Button>
                   <Button size="sm" onClick={() => setEditingKey({ form: {
                     name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: false,
-                    contextWindow: DEFAULT_CONTEXT_WINDOW,
+                    antigravity: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
                   } })}>
                     <Plus className="w-3.5 h-3.5 mr-1" /> {t('admin.llm.add')}
                   </Button>
@@ -498,7 +498,7 @@ export function Admin() {
                   <Button variant="ghost" size="sm" onClick={() => setEditingKey({ id: key.id, form: {
                     name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
                     model: key.model || '', reasoningEffort: key.reasoningEffort || '', apiKey: key.apiKey, webSearch: false,
-                    contextWindow: DEFAULT_CONTEXT_WINDOW,
+                    antigravity: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
                   } })}>
                     <Pencil className="w-3.5 h-3.5" />
                   </Button>

@@ -13,9 +13,12 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 服务端搜索的过程事件，三个自研协议共用一个形状。
  * 模型层把它作为<b>空文本帧</b>发出，挂在 ChatResponseMetadata 的 {@link #KEY} 上（值是本记录的 JSON 串）；
  * ChatTurnRunner 逐帧取出交给 SSE 出口，前端据此画"正在搜索 / 搜索了 N 个网站"，来源攒到答案底部。
+ * 包成本地工具的搜索（{@link WebSearchTool}）没有帧，事件由 ChatTurnRunner 按 web_search 的调用与回执合成。
+ * 阻塞路径（call）合并帧时，这次调用的事件按顺序挂在 generation metadata 的同一个键上（值是 {@code List<SearchEvent>}）。
  *
  * @param phase   {@link #SEARCHING}=开始搜（query 可能还没有）；{@link #SEARCHED}=搜完（sources 是命中的站点）；
- *                {@link #CITED}=正文引用了某个来源（只并入本轮来源，不进过程轨）
+ *                {@link #CITED}=正文引用了某个来源（只并入本轮来源，不进过程轨）；
+ *                {@link #FAILED}=web_search 没搜成（工具失败、上游没搜、被保险丝或闸门跳过）
  * @param query   搜索词，可空
  * @param sources 站点列表，可空表示没有
  */
@@ -25,6 +28,7 @@ public record SearchEvent(String phase, String query, List<Source> sources) {
     public static final String SEARCHING = "searching";
     public static final String SEARCHED = "searched";
     public static final String CITED = "cited";
+    public static final String FAILED = "failed";
 
     public record Source(String url, String title) {
 
@@ -58,6 +62,10 @@ public record SearchEvent(String phase, String query, List<Source> sources) {
 
     public static SearchEvent cited(List<Source> sources) {
         return new SearchEvent(CITED, null, sources);
+    }
+
+    public static SearchEvent failed(String query) {
+        return new SearchEvent(FAILED, query, List.of());
     }
 
     /** 与 SSE search 事件同形 */

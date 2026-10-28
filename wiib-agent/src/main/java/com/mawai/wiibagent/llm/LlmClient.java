@@ -212,7 +212,8 @@ public class LlmClient {
         }
 
         /**
-         * 授权这个 client 使用服务端联网搜索（每次调用都生效）。只给 chat 的主 agent 与 researcher worker 开——
+         * 授权这个 client 使用服务端联网搜索（每次调用都生效）。只给 chat 的主 agent 与 researcher worker 开
+         * （Antigravity 来源时改由它们挂的 {@link WebSearchTool} 开）——
          * 真正搜不搜还要过端点那道闸（{@link SseChatModel} 的 webSearch 构造参数），双闸门缺一不可。
          */
         public Builder webSearch(boolean webSearch) {

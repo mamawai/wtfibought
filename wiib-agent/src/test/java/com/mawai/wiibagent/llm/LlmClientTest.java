@@ -137,7 +137,7 @@ class LlmClientTest {
     }
 
     /**
-     * 服务端搜索许可（只有 chat 的主 agent 与 researcher worker 开）：对这个 client 的<b>每次</b>调用都生效。
+     * 服务端搜索许可（只有 chat 的主 agent、researcher worker 和它们挂的 WebSearchTool 开）：对这个 client 的<b>每次</b>调用都生效。
      * 经 toolContext 捎带，ResponsesChatModel 建请求体时读回。
      */
     @Test

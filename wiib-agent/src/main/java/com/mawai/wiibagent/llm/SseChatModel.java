@@ -68,7 +68,8 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
      * toolContext 键：本次调用允许服务端搜索（Boolean.TRUE 时生效）。
      * 与端点配置构成双闸门——{@code webSearch}（端点声明支持）∧ 本键（这个 agent 被授权搜）
      * 同时成立才往 tools 里加该协议的服务端搜索工具。搜索是 opt-in 语义：不声明上游就不搜，
-     * 只有 chat 的主 agent 与 researcher worker 捎这个键（LlmClient.Builder#webSearch），
+     * 只有 chat 的主 agent 与 researcher worker 能搜：原生搜索时它们的 client 捎这个键（LlmClient.Builder#webSearch），
+     * Antigravity 来源时由它们挂的 {@link WebSearchTool} 单独发的那次请求捎；
      * analyst worker 与 trader 链路的数据源必须可控，拿不到搜索。
      */
     public static final String WEB_SEARCH_KEY = "wiib_web_search";
@@ -220,6 +221,8 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
     /**
      * 帧合并：拼文本、收工具调用，finishReason/usage/消息 metadata 取收尾帧；没等到收尾帧＝上游断流，判瞬时可重试。
      * 消息 metadata 跟着最后一帧走，与 {@link ReactLoop} 的流式合并同口径——子类挂在上面的原始内容块两条路都不丢。
+     * 搜索过程帧也在这里并掉：这次调用的搜索事件按到达顺序挂在 generation metadata 的 {@link SearchEvent#KEY} 上
+     * （值是 {@code List<SearchEvent>}），{@link WebSearchTool} 从这取来源。
      */
     private ChatResponse mergeFrames(List<ChatResponse> frames) {
         ChatResponse last = frames == null || frames.isEmpty() ? null : frames.getLast();
@@ -230,21 +233,28 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
         }
         StringBuilder text = new StringBuilder();
         List<AssistantMessage.ToolCall> toolCalls = new ArrayList<>();
+        List<SearchEvent> searches = new ArrayList<>();
         for (ChatResponse frame : frames) {
             AssistantMessage output = frame.getResult().getOutput();
             if (output.getText() != null) {
                 text.append(output.getText());
             }
             toolCalls.addAll(output.getToolCalls());
+            String search = frame.getMetadata().get(SearchEvent.KEY);
+            if (search != null) {
+                searches.add(SearchEvent.parse(search));
+            }
         }
         // 工具是否真被调用：toolCalls 空=模型自己答的（内置搜索/记忆），没走我们挂上去的工具
         log.info("[{}] {} toolCalls={} 文本{}字", tag, model,
                 toolCalls.stream().map(AssistantMessage.ToolCall::name).toList(), text.length());
         AssistantMessage message = AssistantMessage.builder().content(text.toString()).toolCalls(toolCalls)
                 .properties(last.getResult().getOutput().getMetadata()).build();
-        Generation generation = new Generation(message, ChatGenerationMetadata.builder()
-                .finishReason(finishReason).build());
-        return new ChatResponse(List.of(generation), last.getMetadata());
+        ChatGenerationMetadata.Builder generationMetadata = ChatGenerationMetadata.builder().finishReason(finishReason);
+        if (!searches.isEmpty()) {
+            generationMetadata.metadata(SearchEvent.KEY, searches);
+        }
+        return new ChatResponse(List.of(new Generation(message, generationMetadata.build())), last.getMetadata());
     }
 
     // ========== SSE 骨架 ==========

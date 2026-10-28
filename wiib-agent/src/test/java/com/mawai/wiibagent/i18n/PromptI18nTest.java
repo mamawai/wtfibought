@@ -140,7 +140,7 @@ class PromptI18nTest {
                 "chat.traderQuery.kindNote",
                 "chat.traderQuery.planNote", "chat.traderQuery.tradeNote", "chat.traderQuery.noTrader",
                 "llm.callLimit.notExecuted",
-                "tool.run_deep_analysis", "tool.news_search",
+                "tool.run_deep_analysis", "tool.news_search", "tool.web_search",
                 // 已搬进词表的工具描述：英文侧不许混中文
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
                 "tool.klines", "tool.indicators", "tool.kline_structure",
@@ -317,7 +317,7 @@ class PromptI18nTest {
     void 三个域的英文词表都真有自己的文案() {
         for (String key : List.of("trader.template", "trader.label.memory", "trader.mark.conclusion",
                 "reviewer.system", "reviewer.mark.updates", "reviewer.label.statsHeader",
-                "tool.run_deep_analysis", "tool.news_search", "tool.delegate",
+                "tool.run_deep_analysis", "tool.news_search", "tool.web_search", "tool.delegate",
                 "chat.main", "chat.newsRule.search", "chat.newsRule.noSearch",
                 "chat.worker.researcher", "chat.worker.analyst", "chat.wake.instruction",
                 "chat.compact.instruction", "chat.compact.preamble", "chat.deepAnalysis.judgePrompt",

@@ -58,8 +58,9 @@ export type ChatItem =
       kind: 'child'; rid: number; at: number; runId: string; runKind: ChildRunKind; label: string; brief?: string | null;
       status: ChildStatus; steps: ChildStep[]; endedAt?: number; error?: string; keyed?: boolean;
     }
-  // 主 agent 的一次联网搜索：active=还在搜（亮着转圈），搜完回填 sources 熄灭；query 开搜时可能还没有
-  | { kind: 'search'; rid: number; query: string | null; sources: SearchSource[]; active: boolean }
+  // 主 agent 的一次联网搜索：active=还在搜（亮着转圈），搜完回填 sources 熄灭；query 开搜时可能还没有；
+  // failed=没搜成（web_search 失败、上游没搜、被跳过）
+  | { kind: 'search'; rid: number; query: string | null; sources: SearchSource[]; active: boolean; failed?: boolean }
   // requestId 存在 item 上：hitlDecide 按它取回本条再原样回传，服务端据此确认"点的是哪张卡"
   | { kind: 'hitl'; symbol: string; reason: string; requestId: string; resumeMessage: string; status: 'pending' | 'approved' | 'rejected' }
   // trader 动作表单卡：模型只有弹卡的权，执行权归用户点击。纯前端态不落历史，id 本地发
@@ -339,21 +340,21 @@ function watchEnd(onEvent: (e: WorkbenchEvent) => void) {
 }
 
 /**
- * 搜完事件回填到哪条：先找亮着且 query 相同（或开搜时没给 query）的，
+ * 搜完（或没搜成）事件回填到哪条：先找亮着且 query 相同（或开搜时没给 query）的，
  * 再找同 query 已熄灭的（Gemini 分块补来源），都没有就新建一条
  */
-function fillSearched(items: ChatItem[], query: string | null, sources: SearchSource[]): ChatItem[] {
+function fillSearched(items: ChatItem[], query: string | null, sources: SearchSource[], failed: boolean): ChatItem[] {
   const next = [...items];
   for (let j = next.length - 1; j >= 0; j--) {
     const it = next[j];
     if (it.kind !== 'search') continue;
     const hit = it.active ? (it.query === query || !it.query) : (it.query !== null && it.query === query);
     if (hit) {
-      next[j] = { ...it, query: it.query ?? query, sources: mergeSources(it.sources, sources), active: false };
+      next[j] = { ...it, query: it.query ?? query, sources: mergeSources(it.sources, sources), active: false, failed };
       return next;
     }
   }
-  return appendBeforeAnswer(next, { kind: 'search', rid: nextRid(), query, sources, active: false });
+  return appendBeforeAnswer(next, { kind: 'search', rid: nextRid(), query, sources, active: false, failed });
 }
 
 /** 唤醒轮的实时答案气泡：对应提问不在会话末尾，与历史回放的补答行一样不给重新生成 */
@@ -450,7 +451,7 @@ function handleEvent(e: WorkbenchEvent) {
       if (e.phase === 'cited') break;
       updateItems(prev => e.phase === 'searching'
         ? appendBeforeAnswer(settleSteps(prev), { kind: 'search', rid: nextRid(), query: e.query ?? null, sources: [], active: true })
-        : fillSearched(settleSteps(prev), e.query ?? null, e.sources ?? []));
+        : fillSearched(settleSteps(prev), e.query ?? null, e.sources ?? [], e.phase === 'failed'));
       break;
     case 'done':
       // 欠不欠唤醒以后端此刻的口径为准：最后一次模型调用之后又到了报告就欠

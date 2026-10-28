@@ -21,7 +21,7 @@ agent:
     contextWindowInvalid: "上下文窗口需在 {{min}}K ~ {{max}}K 之间"
     apiKeyRequired: apiKey不能为空
     connectFailed: "模型连通性测试失败：{{reason}}"
-    # 勾了联网搜索的端点：测试连通性、新增、刚勾上搜索或改了协议/地址/模型/key/思考档位的保存，都会探一次搜索
+    # 勾了联网搜索的端点：测试连通性、新增、刚勾上搜索或改了协议/地址/模型/key/思考档位/Antigravity 来源的保存，都会探一次搜索
     searchUnsupported: "连通正常，但这个端点或模型不支持联网搜索，请取消勾选「联网搜索」。上游原因：{{reason}}"
     searchProbeUnreachable: "勾选了联网搜索，但探测请求没成功（连不上、被限流或上游暂时出错），没法确认是否支持。请稍后再试，或取消勾选「联网搜索」。上游原因：{{reason}}"
     # SSRF 防线（BaseUrlGuard）的拒因

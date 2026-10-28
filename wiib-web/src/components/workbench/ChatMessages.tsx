@@ -15,7 +15,7 @@ type ChildItem = Extract<ChatItem, { kind: 'child' }>;
 /** 工具名 → 图标；认不出的用扳手 */
 const TOOL_ICON: Record<string, LucideIcon> = {
   klines: ChartCandlestick, kline_structure: ChartCandlestick, indicators: Activity, market_snapshot: Gauge,
-  option_iv: Waves, funding_history: Percent, orderbook_depth: Layers, news_search: Newspaper,
+  option_iv: Waves, funding_history: Percent, orderbook_depth: Layers, news_search: Newspaper, web_search: Globe,
   trader_overview: Bot, trader_positions: Bot, trader_trades: Bot, trader_plans: Bot, trader_decisions: Bot,
   trader_play_stats: Bot, analyze_my_behavior: UserSearch,
 };
@@ -23,7 +23,7 @@ const TOOL_ICON: Record<string, LucideIcon> = {
 const CHILD_ICON: Record<ChildRunKind, LucideIcon> = { DELEGATE: Sparkles, DEEP_ANALYSIS: Scale };
 
 /** 工具参数摘要只挑这几个字段、按这个顺序：整份参数铺出来太长 */
-const ARG_KEYS = ['symbol', 'interval', 'kind', 'limit'];
+const ARG_KEYS = ['symbol', 'interval', 'kind', 'limit', 'query'];
 
 /** 慢转的小橙星 */
 const SPIN_STAR = 'w-3 h-3 shrink-0 text-primary fill-current animate-[wiib-star-spin_2.4s_linear_infinite] motion-reduce:animate-none';
@@ -158,6 +158,13 @@ function SearchRow({ item }: { item: Extract<ChatItem, { kind: 'search' }> }) {
     return (
       <RailRow icon={Globe} hot>
         <StepLine label={item.query ? t('rail.searching', { query: item.query }) : t('rail.searchingNoQuery')} hot />
+      </RailRow>
+    );
+  }
+  if (item.failed) {
+    return (
+      <RailRow icon={Globe}>
+        <StepLine label={t('rail.searchFailed')} detail={item.query ?? undefined} />
       </RailRow>
     );
   }

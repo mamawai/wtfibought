@@ -875,6 +875,7 @@ CREATE TABLE IF NOT EXISTS user_llm_endpoint (
     model            VARCHAR(128)  NOT NULL,
     reasoning_effort VARCHAR(16),
     web_search       BOOLEAN       NOT NULL DEFAULT FALSE,
+    antigravity      BOOLEAN       NOT NULL DEFAULT FALSE,
     context_window   INT           NOT NULL DEFAULT 256000,
     api_key_enc      VARCHAR(1024) NOT NULL,
     is_default       BOOLEAN       NOT NULL DEFAULT FALSE,
@@ -887,6 +888,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_user_llm_endpoint_default ON user_llm_endpo
 COMMENT ON TABLE  user_llm_endpoint IS '用户 BYOK 端点库：一条=协议+URL+key+模型(+思考档位)，一人多条；对话/交易员/复盘教练从中选';
 COMMENT ON COLUMN user_llm_endpoint.reasoning_effort IS '思考档位，任意上游认的值（none/low/medium/high/xhigh…），NULL=不传走模型默认；模型支不支持查不到，由用户自选';
 COMMENT ON COLUMN user_llm_endpoint.web_search IS '服务端联网搜索：请求里声明该协议的服务端搜索工具才搜(opt-in)，勾了的保存前会探测、上游不支持不让存；responses/anthropic/gemini协议可勾(openai归一false)；当前只有对话主agent与researcher worker用';
+COMMENT ON COLUMN user_llm_endpoint.antigravity IS 'Gemini 来源是 Antigravity(如经 CPA 反代)：只在 gemini 协议且勾了联网搜索时为TRUE，其余归一FALSE；这种来源不收服务端搜索和本地工具在同一请求里，搜索改成本地工具 web_search，调用时单独发一次只带搜索的请求';
 COMMENT ON COLUMN user_llm_endpoint.context_window IS '上下文窗口(token)：对话主模型的上下文用量达到它的90%时，下一轮开始前整理上下文；128000~1000000，默认256000，用户按模型实际窗口填';
 COMMENT ON COLUMN user_llm_endpoint.api_key_enc IS 'AES-256-GCM 密文，密钥来自 WIIB_TRADER_KEY_SECRET';
 COMMENT ON COLUMN user_llm_endpoint.is_default IS '默认端点：没按用途绑定的地方都用它；一人恰一条（首条自动、删默认时最早的顶上）';

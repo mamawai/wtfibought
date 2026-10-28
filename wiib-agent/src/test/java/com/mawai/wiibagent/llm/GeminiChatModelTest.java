@@ -170,9 +170,12 @@ class GeminiChatModelTest {
         assertThat(body().has("generationConfig")).isFalse();
     }
 
-    /** 工具只声明不强制：toolConfig 一律不传（mode=ANY 是强制，这里不用） */
+    /**
+     * 工具只声明不强制：不放 functionCallingConfig（mode=ANY 是强制，这里不用）；没捎许可不声明搜索、也不带 toolConfig，
+     * 捎了才声明。捎了许可时带的 toolConfig 见请求体整串金标准
+     */
     @Test
-    void 请求侧_function声明且不传toolConfig_未捎许可不声明搜索() {
+    void 请求侧_function声明不强制_未捎许可不声明搜索也不带toolConfig() {
         chunks = PLAIN;
         GeminiChatModel m = model(null, true, oneTool());
         m.call(new Prompt("q", m.getOptions()));
@@ -186,7 +189,6 @@ class GeminiChatModelTest {
 
         m.call(new Prompt("q", allowWebSearch(m)));
         assertThat(body().get("tools")).hasSize(2);
-        assertThat(body().has("toolConfig")).isFalse();
     }
 
     @Test
@@ -235,7 +237,8 @@ class GeminiChatModelTest {
 
     /**
      * 请求体整串钉死：温度/档位、系统指令拼接、同角色合并、合成 id 不回传真实 id 回传、回执是对象直接用否则包 output、
-     * 有原始 parts 的原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、转义与 emoji
+     * 有原始 parts 的原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、
+     * 搜索和函数工具同一请求开 includeServerSideToolInvocations、转义与 emoji
      */
     @Test
     void 请求侧_请求体整串金标准() {
@@ -276,7 +279,8 @@ class GeminiChatModelTest {
                 + "{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"get_price\",\"response\":{\"output\":\"ERROR: 超时\\t重试\"},"
                 + "\"id\":\"call_real\"}}]}],\"tools\":[{\"functionDeclarations\":[{\"name\":\"get_price\",\"description\":\"查价格 <b>&\\\"引号\\\"\","
                 + "\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},"
-                + "\"required\":[\"qty\"],\"additionalProperties\":false}}]},{\"google_search\":{}}]}");
+                + "\"required\":[\"qty\"],\"additionalProperties\":false}}]},{\"google_search\":{}}],"
+                + "\"toolConfig\":{\"includeServerSideToolInvocations\":true}}");
     }
 
     // ========== 阻塞路径 ==========
@@ -374,6 +378,45 @@ class GeminiChatModelTest {
         JsonNode parts = MAPPER.readTree((String) last.getResult().getOutput().getMetadata().get(GeminiChatModel.PARTS_KEY));
         assertThat(parts).hasSize(1);
         assertThat(parts.get(0).path("text").asString(null)).isEqualTo("据报道，BTC 上涨");
+    }
+
+    // ========== 包装搜索（WebSearchTool）==========
+
+    /**
+     * Antigravity 来源的搜索单独发：用生产的 ToolCallingManager，请求里只有 google_search，没有函数声明也不开 toolConfig；
+     * 阻塞路径把分块来的 grounding 并下来，答复和来源（按 url 去重）交回模型。没 grounding 就是没搜，不当搜索结果
+     */
+    @Test
+    void 包装搜索_单独发只带google_search_答复和来源交回模型() {
+        chunks = new String[]{
+                """
+                {"candidates":[{"content":{"role":"model","parts":[{"text":"据报道"}]},
+                  "groundingMetadata":{"webSearchQueries":["BTC ETF"],
+                    "groundingChunks":[{"web":{"uri":"https://a.com/1","title":"a.com"}}]}}]}""",
+                """
+                {"candidates":[{"content":{"role":"model","parts":[{"text":"，ETF 净流入"}]},"finishReason":"STOP",
+                  "groundingMetadata":{"webSearchQueries":["BTC ETF"],
+                    "groundingChunks":[{"web":{"uri":"https://a.com/1","title":"a.com"}},{"web":{"uri":"https://b.com/2","title":"b.com"}}]}}],
+                 "usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":9,"totalTokenCount":14}}"""
+        };
+        WebSearchTool tool = new WebSearchTool(model(null, true, ToolCallingManager.builder().build()));
+
+        String out = tool.webSearch("BTC ETF 资金流");
+        JsonNode result = MAPPER.readTree(out);
+
+        JsonNode body = body();
+        assertThat(MAPPER.writeValueAsString(body.get("tools"))).isEqualTo("[{\"google_search\":{}}]");
+        assertThat(body.has("toolConfig")).isFalse();
+        assertThat(body.get("contents").get(0).get("parts").get(0).path("text").asString(null)).isEqualTo("BTC ETF 资金流");
+        assertThat(result.path("answer").asString(null)).isEqualTo("据报道，ETF 净流入");
+        assertThat(result.get("sources")).extracting(s -> s.path("url").asString(null))
+                .containsExactly("https://a.com/1", "https://b.com/2");
+        // 过程轨从回执读来源：保险丝把预算提示贴在回执末尾也读得出；占位回执算没搜成
+        assertThat(WebSearchTool.sourcesOf(out + "\n\n（系统提示：本轮工具调用预算已用完）")).hasSize(2);
+        assertThat(WebSearchTool.sourcesOf("未执行：本轮模型调用已达上限，工具被跳过。")).isNull();
+
+        chunks = PLAIN;
+        assertThat(MAPPER.readTree(tool.webSearch("BTC ETF 资金流")).path("available").asBoolean(true)).isFalse();
     }
 
     // ========== 错误归类 ==========

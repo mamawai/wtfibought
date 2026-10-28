@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -61,6 +62,7 @@ class LlmEndpointServiceTest {
         e.setBaseUrl("https://8.8.8.8");
         e.setModel("m" + id);
         e.setApiKeyEnc("enc" + id);
+        e.setAntigravity(false);    // 库里这列 NOT NULL DEFAULT FALSE
         e.setIsDefault(dft);
         return e;
     }
@@ -75,11 +77,20 @@ class LlmEndpointServiceTest {
 
     private static LlmEndpointService.SaveReq req(String protocol, String effort, String key, Boolean webSearch,
                                                   Integer contextWindow) {
+        return req(protocol, effort, key, webSearch, null, contextWindow);
+    }
+
+    private static LlmEndpointService.SaveReq req(String protocol, String effort, String key, Boolean webSearch,
+                                                  Boolean antigravity, Integer contextWindow) {
         return new LlmEndpointService.SaveReq("主力", protocol, "https://8.8.8.8/", " deepseek-chat ", effort, key,
-                webSearch, contextWindow);
+                webSearch, antigravity, contextWindow);
     }
 
     private static final ChatResponse PONG = new ChatResponse(List.of(new Generation(new AssistantMessage("pong"))));
+    /** 上游真搜了：阻塞路径把搜索事件挂在 generation metadata 上（见 SseChatModel 的帧合并） */
+    private static final ChatResponse GROUNDED = new ChatResponse(List.of(new Generation(new AssistantMessage("据报道"),
+            ChatGenerationMetadata.builder().finishReason("STOP")
+                    .metadata(SearchEvent.KEY, List.of(SearchEvent.searched("bitcoin news", List.of()))).build())));
     private static final RuntimeException SEARCH_REJECTED =
             new NonTransientAiException("400: web_search tool is not supported by this model");
 
@@ -119,6 +130,25 @@ class LlmEndpointServiceTest {
     }
 
     /**
+     * Antigravity 来源只对 gemini 协议的搜索有意义：没勾搜索、或不是 gemini 协议，勾了也归一 false
+     * （存成 true 的那条见 Antigravity来源按单独发搜索来探）
+     */
+    @Test
+    void antigravity只在gemini协议且勾了搜索时入库() {
+        when(endpointMapper.selectList(any())).thenReturn(List.of());
+        when(crypto.encrypt(any())).thenReturn("enc");
+        ChatModel model = modelAnswering(PONG);
+        when(builder.build(any())).thenReturn(model);
+
+        assertThat(service.create(1L, req("gemini", "", "sk-x", false, true, null))).isNull();
+        assertThat(service.create(1L, req("responses", "", "sk-x", true, true, null))).isNull();
+
+        ArgumentCaptor<UserLlmEndpoint> cap = ArgumentCaptor.forClass(UserLlmEndpoint.class);
+        verify(endpointMapper, times(2)).insert(cap.capture());
+        assertThat(cap.getAllValues()).extracting(UserLlmEndpoint::getAntigravity).containsExactly(false, false);
+    }
+
+    /**
      * 勾了联网搜索的保存先探测，三种失败都不入库、各给各的说法：上游拒收搜索是不支持；
      * 连不上、探搜索时被限流说明不了支不支持，是没法确认
      */
@@ -137,6 +167,30 @@ class LlmEndpointServiceTest {
         verify(endpointMapper, never()).insert(any(UserLlmEndpoint.class));
     }
 
+    /**
+     * Antigravity 来源按生产的样子探：只带搜索单独发一次、不带本地工具；回了 grounding 才算支持，
+     * 没搜（模型自己答了）就是不支持
+     */
+    @Test
+    void Antigravity来源按单独发搜索来探() {
+        when(endpointMapper.selectList(any())).thenReturn(List.of());
+        when(crypto.encrypt(any())).thenReturn("enc");
+        ChatModel grounded = modelAnswering(PONG, GROUNDED);
+        ChatModel notSearched = modelAnswering(PONG);
+        when(builder.build(any())).thenReturn(grounded, notSearched);
+
+        assertThat(service.create(1L, req("gemini", "", "sk-x", true, true, null))).isNull();
+        assertThat(service.create(1L, req("gemini", "", "sk-x", true, true, null))).contains("不支持联网搜索");
+
+        // 不挂本地工具：混用的那种探法会挂一个 noop
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(grounded, times(2)).call(sent.capture());
+        assertThat(((ToolCallingChatOptions) sent.getAllValues().get(1).getOptions()).getToolCallbacks()).isNullOrEmpty();
+        ArgumentCaptor<UserLlmEndpoint> saved = ArgumentCaptor.forClass(UserLlmEndpoint.class);
+        verify(endpointMapper, times(1)).insert(saved.capture());
+        assertThat(saved.getValue().getAntigravity()).isTrue();
+    }
+
     /** 测试连通性：没勾搜索只 ping 一次；连不上用测试失败那句 */
     @Test
     void 测试连通性先测连通再测搜索() {
@@ -150,7 +204,7 @@ class LlmEndpointServiceTest {
         assertThat(service.testConnection(1L, null, req("responses", "", "sk-x", true))).contains("连通性测试失败");
     }
 
-    /** 改端点：勾着搜索只改名字、窗口不发请求；刚勾上搜索、改了模型才重新探测 */
+    /** 改端点：勾着搜索只改名字、窗口不发请求；刚勾上搜索、改了模型、切了 Antigravity 来源才重新探测 */
     @Test
     void 改端点只在影响探测的字段变了才重新探测() {
         UserLlmEndpoint cur = ep(1, true);
@@ -158,7 +212,7 @@ class LlmEndpointServiceTest {
         cur.setModel("deepseek-chat");
         cur.setWebSearch(true);
         when(endpointMapper.selectById(1L)).thenReturn(cur);
-        ChatModel model = modelAnswering(PONG);
+        ChatModel model = modelAnswering(PONG, GROUNDED);
         when(builder.build(any())).thenReturn(model);
 
         assertThat(service.update(1L, 1L, req("responses", "", null, true, 200_000))).isNull();
@@ -170,6 +224,14 @@ class LlmEndpointServiceTest {
         cur.setModel("deepseek-reasoner");
         assertThat(service.update(1L, 1L, req("responses", "", null, true))).isNull();
         verify(builder, times(2)).build(any());
+
+        cur.setApiProtocol("gemini");
+        cur.setModel("deepseek-chat");
+        assertThat(service.update(1L, 1L, req("gemini", "", null, true, true, null))).isNull();
+        verify(builder, times(3)).build(any());
+        cur.setAntigravity(true);
+        assertThat(service.update(1L, 1L, req("gemini", "", null, true, true, null))).isNull();
+        verify(builder, times(3)).build(any());
     }
 
     @Test
@@ -217,11 +279,11 @@ class LlmEndpointServiceTest {
     @Test
     void 校验挡住内网地址与超长档位与缺key() {
         when(endpointMapper.selectList(any())).thenReturn(List.of());
-        assertThat(service.create(1L, new LlmEndpointService.SaveReq("x", "openai", "http://127.0.0.1:8080", "m", "", "sk", null, null)))
+        assertThat(service.create(1L, new LlmEndpointService.SaveReq("x", "openai", "http://127.0.0.1:8080", "m", "", "sk", null, null, null)))
                 .contains("内网");
         assertThat(service.create(1L, req("openai", "seventeen-chars-x", "sk"))).contains("思考档位");   // 17 字符，超列宽
         assertThat(service.create(1L, req("openai", "", ""))).isEqualTo("apiKey不能为空");
-        assertThat(service.create(1L, new LlmEndpointService.SaveReq(" ", "openai", "https://8.8.8.8", "m", "", "sk", null, null)))
+        assertThat(service.create(1L, new LlmEndpointService.SaveReq(" ", "openai", "https://8.8.8.8", "m", "", "sk", null, null, null)))
                 .contains("名称");
         verify(endpointMapper, never()).insert(any(UserLlmEndpoint.class));
     }

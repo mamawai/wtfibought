@@ -567,8 +567,8 @@ export type WorkbenchEvent =
   //（少了 overview.trend 那 30 天逐日快照——对模型是噪音，对卡片是那条资产曲线）
   | { type: 'behavior_report'; report: BehaviorAnalysisReport }
   // 主 agent 的服务端搜索过程：searching=开搜（query 可能还没有）、searched=搜完（sources 是命中站点）、
-  // cited=正文引用了某来源（只并入后端攒的来源随 done 回来，过程轨不画）
-  | { type: 'search'; phase: 'searching' | 'searched' | 'cited'; query?: string | null; sources: SearchSource[] }
+  // cited=正文引用了某来源（只并入后端攒的来源随 done 回来，过程轨不画）、failed=web_search 没搜成
+  | { type: 'search'; phase: 'searching' | 'searched' | 'cited' | 'failed'; query?: string | null; sources: SearchSource[] }
   // 主 agent 每次调完模型的上下文用量（底栏计量条）
   | ({ type: 'context' } & ContextUsage)
   // meta 是本轮读数。
@@ -725,6 +725,8 @@ export interface LlmEndpointView {
   reasoningEffort: string | null;
   /** 服务端联网搜索（responses / anthropic / gemini 协议端点可开；只有对话的主 agent 与调研子 agent 用它） */
   webSearch: boolean;
+  /** Gemini 来源是 Antigravity（如经 CPA 反代）：搜索单独发一次，只在 gemini 协议且勾了联网搜索时为 true */
+  antigravity: boolean;
   /** 上下文窗口（token）：对话主模型用到它的 90% 时，下一轮开始前整理上下文 */
   contextWindow: number;
   apiKeyTail: string;
@@ -741,6 +743,7 @@ export interface LlmEndpointSaveRequest {
   reasoningEffort: string;
   apiKey: string;
   webSearch: boolean;
+  antigravity: boolean;
   /** 上下文窗口（token），128000~1000000 */
   contextWindow: number;
 }

@@ -9,17 +9,22 @@ import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.SseChatModel;
+import com.mawai.wiibagent.llm.WebSearchTool;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,6 +40,7 @@ import java.util.function.Consumer;
  *   ↓
  * 主 agent（ReactLoop · 深模型 · 流式；行情/新闻/trader/深研判/行为分析全是它手里的工具）
  *   ├ 模型要调工具 ────► 这一批连名带参推给前端（tool_calls），画成过程条目
+ *   ├ 调的是 web_search ► 画成搜索条目（search），回执里的来源攒进本轮来源，没搜成画成搜索失败
  *   ├ 每次调完模型 ────► 上游报的上下文用量推给前端（context），底栏计量条跟着动
  *   ├ 子运行报告到达 ──► 下一次调模型前排进上下文
  *   ├ 用户点停止 ──────► 半截答案落库，本轮结束
@@ -89,7 +95,7 @@ public class ChatTurnRunner {
      *                        唤醒轮给的是唤醒指令
      * @param intent          功能按钮直发的意图，可空（用户自己打字的普通一轮就是空）
      * @param answerTokenSink 答案增量，逐帧
-     * @param searchSink      服务端搜索过程（模型层挂在帧 metadata 上，见 {@link SearchEvent}）
+     * @param searchSink      搜索过程：原生搜索取自帧 metadata，web_search 的按调用与回执合成（见 {@link SearchEvent}）
      * @param cancel          中断信号，可空；完成即中断，在途答案流一并掐断
      */
     public TurnResult run(ChatAgentFactory.Leaves leaves, long userId, String sessionId, String enrichedMessage,
@@ -208,6 +214,8 @@ public class ChatTurnRunner {
                                         AtomicReference<ContextUsage> measured) {
         // 这次调用里服务端搜过
         AtomicBoolean searched = new AtomicBoolean();
+        // 在途的 web_search：tool_call id → 搜索词，回执到了按它配上"正在搜索"那条
+        Map<String, String> webSearches = new HashMap<>();
         ReactLoop.Listener listener = new ReactLoop.Listener() {
             @Override
             public void chunk(ChatResponse frame) {
@@ -240,9 +248,32 @@ public class ChatTurnRunner {
 
             @Override
             public void message(Message message) {
-                // 模型要调工具了：这一批连名带参推给前端画过程条目
+                // 模型要调工具了：这一批连名带参推给前端画过程条目。web_search 是包成本地工具的联网搜索（Antigravity 来源），
+                // 画成搜索条目，跟原生搜索一个样：调用时"正在搜索"，回执到了"搜索了 N 个网站"、来源攒进本轮
                 if (message instanceof AssistantMessage reply && reply.hasToolCalls()) {
-                    runRegistry.publishToolCalls(sessionId, null, reply.getToolCalls());
+                    List<AssistantMessage.ToolCall> tools = new ArrayList<>();
+                    for (AssistantMessage.ToolCall call : reply.getToolCalls()) {
+                        if (WebSearchTool.NAME.equals(call.name())) {
+                            ObjectNode args = WorkbenchRunRegistry.argsOf(call);
+                            String query = args == null ? null : args.path("query").asString(null);
+                            webSearches.put(call.id(), query);
+                            searchSink.accept(SearchEvent.searching(query));
+                        } else {
+                            tools.add(call);
+                        }
+                    }
+                    // 搜索条目要先推：前端到了搜索会把亮着的工具条目熄掉
+                    if (!tools.isEmpty()) {
+                        runRegistry.publishToolCalls(sessionId, null, tools);
+                    }
+                } else if (message instanceof ToolResponseMessage responses) {
+                    for (ToolResponseMessage.ToolResponse response : responses.getResponses()) {
+                        if (WebSearchTool.NAME.equals(response.name())) {
+                            String query = webSearches.remove(response.id());
+                            List<SearchEvent.Source> sources = WebSearchTool.sourcesOf(response.responseData());
+                            searchSink.accept(sources == null ? SearchEvent.failed(query) : SearchEvent.searched(query, sources));
+                        }
+                    }
                 }
             }
 

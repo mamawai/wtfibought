@@ -31,7 +31,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * Gemini generateContent 协议（/v1beta/models/{model}:streamGenerateContent?alt=sse）。
  * <p>
  * 思考档位：留空不传；none → {@code thinkingConfig.thinkingBudget=0}；其余 → {@code thinkingConfig.thinkingLevel}（大写枚举）。
- * 服务端搜索声明 {@code {google_search:{}}}；搜索只有完成态（groundingMetadata），没有"开始"信号。
+ * 服务端搜索声明 {@code {google_search:{}}}，和函数工具同一请求时带 {@code toolConfig.includeServerSideToolInvocations=true}
+ * （官方 API 的要求；Antigravity 来源带了也不收，那种端点的搜索走 {@link WebSearchTool} 单独发）；
+ * 搜索只有完成态（groundingMetadata），没有"开始"信号。
  * <p>
  * parts 原样回传：每条 model 消息的原始 parts 数组挂在收尾帧消息的 {@link #PARTS_KEY} 上，之后每次请求都原样回放
  * （thoughtSignature、functionCall 自带的 id 都在里面）。官方要求签名原样回传、不删不改，换模型也照样回传；
@@ -148,12 +150,17 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
             if (!declarations.isEmpty()) {
                 tools.add(MAPPER.createObjectNode().set("functionDeclarations", declarations));
             }
-            if (searchAllowed(toolOptions)) {
+            boolean search = searchAllowed(toolOptions);
+            if (search) {
                 tools.add(MAPPER.createObjectNode().set("google_search", MAPPER.createObjectNode()));
                 toolNames.add("google_search");
             }
             if (!tools.isEmpty()) {
                 body.set("tools", tools);
+            }
+            // 内置搜索和函数工具在同一请求里：官方 API 要开这个才收
+            if (search && !declarations.isEmpty()) {
+                body.set("toolConfig", MAPPER.createObjectNode().put("includeServerSideToolInvocations", true));
             }
         }
         logRequest(effectiveModel(prompt), toolNames);

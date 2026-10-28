@@ -22,7 +22,7 @@ agent:
     apiKeyRequired: apiKey is required
     connectFailed: "Model connectivity test failed: {{reason}}"
     # Endpoints with web search ticked: the connectivity test, creating, and saving an edit that just ticked search or
-    # changed protocol/URL/model/key/reasoning effort all probe search once
+    # changed protocol/URL/model/key/reasoning effort/Antigravity source all probe search once
     searchUnsupported: "The endpoint is reachable, but this endpoint or model does not support web search - untick \"Web search\". Upstream reason: {{reason}}"
     searchProbeUnreachable: "Web search is ticked, but the probe request failed (unreachable, rate-limited or a temporary upstream error), so its support can't be confirmed. Try again later, or untick \"Web search\". Upstream reason: {{reason}}"
     # Rejections from the SSRF guard (BaseUrlGuard)

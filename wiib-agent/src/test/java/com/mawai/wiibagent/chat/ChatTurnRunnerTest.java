@@ -20,6 +20,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -69,6 +70,8 @@ class ChatTurnRunnerTest {
     /** 真注册表 + 只收 tool_calls 的出口：工具调用事件是不是连名带参推出去了 */
     private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
     private final List<ObjectNode> toolCallEvents = new CopyOnWriteArrayList<>();
+    /** 叶子用的端点（叶子指纹含 userId，trader 工具按它认人）；要别的端点能力的用例自己换 */
+    private ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");
 
     private static ChatResponse responseOf(AssistantMessage message) {
         return new ChatResponse(List.of(new Generation(message)));
@@ -107,7 +110,6 @@ class ChatTurnRunnerTest {
     private ChatAgentFactory.Leaves leaves() {
         ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, light));
-        ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), newsToolkit,
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
                 mock(WorkbenchRunRegistry.class), childRuns,
@@ -236,6 +238,41 @@ class ChatTurnRunnerTest {
                 .containsExactly(SearchEvent.SEARCHING, SearchEvent.SEARCHED);
         assertThat(search.get(1).sources()).extracting(SearchEvent.Source::url).containsExactly("https://a.com/1");
         assertThat(answer.toString()).isEqualTo("这是答案");
+    }
+
+    /**
+     * Antigravity 来源的搜索是本地工具 web_search：调用画成"正在搜索"、回执到了画成"搜索了 N 个网站"，跟原生搜索一个样；
+     * 它不当普通工具条目推，来源随回执进 searchSink（答案底部与落库都从那攒）
+     */
+    @Test
+    void web_search的调用与回执画成搜索事件() {
+        llmConfig = new ChatEndpoints(1L, ChatTestEndpoints.antigravity("gemini-4-argon-high"), null);
+        mainCallsThenAnswers("web_search", "{\"query\":\"BTC ETF\"}", "这是答案");
+        when(deep.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(new Generation(new AssistantMessage("据报道"),
+                ChatGenerationMetadata.builder().finishReason("STOP").metadata(SearchEvent.KEY, List.of(SearchEvent.searched(
+                        "BTC ETF flows", List.of(new SearchEvent.Source("https://a.com/1", "a.com"))))).build()))));
+
+        turn("BTC ETF 最近怎么样");
+
+        assertThat(search).extracting(SearchEvent::phase).containsExactly(SearchEvent.SEARCHING, SearchEvent.SEARCHED);
+        assertThat(search).extracting(SearchEvent::query).containsOnly("BTC ETF");
+        assertThat(search.get(1).sources()).extracting(SearchEvent.Source::url).containsExactly("https://a.com/1");
+        assertThat(toolCallEvents).isEmpty();
+        assertThat(answer.toString()).isEqualTo("这是答案");
+    }
+
+    /** web_search 没搜成（这里是上游没执行搜索，工具回 available=false）：那条画成搜索失败，不带来源 */
+    @Test
+    void web_search没搜成画成搜索失败() {
+        llmConfig = new ChatEndpoints(1L, ChatTestEndpoints.antigravity("gemini-4-argon-high"), null);
+        mainCallsThenAnswers("web_search", "{\"query\":\"BTC ETF\"}", "这是答案");
+        when(deep.call(any(Prompt.class))).thenReturn(responseOf(new AssistantMessage("凭记忆答的")));
+
+        turn("BTC ETF 最近怎么样");
+
+        assertThat(search).extracting(SearchEvent::phase).containsExactly(SearchEvent.SEARCHING, SearchEvent.FAILED);
+        assertThat(search.get(1).query()).isEqualTo("BTC ETF");
+        assertThat(search.get(1).sources()).isEmpty();
     }
 
     /** 按钮直发的一轮：收尾指令里钉死"本轮必须调这个工具"，输出语言照样是最后一句 */

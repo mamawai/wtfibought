@@ -26,6 +26,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -79,6 +80,14 @@ class ChatAgentFactoryTest {
 
     private static ChatEndpoints config(String model) {
         return ChatTestEndpoints.eps(1L, model);
+    }
+
+    /** 声明了原生服务端搜索的端点 */
+    private static UserLlmEndpoint searchEndpoint() {
+        UserLlmEndpoint e = ChatTestEndpoints.endpoint("grok-4.6");
+        e.setApiProtocol("responses");
+        e.setWebSearch(true);
+        return e;
     }
 
     /** 主 agent 真跑一次，把它挂给模型的工具表抓出来 */
@@ -148,8 +157,8 @@ class ChatAgentFactoryTest {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         ChatAgentFactory factory = factory(model);
 
-        Prompt researcher = workerPrompt(model, factory.newWorker(WorkerKind.RESEARCHER, AgentLang.ZH, true, model));
-        Prompt analyst = workerPrompt(model, factory.newWorker(WorkerKind.ANALYST, AgentLang.ZH, true, model));
+        Prompt researcher = workerPrompt(model, factory.newWorker(WorkerKind.RESEARCHER, AgentLang.ZH, searchEndpoint(), model));
+        Prompt analyst = workerPrompt(model, factory.newWorker(WorkerKind.ANALYST, AgentLang.ZH, searchEndpoint(), model));
 
         assertThat(toolNames(researcher)).containsExactly("news_search");
         assertThat(carriesSearch(researcher)).isTrue();
@@ -259,14 +268,73 @@ class ChatAgentFactoryTest {
             prompts.add(inv.getArgument(0));
             return Flux.just(new ChatResponse(List.of(new Generation(new AssistantMessage("答")))));
         });
-        UserLlmEndpoint e = ChatTestEndpoints.endpoint("grok-4.6");
-        e.setApiProtocol("responses");
-        e.setWebSearch(true);
-
-        ChatAgentFactory.Leaves leaves = factory(model).leavesFor(new ChatEndpoints(1L, e, null), AgentLang.ZH);
+        ChatAgentFactory.Leaves leaves = factory(model).leavesFor(new ChatEndpoints(1L, searchEndpoint(), null), AgentLang.ZH);
         leaves.main().run(List.of(new UserMessage("过去24小时BTC新闻")), "wb-ws", null, null);
 
         assertThat(prompts).isNotEmpty();
         assertThat(prompts).allMatch(ChatAgentFactoryTest::carriesSearch);
+    }
+
+    /**
+     * Antigravity 来源不收服务端搜索和函数工具同一请求：主 agent 与 researcher 改挂本地工具 web_search、不捎原生许可，
+     * 主 agent 照样用承诺联网的那版提示词
+     */
+    @Test
+    void Antigravity来源的搜索包成web_search工具() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        List<Prompt> prompts = new ArrayList<>();
+        when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            return Flux.just(new ChatResponse(List.of(new Generation(new AssistantMessage("答")))));
+        });
+        ChatAgentFactory factory = factory(model);
+        UserLlmEndpoint e = ChatTestEndpoints.antigravity("gemini-4-argon-high");
+
+        factory.leavesFor(new ChatEndpoints(1L, e, null), AgentLang.ZH).main()
+                .run(List.of(new UserMessage("过去24小时BTC新闻")), "wb-ag", null, null);
+        Prompt researcher = workerPrompt(model, factory.newWorker(WorkerKind.RESEARCHER, AgentLang.ZH, e, model));
+
+        assertThat(toolNames(prompts.getFirst())).contains("web_search", "news_search");
+        assertThat(carriesSearch(prompts.getFirst())).isFalse();
+        assertThat(prompts.getFirst().getInstructions().getFirst().getText()).contains("用你的联网搜索");
+        assertThat(toolNames(researcher)).containsExactly("news_search", "web_search");
+        assertThat(carriesSearch(researcher)).isFalse();
+    }
+
+    /** Antigravity 来源决定工具表，烤在叶子上：切了要拿新叶子；它不影响模型实例，不进模型指纹 */
+    @Test
+    void 切Antigravity来源拿到新叶子() {
+        ChatEndpoints antigravity = config("gpt-5");
+        antigravity.deep().setAntigravity(true);
+
+        assertThat(ChatAgentFactory.leafKey(antigravity, AgentLang.ZH))
+                .isNotEqualTo(ChatAgentFactory.leafKey(config("gpt-5"), AgentLang.ZH));
+        assertThat(ChatModelFactory.fingerprint(antigravity)).isEqualTo(ChatModelFactory.fingerprint(config("gpt-5")));
+    }
+
+    /** 模型调 web_search：用主 agent 自己的模型单独发一次，搜的就是模型给的 query，这次也记在本轮账上 */
+    @Test
+    void web_search单独发一次搜索且记在本轮账上() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger streams = new AtomicInteger();
+        when(model.stream(any(Prompt.class))).thenAnswer(inv -> Flux.just(streams.getAndIncrement() == 0
+                ? new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("c1", "function", "web_search", "{\"query\":\"BTC ETF\"}"))).build())))
+                : new ChatResponse(List.of(new Generation(new AssistantMessage("答"))))));
+        List<Prompt> searches = new ArrayList<>();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            searches.add(inv.getArgument(0));
+            return new ChatResponse(List.of(new Generation(new AssistantMessage("据报道"))));
+        });
+        ChatAgentFactory.Leaves leaves = factory(model).leavesFor(
+                new ChatEndpoints(1L, ChatTestEndpoints.antigravity("gemini-4-argon-high"), null), AgentLang.ZH);
+
+        leaves.main().run(List.of(new UserMessage("BTC ETF 最近怎么样")), "wb-ag", null, null);
+
+        assertThat(searches).hasSize(1);
+        assertThat(searches.getFirst().getInstructions().getLast().getText()).isEqualTo("BTC ETF");
+        assertThat(leaves.deep().snapshot().modelCalls()).isEqualTo(3);
     }
 }

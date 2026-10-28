@@ -32,7 +32,7 @@ import java.util.Set;
  * <ul>
  *   <li>一人只要还有端点，就<b>恰有一条</b>默认（首条自动默认；删默认时最早的一条顶上）；</li>
  *   <li>绑定行永远指向活着的端点：删端点连带删它的绑定，受影响的用途回落默认；</li>
- *   <li>勾着联网搜索的端点，新增时、改动里刚勾上搜索或改了协议/地址/模型/key/思考档位时，保存前先探测，
+ *   <li>勾着联网搜索的端点，新增时、改动里刚勾上搜索或改了协议/地址/模型/key/思考档位/Antigravity 来源时，保存前先探测，
  *       连得上且支持搜索才入库；其余保存不发上游请求。
  *       测什么就是接下来真跑什么——探测走 {@link ByokModelBuilder} 的生产建模路径，见 {@link #probe}。</li>
  * </ul>
@@ -56,12 +56,18 @@ public class LlmEndpointService {
 
     private static final Set<String> PURPOSES = Set.of(UserLlmBinding.CHAT_MAIN, UserLlmBinding.CHAT_LIGHT, UserLlmBinding.TRADER);
 
+    /** 探 Antigravity 来源的搜索时问的：要当天的信息，模型才会真去搜 */
+    private static final String SEARCH_PROBE_QUERY = "What is the latest Bitcoin news today?";
+    /** 只带搜索的那次请求没回 grounding：上游没执行搜索 */
+    private static final String NOT_SEARCHED = "the search-only request came back without groundingMetadata (no search was run)";
+
     /**
      * apiKey 传空=沿用已存的 key（只在 update/探测已有端点时合法）；webSearch 只在能声明服务端搜索的协议下入库；
-     * contextWindow 传空=默认 256K
+     * antigravity 只在 gemini 协议且勾了搜索时入库；contextWindow 传空=默认 256K
      */
     public record SaveReq(String name, String apiProtocol, String baseUrl, String model,
-                          String reasoningEffort, String apiKey, Boolean webSearch, Integer contextWindow) {
+                          String reasoningEffort, String apiKey, Boolean webSearch, Boolean antigravity,
+                          Integer contextWindow) {
     }
 
     public record ListModelsResult(String error, List<String> models) {
@@ -315,19 +321,23 @@ public class LlmEndpointService {
         return Boolean.TRUE.equals(row.getWebSearch()) ? probe(row, "agent.endpoint.searchProbeUnreachable") : null;
     }
 
-    /** 改端点时要不要重新探测：刚勾上搜索，或影响探测结果的协议、地址、模型、key、思考档位变了 */
+    /** 改端点时要不要重新探测：刚勾上搜索，或影响探测结果的协议、地址、模型、key、思考档位、Antigravity 来源变了 */
     private static boolean probeInputsChanged(UserLlmEndpoint cur, UserLlmEndpoint row) {
         return !Boolean.TRUE.equals(cur.getWebSearch())
                 || !Objects.equals(cur.getApiProtocol(), row.getApiProtocol())
                 || !Objects.equals(cur.getBaseUrl(), row.getBaseUrl())
                 || !Objects.equals(cur.getModel(), row.getModel())
                 || !Objects.equals(cur.getApiKeyEnc(), row.getApiKeyEnc())
-                || !Objects.equals(cur.getReasoningEffort(), row.getReasoningEffort());
+                || !Objects.equals(cur.getReasoningEffort(), row.getReasoningEffort())
+                || !Objects.equals(cur.getAntigravity(), row.getAntigravity());
     }
 
     /**
-     * 先发一句 ping 测连通；勾了联网搜索的，再按生产的样子发一次：搜索许可和一个本地工具一起带
-     * （主 agent 两样总是同时带着，有的上游不收这个组合），上游拒收就是不支持。通过返 null。
+     * 先发一句 ping 测连通；勾了联网搜索的，再按生产的样子发一次，上游拒收就是不支持。通过返 null。生产的样子分两种：
+     * <ul>
+     *   <li>Antigravity 来源：搜索是单独发的（{@link WebSearchTool}），就照那样只带搜索发一次，真搜了（回了 grounding）才算支持</li>
+     *   <li>其余：搜索许可和一个本地工具一起带（主 agent 两样总是同时带着，有的上游不收这个组合）</li>
+     * </ul>
      * 走的就是生产建模那条路（{@link ByokModelBuilder#build}）——测什么就得是接下来真跑什么。
      *
      * @param unreachableKey 连不上时用哪句：测试连通性说测试失败，保存说没法确认支不支持搜索
@@ -344,6 +354,10 @@ public class LlmEndpointService {
             return null;
         }
         try {
+            if (Boolean.TRUE.equals(row.getAntigravity())) {
+                return new WebSearchTool(model).search(SEARCH_PROBE_QUERY).searched() ? null
+                        : messages.get("agent.endpoint.searchUnsupported", Map.of("reason", NOT_SEARCHED));
+            }
             LlmClient.builder().model(model).systemPrompt("Reply with: pong. Do not use any tools.")
                     .tools(List.of(ToolCallbacks.from(new SearchProbeTool()))).webSearch(true).build()
                     .execute(List.of(new UserMessage("ping")));
@@ -413,6 +427,9 @@ public class LlmEndpointService {
         // 归一而非报错：协议声明不了服务端搜索的（chat-completions），勾了也不把兑现不了的承诺存进库
         row.setWebSearch(Boolean.TRUE.equals(req.webSearch())
                 && AiProtocols.supportsServerSearch(row.getApiProtocol()));
+        // 同理：只有 gemini 协议的搜索分得出官方/Antigravity，别的情况存 false
+        row.setAntigravity(Boolean.TRUE.equals(req.antigravity()) && row.getWebSearch()
+                && AiProtocols.GEMINI.equals(row.getApiProtocol()));
         row.setContextWindow(req.contextWindow() == null ? DEFAULT_CONTEXT_WINDOW : req.contextWindow());
         row.setApiKeyEnc(keepKeyEnc != null ? keepKeyEnc : apiKeyCrypto.encrypt(req.apiKey().trim()));
         return row;

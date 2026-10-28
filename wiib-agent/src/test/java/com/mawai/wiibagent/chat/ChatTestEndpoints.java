@@ -90,6 +90,15 @@ public final class ChatTestEndpoints {
         return e;
     }
 
+    /** Antigravity 来源的 Gemini 端点，勾了搜索 */
+    public static UserLlmEndpoint antigravity(String model) {
+        UserLlmEndpoint e = endpoint(model);
+        e.setApiProtocol("gemini");
+        e.setWebSearch(true);
+        e.setAntigravity(true);
+        return e;
+    }
+
     /** 只有主模型（轻模型复用主模型） */
     public static ChatEndpoints eps(long userId, String model) {
         return new ChatEndpoints(userId, endpoint(model), null);

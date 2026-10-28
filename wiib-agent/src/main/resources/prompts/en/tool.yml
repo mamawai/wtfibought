@@ -10,6 +10,12 @@ tool:
     Get the recent important news flashes (title + full body + source + time). A flash is already
     the complete text — there is no such thing as deep-reading a single one.
 
+  # Web search as a local tool (only on Gemini endpoints backed by Antigravity): each call sends a
+  # separate search-only request, see WebSearchTool
+  web_search: |-
+    Search the web for the query. Returns an answer written from the search results (answer) and the
+    sources it drew on (sources: title and url). Returns available=false when the search found nothing.
+
   # Deep analysis: one call = 3 deep-model calls; the description nails down "expensive" and "needs the user's nod".
   # Word for word the same as the zh entry apart from the trigger phrases: the description is read by the
   # model, the trigger phrases have to match what the user actually types, so only those follow the language.

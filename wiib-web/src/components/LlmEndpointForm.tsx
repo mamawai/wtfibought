@@ -17,6 +17,8 @@ export interface LlmEndpointValue {
   apiKey: string;
   /** 服务端联网搜索（responses / anthropic / gemini 协议可勾；openai 协议下后端归一 false） */
   webSearch: boolean;
+  /** Gemini 来源是 Antigravity（如经 CPA 反代）：gemini 协议勾了联网搜索才有这个勾选框，其余情况后端归一 false */
+  antigravity: boolean;
   /** 上下文窗口（token），界面按 K 填 */
   contextWindow: number;
 }
@@ -209,6 +211,19 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
         <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
           <Globe className="w-3 h-3" /> {t('endpoint.webSearchOpenAiHint')}
         </span>
+      )}
+
+      {/* Antigravity 来源：它不收搜索和本地工具在同一请求里，勾上后后端把搜索改成单独发一次只带搜索的请求 */}
+      {!platform && value.apiProtocol === 'gemini' && value.webSearch && (
+        <label className="flex items-start gap-2 text-xs cursor-pointer select-none ml-5">
+          <input type="checkbox" checked={value.antigravity}
+                 onChange={e => onChange({ antigravity: e.target.checked })}
+                 className="mt-0.5 accent-primary" />
+          <span className="space-y-0.5">
+            <span className="font-bold block">{t('endpoint.antigravity')}</span>
+            <span className="text-[10px] text-muted-foreground/70 block">{t('endpoint.antigravityHint')}</span>
+          </span>
+        </label>
       )}
 
       <button type="button" onClick={() => void test()}

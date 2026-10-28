@@ -14,7 +14,7 @@ import type { LlmBindings, LlmEndpointView, LlmPurpose, TraderOwnerView, Workben
 // webSearch 默认勾上：能声明搜索的协议就声明，保存时探测，上游不支持会拦下请用户取消勾选；openai 协议后端归一 false
 const EMPTY: LlmEndpointValue = {
   name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: true,
-  contextWindow: DEFAULT_CONTEXT_WINDOW,
+  antigravity: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
 };
 
 /** 一条端点被谁用着：主标签 + 是否经"默认"落到它头上 */
@@ -93,7 +93,7 @@ export function ModelConfig() {
     setForm({
       name: e.name, apiProtocol: e.apiProtocol, baseUrl: e.baseUrl, model: e.model,
       reasoningEffort: e.reasoningEffort ?? '', apiKey: '',   // 明文 key 不出服务端，改 key 才填
-      webSearch: e.webSearch, contextWindow: e.contextWindow,
+      webSearch: e.webSearch, antigravity: e.antigravity, contextWindow: e.contextWindow,
     });
     setEditing({ id: e.id, keyTail: e.apiKeyTail });
   };

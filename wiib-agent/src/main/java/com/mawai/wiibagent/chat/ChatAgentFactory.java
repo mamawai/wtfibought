@@ -22,6 +22,7 @@ import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
+import com.mawai.wiibagent.llm.WebSearchTool;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
@@ -31,6 +32,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -111,8 +113,8 @@ public class ChatAgentFactory {
                     });
 
     /**
-     * @param supplementSource 补充源名。BlockBeats 之外那一路是主 agent 经服务端 web_search 工具搜的
-     *                         （端点勾选开启，见 {@link #build} 的 webSearch），搜到什么平台随上游走。
+     * @param supplementSource 补充源名。BlockBeats 之外那一路是主 agent 联网搜的
+     *                         （端点勾选开启，见 {@link #toolsWithSearch}），搜到什么平台随上游走。
      *                         所以提示词里一律只说"联网搜索"不点名平台，只有输出标签用这个名字——
      *                         换源改配置一处，提示词不用动；留空标 [Web]
      */
@@ -176,15 +178,16 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 叶子的缓存键 = 模型配置指纹 + 语言 + 上下文窗口。语言变则整套系统提示词与工具描述变，叶子须重建；
-     * 窗口烤在叶子里，改了也得换一套。
+     * 叶子的缓存键 = 模型配置指纹 + 语言 + 上下文窗口 + 主/轻两条端点的 Antigravity 来源。语言变则整套系统提示词与工具描述变，
+     * 叶子须重建；窗口烤在叶子里，改了也得换一套；Antigravity 来源决定搜索走原生还是 web_search，工具表跟着变。
      * <p>
-     * 这两样只加在这一层，不进 {@link ChatModelFactory#fingerprint}：模型实例与它们无关，
-     * 切语言、改窗口都不重建 SDK 客户端与连接池。
+     * 这几样只加在这一层，不进 {@link ChatModelFactory#fingerprint}：模型实例与它们无关，
+     * 切语言、改窗口、切 Antigravity 都不重建 SDK 客户端与连接池。
      */
     static String leafKey(ChatEndpoints eps, AgentLang lang) {
-        // 指纹是十六进制串，用冒号接语言码与窗口不会与它的任何取值相撞
-        return ChatModelFactory.fingerprint(eps) + ':' + lang.code() + ':' + eps.deep().getContextWindow();
+        // 指纹是十六进制串，用冒号接后面几样不会与它的任何取值相撞
+        return ChatModelFactory.fingerprint(eps) + ':' + lang.code() + ':' + eps.deep().getContextWindow()
+                + ':' + eps.deep().getAntigravity() + ':' + eps.lightOrDeep().getAntigravity();
     }
 
     /** 端点声明了服务端搜索：协议支持且用户勾了 */
@@ -192,14 +195,32 @@ public class ChatAgentFactory {
         return AiProtocols.supportsServerSearch(endpoint.getApiProtocol()) && Boolean.TRUE.equals(endpoint.getWebSearch());
     }
 
+    /**
+     * 给被授权搜索的 agent 挂工具，搜索按端点给：Antigravity 来源多挂一个本地工具 web_search
+     * （它不收服务端搜索和函数工具在同一请求里，见 {@link WebSearchTool}）；其余端点开了搜索就每次调用捎服务端搜索许可
+     *
+     * @param model 这个 agent 自己的模型（带账本）：web_search 那次搜索也用它发
+     */
+    private void toolsWithSearch(LlmClient.Builder client, UserLlmEndpoint endpoint, ChatModel model, AgentLang lang,
+                                 Object... toolkits) {
+        // antigravity 只在 gemini 协议且勾了搜索时为 true（存库时归一）
+        if (Boolean.TRUE.equals(endpoint.getAntigravity())) {
+            Object[] withSearchTool = Arrays.copyOf(toolkits, toolkits.length + 1);
+            withSearchTool[toolkits.length] = new WebSearchTool(model);
+            client.tools(localizedTools.of(lang, withSearchTool));
+        } else {
+            client.tools(localizedTools.of(lang, toolkits)).webSearch(serverSearch(endpoint));
+        }
+    }
+
     private Leaves build(ChatEndpoints eps, AgentLang lang) {
         ChatModelFactory.Models models = chatModelFactory.modelsFor(eps);
         // 用量装饰器进行包装
         UsageTrackingChatModel deep = new UsageTrackingChatModel(models.deep());
-        // worker 跑在浅模型上：它的搜索许可看浅模型那条端点
-        boolean lightSearch = serverSearch(eps.lightOrDeep());
+        // worker 跑在浅模型上：它的搜索看浅模型那条端点
+        UserLlmEndpoint light = eps.lightOrDeep();
         LlmClient client = mainClient(deep, models.deep(), eps.userId(), lang, eps.deep(),
-                kind -> newWorker(kind, lang, lightSearch, models.light()));
+                kind -> newWorker(kind, lang, light, models.light()));
         return new Leaves(modelLabel(eps.deep()), deep, mainLoop(client, lang), client, lang,
                 eps.deep().getContextWindow());
     }
@@ -227,30 +248,29 @@ public class ChatAgentFactory {
      *
      * @param deepBase 裸深模型，给深研判子运行：它每次自己包账本，不走主轮那本
      * @param userId   trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
-     * @param endpoint 主模型端点：声明了服务端搜索就用承诺联网的那版提示词、每次调用捎搜索许可；端点身份进前缀指纹
+     * @param endpoint 主模型端点：声明了服务端搜索就用承诺联网的那版提示词，搜索按它给（见 {@link #toolsWithSearch}）；
+     *                 端点身份进前缀指纹
      * @param workers  delegate 按预设现建 worker 的办法
      */
     private LlmClient mainClient(ChatModel deep, ChatModel deepBase, long userId, AgentLang lang,
                                  UserLlmEndpoint endpoint, java.util.function.Function<WorkerKind, Worker> workers) {
-        boolean webSearch = serverSearch(endpoint);
-        // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
-        return LlmClient.builder()
+        LlmClient.Builder client = LlmClient.builder()
                 .model(deep)
-                .systemPrompt(mainInstruction(lang, webSearch))
-                .tools(localizedTools.of(lang,
-                        // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
-                        marketToolkit,
-                        newsToolkit.boundTo(lang),
-                        new DeepAnalysisToolkit(deepBase, deepAnalysisService, childRuns, prompts, userId, lang),
-                        new TraderQueryToolkit(traderChatService, userId, lang),
-                        new TraderActionToolkit(runRegistry, userId, prompts, lang),
-                        new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),
-                        new DelegateToolkit(childRuns, workers, prompts, userId, lang)))
-                .webSearch(webSearch)
+                .systemPrompt(mainInstruction(lang, serverSearch(endpoint)))
                 .origin(String.join("\0", endpoint.getApiProtocol(), endpoint.getBaseUrl(), endpoint.getModel(),
                         endpoint.getApiKeyEnc()))
-                .maxAttempts(3).initialDelay(500).maxDelay(4000)
-                .build();
+                .maxAttempts(3).initialDelay(500).maxDelay(4000);
+        // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
+        toolsWithSearch(client, endpoint, deep, lang,
+                // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
+                marketToolkit,
+                newsToolkit.boundTo(lang),
+                new DeepAnalysisToolkit(deepBase, deepAnalysisService, childRuns, prompts, userId, lang),
+                new TraderQueryToolkit(traderChatService, userId, lang),
+                new TraderActionToolkit(runRegistry, userId, prompts, lang),
+                new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),
+                new DelegateToolkit(childRuns, workers, prompts, userId, lang));
+        return client.build();
     }
 
     /** 主 agent：流式作答，挂保险丝与 HITL 闸门 */
@@ -268,17 +288,17 @@ public class ChatAgentFactory {
      * 按预设现建一个 worker：浅模型 + 预设的只读工具集，独享账本，没有闸门。
      * 每次派发现建而不是建叶子时缓存：账本要独享，循环又是把模型绑死的，只能连循环一起新建。
      *
-     * @param lightSearch researcher 的服务端搜索许可：浅模型端点声明了才给
+     * @param light 浅模型那条端点：researcher 的搜索按它给（见 {@link #toolsWithSearch}）
      */
     // 包私有非 private：ChatAgentFactoryTest 要直接验两个预设的工具表与许可
-    Worker newWorker(WorkerKind kind, AgentLang lang, boolean lightSearch, ChatModel lightBase) {
+    Worker newWorker(WorkerKind kind, AgentLang lang, UserLlmEndpoint light, ChatModel lightBase) {
         UsageTrackingChatModel model = new UsageTrackingChatModel(lightBase);
         LlmClient.Builder client = LlmClient.builder()
                 .model(model)
                 .systemPrompt(prompts.get(lang, kind.promptKey()))
                 .maxAttempts(3).initialDelay(500).maxDelay(4000);
         switch (kind) {
-            case RESEARCHER -> client.tools(localizedTools.of(lang, newsToolkit.boundTo(lang))).webSearch(lightSearch);
+            case RESEARCHER -> toolsWithSearch(client, light, model, lang, newsToolkit.boundTo(lang));
             case ANALYST -> client.tools(localizedTools.of(lang, marketToolkit, indicatorToolkit));
         }
         ReactLoop loop = ReactLoop.builder().client(client.build())

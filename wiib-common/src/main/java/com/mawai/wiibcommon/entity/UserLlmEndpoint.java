@@ -41,6 +41,11 @@ public class UserLlmEndpoint {
      * 能声明的协议才存 true（AiProtocols.supportsServerSearch）。当前只有对话的主 agent 与 researcher worker 会用到。
      */
     private Boolean webSearch;
+    /**
+     * Gemini 来源是 Antigravity（如经 CPA 反代）：只在 gemini 协议且勾了联网搜索时为 true。
+     * 这种来源不收服务端搜索和本地工具在同一请求里，搜索改成本地工具 web_search，调用时单独发一次只带搜索的请求。
+     */
+    private Boolean antigravity;
     /** 上下文窗口（token）：对话主模型的上下文用量达到它的 90% 时，下一轮开始前整理上下文；用户按模型实际窗口填 */
     private Integer contextWindow;
     /** AES-GCM 密文 base64(iv+cipher)，密钥来自 WIIB_TRADER_KEY_SECRET */
