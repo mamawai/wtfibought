@@ -505,7 +505,8 @@ export interface Calibration {
     base: { recentSharpe: number; sharpe: number; recentFrom: string; carryShare: number };
     /** 库里每条：拿掉它的方案再加回去 */
     library: { name: string; recent: Gain; full: Gain }[];
-    candidates: GainGroup;
+    /** 没勾就没算，是 null */
+    candidates: GainGroup | null;
     random: GainGroup;
   };
   /** 口径、数据、在役库和现在一样不一样，三样都一样才作数 */
@@ -1078,7 +1079,8 @@ export const alpha = {
     call<{ reply: string; ms: number }>('POST', `${ALPHA}/models/${role}/test`, body),
   standard: () => call<StandardView>('GET', `${ALPHA}/standard`),
   /** 后台标定 G9，进度和结果看 standard()，total 要等库算好才有；有 campaign、刷新、参照集在跑是 409 */
-  calibrate: (randoms: number) => call<{ started: boolean }>('POST', `${ALPHA}/standard/calibrate`, { randoms }),
+  calibrate: (randoms: number, candidates: boolean) =>
+    call<{ started: boolean }>('POST', `${ALPHA}/standard/calibrate`, { randoms, candidates }),
   /** 改 G9 的线：口径换成新的一版，下一次评估起按它判；campaign、复评在跑是 409 */
   saveStandard: (body: { sharpeGainMin: number }) => call<StandardView>('PUT', `${ALPHA}/standard`, body),
   policy: () => call<Policy>('GET', `${ALPHA}/policy`),

@@ -173,9 +173,9 @@ async def test_batch_keeps_one_of_survivors_that_are_the_same_signal(store, ctx_
 async def test_batch_notes_later_survivors_gain_after_earlier_ones(store, ctx_of, monkeypatch):
     """截面相关没到阈值的照样留（这里把相关压成 0.1）：同批规范形相同的只留一条（G8 拒），
     排在后面的 G9 备注里写明排在谁后面增量多少，留给人判"""
-    def no_gain(base, name, f, params):
+    def no_gain(base, name, f):
         flat = {"base": 2.0, "with": 1.9, "gain": -0.1}
-        return {"sharpe": flat, "recentSharpe": flat, "recentFrom": params.recent_from,
+        return {"sharpe": flat, "recentSharpe": flat, "recentFrom": base.params.recent_from,
                 "netReturn": {"base": 0.5, "with": 0.49}}
 
     monkeypatch.setattr(graph_module, "gain", no_gain)

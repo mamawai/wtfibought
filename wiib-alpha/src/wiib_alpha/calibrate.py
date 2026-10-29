@@ -20,6 +20,7 @@ import json
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -54,6 +55,8 @@ LEAKY = {
 }
 PLANTED = {"planted_carry": "$funding_rate"}
 GATE_IDS = [f"G{i}" for i in range(11)]
+# G9 标定同时算几条
+THREADS = 2
 # 2024-01-01 00:00 UTC，对齐到 0 点，网格从这里数
 SYNTHETIC_START = 1_704_067_200_000
 # 一次结算 32 根 bar（8 小时）
@@ -183,43 +186,53 @@ def service_thresholds(db_path: str) -> Thresholds:
 
 
 def g9_gains(pool: Pool, vol: np.ndarray, basis: np.ndarray, library: dict[str, np.ndarray],
-             candidates: list[tuple[str, str]], params: EvalParams, share: float, randoms: int, seed: int,
+             candidates: list[tuple[str, str]] | None, params: EvalParams, share: float, randoms: int, seed: int,
              progress: dict[str, Any]) -> dict[str, Any]:
     """G9 的线怎么定：库里每条（拿掉它的方案再加回去）、库外的候选、随机因子，加进交易方案后搜索段净 Sharpe 各升多少，
-    2022 起（G9 判这份）和全段各一份。library 是在役因子在搜索段上的值，candidates 是库外候选的 (名字, 表达式)；
-    vol、basis 与 pool.search 对齐。页面的标定任务和命令行都走这里，progress["done"] 每过一条加一（解析不了跳过的也算）"""
+    2022 起（G9 判这份）和全段各一份。library 是在役因子在搜索段上的值，candidates 是库外候选的 (名字, 表达式)，
+    None 是这次不算它们（结果里记 None）；vol、basis 与 pool.search 对齐。页面的标定任务和命令行都走这里，
+    候选和随机因子 THREADS 条一起算，progress["done"] 每过一条加一（解析不了跳过的也算）"""
     pick = pool.in_search
-
-    def base(values: dict[str, np.ndarray]) -> scheme.Base:
-        c = Combo.empty(pool.search, pool.symbols)
-        for name, f in values.items():
-            c = c.plus(name, f)
-        return scheme.Base.of(c, basis, vol, params, share)
 
     def delta(g: dict[str, Any]) -> dict[str, Any]:
         return {"recent": g["recentSharpe"], "full": g["sharpe"]}
 
-    full = base(library)
+    c = Combo.empty(pool.search, pool.symbols)
+    for name, f in library.items():
+        c = c.plus(name, f)
+    full = scheme.Base.of(c, basis, vol, params, share)
     out: dict[str, Any] = {"base": {"recentSharpe": full.result["recentSharpe"], "sharpe": full.result["sharpe"],
                                     "recentFrom": day_name(params.recent_from), "carryShare": share},
                            "library": []}
-    for name, f in library.items():
-        g = scheme.gain(base({n: v for n, v in library.items() if n != name}), name, f, params)
-        out["library"].append({"name": name, **delta(g)})
+    for j, (name, f) in enumerate(library.items()):
+        out["library"].append({"name": name, **delta(scheme.gain(full.without(j), name, f))})
         progress["done"] += 1
     rng = np.random.default_rng(seed)
     first = pool.store.load(pool.symbols[0])
     groups = {"candidates": candidates,
               "random": [(f"rand{i:03d}", str(random_expression(rng, first))) for i in range(randoms)]}
+
+    def one(name: str, expr: str) -> dict[str, Any] | None:
+        try:
+            f = pool.values(parse(expr, FEATURE_COLUMNS)).f[pick]
+        except DslError:
+            return None
+        return {"name": name, "expr": expr, **delta(scheme.gain(full, name, f))}
+
     for key, items in groups.items():
-        rows = []
-        for name, expr in items:
-            progress["done"] += 1
-            try:
-                f = pool.values(parse(expr, FEATURE_COLUMNS)).f[pick]
-            except DslError:
-                continue
-            rows.append({"name": name, "expr": expr, **delta(scheme.gain(full, name, f, params))})
+        if items is None:
+            out[key] = None
+            continue
+        with ThreadPoolExecutor(THREADS) as ex:
+            futures = [ex.submit(one, name, expr) for name, expr in items]
+            for fut in as_completed(futures):
+                # 一条出错就不算剩下的
+                if fut.exception() is not None:
+                    ex.shutdown(cancel_futures=True)
+                fut.result()
+                progress["done"] += 1
+        # 按交进去的顺序收
+        rows = [r for r in (fut.result() for fut in futures) if r is not None]
         out[key] = {"n": len(rows), "items": rows,
                     **{which: _quantiles([r[which]["gain"] for r in rows]) for which in ("recent", "full")}}
     return out

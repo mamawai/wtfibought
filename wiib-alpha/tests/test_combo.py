@@ -80,3 +80,19 @@ def test_weight_is_the_legs_net_return_with_the_ic_sign(planted_pool, planted_vo
     assert (combo.learned(full, planted_vol, 96, costly) == 0).all()
     tr = combo.tracks(full, planted_vol, 96, PARAMS)[0][0]
     assert np.nanmean(tr.ic) > 0.3 and np.nanmean(tr.gross - tr.cost) > 0
+
+
+def test_tracks_reuse_the_known_ones(planted_pool, planted_vol):
+    f = planted_pool.values(parse("Mean($volume, 4)", COLS)).f
+    full = combo.Combo.empty(planted_pool.rows, planted_pool.symbols).plus("planted", f).plus("inv", -f)
+    trs, p = combo.tracks(full, planted_vol, 96, PARAMS)
+    # 给了前一条就只算后一条，样本还是最后一条的
+    reused, p2 = combo.tracks(full, planted_vol, 96, PARAMS, trs[:1])
+    assert reused[0] is trs[0] and np.array_equal(reused[1].ic, trs[1].ic, equal_nan=True)
+    assert np.array_equal(reused[1].gross, trs[1].gross, equal_nan=True)
+    assert np.array_equal(reused[1].cost, trs[1].cost, equal_nan=True)
+    assert p2.total == p.total and np.array_equal(p2.months, p.months)
+    # 算好的直接给进去，信号一样
+    z = combo.zscores(full)
+    np.testing.assert_array_equal(combo.signal(full, z, planted_vol, 96, PARAMS, (trs, p)),
+                                  combo.signal(full, z, planted_vol, 96, PARAMS))

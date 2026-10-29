@@ -178,14 +178,25 @@ def test_gain_is_the_change_in_the_scheme_sharpe(planted_pool, planted_vol):
                            PARAMS, 0.25)
     # 库空时基线是只有 carry 的方案，和整段回测一样
     assert empty.result == scheme.backtest(planted_pool, [], basis, planted_vol, PARAMS, False, 0.25)
-    first = scheme.gain(empty, "planted", search("Mean($volume, 4)"), PARAMS)
+    first = scheme.gain(empty, "planted", search("Mean($volume, 4)"))
     assert first["sharpe"]["base"] == pytest.approx(empty.result["sharpe"]) and first["sharpe"]["gain"] > 0.5
     assert first["recentSharpe"] == pytest.approx(first["sharpe"]) and first["recentFrom"] == PARAMS.recent_from
-    lib = empty.plus("planted", search("Mean($volume, 4)"), PARAMS)
+    lib = empty.plus("planted", search("Mean($volume, 4)"))
     assert lib.result["sharpe"] == pytest.approx(first["sharpe"]["with"])
     # 换个窗口的翻版、噪音：加进去方案几乎不动
-    twin = scheme.gain(lib, "twin", search("Mean($volume, 8)"), PARAMS)
-    noise = scheme.gain(lib, "noise", search("$trades"), PARAMS)
+    twin = scheme.gain(lib, "twin", search("Mean($volume, 8)"))
+    noise = scheme.gain(lib, "noise", search("$trades"))
     assert twin["sharpe"]["base"] == pytest.approx(first["sharpe"]["with"])
+    # 用存着的库里 Track 和 carry 腿算的，和整段重算一样
+    fresh = scheme.backtest(planted_pool, [planted_pool.values(PLANTED).f,
+                                           planted_pool.values(parse("Mean($volume, 8)", FEATURE_COLUMNS)).f],
+                            basis, planted_vol, PARAMS, False, 0.25)
+    assert twin["sharpe"]["with"] == pytest.approx(fresh["sharpe"]) and twin["netReturn"]["with"] == pytest.approx(fresh["netReturn"])
+    # 拿掉一条：别的 Track、样本和 carry 腿照用，和从头算一样
+    both = lib.plus("twin", search("Mean($volume, 8)"))
+    without = both.without(0)
+    assert without.combo.names == ("twin",) and len(without.tracks) == 1 and without.tracks[0] is both.tracks[1]
+    only_twin = Combo(planted_pool.search, planted_pool.symbols, ("twin",), both.combo.values[:, 1:])
+    assert without.result == scheme.Base.of(only_twin, basis[pick], planted_vol[pick], PARAMS, 0.25).result
     assert abs(twin["sharpe"]["gain"]) < 0.1 * first["sharpe"]["gain"]
     assert abs(noise["sharpe"]["gain"]) < 0.1 * first["sharpe"]["gain"]

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -69,10 +70,15 @@ class Track:
     cost: np.ndarray
 
 
-def tracks(combo: Combo, vol: np.ndarray, bars: int, params: EvalParams) -> tuple[list[Track], cs_ic.Points]:
-    """每条因子一条 Track，vol 与 combo.rows 对齐；另给最后一条的样本，网格点的时刻和月份各条都一样。combo 至少一条"""
-    out = []
-    for j in range(len(combo.names)):
+# tracks() 的返回：每条的 Track 和最后一条的样本
+Tracked = tuple[list[Track], cs_ic.Points]
+
+
+def tracks(combo: Combo, vol: np.ndarray, bars: int, params: EvalParams, known: Sequence[Track] = ()) -> Tracked:
+    """每条因子一条 Track，vol 与 combo.rows 对齐；known 是前几条已经算好的，只算后面的（至少剩一条）。
+    另给最后一条的样本，网格点的时刻和月份各条都一样"""
+    out = list(known)
+    for j in range(len(out), len(combo.names)):
         f = combo.values[:, j]
         p = cs_ic.points(combo.rows, f, bars, params.min_names)
         leg_p, leg_vol = cs_leg.sized(combo.rows, f, vol, bars, params.min_names)
@@ -94,9 +100,9 @@ def _weights(trs: list[Track], months: np.ndarray, end: int, min_points: int) ->
 
 
 def _weighted(combo: Combo, z: np.ndarray, vol: np.ndarray, bars: int, params: EvalParams,
-              blocks: Callable[[cs_ic.Points], list[Window]]) -> np.ndarray:
-    """每个块用它训练窗学到的权重出信号，与 rows 对齐，块外是 NaN"""
-    trs, p = tracks(combo, vol, bars, params)
+              blocks: Callable[[cs_ic.Points], list[Window]], known: Tracked | None = None) -> np.ndarray:
+    """每个块用它训练窗学到的权重出信号，与 rows 对齐，块外是 NaN；known 是算好的 tracks()"""
+    trs, p = known if known is not None else tracks(combo, vol, bars, params)
     t = combo.rows["t"].to_numpy(dtype="int64")
     out = np.full(len(t), np.nan)
     wins = blocks(p)
@@ -115,9 +121,10 @@ def _weighted(combo: Combo, z: np.ndarray, vol: np.ndarray, bars: int, params: E
     return out
 
 
-def signal(combo: Combo, z: np.ndarray, vol: np.ndarray, bars: int, params: EvalParams) -> np.ndarray:
-    """walk-forward 组合信号，只在 test 块有值；vol 与 combo.rows 对齐"""
-    return _weighted(combo, z, vol, bars, params, lambda p: grid_windows(p.total, bars, params))
+def signal(combo: Combo, z: np.ndarray, vol: np.ndarray, bars: int, params: EvalParams,
+           known: Tracked | None = None) -> np.ndarray:
+    """walk-forward 组合信号，只在 test 块有值；vol 与 combo.rows 对齐，known 是算好的 tracks()"""
+    return _weighted(combo, z, vol, bars, params, lambda p: grid_windows(p.total, bars, params), known)
 
 
 def holdout_signal(combo: Combo, z: np.ndarray, vol: np.ndarray, bars: int, cut_ms: int,

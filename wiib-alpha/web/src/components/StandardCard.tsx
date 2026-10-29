@@ -22,6 +22,7 @@ export function StandardCard({ busy, active }: { busy: Busy | null; active: bool
   const fail = useFail();
   const [view, setView] = useState<StandardView | null>(null);
   const [randoms, setRandoms] = useState('300');
+  const [candidates, setCandidates] = useState(false);
   const [starting, setStarting] = useState(false);
   const blocked = busy?.calibrate;
 
@@ -35,7 +36,7 @@ export function StandardCard({ busy, active }: { busy: Busy | null; active: bool
   const start = async () => {
     setStarting(true);
     try {
-      await alpha.calibrate(Number(randoms));
+      await alpha.calibrate(Number(randoms), candidates);
       await load();
     } catch (err) {
       fail(err);
@@ -70,9 +71,10 @@ export function StandardCard({ busy, active }: { busy: Busy | null; active: bool
                   library: cal.library.map(x => x.name).join(', ') || t('standard.emptyLibrary'), randoms: cal.randoms })}
               </p>
               <Quantile label={t('standard.random')} q={cal.result.random} from={cal.result.base.recentFrom} />
-              {cal.result.candidates.n > 0
-                ? <Quantile label={t('standard.candidates')} q={cal.result.candidates} from={cal.result.base.recentFrom} />
-                : <p className="text-muted">{t('standard.noCandidates')}</p>}
+              {!cal.result.candidates ? <p className="text-muted">{t('standard.candidatesSkipped')}</p>
+                : cal.result.candidates.n > 0
+                  ? <Quantile label={t('standard.candidates')} q={cal.result.candidates} from={cal.result.base.recentFrom} />
+                  : <p className="text-muted">{t('standard.noCandidates')}</p>}
               <div>
                 {changed.length === 0
                   ? <Badge tone="gain" icon={Check}>{t('standard.valid')}</Badge>
@@ -84,6 +86,10 @@ export function StandardCard({ busy, active }: { busy: Busy | null; active: bool
             <span className="text-muted">{t('standard.randoms')}</span>
             <input type="number" min={1} max={2000} step={1} value={randoms} onChange={e => setRandoms(e.target.value)}
                    disabled={running} className="input w-24 text-right font-mono" />
+            <label className="flex items-center gap-1.5 text-muted">
+              <input type="checkbox" checked={candidates} onChange={e => setCandidates(e.target.checked)} disabled={running} />
+              {t('standard.withCandidates')}
+            </label>
             <Button icon={Play} loading={starting || running} disabled={!!blocked || !(Number(randoms) >= 1)}
                     onClick={() => void start()}>
               {running ? t('standard.running') : t('standard.run')}

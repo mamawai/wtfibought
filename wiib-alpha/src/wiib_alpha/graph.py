@@ -382,11 +382,11 @@ def screen_batch(cands: list[dict[str, Any]], full: dict[str, np.ndarray], pool:
             c["status"], c["reason"] = "rejected_gates", f"G6 {note}"
             continue
         if out:
-            again = gain(kept, c["name"], f, params)
+            again = gain(kept, c["name"], f)
             note = (f"；排在同批 {'、'.join(x['name'] for x in out)} 之后 {day_name(again['recentFrom'])} 起净 Sharpe 增量 "
                     f"{fmt(again['recentSharpe']['gain'], 2)}")
             c["gates"] = [{**g, "note": g["note"] + note} if g["id"] == "G9" else g for g in c["gates"]]
-        kept, batch = kept.plus(c["name"], f, params), batch.plus(c["name"], f)
+        kept, batch = kept.plus(c["name"], f), batch.plus(c["name"], f)
         canon[c["canonical"]] = c["name"]
         out.append(c)
     return out

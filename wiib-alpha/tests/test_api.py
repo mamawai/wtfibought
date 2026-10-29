@@ -501,8 +501,15 @@ async def test_g9_calibration_runs_in_the_service_and_knows_when_it_is_outdated(
 
     await wait_until(finished, 60)
     std = data(await client.get("/api/alpha/standard", headers=ADMIN))
+    # 默认不算库外候选：库 1 条 + 随机 2 条
+    assert std["job"]["error"] is None and (std["job"]["done"], std["job"]["total"]) == (3, 3)
+    assert std["calibration"]["result"]["candidates"] is None
+    # 勾上库外候选：库 1 条 + 库外候选 1 条 + 随机 2 条
+    assert data(await client.post("/api/alpha/standard/calibrate", json={"randoms": 2, "candidates": True},
+                                  headers=ADMIN)) == {"started": True}
+    await wait_until(finished, 60)
+    std = data(await client.get("/api/alpha/standard", headers=ADMIN))
     cal = std["calibration"]
-    # 库 1 条 + 库外候选 1 条 + 随机 2 条
     assert std["job"]["error"] is None and (std["job"]["done"], std["job"]["total"]) == (4, 4)
     assert (cal["standardId"], cal["cutMs"], cal["randoms"], cal["seed"]) == (1, m.app.state.data.cut_ms, 2, 0)
     assert cal["library"] == [{"name": "vol4", "expr": "Mean($volume, 4)"}]

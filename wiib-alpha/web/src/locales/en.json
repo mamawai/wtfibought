@@ -516,7 +516,7 @@
       "reference": "Reference set"
     },
     "calibration": "G9 calibration",
-    "calibrationHint": "How much the search-span net Sharpe rises when each library factor is removed and added back, and when outside candidates or random factors are added to the scheme. Once the evaluation parameters, the trading scheme (carry share included), the data or the active library changes, the last calibration no longer counts; the G9 line does not affect the gains, so adopting it from the calibration keeps the calibration valid.",
+    "calibrationHint": "How much the search-span net Sharpe rises when each library factor is removed and added back, and when outside candidates (only if ticked) or random factors are added to the scheme. Once the evaluation parameters, the trading scheme (carry share included), the data or the active library changes, the last calibration no longer counts; the G9 line does not affect the gains, so adopting it from the calibration keeps the calibration valid.",
     "none": "Not calibrated yet.",
     "last": "Last run {{time}}: standard #{{id}}, data to {{cut}}, library {{library}}, {{randoms}} random factors",
     "emptyLibrary": "empty",
@@ -524,6 +524,7 @@
     "random": "Random factors",
     "candidates": "Outside candidates",
     "noCandidates": "No outside candidates",
+    "candidatesSkipped": "Outside candidates were not computed this time",
     "valid": "counts",
     "outdated": "Recalibrate: {{what}}",
     "changed": {
@@ -532,6 +533,7 @@
       "library": "the library changed"
     },
     "randoms": "Random factors",
+    "withCandidates": "Include outside candidates (more than doubles the time)",
     "run": "Calibrate",
     "running": "Calibrating",
     "progress": "{{done}} / {{total}}",

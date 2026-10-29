@@ -1108,17 +1108,13 @@ async def _library_reeval(app: FastAPI, data: Data, lib: Library, job: dict[str,
     store: Store = app.state.store
     pool = data.pool
     observing, obs_exprs = await _observing(app)
-    search = combo.Combo(pool.search, pool.symbols, lib.full.names, lib.full.values[pool.in_search])
-    basis, vol = data.basis[pool.in_search], data.vol[pool.in_search]
     for j, f in enumerate(lib.factors):
         job["current"] = f["name"]
         direction = await _declared(store, f)
         asked = direction is None
         if asked:
             direction = await _declare(app, data, f, lang)
-        others = combo.Combo(search.rows, search.symbols, search.names[:j] + search.names[j + 1:],
-                             np.delete(search.values, j, axis=1))
-        base = await asyncio.to_thread(scheme.Base.of, others, basis, vol, params, lib.base.carry_share)
+        base = await asyncio.to_thread(lib.base.without, j)
         exprs = {**{k: v for k, v in lib.exprs.items() if k != f"lib:{f['name']}"}, **obs_exprs}
         ev = await asyncio.to_thread(evaluate, parse(f["expr"], FEATURE_COLUMNS), pool, data.vol, params,
                                      data.reference_grid, base, data.products, True, observing, peer_exprs=exprs)
@@ -1311,6 +1307,8 @@ async def _standard(app: FastAPI, standard: Standard) -> Standard:
 class Calibrate(BaseModel):
     randoms: int = Field(default=300, ge=1, le=2000)
     seed: int = 0
+    # 库外候选也算一遍（慢一倍多）
+    candidates: bool = False
 
 
 class StandardSave(BaseModel):
@@ -1363,9 +1361,9 @@ async def save_standard(body: StandardSave, request: Request):
 
 @router.post("/standard/calibrate")
 async def calibrate_g9(body: Calibrate, request: Request):
-    """标定 G9 的线：库里每条拿掉再加回去、库外候选、随机因子各加进交易方案后搜索段净 Sharpe 升多少（calibrate.g9_gains），
-    结果连同口径版本、数据切点、在役库存下。库没算好时在后台先算库，running 一进来就置上，刷新、campaign 挡得住；
-    total 要等库和候选齐了才有。线在 PUT /standard 上改"""
+    """标定 G9 的线：库里每条拿掉再加回去、库外候选（勾了才算）、随机因子各加进交易方案后搜索段净 Sharpe 升多少
+    （calibrate.g9_gains），结果连同口径版本、数据切点、在役库存下。库没算好时在后台先算库，running 一进来就置上，
+    刷新、campaign 挡得住；total 要等库和候选齐了才有。线在 PUT /standard 上改"""
     app = request.app
     await _check(app, "calibrate")
     data = _data(app)
@@ -1378,9 +1376,11 @@ async def calibrate_g9(body: Calibrate, request: Request):
     async def work() -> None:
         try:
             lib = await _library(app)
-            taken = {f["expr"] for f in lib.factors}
-            candidates = [(name, expr) for name, expr in await store.candidate_exprs() if expr not in taken]
-            job["total"] = len(lib.factors) + len(candidates) + body.randoms
+            candidates = None
+            if body.candidates:
+                taken = {f["expr"] for f in lib.factors}
+                candidates = [(name, expr) for name, expr in await store.candidate_exprs() if expr not in taken]
+            job["total"] = len(lib.factors) + len(candidates or ()) + body.randoms
             pick = data.pool.in_search
             library = {f["name"]: lib.full.values[pick, j] for j, f in enumerate(lib.factors)}
             result = await asyncio.to_thread(calibrate.g9_gains, data.pool, data.vol[pick], data.basis[pick], library,

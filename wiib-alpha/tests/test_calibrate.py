@@ -1,10 +1,12 @@
 import sqlite3
 
 import numpy as np
+import pytest
 
 from wiib_alpha import calibrate
 from wiib_alpha.data.panel import BENCHMARK, FEATURE_COLUMNS, TARGET_COLUMNS
 from wiib_alpha.dsl import parse
+from wiib_alpha.eval.combo import Combo
 from wiib_alpha.eval.evaluate import evaluate
 from wiib_alpha.eval.params import EvalParams
 from wiib_alpha.store import SCHEMA
@@ -52,6 +54,23 @@ def test_g9_prints_the_gain_of_the_library_candidates_and_random_factors(tmp_pat
     assert "== 库外候选：1 条 ==" in out and "vol_again  Mean($volume, 4)" in out
     # 两组各出 2022 起（G9 判这份）和全段两行分位数
     assert "== 随机因子：2 条 ==" in out and out.count("2022-01-01 起增量：中位") == 2 and out.count("全段增量：中位") == 2
+
+
+def test_g9_gains_skips_the_candidates_when_told_and_matches_one_by_one(planted_pool, planted_vol):
+    """候选给 None 这次不算；随机因子几条一起算，结果按交进去的顺序、和逐条单算的一样，进度一条一条加"""
+    pick = planted_pool.in_search
+    params = EvalParams(test_size=96, embargo=4, min_train=500, iterations=0, holdout_days=10)
+    planted = planted_pool.values(parse("Mean($volume, 4)", FEATURE_COLUMNS)).f[pick]
+    vol, basis = planted_vol[pick], scheme.carry_signal(planted_pool)[pick]
+    progress = {"done": 0}
+    out = calibrate.g9_gains(planted_pool, vol, basis, {"planted": planted}, None, params, 0.25, 3, 0, progress)
+    assert out["candidates"] is None and progress["done"] == 1 + 3
+    assert [x["name"] for x in out["random"]["items"]] == ["rand000", "rand001", "rand002"]
+    full = scheme.Base.of(Combo.empty(planted_pool.search, planted_pool.symbols).plus("planted", planted), basis, vol,
+                          params, 0.25)
+    for x in out["random"]["items"]:
+        f = planted_pool.values(parse(x["expr"], FEATURE_COLUMNS)).f[pick]
+        assert x["recent"]["gain"] == pytest.approx(scheme.gain(full, x["name"], f)["recentSharpe"]["gain"])
 
 
 def test_random_expression_is_valid_and_not_degenerate(tmp_path):

@@ -87,15 +87,15 @@ def leg(rows: pd.DataFrame, f: np.ndarray, vol: np.ndarray, params: EvalParams, 
 
 
 def combo_signal(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarray], vol: np.ndarray,
-                 params: EvalParams, cut_ms: int | None) -> np.ndarray:
+                 params: EvalParams, cut_ms: int | None, known: combo.Tracked | None = None) -> np.ndarray:
     """组合腿的信号，与 rows 对齐：cut_ms 不给是 walk-forward（只在 test 块有值），给了是搜索段整段定权重、只在 cut 之后有值；
-    一条因子都没有是全 NaN，组合腿空仓"""
+    一条因子都没有是全 NaN，组合腿空仓。known 是算好的 tracks()（walk-forward 才用）"""
     if not len(values):
         return np.full(len(rows), np.nan)
     c = combo.Combo(rows, symbols, tuple(map(str, range(len(values)))), np.column_stack(values))
     z = combo.zscores(c)
     if cut_ms is None:
-        return combo.signal(c, z, vol, BARS, params)
+        return combo.signal(c, z, vol, BARS, params, known)
     return combo.holdout_signal(c, z, vol, BARS, cut_ms, params)
 
 
@@ -109,13 +109,14 @@ def backtest(pool: Pool, values: Sequence[np.ndarray], basis: np.ndarray, vol: n
 
 
 def run(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarray], basis: np.ndarray, vol: np.ndarray,
-        params: EvalParams, since: int | None, carry_share: float) -> dict[str, Any]:
+        params: EvalParams, since: int | None, carry_share: float, known: combo.Tracked | None = None,
+        carry: Leg | None = None) -> dict[str, Any]:
     """values、basis、vol 与 rows 对齐；since 不给是 walk-forward，给了是 holdout（只算它之后、组合腿方向定 +1）；
     carry_share 是 carry 腿占的资金比例，组合腿占其余。出净收益、年化 Sharpe、最大回撤、换手、carry 腿每期资金费，
-    再加 params.recent_from 起那段的净收益和 Sharpe"""
-    signal = combo_signal(rows, symbols, values, vol, params, since)
+    再加 params.recent_from 起那段的净收益和 Sharpe。known 是算好的 tracks()，carry 是算好的 carry 腿（同一份 rows、since）"""
+    signal = combo_signal(rows, symbols, values, vol, params, since, known)
     a = leg(rows, signal, vol, params, None if since is None else 1.0, since)
-    b = leg(rows, basis, vol, params, -1.0, since)
+    b = carry if carry is not None else leg(rows, basis, vol, params, -1.0, since)
     active = a.active & b.active
     every = (1 - carry_share) * a.net + carry_share * b.net
     net = every[active]
@@ -140,38 +141,57 @@ def run(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarra
 
 @dataclass(frozen=True)
 class Base:
-    """G9 的基线：库里的因子（combo，搜索段）加基差 carry 的交易方案；basis、vol 与 combo.rows 对齐，result 是它的回测"""
+    """G9 的基线：库里的因子（combo，搜索段）加基差 carry 的交易方案，按 params 和 carry 份额算；basis、vol 与 combo.rows 对齐，
+    result 是它的回测。tracks 是库里每条的 Track、points 是网格样本、carry 是 carry 腿，算一次存着：plus、without 只算变的那条"""
     combo: combo.Combo
     basis: np.ndarray
     vol: np.ndarray
+    params: EvalParams
     # carry 腿占的资金比例
     carry_share: float
+    tracks: list[combo.Track]
+    # 最后一条的样本（网格点的时刻、月份），库空着是 None
+    points: cs_ic.Points | None
+    carry: Leg
     result: dict[str, Any]
 
     @classmethod
     def of(cls, library: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams, carry_share: float) -> "Base":
-        return cls(library, basis, vol, carry_share, _search(library, basis, vol, params, carry_share))
+        trs, p = combo.tracks(library, vol, BARS, params) if len(library.names) else ([], None)
+        return cls._make(library, basis, vol, params, carry_share, trs, p, leg(library.rows, basis, vol, params, -1.0, None))
 
-    def plus(self, name: str, f: np.ndarray, params: EvalParams) -> "Base":
-        """组合腿再加一条（f 与 rows 对齐）"""
-        return Base.of(self.combo.plus(name, f), self.basis, self.vol, params, self.carry_share)
+    @classmethod
+    def _make(cls, c: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams, carry_share: float,
+              trs: list[combo.Track], p: cs_ic.Points | None, carry: Leg) -> "Base":
+        result = run(c.rows, c.symbols, [c.values[:, j] for j in range(len(c.names))], basis, vol, params, None, carry_share,
+                     (trs, p), carry)
+        return cls(c, basis, vol, params, carry_share, trs, p, carry, result)
+
+    def plus(self, name: str, f: np.ndarray) -> "Base":
+        """组合腿再加一条（f 与 rows 对齐），只算新的那条"""
+        c = self.combo.plus(name, f)
+        trs, p = combo.tracks(c, self.vol, BARS, self.params, self.tracks)
+        return Base._make(c, self.basis, self.vol, self.params, self.carry_share, trs, p, self.carry)
+
+    def without(self, j: int) -> "Base":
+        """拿掉第 j 条的方案，别的照用"""
+        c = combo.Combo(self.combo.rows, self.combo.symbols, self.combo.names[:j] + self.combo.names[j + 1:],
+                        np.delete(self.combo.values, j, axis=1))
+        return Base._make(c, self.basis, self.vol, self.params, self.carry_share,
+                          [t for k, t in enumerate(self.tracks) if k != j], self.points, self.carry)
 
 
-def gain(base: Base, name: str, f: np.ndarray, params: EvalParams) -> dict[str, Any]:
-    """G9：f 加进组合腿后，交易方案搜索段的年化净 Sharpe、净收益比基线变了多少，recentSharpe 是只看 params.recent_from 起的那份；
+def gain(base: Base, name: str, f: np.ndarray) -> dict[str, Any]:
+    """G9：f 加进组合腿后，交易方案搜索段的年化净 Sharpe、净收益比基线变了多少，recentSharpe 是只看 recent_from 起的那份；
     Sharpe 算不出来（一期都没有）按 0"""
-    after = _search(base.combo.plus(name, f), base.basis, base.vol, params, base.carry_share)
+    after = base.plus(name, f).result
 
     def delta(key: str) -> dict[str, float]:
         before, with_ = float(np.nan_to_num(base.result[key])), float(np.nan_to_num(after[key]))
         return {"base": before, "with": with_, "gain": with_ - before}
 
-    return {"sharpe": delta("sharpe"), "recentSharpe": delta("recentSharpe"), "recentFrom": params.recent_from,
+    return {"sharpe": delta("sharpe"), "recentSharpe": delta("recentSharpe"), "recentFrom": base.params.recent_from,
             "carryShare": base.carry_share, "netReturn": {"base": base.result["netReturn"], "with": after["netReturn"]}}
-
-
-def _search(c: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams, carry_share: float) -> dict[str, Any]:
-    return run(c.rows, c.symbols, [c.values[:, j] for j in range(len(c.names))], basis, vol, params, None, carry_share)
 
 
 def learned_weights(pool: Pool, values: Sequence[np.ndarray], vol: np.ndarray, params: EvalParams) -> np.ndarray:

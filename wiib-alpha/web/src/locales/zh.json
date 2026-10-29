@@ -516,7 +516,7 @@
       "reference": "参照集"
     },
     "calibration": "G9 标定",
-    "calibrationHint": "库里每条拿掉再加回去、库外候选、随机因子各加进交易方案后搜索段净 Sharpe 升多少。评估参数、交易方案（含 carry 份额）、数据、在役库有一样变了，上次的标定就不作数；G9 的线不影响增量，按标定改了线，标定照样作数。",
+    "calibrationHint": "库里每条拿掉再加回去、库外候选（勾了才算）、随机因子各加进交易方案后搜索段净 Sharpe 升多少。评估参数、交易方案（含 carry 份额）、数据、在役库有一样变了，上次的标定就不作数；G9 的线不影响增量，按标定改了线，标定照样作数。",
     "none": "还没标过。",
     "last": "最近一次 {{time}}：第 {{id}} 版口径、数据到 {{cut}}、库 {{library}}，随机因子 {{randoms}} 条",
     "emptyLibrary": "空",
@@ -524,6 +524,7 @@
     "random": "随机因子",
     "candidates": "库外候选",
     "noCandidates": "没有库外候选",
+    "candidatesSkipped": "库外候选这次没算",
     "valid": "作数",
     "outdated": "要重标：{{what}}",
     "changed": {
@@ -532,6 +533,7 @@
       "library": "库变了"
     },
     "randoms": "随机因子条数",
+    "withCandidates": "连库外候选一起算（慢一倍多）",
     "run": "标定",
     "running": "标定中",
     "progress": "{{done}} / {{total}}",

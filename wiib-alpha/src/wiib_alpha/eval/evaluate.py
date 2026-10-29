@@ -59,7 +59,7 @@ def evaluate(expr: Expr, pool: Pool, vol: np.ndarray, params: EvalParams = EvalP
                                  {"lib": library.combo if library else None, "obs": observing}, peer_exprs or {},
                                  params),
         "neutral": neutral(pool.search, f, reference_grid, params),
-        "gain": scheme.gain(library, str(expr), f, params) if library is not None else None,
+        "gain": scheme.gain(library, str(expr), f) if library is not None else None,
         "timeseries": timeseries.report(expr, products, params, values.at) if products else None,
     }
     if holdout:
