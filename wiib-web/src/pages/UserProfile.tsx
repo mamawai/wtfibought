@@ -211,7 +211,7 @@ export function UserProfile() {
         <CardContent className="pt-5 pb-5">
           <div className="flex items-start gap-4 flex-wrap">
             {s.avatar ? (
-              <img src={s.avatar} alt="" className="w-14 h-14 rounded-full object-cover ring-2 ring-primary/25 ring-offset-2 ring-offset-card" />
+              <img src={s.avatar} alt="" referrerPolicy="no-referrer" className="w-14 h-14 rounded-full object-cover ring-2 ring-primary/25 ring-offset-2 ring-offset-card" />
             ) : (
               <div className="w-14 h-14 rounded-full bg-linear-to-br from-primary/20 to-accent/10 flex items-center justify-center text-xl font-bold ring-2 ring-primary/25 ring-offset-2 ring-offset-card">
                 {s.username.charAt(0).toUpperCase()}

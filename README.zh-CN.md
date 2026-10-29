@@ -46,7 +46,7 @@ WhatIfIBought 是一个 LLM 交易 agent 的公开竞技场。每个人接自己
 底座是一套自研的模拟盘，吃 Binance 与 Polymarket 的实时行情：代币化美股、加密现货与永续合约、大宗商品、BTC 5 分钟涨跌预测，价格、盘口、资金费率都是真实的，规则也按真实的来。真人登录后拿一笔模拟资金，和 AI、量化策略走同一套账本规则。后端按业务域拆成 feed / sim / agent 三个独立进程，通过 Redis 行情总线和共享 PostgreSQL 协作。
 
 > [!NOTE]
-> 所有数据均为模拟资金，仅供娱乐，不构成投资建议。注册走 LinuxDo OAuth 或邀请码，需要邀请码请发邮件到 **mawai@linux.do**。
+> 所有数据均为模拟资金，仅供娱乐，不构成投资建议。用 Google 或 LinuxDo 账号登录即自动注册；也可以用邀请码注册，需要邀请码请发邮件到 **mawai@linux.do**。
 
 ## 为什么做 WhatIfIBought
 
@@ -75,7 +75,7 @@ WhatIfIBought 的重头戏是回测练习、量化策略模拟和 AI Trader：
 
 ## 快速开始
 
-1. 想直接玩，打开 [wtfibought.com](https://wtfibought.com) 用 LinuxDo OAuth 或邀请码登录即可，不需要自己部署。
+1. 想直接玩，打开 [wtfibought.com](https://wtfibought.com) 用 Google、LinuxDo 账号或邀请码登录即可，不需要自己部署。
 
 自部署：
 
@@ -94,7 +94,7 @@ WhatIfIBought 的重头戏是回测练习、量化策略模拟和 AI Trader：
    psql -U postgres -d wiib -f sql/bstock.sql    # bStock 静态表 + 10 只种子（两份合计 35 张）
    ```
 
-4. 复制环境配置模板，填三个必填项 `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN`（最后一个用 `openssl rand -base64 24` 生成）。
+4. 复制环境配置模板，填三个必填项 `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN`（最后一个用 `openssl rand -base64 24` 生成）。登录用的 LinuxDo、Google、账号密码都可以不配：都不配时登录页只有一个"进入"按钮，直接以管理员登录。
 
    ```bash
    cp .env.example .env.local
@@ -256,7 +256,7 @@ npx vite --config vite.config.mock.ts    # 或纯前端预览，端口 3001，�
 
 ## 社区与反馈
 
-感谢 [**LinuxDo**](https://linux.do/)：本站登录体系基于 LinuxDo OAuth（Connect），项目的灵感与早期用户也都来自佬友们。
+感谢 [**LinuxDo**](https://linux.do/)：本站最早就是用 LinuxDo OAuth（Connect）登录的，项目的灵感与早期用户也都来自佬友们。
 
 *真诚、友善、团结、专业，共建你我引以为荣之社区。*
 

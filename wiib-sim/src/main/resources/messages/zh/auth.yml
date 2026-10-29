@@ -11,7 +11,7 @@ auth:
   badCredentials: 用户名或密码错误
   loginFailed: "登录失败: {{reason}}"
 
-  # LinuxDo OAuth 的几步：拿 token、换用户信息。{{reason}} 是上游原样返回的内容，不翻
+  # OAuth（LinuxDo、Google）的几步：拿 token、换用户信息。{{reason}} 是上游原样返回的内容，不翻
   oauth:
     tokenFailed: "获取access_token失败: {{reason}}"
     tokenEmpty: "获取access_token失败: 空响应"

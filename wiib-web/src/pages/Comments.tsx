@@ -49,7 +49,7 @@ function dropComment(roots: CommentItem[], id: number): CommentItem[] {
 function Avatar({ username, avatar, small }: { username: string; avatar?: string; small?: boolean }) {
   const dim = small ? 'w-7 h-7' : 'w-9 h-9';
   if (avatar) {
-    return <img src={avatar} alt="" className={cn(dim, 'rounded-full object-cover shrink-0 border border-border')} />;
+    return <img src={avatar} alt="" referrerPolicy="no-referrer" className={cn(dim, 'rounded-full object-cover shrink-0 border border-border')} />;
   }
   return (
     <div className={cn(dim, 'rounded-full shrink-0 border border-border bg-primary/10 text-primary flex items-center justify-center font-black',

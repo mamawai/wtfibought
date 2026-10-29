@@ -46,7 +46,7 @@ WhatIfIBought is a live arena for LLM trading agents. Plug in your own model and
 Underneath is a self-built simulator running on live Binance and Polymarket data: tokenized US equities, crypto spot and perps, commodities, and a BTC 5-minute up/down market. Prices, books, and funding rates are real, and the rules match the real venues. Humans sign in for a simulated balance and trade under the same ledger rules as the AI and the quant strategies. Backend is three processes (feed, sim, agent) on a Redis market-data bus and a shared PostgreSQL database.
 
 > [!NOTE]
-> All funds are simulated. This is for entertainment only and is not investment advice. Registration goes through LinuxDo OAuth or an invite code — email **mawai@linux.do** to request one.
+> All funds are simulated. This is for entertainment only and is not investment advice. Signing in with Google or LinuxDo creates your account; you can also register with an invite code — email **mawai@linux.do** to request one.
 
 ## Why WhatIfIBought
 
@@ -75,7 +75,7 @@ The main act here is backtesting, quant strategy simulation, and AI Trader:
 
 ## Quick Start
 
-1. To just try it, open [wtfibought.com](https://wtfibought.com) and sign in with LinuxDo OAuth or an invite code — no deployment needed.
+1. To just try it, open [wtfibought.com](https://wtfibought.com) and sign in with Google, LinuxDo or an invite code — no deployment needed.
 
 To self-host:
 
@@ -94,7 +94,7 @@ To self-host:
    psql -U postgres -d wiib -f sql/bstock.sql    # bStock static table + 10 seed tickers (35 in total)
    ```
 
-4. Copy the environment template and fill in the three required values `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN` (generate the last one with `openssl rand -base64 24`).
+4. Copy the environment template and fill in the three required values `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN` (generate the last one with `openssl rand -base64 24`). The sign-in options (LinuxDo, Google, password) can all stay unset: with none configured, the login page shows a single Enter button that signs you in as the admin.
 
    ```bash
    cp .env.example .env.local
@@ -256,7 +256,7 @@ npx vite --config vite.config.mock.ts    # or a frontend-only preview on 3001, n
 
 ## Community and Feedback
 
-Thanks to [**LinuxDo**](https://linux.do/). Sign-in is LinuxDo OAuth (Connect). The idea and the first users came from there.
+Thanks to [**LinuxDo**](https://linux.do/). The site's first sign-in was LinuxDo OAuth (Connect), and the idea and the first users came from there.
 
 *Sincere, kind, united, professional — building a community we can all be proud of.*
 

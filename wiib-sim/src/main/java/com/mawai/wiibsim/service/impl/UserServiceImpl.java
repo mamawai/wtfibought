@@ -10,6 +10,7 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.enums.LedgerWallet;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibsim.ledger.Ledger;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.WALLET_TRANSFER_IN;
 import static com.mawai.wiibcommon.enums.LedgerBizType.WALLET_TRANSFER_OUT;
@@ -41,6 +43,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private final FuturesPositionMapper futuresPositionMapper;
     private final AssetValuationService assetValuationService;
     private final UserLedgerMapper userLedgerMapper;
+    private final MessageCatalog messages;
 
     @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
@@ -49,6 +52,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     public User findByLinuxDoId(String linuxDoId) {
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(User::getLinuxDoId, linuxDoId);
+        return baseMapper.selectOne(wrapper);
+    }
+
+    @Override
+    public User findByGoogleId(String googleId) {
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getGoogleId, googleId);
         return baseMapper.selectOne(wrapper);
     }
 
@@ -84,6 +94,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         User existing = baseMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, username).last("LIMIT 1"));
         if (existing != null) {
+            // 同名的得是机器人号；真人占着这个名字就拒绝，不能把真人账户交给量化去下单
+            if (existing.getLinuxDoId() == null || !existing.getLinuxDoId().startsWith("internal:")) {
+                throw new BizException(messages.get("sim.quantAccount.nameTaken", Map.of("name", username)));
+            }
             return existing;   // 幂等：已有账户不重复入金
         }
 

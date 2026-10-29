@@ -44,13 +44,20 @@ management:
     tags:
       application: wiib-sim
 
-# 不配则关闭 LinuxDo 登录；本地/线上两对凭证分别放 .env.local / 线上 .env
+# 不配则关闭 LinuxDo 登录；本地/线上两对凭证分别放 .env.local / 线上 .env。
+# redirect-uri 既拼进授权地址，也在换 token 时带上，线上要配成线上的 /login
 linuxdo:
   client-id: ${LINUXDO_CLIENT_ID:}
   client-secret: ${LINUXDO_CLIENT_SECRET:}
   redirect-uri: ${LINUXDO_REDIRECT_URI:http://localhost:3000/login}
 
-# 与 LinuxDo 并存；开了任一正式登录方式则管理员直登关闭。
+# 不配则关闭 Google 登录；redirect-uri 同上，还得在 Google 客户端的重定向 URI 里登记过
+google:
+  client-id: ${GOOGLE_CLIENT_ID:}
+  client-secret: ${GOOGLE_CLIENT_SECRET:}
+  redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:3000/login}
+
+# 与 LinuxDo、Google 并存。三种都没开时，登录页只剩管理员直登（不用配任何 key）；开了任意一种，管理员直登就关闭。
 # admin-password 启动时同步到管理员账号(id=1)——开密码登录必须配：
 # 邀请码只有管理员能生成，id=1 没密码就没人能生成码、也就没人能注册
 auth:

@@ -11,7 +11,7 @@ auth:
   badCredentials: Wrong username or password
   loginFailed: "Sign-in failed: {{reason}}"
 
-  # The LinuxDo OAuth steps: get a token, then exchange it for the user info.
+  # The OAuth steps (LinuxDo, Google): get a token, then exchange it for the user info.
   # {{reason}} is whatever upstream returned, passed through untranslated
   oauth:
     tokenFailed: "Could not get an access_token: {{reason}}"

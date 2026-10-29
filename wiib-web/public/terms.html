@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>服务条款 | Terms of Service - WhatIfIBought</title>
+<meta name="description" content="WhatIfIBought 服务条款 / Terms of Service">
+<link rel="icon" href="/favicon.ico">
+<script>
+  // 主题、语言跟站内一致：都存在 localStorage（theme / wiib-lang）
+  (function () {
+    var d = document.documentElement;
+    var lang = 'zh';
+    try {
+      if (localStorage.getItem('theme') === 'dark') d.classList.add('dark');
+      lang = localStorage.getItem('wiib-lang') || navigator.language || 'zh';
+    } catch (e) {}
+    d.setAttribute('data-lang', lang.toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en');
+  })();
+  function switchLang() {
+    var d = document.documentElement;
+    var next = d.getAttribute('data-lang') === 'zh' ? 'en' : 'zh';
+    d.setAttribute('data-lang', next);
+    try { localStorage.setItem('wiib-lang', next); } catch (e) {}
+  }
+</script>
+<style>
+  :root { --bg: #fafaf7; --ink: #121316; --soft: #5b5c60; --line: #e7e7e2; --orange: #f25f0a; color-scheme: light; }
+  html.dark { --bg: #0f1012; --ink: #f1f1ec; --soft: #a9aaa6; --line: #26282d; --orange: #f97316; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Archivo Variable", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.75; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 28px 20px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .logo { font-size: 18px; font-weight: 800; letter-spacing: .02em; color: var(--ink); text-decoration: none; }
+  .logo i { font-style: normal; color: var(--orange); }
+  .lang {
+    background: none; border: 1px solid var(--ink); border-radius: 0; color: var(--ink);
+    font: inherit; font-size: 13px; font-weight: 600; line-height: 1; padding: 8px 12px; cursor: pointer;
+  }
+  h1 { margin: 48px 0 6px; font-size: 34px; line-height: 1.2; font-weight: 800; letter-spacing: -.02em; }
+  .date { margin: 0; font-size: 13px; color: var(--soft); }
+  /* 墨线 + 左端橙方块，同登录卡 */
+  .rule { position: relative; height: 2px; background: var(--ink); margin: 24px 0 8px; }
+  .rule::after { content: ""; position: absolute; left: 0; top: -3px; width: 8px; height: 8px; background: var(--orange); }
+  h2 { margin: 32px 0 8px; font-size: 17px; line-height: 1.4; font-weight: 800; }
+  p, li { font-size: 15px; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 1.25em; }
+  li { margin: 4px 0; }
+  a { color: var(--ink); text-underline-offset: 3px; }
+  footer {
+    display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 48px; padding-top: 16px;
+    border-top: 1px solid var(--line); font-size: 13px; color: var(--soft);
+  }
+  footer a { color: var(--soft); }
+  /* 只显示当前语言那一份；脚本没跑就两份都显示 */
+  html[data-lang="zh"] [lang="en"], html[data-lang="en"] [lang="zh-CN"] { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="logo" href="/">WIIB<i>.</i></a>
+    <button class="lang" type="button" onclick="switchLang()"><span lang="zh-CN">English</span><span lang="en">中文</span></button>
+  </header>
+
+  <article lang="zh-CN">
+    <h1>服务条款</h1>
+    <p class="date">生效日期：2026 年 10 月 29 日</p>
+    <div class="rule" aria-hidden="true"></div>
+    <p>使用 WhatIfIBought（网址 wtfibought.com，下称"本站"），即表示你同意以下条款。</p>
+
+    <h2>1. 服务内容</h2>
+    <p>本站提供模拟交易：用虚拟资金按真实行情交易代币化美股、加密货币现货与永续合约、大宗商品等，另有 AI Trader、研判助手、排行榜和留言板等功能。本站不涉及真实资金，不能充值，也不能提现。</p>
+
+    <h2>2. 不构成投资建议</h2>
+    <p>本站的行情展示、AI 生成的内容、排行榜和用户留言都只供娱乐和学习，不构成任何投资建议。你在本站以外做出的任何真实投资决定，由你自己负责。</p>
+
+    <h2>3. 账户</h2>
+    <ul>
+      <li>你可以用 Google、LinuxDo 账号登录，或用邀请码注册账号密码。</li>
+      <li>请妥善保管你的登录方式，账户下的操作视为你本人所为。</li>
+      <li>不得批量注册账户刷排行榜，不得冒充他人，不得利用程序漏洞获取虚拟资产。发现漏洞欢迎告诉我们。</li>
+    </ul>
+
+    <h2>4. 虚拟资产</h2>
+    <p>账户里的资金、持仓等全部是虚拟的，没有任何现实价值，不能兑换、转让或交易。为修复故障、调整规则或处理违规，本站可能调整或重置虚拟资产。</p>
+
+    <h2>5. 你发布的内容</h2>
+    <ul>
+      <li>你对自己发布的留言等内容负责。内容须遵守法律法规，不得包含违法、侵权、骚扰、广告或垃圾信息。</li>
+      <li>本站可以删除违规内容，并对相关账户禁言或停用。</li>
+      <li>你同意本站在站内展示你发布的内容。</li>
+    </ul>
+
+    <h2>6. AI 功能</h2>
+    <ul>
+      <li>使用你自己的 API key 时，模型服务商产生的费用由你承担，你也需要遵守该服务商的条款。</li>
+      <li>AI 生成的内容可能出错，请自行判断。</li>
+    </ul>
+
+    <h2>7. 服务的变更与中断</h2>
+    <p>本站按现状提供服务，可能随时修改、暂停或终止部分或全部功能，不保证服务不中断、不出错或数据不丢失。</p>
+
+    <h2>8. 责任限制</h2>
+    <p>在法律允许的最大范围内，本站不对你因使用或无法使用本站而遭受的任何直接或间接损失负责。</p>
+
+    <h2>9. 开源</h2>
+    <p>本站源代码以 MIT 许可证在 <a href="https://github.com/mamawai/wtfibought">GitHub</a> 开源。本条款约束的是你对 wtfibought.com 这项在线服务的使用。</p>
+
+    <h2>10. 条款更新</h2>
+    <p>条款有变化时，我们会修改本页并更新上方的生效日期。更新后你继续使用本站，即视为同意新的条款。</p>
+
+    <h2>11. 联系我们</h2>
+    <p><a href="mailto:mawai@linux.do">mawai@linux.do</a></p>
+  </article>
+
+  <article lang="en">
+    <h1>Terms of Service</h1>
+    <p class="date">Effective October 29, 2026</p>
+    <div class="rule" aria-hidden="true"></div>
+    <p>By using WhatIfIBought ("WIIB", wtfibought.com), you agree to these terms.</p>
+
+    <h2>1. The service</h2>
+    <p>WIIB is a paper-trading site. You trade tokenized US stocks, crypto spot and perpetual futures, commodities and more at real market prices using virtual money, alongside features such as AI Trader, an analysis assistant, a leaderboard and comments. No real money is involved: you can't deposit or withdraw.</p>
+
+    <h2>2. Not investment advice</h2>
+    <p>The market data, AI-generated content, leaderboard and user comments on WIIB are for entertainment and learning only and are not investment advice. Any real-world investment decision you make is your own responsibility.</p>
+
+    <h2>3. Accounts</h2>
+    <ul>
+      <li>You can sign in with Google or LinuxDo, or register a username and password with an invite code.</li>
+      <li>Keep your sign-in method safe. Activity on your account is treated as yours.</li>
+      <li>Don't mass-register accounts to game the leaderboard, impersonate others, or exploit bugs to gain virtual assets. If you find a bug, please tell us.</li>
+    </ul>
+
+    <h2>4. Virtual assets</h2>
+    <p>All funds and positions on WIIB are virtual. They have no real-world value and can't be exchanged, transferred or traded. We may adjust or reset virtual assets to fix problems, change rules or deal with abuse.</p>
+
+    <h2>5. Your content</h2>
+    <ul>
+      <li>You're responsible for the comments and other content you post. It must follow the law and must not be illegal, infringing, harassing, advertising or spam.</li>
+      <li>We may remove content that breaks these rules and mute or suspend the accounts involved.</li>
+      <li>You allow WIIB to display what you post on the site.</li>
+    </ul>
+
+    <h2>6. AI features</h2>
+    <ul>
+      <li>When you use your own API key, you pay any charges from the model provider and must follow that provider's terms.</li>
+      <li>AI-generated content can be wrong. Use your own judgment.</li>
+    </ul>
+
+    <h2>7. Changes and interruptions</h2>
+    <p>WIIB is provided as is. We may change, suspend or end any part of the service at any time, and we don't guarantee it will be uninterrupted, error-free or free of data loss.</p>
+
+    <h2>8. Limitation of liability</h2>
+    <p>To the fullest extent permitted by law, WIIB is not liable for any direct or indirect loss arising from your use of, or inability to use, the site.</p>
+
+    <h2>9. Open source</h2>
+    <p>WIIB's source code is open source under the MIT License on <a href="https://github.com/mamawai/wtfibought">GitHub</a>. These terms govern your use of the online service at wtfibought.com.</p>
+
+    <h2>10. Changes to these terms</h2>
+    <p>When these terms change, we'll update this page and the effective date above. If you keep using WIIB after an update, you accept the new terms.</p>
+
+    <h2>11. Contact</h2>
+    <p><a href="mailto:mawai@linux.do">mawai@linux.do</a></p>
+  </article>
+
+  <footer>
+    <a href="/privacy.html"><span lang="zh-CN">隐私政策</span><span lang="en">Privacy Policy</span></a>
+    <a href="/"><span lang="zh-CN">返回 WhatIfIBought</span><span lang="en">Back to WhatIfIBought</span></a>
+  </footer>
+</div>
+</body>
+</html>

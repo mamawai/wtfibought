@@ -21,6 +21,9 @@ public class User {
     /** LinuxDo用户ID，OAuth登录标识 */
     private String linuxDoId;
 
+    /** Google账号的sub，OAuth登录标识 */
+    private String googleId;
+
     /** 用户名 */
     private String username;
 

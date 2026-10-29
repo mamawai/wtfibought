@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.entity.UserLedger;
 import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.enums.LedgerWallet;
+import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -35,7 +36,7 @@ class UserServiceGameAccountTest {
         userMapper = mock(UserMapper.class);
         ledgerMapper = mock(UserLedgerMapper.class);
         service = new UserServiceImpl(mock(CryptoPositionService.class), mock(FuturesPositionMapper.class),
-                mock(AssetValuationService.class), ledgerMapper);
+                mock(AssetValuationService.class), ledgerMapper, mock(MessageCatalog.class));
         // ServiceImpl 的 baseMapper 由容器注入，单测手动塞
         ReflectionTestUtils.setField(service, "baseMapper", userMapper);
     }

@@ -72,16 +72,19 @@ cp .env.example .env.local    # 填 PG_USER / PG_PASSWORD / INTERNAL_API_TOKEN�
 | 变量 | 不配会怎样 |
 |---|---|
 | `WIIB_TRADER_KEY_SECRET` | base64 的 32 字节（`openssl rand -base64 32`）。不配则**用户无法保存 API key**：key 一律 AES-GCM 加密入库，没有密钥就直接报错，不会以明文落库。每环境单独生成勿复用 |
-| `PASSWORD_LOGIN_ENABLED` + `ADMIN_PASSWORD` | 开了密码登录就**必须**配 `ADMIN_PASSWORD`。邀请码只有管理员能生成，id=1 没密码就没人进得了 Admin 页——LinuxDo 也没配的话，等于全站没人能注册 |
+| `PASSWORD_LOGIN_ENABLED` + `ADMIN_PASSWORD` | 开了密码登录就**必须**配 `ADMIN_PASSWORD`。邀请码只有管理员能生成，id=1 没密码就没人进得了 Admin 页——LinuxDo、Google 也都没配的话，等于全站没人能注册 |
 | `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_SECRET_KEY` | 策略切 `target: testnet` 轨要用，Testnet 看板页也直接吃它（纯实时直拉，不落库不缓存）；不填只有 sim 模拟盘轨可用 |
 | `WIIB_TRADER_BASEURL_ALLOWLIST` | BYOK 的 baseUrl 走 SSRF 校验，默认拒绝内网/本机地址。docker 同网络的代理网关（如 `cliproxyapi`）要在这里按主机名放行 |
 | `BLOCKBEATS_API_KEY` | 快讯功能降级 |
 | `JEV_API_KEY` / `JEV_BASE_URL` / `JEV_MODEL` | 平台自己的 TypeSafe Jev，只给预测员用（不走 BYOK）。不配则预测员不启动，配了还要在 /admin 打开预测员开关；后两个默认官方地址与 `jev-latest` |
-| `LINUXDO_CLIENT_ID` / `LINUXDO_CLIENT_SECRET` / `LINUXDO_REDIRECT_URI` | 关闭 LinuxDo 登录。回调默认 `http://localhost:3000/login`，与前端 dev 端口绑死，改端口要一起改 |
+| `LINUXDO_CLIENT_ID` / `LINUXDO_CLIENT_SECRET` / `LINUXDO_REDIRECT_URI` | 关闭 LinuxDo 登录。回调默认 `http://localhost:3000/login`，与前端 dev 端口绑死，改端口要一起改。线上必须配成 `https://<域名>/login`：授权跳转地址由后端拼，用的就是它 |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | 关闭 Google 登录。回调默认同上，线上同样配成 `https://<域名>/login`，并且要在 Google 客户端的"已获授权的重定向 URI"里登记，差一个字符 Google 就报 `redirect_uri_mismatch` |
 | `TRADE_ALIAS_SALT` | 全站公开成交流水的匿名昵称哈希盐，默认是硬编码公开串。线上不改等于匿名化形同虚设；同一次部署内必须稳定，改了历史昵称全变 |
 | `PG_HOST/PORT/DB`、`REDIS_HOST/PORT/DB/PASSWORD` | 各有默认值（localhost）。docker 部署里 HOST 要填容器名或宿主内网 IP，写 `localhost` 会指向容器自己 |
 | `SPRING_PROFILES_ACTIVE=sentinel` + `REDIS_SENTINEL_*` | 切 Redis 哨兵模式（配合 `redis-compose.yml`），不切就走单机 |
 | `TZ` | 仅 docker 用，默认 `Asia/Singapore` |
+
+**登录方式**：LinuxDo、Google 的 `CLIENT_ID` 都留空，且 `PASSWORD_LOGIN_ENABLED=false`（模板默认值）时，登录页只有一个"进入"按钮，点了直接以管理员（id=1）登录，不用申请任何 key。配了其中任意一种，管理员直登就自动关闭，登录页只显示配了的那几种。
 
 容器间寻址（`FEED_INTERNAL_BASE_URL` / `SIM_INTERNAL_BASE_URL`）由 compose 直接注入，不用写进 `.env`。
 
@@ -137,7 +140,7 @@ npm run build      # 开发：npm run dev
 | 其余 `/api` | wiib-sim `:8080` |
 | `/ws` | wiib-sim `:8080`（WebSocket） |
 
-端口固定 3000——`LINUXDO_REDIRECT_URI` 默认指向它，改端口登录回调会失效。
+端口固定 3000——`LINUXDO_REDIRECT_URI`、`GOOGLE_REDIRECT_URI` 默认指向它，改端口登录回调会失效。
 
 另有一套纯前端预览配置，不需要后端：
 

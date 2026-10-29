@@ -23,12 +23,12 @@ public class AuthController {
     private final AuthService authService;
 
     /**
-     * 登录模式：前端据此决定展示 LinuxDo 登录还是管理员直登
+     * 登录模式：前端据此决定展示哪些登录入口
      */
     @GetMapping("/mode")
     @Operation(summary = "获取登录模式")
     public Result<AuthModeDTO> mode() {
-        return Result.ok(new AuthModeDTO(authService.isLinuxDoEnabled(), authService.isPasswordLoginEnabled()));
+        return Result.ok(authService.mode());
     }
 
     /**
@@ -62,7 +62,17 @@ public class AuthController {
     }
 
     /**
-     * 管理员直登（仅未配置 LinuxDo 时可用）
+     * Google回调处理
+     */
+    @GetMapping("/callback/google")
+    @Operation(summary = "Google OAuth回调")
+    public Result<String> googleCallback(@RequestParam String code) {
+        String token = authService.handleGoogleCallback(code);
+        return Result.ok(token);
+    }
+
+    /**
+     * 管理员直登（LinuxDo、Google、密码登录都没开时才可用）
      */
     @PostMapping("/login/local")
     @Operation(summary = "管理员直登")

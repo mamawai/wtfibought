@@ -838,8 +838,9 @@ export function traderMock(): Plugin {
       return [{
         tag: 'script',
         injectTo: 'head-prepend' as const,
-        // ?dark / ?light 钉死主题，?en 切英文（不跟浏览器）；首页公告也按"已看过"处理，截图省得手点
-        children: `localStorage.setItem('wiib-user', JSON.stringify({ state: { token: 'mock-token' }, version: 0 }));
+        // ?dark / ?light 钉死主题，?en 切英文（不跟浏览器），?guest 不塞 token（看登录页）；首页公告也按"已看过"处理，截图省得手点
+        children: `if (location.search.includes('guest')) localStorage.removeItem('wiib-user');
+else localStorage.setItem('wiib-user', JSON.stringify({ state: { token: 'mock-token' }, version: 0 }));
 localStorage.setItem('wiib-lang', location.search.includes('en') ? 'en' : 'zh');
 localStorage.setItem('wiib-notice-seen', '1');
 if (location.search.includes('dark')) localStorage.setItem('theme', 'dark');
@@ -898,6 +899,13 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
 
         // ---- 普通 GET ----
         if (path === '/api/ai/trader/arena') return ok(res, TRADERS);
+        if (path === '/api/auth/mode') {
+          return ok(res, {
+            googleAuthorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=mock',
+            linuxDoAuthorizeUrl: 'https://connect.linux.do/oauth2/authorize?client_id=mock',
+            passwordLoginEnabled: true,
+          });
+        }
         if (path === '/api/auth/current') {
           return ok(res, {
             id: 9001, username: 'mock', balance: 8799.46, gameBalance: 0, frozenBalance: 725.4,

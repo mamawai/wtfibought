@@ -12,8 +12,9 @@
 CREATE TABLE IF NOT EXISTS "user" (
     id BIGSERIAL PRIMARY KEY,
     linux_do_id VARCHAR(64) UNIQUE,
+    google_id VARCHAR(255) UNIQUE,
     username VARCHAR(64) NOT NULL UNIQUE,
-    avatar VARCHAR(256),
+    avatar TEXT,
     password_hash VARCHAR(60),
     invite_code_id BIGINT,
     balance DECIMAL(18,2) NOT NULL DEFAULT 10000.00,
@@ -35,9 +36,10 @@ CREATE TABLE IF NOT EXISTS "user" (
 
 COMMENT ON TABLE "user" IS '用户表';
 COMMENT ON COLUMN "user".id IS '主键';
-COMMENT ON COLUMN "user".linux_do_id IS 'LinuxDo用户ID，OAuth登录标识（本地注册用户为空）';
+COMMENT ON COLUMN "user".linux_do_id IS 'LinuxDo用户ID，OAuth登录标识（不是LinuxDo登录的用户为空）';
+COMMENT ON COLUMN "user".google_id IS 'Google账号的sub，OAuth登录标识（不是Google登录的用户为空）';
 COMMENT ON COLUMN "user".username IS '用户名（全局唯一，密码登录按此查人）';
-COMMENT ON COLUMN "user".avatar IS '头像URL';
+COMMENT ON COLUMN "user".avatar IS '头像URL（Google头像地址可能几百上千字符，所以不限长）';
 COMMENT ON COLUMN "user".password_hash IS 'BCrypt密码哈希（定长60，OAuth用户为空）';
 COMMENT ON COLUMN "user".invite_code_id IS '注册用的邀请码ID（可追溯，OAuth用户为空）';
 COMMENT ON COLUMN "user".balance IS '余额钱包（交易：现货/B股/合约/杠杆，全仓保证金池）';

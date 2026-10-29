@@ -109,7 +109,7 @@ class PublicTradeControllerTest {
      */
     @Test
     void 对外DTO上没有任何身份字段() {
-        Set<String> banned = Set.of("userid", "username", "avatar", "linuxdoid", "nickname");
+        Set<String> banned = Set.of("userid", "username", "avatar", "linuxdoid", "googleid", "nickname");
 
         for (Field f : PublicTradeDTO.class.getDeclaredFields()) {
             if (f.isSynthetic()) continue;

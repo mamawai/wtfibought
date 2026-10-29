@@ -47,7 +47,7 @@ function RankNum({ rank, className }: { rank: number; className?: string }) {
 function Avatar({ username, avatar, className }: { username: string; avatar?: string; className?: string }) {
   const base = 'border border-border shrink-0';
   if (avatar) {
-    return <img src={avatar} alt="" className={cn(base, 'object-cover', className)} />;
+    return <img src={avatar} alt="" referrerPolicy="no-referrer" className={cn(base, 'object-cover', className)} />;
   }
   return (
     <div className={cn(base, 'bg-card-2 flex items-center justify-center font-bold', className)}>

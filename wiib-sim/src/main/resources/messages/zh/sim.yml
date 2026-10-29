@@ -1,4 +1,4 @@
-# sim 侧其余界面文案：feed 流监控、邀请码、账户重置（都在管理页）。
+# sim 侧其余界面文案：feed 流监控、邀请码、账户重置（都在管理页），量化子账户建号（内部接口）。
 sim:
   feed:
     statusFailed: "feed 流状态获取失败（feed 是否在线？）: {{reason}}"
@@ -10,4 +10,7 @@ sim:
 
   reset:
     onlyQuantSubAccount: "仅允许删除 ai_trader 量化子账户: {{name}}"
+
+  quantAccount:
+    nameTaken: "这个用户名已被真人账户占用，不能用作量化子账户: {{name}}"
 

@@ -75,11 +75,19 @@ api.interceptors.response.use(
 );
 
 // ========== 认证接口 ==========
+/** 登录模式：授权地址为 null=没开这种登录，有值时拼上 state 跳过去；三种都没开走管理员直登 */
+export interface AuthMode {
+  linuxDoAuthorizeUrl: string | null;
+  googleAuthorizeUrl: string | null;
+  passwordLoginEnabled: boolean;
+}
+
 export const authApi = {
-  // 登录模式：两个开关都关时走管理员直登
-  mode: () => api.get<unknown, { linuxDoEnabled: boolean; passwordLoginEnabled: boolean }>('/auth/mode'),
+  mode: () => api.get<unknown, AuthMode>('/auth/mode'),
   // LinuxDo OAuth回调
   linuxDoCallback: (code: string) => api.get<unknown, string>('/auth/callback/linuxdo', { params: { code } }),
+  // Google OAuth回调
+  googleCallback: (code: string) => api.get<unknown, string>('/auth/callback/google', { params: { code } }),
   // 管理员直登（仅所有正式登录方式都未启用时可用）
   localLogin: () => api.post<unknown, string>('/auth/login/local'),
   // 邀请码注册（成功即登录，返回 token）

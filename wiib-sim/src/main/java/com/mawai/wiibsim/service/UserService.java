@@ -18,6 +18,11 @@ public interface UserService extends IService<User> {
     User findByLinuxDoId(String linuxDoId);
 
     /**
+     * 根据Google sub查找用户
+     */
+    User findByGoogleId(String googleId);
+
+    /**
      * 根据用户名查找用户（username 有唯一索引）
      */
     User findByUsername(String username);
@@ -28,7 +33,7 @@ public interface UserService extends IService<User> {
     void ensureAdminUser();
 
     /**
-     * 幂等建/取量化机器人账户（username 唯一）。已存在直接返回、不重复入金；
+     * 幂等建/取量化机器人账户（username 唯一）。已有的机器人号直接返回、不重复入金，同名的是真人账户则拒绝；
      * 新建时连带补记初始资金，与建号同一事务。
      */
     User ensureQuantAccount(String username, BigDecimal initialBalance);

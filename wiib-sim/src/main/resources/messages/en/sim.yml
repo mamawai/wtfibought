@@ -1,4 +1,4 @@
-# Remaining sim-side wording: feed-stream monitor, invite codes, account reset (all on admin pages).
+# Remaining sim-side wording: feed-stream monitor, invite codes, account reset (all on admin pages), quant sub-account creation (internal API).
 sim:
   feed:
     statusFailed: "Could not read the feed stream status (is feed up?): {{reason}}"
@@ -10,4 +10,7 @@ sim:
 
   reset:
     onlyQuantSubAccount: "Only ai_trader quant sub-accounts may be deleted: {{name}}"
+
+  quantAccount:
+    nameTaken: "That username belongs to a real user, so it can't be a quant sub-account: {{name}}"
 

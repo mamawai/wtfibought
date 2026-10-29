@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隐私政策 | Privacy Policy - WhatIfIBought</title>
+<meta name="description" content="WhatIfIBought 隐私政策 / Privacy Policy">
+<link rel="icon" href="/favicon.ico">
+<script>
+  // 主题、语言跟站内一致：都存在 localStorage（theme / wiib-lang）
+  (function () {
+    var d = document.documentElement;
+    var lang = 'zh';
+    try {
+      if (localStorage.getItem('theme') === 'dark') d.classList.add('dark');
+      lang = localStorage.getItem('wiib-lang') || navigator.language || 'zh';
+    } catch (e) {}
+    d.setAttribute('data-lang', lang.toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en');
+  })();
+  function switchLang() {
+    var d = document.documentElement;
+    var next = d.getAttribute('data-lang') === 'zh' ? 'en' : 'zh';
+    d.setAttribute('data-lang', next);
+    try { localStorage.setItem('wiib-lang', next); } catch (e) {}
+  }
+</script>
+<style>
+  :root { --bg: #fafaf7; --ink: #121316; --soft: #5b5c60; --line: #e7e7e2; --orange: #f25f0a; color-scheme: light; }
+  html.dark { --bg: #0f1012; --ink: #f1f1ec; --soft: #a9aaa6; --line: #26282d; --orange: #f97316; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Archivo Variable", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.75; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 28px 20px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .logo { font-size: 18px; font-weight: 800; letter-spacing: .02em; color: var(--ink); text-decoration: none; }
+  .logo i { font-style: normal; color: var(--orange); }
+  .lang {
+    background: none; border: 1px solid var(--ink); border-radius: 0; color: var(--ink);
+    font: inherit; font-size: 13px; font-weight: 600; line-height: 1; padding: 8px 12px; cursor: pointer;
+  }
+  h1 { margin: 48px 0 6px; font-size: 34px; line-height: 1.2; font-weight: 800; letter-spacing: -.02em; }
+  .date { margin: 0; font-size: 13px; color: var(--soft); }
+  /* 墨线 + 左端橙方块，同登录卡 */
+  .rule { position: relative; height: 2px; background: var(--ink); margin: 24px 0 8px; }
+  .rule::after { content: ""; position: absolute; left: 0; top: -3px; width: 8px; height: 8px; background: var(--orange); }
+  h2 { margin: 32px 0 8px; font-size: 17px; line-height: 1.4; font-weight: 800; }
+  p, li { font-size: 15px; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 1.25em; }
+  li { margin: 4px 0; }
+  a { color: var(--ink); text-underline-offset: 3px; }
+  footer {
+    display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 48px; padding-top: 16px;
+    border-top: 1px solid var(--line); font-size: 13px; color: var(--soft);
+  }
+  footer a { color: var(--soft); }
+  /* 只显示当前语言那一份；脚本没跑就两份都显示 */
+  html[data-lang="zh"] [lang="en"], html[data-lang="en"] [lang="zh-CN"] { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="logo" href="/">WIIB<i>.</i></a>
+    <button class="lang" type="button" onclick="switchLang()"><span lang="zh-CN">English</span><span lang="en">中文</span></button>
+  </header>
+
+  <article lang="zh-CN">
+    <h1>隐私政策</h1>
+    <p class="date">生效日期：2026 年 10 月 29 日</p>
+    <div class="rule" aria-hidden="true"></div>
+    <p>WhatIfIBought（下称"本站"，网址 wtfibought.com）是一个用虚拟资金交易真实行情的模拟交易网站。这份政策说明本站收集哪些信息、怎么使用和保护，以及你能做什么。</p>
+
+    <h2>1. 我们收集的信息</h2>
+    <ul>
+      <li><strong>登录信息</strong>
+        <ul>
+          <li>用 Google 登录：Google 账号的唯一标识（sub）、你的 Google 名字和头像地址。名字只在第一次登录时用来生成站内用户名。本站不申请、也不保存你的 Google 邮箱。</li>
+          <li>用 LinuxDo 登录：LinuxDo 用户 ID、用户名和头像地址。</li>
+          <li>用账号密码注册：你设置的用户名、加密后的密码（BCrypt 哈希，本站看不到原密码），以及注册时用的邀请码。</li>
+        </ul>
+      </li>
+      <li><strong>你在本站产生的数据</strong>：虚拟资金余额、订单、持仓、成交和资产历史，预测下注，留言、点赞和通知，界面语言偏好，以及"公开我的持仓与仓位历史"开关。</li>
+      <li><strong>AI 功能</strong>：你自己填写的模型服务配置（服务地址、模型名、API key），你和研判助手的对话记录，以及 AI Trader 的决策记录。API key 加密后保存（AES-GCM）。</li>
+      <li><strong>浏览器本地存储</strong>：登录凭证（token）、主题和语言设置、图表偏好，存在你浏览器的 localStorage 里。本站不使用 Cookie 跟踪你，也没有接入任何第三方统计或广告代码。</li>
+      <li><strong>运行日志</strong>：服务器运行时可能产生常规访问日志（例如 IP 地址、访问时间），只用于排查故障和防止滥用。</li>
+    </ul>
+
+    <h2>2. 信息的用途</h2>
+    <ul>
+      <li>识别你的账户、让你登录；</li>
+      <li>运行模拟交易、排行榜、留言板和 AI 功能；</li>
+      <li>维护站点安全，处理违规行为（例如禁言）。</li>
+    </ul>
+    <p>本站不出售你的个人信息，也不把它用于广告。</p>
+
+    <h2>3. 公开展示的信息</h2>
+    <ul>
+      <li>排行榜和留言板会显示你的用户名和头像，排行榜还会显示总资产和收益率。</li>
+      <li>"公开我的持仓与仓位历史"开关打开时（默认打开），别人可以从排行榜进入你的主页，查看当前持仓、仓位历史和成交明细。你可以在"我的"页面关掉它。</li>
+      <li>全站公开的成交流水只显示匿名昵称，不显示你的用户名。</li>
+    </ul>
+
+    <h2>4. 第三方服务</h2>
+    <ul>
+      <li><strong>Google、LinuxDo</strong>：只在你选择用它们登录时，用来确认你的身份。它们如何处理你的数据，适用各自的隐私政策。</li>
+      <li><strong>你配置的大模型服务商</strong>：使用研判助手或 AI Trader 时，对话内容以及完成任务所需的行情和账户数据，会用你的 API key 发给你选择的服务商，适用该服务商的条款和隐私政策。</li>
+      <li><strong>行情数据</strong>：来自交易所等公开接口，本站获取行情时不会发送你的任何个人信息。</li>
+    </ul>
+
+    <h2>5. 数据安全</h2>
+    <p>全站使用 HTTPS；密码只保存 BCrypt 哈希；API key 加密保存。没有哪个系统能做到绝对安全，但我们会采取合理的措施保护你的数据。</p>
+
+    <h2>6. 保存与删除</h2>
+    <ul>
+      <li>账户存在期间，本站保存上述数据。</li>
+      <li>你可以在"我的"页面重置账户，清空持仓、订单和资产历史（留言和禁言状态不受影响）。</li>
+      <li>如需删除账户及相关数据，请发邮件到 <a href="mailto:mawai@linux.do">mawai@linux.do</a>，我们确认账户归属后处理。</li>
+    </ul>
+
+    <h2>7. 未成年人</h2>
+    <p>本站不面向儿童。如果你未满 14 周岁，请不要注册使用。</p>
+
+    <h2>8. 政策更新</h2>
+    <p>政策有变化时，我们会修改本页并更新上方的生效日期。</p>
+
+    <h2>9. 联系我们</h2>
+    <p><a href="mailto:mawai@linux.do">mawai@linux.do</a></p>
+  </article>
+
+  <article lang="en">
+    <h1>Privacy Policy</h1>
+    <p class="date">Effective October 29, 2026</p>
+    <div class="rule" aria-hidden="true"></div>
+    <p>WhatIfIBought ("WIIB", wtfibought.com) is a paper-trading site where you trade at real market prices with virtual money. This policy explains what we collect, how we use and protect it, and what you can do about it.</p>
+
+    <h2>1. What we collect</h2>
+    <ul>
+      <li><strong>Sign-in information</strong>
+        <ul>
+          <li>Google: your Google account identifier (sub), your name and your profile picture URL. Your name is used once, at your first sign-in, to create your WIIB username. We do not request or store your Google email address.</li>
+          <li>LinuxDo: your LinuxDo user ID, username and avatar URL.</li>
+          <li>Username and password: the username you choose, your password as a BCrypt hash (we never see the original), and the invite code you registered with.</li>
+        </ul>
+      </li>
+      <li><strong>Data you create on WIIB</strong>: virtual balances, orders, positions, trades and asset history, prediction bets, comments, likes and notifications, your language preference, and the "Make my holdings and position history public" setting.</li>
+      <li><strong>AI features</strong>: the model settings you enter (endpoint, model name, API key), your conversations with the analysis assistant, and your AI Trader's decision log. API keys are stored encrypted (AES-GCM).</li>
+      <li><strong>Browser storage</strong>: your sign-in token, theme and language settings, and chart preferences are kept in your browser's localStorage. We don't use cookies to track you, and there are no third-party analytics or ad scripts.</li>
+      <li><strong>Logs</strong>: the server may keep routine access logs (such as IP address and request time), used only to troubleshoot problems and prevent abuse.</li>
+    </ul>
+
+    <h2>2. How we use it</h2>
+    <ul>
+      <li>to identify your account and sign you in;</li>
+      <li>to run paper trading, the leaderboard, comments and the AI features;</li>
+      <li>to keep the site secure and deal with abuse (for example, muting an account).</li>
+    </ul>
+    <p>We do not sell your personal information or use it for advertising.</p>
+
+    <h2>3. What is public</h2>
+    <ul>
+      <li>The leaderboard and comments show your username and avatar; the leaderboard also shows your total assets and return.</li>
+      <li>While "Make my holdings and position history public" is on (the default), anyone can open your profile from the leaderboard and see your current holdings, position history and trades. You can turn it off on the "Me" page.</li>
+      <li>The site-wide public trade feed shows trades under an anonymous alias, never your username.</li>
+    </ul>
+
+    <h2>4. Third parties</h2>
+    <ul>
+      <li><strong>Google and LinuxDo</strong>: used only when you choose to sign in with them, to confirm who you are. Their own privacy policies apply to how they handle your data.</li>
+      <li><strong>The AI model providers you configure</strong>: when you use the analysis assistant or AI Trader, your conversation and the market and account data the task needs are sent, with your API key, to the provider you chose. That provider's terms and privacy policy apply.</li>
+      <li><strong>Market data</strong>: comes from exchanges' public APIs. We send none of your personal information when fetching it.</li>
+    </ul>
+
+    <h2>5. Security</h2>
+    <p>The site is served over HTTPS, passwords are stored only as BCrypt hashes, and API keys are encrypted at rest. No system is perfectly secure, but we take reasonable measures to protect your data.</p>
+
+    <h2>6. Retention and deletion</h2>
+    <ul>
+      <li>We keep the data above for as long as your account exists.</li>
+      <li>You can reset your account on the "Me" page, which clears your positions, orders and asset history (comments and mute status are kept).</li>
+      <li>To delete your account and its data, email <a href="mailto:mawai@linux.do">mawai@linux.do</a>. We'll take care of it once we've confirmed the account is yours.</li>
+    </ul>
+
+    <h2>7. Children</h2>
+    <p>WIIB is not directed at children. If you are under 14, please do not create an account.</p>
+
+    <h2>8. Changes</h2>
+    <p>When this policy changes, we'll update this page and the effective date above.</p>
+
+    <h2>9. Contact</h2>
+    <p><a href="mailto:mawai@linux.do">mawai@linux.do</a></p>
+  </article>
+
+  <footer>
+    <a href="/terms.html"><span lang="zh-CN">服务条款</span><span lang="en">Terms of Service</span></a>
+    <a href="/"><span lang="zh-CN">返回 WhatIfIBought</span><span lang="en">Back to WhatIfIBought</span></a>
+  </footer>
+</div>
+</body>
+</html>
