@@ -41,7 +41,7 @@ tool:
   # ---- 行情/指标数据工具（chat 主 agent 与 trader 唤醒共用）----
   market_snapshot: |-
     获取加密永续合约标的的实时行情横截面（短周期视角，不是 K 线）。字段与符号约定：
-    - lastPrice 现价；atr 是 5m 周期的 atr14，止损距离请用 indicators 里你交易周期的 atr14
+    - lastPrice 现价；atr 是 5m 周期的 atr14，止损距离请用 indicators 里你分析的那个周期的 atr14
     - price_change：{5m,15m,30m,1h,4h,24h} 各窗口涨跌幅（%）
     - regime：按 15m 指标用固定规则打的标签——TREND_UP/TREND_DOWN（adx>25，方向看 DI 大小）、
       SQUEEZE（adx<15 且布林带宽<1.5）、SHOCK（5m ATR 近期>2 倍长期均值，刚有冲击）、RANGE（其余）；是规则不是判断
@@ -136,7 +136,8 @@ tool:
   econ_calendar: |-
     美国财经日历：库里 TradingView High 级的美国宏观事件，只有美国，没有别的国家。
     不传 indicator：过去 3 天已公布（带实际值）和未来 7 天即将公布的事件。
-    传 indicator（按事件标题关键字匹配，不分大小写）：该指标最近 12 次公布，新在前，含下一次已排期的。
+    传 indicator（按事件标题关键字匹配，不分大小写）：标题含它的最近 12 条事件，新在前，含下一次已排期的。
+    关键字宽会混进几条序列（"Inflation Rate" 同时命中 YoY / MoM / Core），只要一条序列就传完整标题，如 "Inflation Rate YoY"。
     标题是 TradingView 的英文叫法：CPI 叫 "Inflation Rate YoY/MoM"（核心加 Core），非农 "Non Farm Payrolls"，
     PCE "Core PCE Price Index MoM"，美联储决议 "Fed Interest Rate Decision"，纪要 "FOMC Minutes"，失业率 "Unemployment Rate"。
     字段：time（北京时间 UTC+8）、title、actual、forecast、previous。
@@ -167,6 +168,17 @@ tool:
     十年美债那行的涨跌是收益率数值本身的百分比变化，不是基点。
     拿 time 和 now 比：美股休市时现货指数就是上次收盘价。非官方来源，报价可能延迟最多 15 分钟。
     黄金、原油平台上也有合约（XAUUSDT / CLUSDT），那是平台合约价，用 market_snapshot 查。
+
+  # ---- 资金流（chat 主 agent 挂）：TFTC 的 BTC 现货 ETF 流入 + DefiLlama 的稳定币市值，日频 ----
+  fund_flows: |-
+    资金面快照，两段，都是日频数据，金额单位百万美元（Musd）：
+    - btcSpotEtf：美国 BTC 现货 ETF（TFTC 整理自发行商披露）。updatedThrough 数据截止的交易日；daily 最近 10 个交易日每天净流入；
+      cumulativeNetFlowMusd 2024 年 1 月上市以来累计净流入；totalNetAssetsMusd 总净资产；latestPerEtfMusd 最近一天各基金净流入，
+      键是基金代码（IBIT、FBTC、GBTC…；其中 "BTC" 是灰度的 Bitcoin Mini Trust，不是比特币本身）。
+      只含 BTC 的 ETF，不含 ETH ETF 的数据。
+    - stablecoins：DefiLlama 的美元稳定币流通市值。total 全部美元稳定币合计，usdt / usdc 各自；每个给 mcapMusd 当前市值、
+      change7dMusd / change30dMusd 相对 7 天前 / 30 天前的增减。净增发是法币进了圈内，净赎回是离场。
+    哪段没取到就列在 unavailable 里。attribution 是 ETF 数据的出处。
 
   # ---- trader 只读档案工具（chat 主 agent 持有；userId 建叶子时烤死）----
   trader_overview: |-

@@ -13,7 +13,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 真打 Yahoo 一次：九个品种都要回来，价格为正、报价时刻是最近 7 天内的。
- * Yahoo 是非官方接口，它改了形状或封了 UA 这里第一时间能看出来。
  * <pre>
  * WIIB_REAL_RUN=1 mvn -o test -pl wiib-quant -am -DskipTests=false -Dtest=CrossAssetRealRunTest \
  *   -Dsurefire.failIfNoSpecifiedTests=false

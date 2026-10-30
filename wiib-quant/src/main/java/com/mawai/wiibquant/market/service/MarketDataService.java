@@ -48,7 +48,7 @@ public class MarketDataService {
     /** 资金费上下文的兜底上限：里面装着标记价，是实时价；一刻钟前的还能当"大致现价"，再久就是误导 */
     private static final long PREMIUM_MAX_STALE_MS = Duration.ofMinutes(15).toMillis();
 
-    /** 衍生品序列的兜底上限：序列按周期出点，一小时内的旧序列最多少最新那一两个点 */
+    /** 衍生品序列兜过期数据的上限 */
     private static final long DERIV_MAX_STALE_MS = Duration.ofHours(1).toMillis();
 
     /**

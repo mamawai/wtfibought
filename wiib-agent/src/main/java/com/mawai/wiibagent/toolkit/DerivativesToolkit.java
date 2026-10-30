@@ -1,6 +1,6 @@
 package com.mawai.wiibagent.toolkit;
 
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibquant.market.service.MarketDataService.DerivSeries;
 import lombok.RequiredArgsConstructor;
@@ -13,8 +13,6 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -32,8 +30,6 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 public class DerivativesToolkit {
 
     static final int POINTS = 30;
-    private static final DateTimeFormatter BJ_FMT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(WakeWindow.ZONE);
 
     private final MarketDataService dataService;
 
@@ -55,18 +51,20 @@ public class DerivativesToolkit {
     public String derivativesHistory(
             @ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
             @ToolParam(description = "Period per point: 1h / 4h / 1d") String period) {
+        String sym = QuantConstants.normalizeSymbolLenient(symbol);
         String p = period.strip().toLowerCase(Locale.ROOT);
         TreeMap<Long, ObjectNode> rows = new TreeMap<>();
         List<String> unavailable = new ArrayList<>();
         for (DerivSeries kind : DerivSeries.values()) {
-            String raw = dataService.derivativesSeries(kind, symbol, p, POINTS);
-            if (raw == null) {
+            String raw = dataService.derivativesSeries(kind, sym, p, POINTS);
+            ArrayNode pts = raw == null ? null : MAPPER.readValue(raw, ArrayNode.class);
+            if (pts == null || pts.isEmpty()) {
                 unavailable.add(field(kind));
                 continue;
             }
-            for (JsonNode pt : MAPPER.readValue(raw, ArrayNode.class)) {
+            for (JsonNode pt : pts) {
                 ObjectNode row = rows.computeIfAbsent(pt.get("timestamp").asLong(),
-                        ts -> MAPPER.createObjectNode().put("time", BJ_FMT.format(Instant.ofEpochMilli(ts))));
+                        ts -> MAPPER.createObjectNode().put("time", BeijingTime.format(ts)));
                 switch (kind) {
                     case OPEN_INTEREST -> {
                         put(row, "oi", pt, "sumOpenInterest");
@@ -82,15 +80,15 @@ public class DerivativesToolkit {
                 }
             }
         }
-        log.info("[DerivativesTool] derivatives_history {} {} {} 行，缺 {}", symbol, p, rows.size(), unavailable);
+        log.info("[DerivativesTool] derivatives_history {} {} {} 行，缺 {}", sym, p, rows.size(), unavailable);
         ObjectNode out = MAPPER.createObjectNode();
         if (rows.isEmpty()) {
             out.put("available", false);
-            out.put("reason", "derivatives history unavailable for " + symbol + " " + p);
+            out.put("reason", "derivatives history unavailable for " + sym + " " + p);
             return MAPPER.writeValueAsString(out);
         }
         out.put("available", true);
-        out.put("symbol", symbol);
+        out.put("symbol", sym);
         out.put("period", p);
         out.put("timezone", "UTC+8");
         if (!unavailable.isEmpty()) {

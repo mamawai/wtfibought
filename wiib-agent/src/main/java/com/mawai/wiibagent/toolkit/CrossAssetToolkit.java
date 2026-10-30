@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.toolkit;
 
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibquant.market.service.CrossAssetService;
 import com.mawai.wiibquant.market.service.CrossAssetService.Quote;
 import lombok.RequiredArgsConstructor;
@@ -10,8 +9,6 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -23,9 +20,6 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 @Component
 @RequiredArgsConstructor
 public class CrossAssetToolkit {
-
-    private static final DateTimeFormatter BJ_FMT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(WakeWindow.ZONE);
 
     private final CrossAssetService crossAssets;
 
@@ -51,7 +45,7 @@ public class CrossAssetToolkit {
         }
         out.put("available", true);
         out.put("timezone", "UTC+8");
-        out.put("now", BJ_FMT.format(Instant.now()));
+        out.put("now", BeijingTime.format(System.currentTimeMillis()));
         ArrayNode arr = out.putArray("quotes");
         for (Quote q : quotes) {
             arr.addObject()
@@ -60,7 +54,7 @@ public class CrossAssetToolkit {
                     .put("price", q.price())
                     .put("changePct1d", q.changePct1d())
                     .put("changePct5d", q.changePct5d())
-                    .put("time", BJ_FMT.format(Instant.ofEpochMilli(q.timeMs())));
+                    .put("time", BeijingTime.format(q.timeMs()));
         }
         return MAPPER.writeValueAsString(out);
     }

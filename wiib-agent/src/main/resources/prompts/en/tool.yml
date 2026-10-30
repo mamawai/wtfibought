@@ -173,7 +173,9 @@ tool:
     US macro economic calendar: TradingView high-impact US events only, no other countries.
     Without indicator: events published in the last 3 days (with actual values) and scheduled in the
     next 7 days. With indicator (keyword matched against event titles, case-insensitive): the latest
-    12 releases of that indicator, newest first, including the next scheduled one.
+    12 events whose title contains it, newest first, including the next scheduled one. A broad keyword
+    mixes several series ("Inflation Rate" hits YoY / MoM / Core); for one series pass the full title,
+    e.g. "Inflation Rate YoY".
     Titles follow TradingView naming: CPI is "Inflation Rate YoY/MoM" (core: "Core Inflation Rate"),
     NFP "Non Farm Payrolls", PCE "Core PCE Price Index MoM", Fed decision "Fed Interest Rate Decision",
     minutes "FOMC Minutes", unemployment "Unemployment Rate".
@@ -213,6 +215,21 @@ tool:
     close. Unofficial source; quotes may lag by up to 15 minutes.
     Gold and oil also trade as platform contracts (XAUUSDT / CLUSDT); that is the platform contract
     price, looked up with market_snapshot.
+
+  # ---- Money flows (on the chat main agent): TFTC's BTC spot ETF flows + DefiLlama's stablecoin supply, daily ----
+  fund_flows: |-
+    Money-flow snapshot, two parts, both daily data (amounts in millions of USD, "Musd"):
+    - btcSpotEtf: US spot Bitcoin ETFs (TFTC, compiled from issuer disclosures). updatedThrough = the
+      last session in the data; daily = net flow per session for the last 10 sessions;
+      cumulativeNetFlowMusd = net inflow since the January 2024 launch; totalNetAssetsMusd = total
+      net assets; latestPerEtfMusd = the last session's net flow per fund, keyed by fund ticker
+      (IBIT, FBTC, GBTC, ...; "BTC" there is the Grayscale Bitcoin Mini Trust, not bitcoin itself).
+      Bitcoin ETFs only; ETH ETF flows are not included.
+    - stablecoins: USD-pegged stablecoin circulating supply (DefiLlama). total = all USD stablecoins,
+      usdt / usdc each: mcapMusd = current supply, change7dMusd / change30dMusd = change vs 7 / 30
+      days ago. Net issuance = fiat entering crypto, net redemption = leaving.
+    A part that could not be fetched is listed in `unavailable`. attribution is the ETF data's
+    source line.
 
   # ---- The trader read-only profile tools (held by the chat main agent; userId baked in at leaf build) ----
   trader_overview: |-

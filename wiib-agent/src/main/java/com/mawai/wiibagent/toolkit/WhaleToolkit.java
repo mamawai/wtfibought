@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.toolkit;
 
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibquant.whale.WhaleQueryService;
 import com.mawai.wiibquant.whale.WhaleQueryService.CoinDetail;
 import lombok.RequiredArgsConstructor;
@@ -13,8 +12,6 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.stream.StreamSupport;
@@ -32,8 +29,6 @@ public class WhaleToolkit {
 
     /** 成本 / 强平分桶每边各取名义最大的几桶 */
     static final int TOP_BUCKETS = 5;
-    private static final DateTimeFormatter BJ_FMT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(WakeWindow.ZONE);
 
     private final WhaleQueryService whales;
 
@@ -69,7 +64,7 @@ public class WhaleToolkit {
         }
         ObjectNode out = MAPPER.createObjectNode();
         out.put("available", true);
-        out.put("observedAt", BJ_FMT.format(Instant.ofEpochMilli(d.observedAt())));
+        out.put("observedAt", BeijingTime.format(d.observedAt()));
         out.put("poolSize", d.poolSize());
         out.setAll((ObjectNode) MAPPER.valueToTree(d.view()));
         out.set("entryClusters", clusters(MAPPER.readTree(d.entryBuckets())));

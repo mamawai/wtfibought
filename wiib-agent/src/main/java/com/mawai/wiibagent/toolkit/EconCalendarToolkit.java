@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.toolkit;
 
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,15 +9,13 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 财经日历工具（chat 主 agent 挂）：库里的 TradingView High 级事件，只看美国的。
- * 不传指标给前 3 天已公布 + 后 7 天即将公布；传指标给标题含它的最近 12 次公布。
+ * 不传指标给前 3 天已公布 + 后 7 天即将公布；传指标给标题含它的最近 12 条。
  * 时刻按北京时间成文，与 trader 开场白的日历块同口径（trader 那边是全部国家、注入不走工具）。
  */
 @Slf4j
@@ -30,8 +27,6 @@ public class EconCalendarToolkit {
     static final long PAST_MS = 3 * 86_400_000L;
     static final long AHEAD_MS = 7 * 86_400_000L;
     static final int SERIES_LIMIT = 12;
-    private static final DateTimeFormatter BJ_FMT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(WakeWindow.ZONE);
 
     private final EconCalendarMapper mapper;
 
@@ -40,7 +35,9 @@ public class EconCalendarToolkit {
             US macro economic calendar: TradingView high-impact US events only (no other countries).
             Without indicator: events published in the last 3 days (with actual values) and scheduled in the
             next 7 days. With indicator (keyword matched against event titles, case-insensitive): the latest
-            12 releases of that indicator, newest first, including the next scheduled one.
+            12 events whose title contains it, newest first, including the next scheduled one. A broad keyword
+            mixes several series ("Inflation Rate" hits YoY / MoM / Core); for one series pass the full
+            title, e.g. "Inflation Rate YoY".
             Titles follow TradingView naming: CPI is "Inflation Rate YoY/MoM" (core: "Core Inflation Rate"),
             NFP "Non Farm Payrolls", PCE "Core PCE Price Index MoM", Fed decision "Fed Interest Rate Decision",
             minutes "FOMC Minutes", unemployment "Unemployment Rate".
@@ -49,7 +46,7 @@ public class EconCalendarToolkit {
             a speech or meeting.""")
     public String econCalendar(
             @ToolParam(required = false, description = """
-                    Keyword matched against event titles, e.g. "Inflation Rate", "Non Farm Payrolls",
+                    Keyword matched against event titles, e.g. "Inflation Rate YoY", "Non Farm Payrolls",
                     "Fed Interest Rate Decision"; omit for the 3-days-back / 7-days-ahead window""")
             String indicator) {
         return econCalendar(indicator, System.currentTimeMillis());
@@ -61,10 +58,10 @@ public class EconCalendarToolkit {
         out.put("available", true);
         out.put("country", COUNTRY);
         out.put("timezone", "UTC+8");
+        out.put("now", BeijingTime.format(nowMs));
         if (keyword == null) {
             List<EconCalendarMapper.Row> rows = mapper.selectWindow(nowMs - PAST_MS, nowMs + AHEAD_MS).stream()
                     .filter(r -> COUNTRY.equals(r.getCountry())).toList();
-            out.put("now", BJ_FMT.format(Instant.ofEpochMilli(nowMs)));
             out.set("published", rows(rows.stream().filter(r -> r.getEventTime() <= nowMs).toList()));
             out.set("upcoming", rows(rows.stream().filter(r -> r.getEventTime() > nowMs).toList()));
             log.info("[EconCalendarTool] econ_calendar 窗口 {} 条", rows.size());
@@ -82,7 +79,7 @@ public class EconCalendarToolkit {
         ArrayNode arr = MAPPER.createArrayNode();
         for (EconCalendarMapper.Row r : rows) {
             ObjectNode o = arr.addObject();
-            o.put("time", BJ_FMT.format(Instant.ofEpochMilli(r.getEventTime())));
+            o.put("time", BeijingTime.format(r.getEventTime()));
             o.put("title", r.getTitle());
             putIfPresent(o, "actual", r.getActual());
             putIfPresent(o, "forecast", r.getForecast());

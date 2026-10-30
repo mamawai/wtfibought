@@ -10,6 +10,7 @@ import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
+import com.mawai.wiibagent.toolkit.FundFlowToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.WhaleToolkit;
@@ -77,7 +78,7 @@ class MainLeafTest {
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
-                mock(CrossAssetToolkit.class), deepAnalysisService, mock(BehaviorAnalysisService.class),
+                mock(CrossAssetToolkit.class), mock(FundFlowToolkit.class), deepAnalysisService, mock(BehaviorAnalysisService.class),
                 traderChatService, runRegistry, ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, limit, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
