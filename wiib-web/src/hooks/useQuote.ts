@@ -20,7 +20,7 @@ export function useCoinQuote(symbol: string): Quote {
     return () => { cancelled = true; };
   }, [symbol]);
 
-  const price = tick?.fp ?? tick?.price ?? null;
+  const price = tick?.price ?? null;
   const pct = price != null && base ? ((price - base) / base) * 100 : null;
   return { key: symbol, name: cfg.name, price, pct, to: `/coin/${symbol}`, live: true };
 }

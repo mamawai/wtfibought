@@ -87,13 +87,13 @@ export function CoinMarketRow({ cfg }: { cfg: CoinCfg }) {
     return () => { cancelled = true; };
   }, [cfg.symbol]);
 
-  const livePrice = tick?.fp ?? tick?.price;
+  const livePrice = tick?.price;
   const spark = livePrice != null && closes.length ? [...closes.slice(0, -1), livePrice] : closes;
   const price = livePrice ?? (closes.length ? closes[closes.length - 1] : null);
   const base = closes.length ? closes[0] : null;
   const pct = price != null && base ? ((price - base) / base) * 100 : null;
   const priceText = price == null ? null : `$${formatCoinPrice(cfg.symbol, price)}`;
-  // 现货价没到先占个 —：第二行一开始就在，主价不会等它到了再往上跳
+  // 现货价没到先占个 —
   const spotPrice = spotTick == null ? '—' : `$${formatCoinPrice(cfg.symbol, spotTick.price)}`;
   const spotLine = cfg.futuresOnly ? undefined : `${t('coin.spot')} ${spotPrice}`;
 

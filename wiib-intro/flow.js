@@ -186,7 +186,7 @@ const PANELS = [
       { id: 'main', x: 226, y: 120, w: 270, h: 300, tag: 'MAIN AGENT', icon: 'zap',
         title: { zh: '主 agent · 深模型', en: 'main agent · deep model' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 8 },
-        // 正好排三行：再多折一行，底下的英文回答会被挤
+        // 顺序按正好排满三行定的
         chips: [
           { id: 'cmk', t: 'market ×4' }, { id: 'cin', t: 'indicators ×3' }, { id: 'ctr', t: 'trader_* ×5' },
           { id: 'cfm', t: 'wake / review / note' }, { id: 'cbh', t: 'analyze_my_behavior' },
