@@ -186,10 +186,11 @@ const PANELS = [
       { id: 'main', x: 226, y: 120, w: 270, h: 300, tag: 'MAIN AGENT', icon: 'zap',
         title: { zh: '主 agent · 深模型', en: 'main agent · deep model' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 8 },
+        // 正好排三行：再多折一行，底下的英文回答会被挤
         chips: [
-          { id: 'cmk', t: 'market ×4' }, { id: 'cnw', t: 'news_search' }, { id: 'ctr', t: 'trader_* ×5' },
+          { id: 'cmk', t: 'market ×4' }, { id: 'cin', t: 'indicators ×3' }, { id: 'ctr', t: 'trader_* ×5' },
           { id: 'cfm', t: 'wake / review / note' }, { id: 'cbh', t: 'analyze_my_behavior' },
-          { id: 'cda', t: 'run_deep_analysis' }, { id: 'cdg', t: 'delegate' }
+          { id: 'cnw', t: 'news_search' }, { id: 'cda', t: 'run_deep_analysis' }, { id: 'cdg', t: 'delegate' }
         ],
         rows: [
           { id: 'par', t: { zh: '同批 tool_call 并发执行', en: 'same-batch tool calls run in parallel' } },
@@ -197,7 +198,7 @@ const PANELS = [
           { id: 'ws', t: { zh: '服务端搜索 · 端点勾选才有', en: 'server search · if the endpoint allows' } }
         ],
         stream: 3,
-        detail: { zh: '一轮只有这一个 agent：深模型 + 16 个工具的 ReactLoop，流式作答。取什么数它自己定，同一批 tool_call 在虚拟线程上并发、回执按原顺序接回；不强制 tool_choice（Opus 5.5 这类模型不收强制），「先取数再答」写在系统提示词里。用户自己的 trader 由它直接查：五个只读工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸，批准后转后台子运行；读得多的活用 delegate 派给后台 worker。每次调模型前先把收件箱里到的子运行报告排进上下文。', en: 'The only agent in a turn: a ReactLoop on the deep model with 16 tools, streaming its answer. It decides what to fetch; tool calls in one batch run in parallel on virtual threads and their results are paired back in order. tool_choice is never forced (models like Opus 5.5 reject it); “fetch first, then answer” lives in the system prompt. It reads the user’s own trader directly through five read-only tools baked to the userId inside the leaf — which is why userId must be part of the cache fingerprint. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money at once, so it passes the HITL gate and then runs as a background child run; heavy reading goes to background workers via delegate. Before every model call, the inbox of arrived child-run reports is appended to the context.' } },
+        detail: { zh: '一轮只有这一个 agent：深模型 + 19 个工具的 ReactLoop，流式作答。取什么数它自己定，同一批 tool_call 在虚拟线程上并发、回执按原顺序接回；不强制 tool_choice（Opus 5.5 这类模型不收强制），「先取数再答」写在系统提示词里。用户自己的 trader 由它直接查：五个只读工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸，批准后转后台子运行；读得多的活用 delegate 派给后台 worker。每次调模型前先把收件箱里到的子运行报告排进上下文。', en: 'The only agent in a turn: a ReactLoop on the deep model with 19 tools, streaming its answer. It decides what to fetch; tool calls in one batch run in parallel on virtual threads and their results are paired back in order. tool_choice is never forced (models like Opus 5.5 reject it); “fetch first, then answer” lives in the system prompt. It reads the user’s own trader directly through five read-only tools baked to the userId inside the leaf — which is why userId must be part of the cache fingerprint. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money at once, so it passes the HITL gate and then runs as a background child run; heavy reading goes to background workers via delegate. Before every model call, the inbox of arrived child-run reports is appended to the context.' } },
       { id: 'cr', x: 556, y: 40, w: 230, h: 150, tag: 'CHILD RUNS', icon: 'layers',
         title: 'ChildRunRegistry',
         rows: [

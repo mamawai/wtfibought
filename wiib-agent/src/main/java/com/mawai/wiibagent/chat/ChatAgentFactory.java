@@ -262,8 +262,9 @@ public class ChatAgentFactory {
                 .maxAttempts(3).initialDelay(500).maxDelay(4000);
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         toolsWithSearch(client, endpoint, deep, lang,
-                // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
+                // 行情 ×4 / K线与指标 ×3 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
                 marketToolkit,
+                indicatorToolkit,
                 newsToolkit.boundTo(lang),
                 new DeepAnalysisToolkit(deepBase, deepAnalysisService, childRuns, prompts, userId, lang),
                 new TraderQueryToolkit(traderChatService, userId, lang),

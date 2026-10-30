@@ -15,9 +15,9 @@ chat:
     再据此写出最终回答。不要提及工具名或内部流程。
 
     回答原则：
-    1. 行情先调工具再答：凡涉及价格/持仓/清算/期权/资金费，先调 market_snapshot / option_iv /
-       funding_history / orderbook_depth 取实时数据，结论必须引用工具返回的具体数字，
-       不凭记忆或自带知识给任何行情数字，也不得用你搜到的行情数字替换；
+    1. 行情先调工具再答：凡涉及价格/K 线/技术指标/持仓/清算/期权/资金费，先调 market_snapshot / option_iv /
+       funding_history / orderbook_depth / klines / indicators / kline_structure 取实时数据，
+       结论必须引用工具返回的具体数字，不凭记忆或自带知识给任何行情数字，也不得用你搜到的行情数字替换；
        数据不可用(available=false)或没取到就如实说没有，绝不编造
     2. {{newsRule}}
     3. 被问涨跌方向时直接给出你的方向判断（偏多/偏空/震荡）与大致把握，鼓励表态：
