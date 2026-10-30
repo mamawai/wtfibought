@@ -12,7 +12,7 @@
 |---|---|:---:|:---:|---|---|---|
 | **trader agent** | ReAct 循环 | 15 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
 | **reviewer workflow** | 单次调用（有待复审条目时再加一次） | 0 | ✗ | 日线边界 | 同 trader | 案例复盘 + 经验账本 |
-| **chat agent** | 单 ReAct 主 agent + 后台子运行 | 19 | ✓ 上限 8 次调用（每个子运行各算各的） | 用户提问 | 用户的 key | 流式回答 |
+| **chat agent** | 单 ReAct 主 agent + 后台子运行 | 21 | ✓ 上限 8 次调用（每个子运行各算各的） | 用户提问 | 用户的 key | 流式回答 |
 | **replay coach** | 单次调用 | 0 | ✗ | 手动复盘里点「AI 提示 / AI 评估」 | 用户的 key | 盘面提示 / 整局操作评估 |
 | **behavior workflow** | 单次调用 | 0 | ✗ | 对话里明说要分析自己（`analyze_my_behavior`） | 用户的 key（chat 那颗深模型） | 行为画像报告 |
 
@@ -112,15 +112,15 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    U((用户提问)) --> MAIN["主 agent · ReactLoop<br/>深模型 · 流式作答<br/>行情 4 / 指标 3 / news_search / trader 只读 5 / 动作表单 3<br/>行为分析 / run_deep_analysis / delegate"]
-    MAIN <-->|"同批 tool_call 并发"| T["快工具<br/>行情 · 指标 · 快讯 · trader 只读"]
+    U((用户提问)) --> MAIN["主 agent · ReactLoop<br/>深模型 · 流式作答<br/>行情 4 / 指标 3 / 日历 / 大户 / news_search / trader 只读 5 / 动作表单 3<br/>行为分析 / run_deep_analysis / delegate"]
+    MAIN <-->|"同批 tool_call 并发"| T["快工具<br/>行情 · 指标 · 日历 · 大户 · 快讯 · trader 只读"]
     MAIN -->|"批准后 / 模型现写任务书"| CR["后台子运行 ChildRunRegistry<br/>深研判 · researcher · analyst<br/>用户开关与上限 · 全局闸 · 超时"]
     CR -.->|"报告（用户侧消息）<br/>轮在跑→收件箱 · 没轮→落库标 pending"| MAIN
     MAIN --> A((答案 + pending))
     A -.->|"前端空闲时 /wake<br/>唤醒轮补充回答"| MAIN
 ```
 
-- 主 agent：19 个工具一张表，同一批 tool_call 并发执行；tool_choice 不强制（auto）：Opus 5.5 / Sonnet 5.5 / Fable 5.1 这类模型不收 any / required，"先取数再答"写在系统提示词里。以前的浅模型路由 + 专家叶子那一层没了：路由每轮要烧一次调用，而"要不要查行情"深模型顺手就判了。
+- 主 agent：21 个工具一张表，同一批 tool_call 并发执行；tool_choice 不强制（auto）：Opus 5.5 / Sonnet 5.5 / Fable 5.1 这类模型不收 any / required，"先取数再答"写在系统提示词里。以前的浅模型路由 + 专家叶子那一层没了：路由每轮要烧一次调用，而"要不要查行情"深模型顺手就判了。
 - 子运行（`chat/run/`）：一套运行时管两类活，区别只在任务书是谁写的。`run_deep_analysis` 过了 HITL 闸门就 spawn 一个子运行、立刻返回 RUNNING；`delegate` 由主 agent 现写任务书、选 `researcher`（浅模型 + 快讯 + 服务端搜索）或 `analyst`（浅模型 + 行情 + 指标）预设，worker 看不到主对话、没有 delegate 也没有动作工具，深度只有一层。派发前三道检查：用户开关（只管 delegate，深研判是用户点过头的）→ 单用户在跑数（默认 3，可调到 5，按用户不按会话）→ 全局 `max-concurrent-children`；拒因原样回给模型，它自己做。
 - 报告回灌只有一条规则：会话正挂着一轮就进收件箱，`ReactLoop` 下一次调模型前追加到尾部；没挂就在会话锁里直接追加进上下文并标 pending。报告是带【后台任务#…】标注的用户侧消息（裸 assistant 消息模型会当成"我自己说过的话"）；超时与失败也回灌一条失败报告，取消的不回灌。pending 随 done / status 下发，前端本地空闲时发 `/wake`，唤醒轮不落 user 行、答案带【补充回答】标头。子运行常比派它的那轮活得久，轮结束后它的事件推不出去：会话派过的子运行都留着结局与内部步骤，status 一并下发，前端本地空闲且还有子运行在跑时轮询它，对齐过程轨、见 pending 就唤醒，刷新后据它重建在跑的那几条。/cancel、重新生成、删会话都连带停掉子运行。
 - 名额：每用户同时一轮，占线直接拒（2203），前端把消息排在本地、这轮结束自动续发；子运行在名额之外（否则一个深研判占着名额几分钟），行情配额靠全局闸另保。

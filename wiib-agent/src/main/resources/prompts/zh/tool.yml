@@ -117,7 +117,31 @@ tool:
     给到你的是算好的路径加 focus_bars——最近 N 根与各关键点附近的原始 K 线；
     要每一根原始 K 线请用 `klines`。
 
-  # ---- trader 只读档案工具（chat 主 agent 持有；userId 建叶子时烤死）----
+  # ---- 财经日历（chat 主 agent 挂；trader 那边是开场白注入，不走工具）----
+  econ_calendar: |-
+    美国财经日历：库里 TradingView High 级的美国宏观事件，只有美国，没有别的国家。
+    不传 indicator：过去 3 天已公布（带实际值）和未来 7 天即将公布的事件。
+    传 indicator（按事件标题关键字匹配，不分大小写）：该指标最近 12 次公布，新在前，含下一次已排期的。
+    标题是 TradingView 的英文叫法：CPI 叫 "Inflation Rate YoY/MoM"（核心加 Core），非农 "Non Farm Payrolls"，
+    PCE "Core PCE Price Index MoM"，美联储决议 "Fed Interest Rate Decision"，纪要 "FOMC Minutes"，失业率 "Unemployment Rate"。
+    字段：time（北京时间 UTC+8）、title、actual、forecast、previous。
+    有 forecast/previous 的是数值型事件：时间已过而没有 actual 就是还没公布；两个都没有的是讲话、会议类。
+
+  # ---- Hyperliquid 大户持仓（chat 主 agent 挂）：Coin 页那份最新快照，分桶只给名义最大的几桶 ----
+  whale_positions: |-
+    Hyperliquid 大户持仓（只有 BTC / ETH / SOL / XRP / DOGE）：每天认证一次的地址池（账户净值 ≥100 万美元，
+    或持有 ≥100 万美元仓位；poolSize 是池内地址数）在这个币上的大额杠杆永续仓位，每 10 分钟一轮快照
+    （observedAt，北京时间）。只算 ≥10 万美元的仓位。是 Hyperliquid 链上数据，不是 Binance。
+    - price：快照时的 Hyperliquid 标记价
+    - long / short：count 该方向地址数；notional 仓位名义合计（美元）；wavgEntry 按数量加权的开仓均价；
+      medianEntry 各地址开仓价的中位数；top1Share 最大一户占该方向名义的比例；upnl 浮动盈亏合计（美元）。
+      count=0 是没人持该方向，其余字段这时不出现
+    - liqAbove / liqBelow：现价上方 5% 内的空头强平名义 / 下方 5% 内的多头强平名义，和名义最大那一桶的价位；
+      5% 内没有这个字段就不出现
+    - hlOpenInterest：Hyperliquid 全市场该币持仓量（美元）；coverage 是池内名义除以它，分两边
+    - entryClusters / liqClusters：按开仓价 / 按强平价分桶，每边各给名义最大的 5 桶（bucketWidth 是现价的
+      0.25% / 0.5%，price 是桶下界）。均价会把双峰抹平，看桶才看得出成本分布
+    样本小、鲸鱼主导（看 count、top1Share、coverage），场外对冲看不到。
   trader_overview: |-
     获取当前用户 AI 交易员的概况：状态（RUNNING/PAUSED/LIQUIDATED 及原因）、权益与初始资金、
     轮次、交易标的、唤醒周期、仓位规格、上次/下次唤醒时刻与当前不能唤醒的原因（能唤醒为 null），

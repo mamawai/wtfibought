@@ -143,7 +143,7 @@ Five independent LLM call sites, each with its own shape and stop conditions. Th
 |---|---|:---:|:---:|---|---|---|
 | **trader agent** | ReAct loop | 15 | ✓ max 12 calls | Every candle close / volatility alert | Owner's key | Real position changes + decision entry |
 | **reviewer workflow** | Single call (one more when entries await re-review) | 0 | ✗ | Daily boundary | Same as trader | Case reviews + experience ledger |
-| **chat agent** | Single ReAct main agent + background sub-runs | 19 | ✓ max 8 calls (each sub-run counts its own) | User question | User's key | Streamed answer |
+| **chat agent** | Single ReAct main agent + background sub-runs | 21 | ✓ max 8 calls (each sub-run counts its own) | User question | User's key | Streamed answer |
 | **replay coach** | Single call | 0 | ✗ | "AI hint / AI review" in manual replay | User's key | Chart hint / full-session review |
 | **behavior workflow** | Single call | 0 | ✗ | User asks for it in chat | User's key | Behavior profile report |
 

@@ -90,4 +90,16 @@ public interface EconCalendarMapper {
             </script>
             """)
     List<Row> selectSeries(@Param("country") String country, @Param("titles") List<String> titles);
+
+    /** 一个国家里标题含关键字的历次公布（不分大小写，新在前，已排期未公布的也在） */
+    @Select("""
+            SELECT source_id AS sourceId, event_time AS eventTime, country, currency, title, actual, forecast, previous
+              FROM econ_calendar_event
+             WHERE country = #{country}
+               AND title ILIKE '%' || #{keyword} || '%'
+             ORDER BY event_time DESC, source_id
+             LIMIT #{limit}
+            """)
+    List<Row> selectRecentByTitle(@Param("country") String country, @Param("keyword") String keyword,
+                                  @Param("limit") int limit);
 }

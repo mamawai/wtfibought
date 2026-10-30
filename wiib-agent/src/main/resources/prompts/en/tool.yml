@@ -147,6 +147,40 @@ tool:
     What you get is the computed path plus focus_bars — the last N candles and the ones
     around each key point; `klines` is the tool that hands you every raw bar instead.
 
+  # ---- Economic calendar (on the chat main agent; the trader gets it injected into its opening message, not as a tool) ----
+  econ_calendar: |-
+    US macro economic calendar: TradingView high-impact US events only, no other countries.
+    Without indicator: events published in the last 3 days (with actual values) and scheduled in the
+    next 7 days. With indicator (keyword matched against event titles, case-insensitive): the latest
+    12 releases of that indicator, newest first, including the next scheduled one.
+    Titles follow TradingView naming: CPI is "Inflation Rate YoY/MoM" (core: "Core Inflation Rate"),
+    NFP "Non Farm Payrolls", PCE "Core PCE Price Index MoM", Fed decision "Fed Interest Rate Decision",
+    minutes "FOMC Minutes", unemployment "Unemployment Rate".
+    Fields: time (UTC+8), title, actual, forecast, previous. An event with forecast/previous is
+    numeric: past time and no actual means not published yet; neither forecast nor previous means
+    a speech or meeting.
+
+  # ---- Hyperliquid whale positions (on the chat main agent): the Coin page's latest snapshot, buckets trimmed to the largest few ----
+  whale_positions: |-
+    Hyperliquid whale positions for a crypto symbol (BTC / ETH / SOL / XRP / DOGE only): the large
+    leveraged perp positions of a daily-qualified address pool (accounts worth >= $1M or holding a
+    >= $1M position; poolSize = addresses in the pool), snapshotted every 10 minutes (observedAt, UTC+8).
+    Only positions >= $100k count. On-chain Hyperliquid data, not Binance.
+    - price: Hyperliquid mark price at the snapshot
+    - long / short: count = addresses on that side; notional = total position value USD; wavgEntry =
+      size-weighted average entry; medianEntry = median entry across addresses; top1Share = the largest
+      address's share of that side's notional; upnl = total unrealized PnL USD. count=0 = nobody on that
+      side, and the other fields are then absent
+    - liqAbove / liqBelow: short (above price) / long (below price) liquidation notional within 5% of
+      price, and the bucket price where it peaks; absent = nothing within 5%
+    - hlOpenInterest: Hyperliquid whole-market open interest of the coin, USD; coverage = pool notional
+      divided by it, per side
+    - entryClusters / liqClusters: per side, the 5 price buckets holding the most notional by entry
+      price / by liquidation price (bucketWidth = 0.25% / 0.5% of price, price = bucket lower bound);
+      an average hides a two-peaked cost base, the clusters show it
+    The sample is small and whale-dominated (read count, top1Share, coverage) and off-platform hedges
+    are invisible.
+
   # ---- The trader read-only profile tools (held by the chat main agent; userId baked in at leaf build) ----
   trader_overview: |-
     Get the current user's AI trader profile: status (RUNNING/PAUSED/LIQUIDATED and why),
