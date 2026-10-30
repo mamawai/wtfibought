@@ -11,6 +11,7 @@ import com.mawai.wiibagent.mapper.WorkbenchChatMessageMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 
 import java.time.LocalDateTime;
@@ -63,22 +64,23 @@ public class ChatHistoryService {
 
     /**
      * kind=特殊行的码（见 {@link ChatRowKind}），普通行为 null，前端认码不认文案。
-     * sources=这一轮联网搜索的来源（答案底部展示），没搜过或老数据为 null；不属于读数，单独一列
+     * sources=这一轮联网搜索的来源（答案底部展示），没搜过或老数据为 null；不属于读数，单独一列。
+     * steps=这一轮的过程事件（和 SSE 帧同形），前端据它重建过程轨；user 行与老数据为 null
      */
     public record ChatMessage(long id, String role, String content, long createdAt, TurnMeta meta, String kind,
-                              List<SearchEvent.Source> sources) {}
+                              List<SearchEvent.Source> sources, JsonNode steps) {}
 
     /** 追加一条消息。历史是增益不是主链，失败只记日志不打断对话。 */
     public boolean append(String sessionId, long userId, String role, String content) {
-        return append(sessionId, userId, role, content, null, null);
+        return append(sessionId, userId, role, content, null, null, null);
     }
 
     /**
-     * 带本轮读数与来源的追加（assistant 行专用；meta/sources 为空即退化成普通追加）。
+     * 带本轮读数、来源与过程事件的追加（assistant 行专用；三者都为空即退化成普通追加）。
      * 返回是否真落了库：重新生成靠它决定敢不敢删旧答案——没落上还删，这个提问就一条答案都不剩了。
      */
     public boolean append(String sessionId, long userId, String role, String content, TurnMeta meta,
-                          List<SearchEvent.Source> sources) {
+                          List<SearchEvent.Source> sources, ArrayNode steps) {
         if (content == null || content.isBlank()) return false;
         try {
             WorkbenchChatMessage row = new WorkbenchChatMessage();
@@ -101,6 +103,9 @@ public class ChatHistoryService {
             }
             if (sources != null && !sources.isEmpty()) {
                 row.setSources(MAPPER.writeValueAsString(SearchEvent.Source.toJson(sources)));
+            }
+            if (steps != null && !steps.isEmpty()) {
+                row.setSteps(MAPPER.writeValueAsString(steps));
             }
             // createdAt 由全局 MetaObjectHandler 填，不手塞
             messageMapper.insert(row);
@@ -146,8 +151,13 @@ public class ChatHistoryService {
                 .stream()
                 .map(row -> new ChatMessage(row.getId(), row.getRole(), row.getContent(),
                         toEpochMillis(row.getCreatedAt()), metaOf(row),
-                        ChatRowKind.of(row.getRole(), row.getContent(), prompts), sourcesOf(row)))
+                        ChatRowKind.of(row.getRole(), row.getContent(), prompts), sourcesOf(row), stepsOf(row)))
                 .toList();
+    }
+
+    /** 没有过程事件的行（user 行、老数据）给 null */
+    private static JsonNode stepsOf(WorkbenchChatMessage row) {
+        return row.getSteps() == null ? null : MAPPER.readTree(row.getSteps());
     }
 
     /** 没搜过的行（user 行、老数据）给 null，不给空列表 */

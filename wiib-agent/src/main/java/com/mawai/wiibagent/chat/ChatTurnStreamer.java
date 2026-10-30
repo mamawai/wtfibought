@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
@@ -25,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -124,6 +126,11 @@ public class ChatTurnStreamer {
         private String prefix = "";
         /** 本轮搜到/引用到的来源，按 url 去重保序：随 done 下发并落库，刷新后答案底部还在 */
         private final Map<String, SearchEvent.Source> sources = new LinkedHashMap<>();
+        /** 经事件出口的过程事件里随答案落库的几种（搜索另从 onSearch 进）；前端重开历史时据它重建过程轨 */
+        private static final Set<String> STEP_EVENTS =
+                Set.of("progress", "tool_calls", "child_start", "child_progress", "child_done");
+        /** 本轮的过程事件，和推给前端的 SSE 帧同形，多一个 type */
+        private final ArrayNode steps = MAPPER.createArrayNode();
 
         void run() {
             ScheduledFuture<?> heartbeat = heartbeatScheduler.scheduleWithFixedDelay(
@@ -132,6 +139,10 @@ public class ChatTurnStreamer {
                 // 运行中标记：status 接口、拒删会话都看它
                 // 事件出口：工具手里只有 sessionId，进度/表单卡/子运行事件经这转成 SSE 帧
                 runRegistry.start(sessionId, (event, data) -> {
+                    // 落库不看连接死活：断连后这轮照跑完，过程也要留在历史里
+                    if (STEP_EVENTS.contains(event)) {
+                        steps.add(data.deepCopy().put("type", event));
+                    }
                     if (channel.isClosed()) {
                         return false;
                     }
@@ -200,8 +211,13 @@ public class ChatTurnStreamer {
                     sources.putIfAbsent(source.url(), source);
                 }
             }
+            ObjectNode json = event.toJsonObject();
+            // 引用只并入来源，不是过程轨的一步
+            if (!"cited".equals(json.path("phase").asString(null))) {
+                steps.add(json.deepCopy().put("type", "search"));
+            }
             if (!channel.isClosed()) {
-                channel.send("search", event.toJsonObject());
+                channel.send("search", json);
             }
         }
 
@@ -217,7 +233,7 @@ public class ChatTurnStreamer {
             String stopped = ChatTurnRunner.cancelledAnswer(prompts, leaves.lang(), fullAnswer());
             // 中断的轮不报上下文用量：工具过程没落库，轮中途测到的偏大
             ChatHistoryService.TurnMeta meta = turnMeta(null);
-            boolean saved = chatHistoryService.append(sessionId, userId, "assistant", stopped, meta, sourceList());
+            boolean saved = chatHistoryService.append(sessionId, userId, "assistant", stopped, meta, sourceList(), stepsOrNull());
             // 重生成轮：出了半截才顶掉旧答案，半截也是这一次重生成的产物，留着旧的同一个提问下
             // 就是两条 assistant 行。一个字都没出（点得快）就别删——那等于拿一行"未作答"
             // 换掉用户原来那条好答案，而且不可恢复
@@ -258,7 +274,7 @@ public class ChatTurnStreamer {
             ChatHistoryService.TurnMeta meta = turnMeta(context);
             // 历史不看连接死活：切页断连后这一轮照跑完，答案必须落库（前端回来靠 status+历史补）。
             // 且必须在 finally 摘运行标记之前写完——轮询端不能出现"已结束但查不到答案"的空窗
-            boolean saved = chatHistoryService.append(sessionId, userId, "assistant", finalAnswer, meta, sourceList());
+            boolean saved = chatHistoryService.append(sessionId, userId, "assistant", finalAnswer, meta, sourceList(), stepsOrNull());
             // 旧答案留到新答案确实落库之后才删（append 落没落库看返回值，空产出压根不落行）：
             // 重跑抛异常、产出为空、insert 失败的任何一条路上，用户至少还留着原来那条，
             // 也还能再点一次重新生成——两条都没了的话末尾是 user 行，连重新生成都点不了
@@ -284,6 +300,11 @@ public class ChatTurnStreamer {
 
         private List<SearchEvent.Source> sourceList() {
             return new ArrayList<>(sources.values());
+        }
+
+        /** 一步过程都没有的轮不落这一列 */
+        private ArrayNode stepsOrNull() {
+            return steps.isEmpty() ? null : steps;
         }
 
         /** 本轮读数。中断丢下的在途流会在读数之后才入账，账本不可信时只报耗时（null=没报，与全站 token 语义一致） */

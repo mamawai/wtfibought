@@ -53,6 +53,10 @@ public class WorkbenchChatMessage {
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String sources;
 
+    /** 这一轮的过程事件（阶段/工具调用/搜索/子运行），JSON 数组、和 SSE 帧同形；只有 assistant 行有值 */
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String steps;
+
     /** 这一轮结束时的上下文用量（token），中断的轮与老数据为 null */
     private Long contextTokens;
 

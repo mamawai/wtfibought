@@ -9,10 +9,12 @@ import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.mapper.WorkbenchChatMessageMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -45,10 +47,12 @@ class ChatHistoryMetaTest {
         WorkbenchChatMessageMapper mapper = mock(WorkbenchChatMessageMapper.class);
         ChatHistoryService service = new ChatHistoryService(mapper, ChatTestEndpoints.PROMPTS, new MessageCatalog());
 
+        ArrayNode steps = MAPPER.createArrayNode();
+        steps.addObject().put("type", "tool_calls").putArray("calls").addObject().put("id", "c1").put("name", "klines");
         service.append(SESSION, 1L, "assistant", "答案",
                 new ChatHistoryService.TurnMeta("我的端点 · gpt-5", 3, 160L, 30L, 190L, 4200,
                         new ContextUsage(201_000, 256_000, true)),
-                List.of(new SearchEvent.Source("https://a.com/1", "A1")));
+                List.of(new SearchEvent.Source("https://a.com/1", "A1")), steps);
 
         ArgumentCaptor<WorkbenchChatMessage> captor = ArgumentCaptor.forClass(WorkbenchChatMessage.class);
         verify(mapper).insert(captor.capture());
@@ -61,6 +65,8 @@ class ChatHistoryMetaTest {
         assertThat(saved.getLatencyMs()).isEqualTo(4200);
         // 来源单独一列，JSON 数组 [{url,title}]
         assertThat(saved.getSources()).contains("https://a.com/1").contains("A1");
+        // 过程事件单独一列，JSON 数组，和 SSE 帧同形
+        assertThat(saved.getSteps()).contains("\"type\":\"tool_calls\"").contains("klines");
         assertThat(saved.getContextTokens()).isEqualTo(201_000L);
         assertThat(saved.getContextWindow()).isEqualTo(256_000);
         assertThat(saved.getContextEstimated()).isTrue();
@@ -76,6 +82,7 @@ class ChatHistoryMetaTest {
         fresh.setTotalTokens(190L);
         fresh.setLatencyMs(4200);
         fresh.setSources("[{\"url\":\"https://a.com/1\",\"title\":\"A1\"}]");
+        fresh.setSteps("[{\"type\":\"progress\",\"text\":\"分析中\"}]");
         fresh.setContextTokens(201_000L);
         fresh.setContextWindow(256_000);
         fresh.setContextEstimated(false);
@@ -97,5 +104,8 @@ class ChatHistoryMetaTest {
         // 来源同理：没搜过的行是 null 不是空列表
         assertThat(messages.get(1).sources()).isNull();
         assertThat(messages.get(2).sources()).extracting(SearchEvent.Source::url).containsExactly("https://a.com/1");
+        // 过程事件同理：老数据是 null，新行原样回读
+        assertThat(messages.get(1).steps()).isNull();
+        assertThat(messages.get(2).steps().get(0).get("type").asString()).isEqualTo("progress");
     }
 }

@@ -97,7 +97,9 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
     () => blocks.filter(b => b.kind === 'rail').map(b => b.key),
     [blocks],
   );
-  const anyRailOpen = railKeys.some(k => !railClosed[k]);
+  // 没点过的轨：实时长出来的开着，历史回放的收着
+  const railOpen = (key: string, replayed: boolean) => (key in railClosed ? !railClosed[key] : !replayed);
+  const anyRailOpen = blocks.some(b => b.kind === 'rail' && railOpen(b.key, b.replayed));
   const toggleAllRails = useCallback(() => {
     setRailClosed(Object.fromEntries(railKeys.map(k => [k, anyRailOpen])));
   }, [railKeys, anyRailOpen]);
@@ -328,7 +330,7 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
                       steps={block.steps}
                       live={block.key === liveRailKey}
                       since={turnStartedAt}
-                      open={!railClosed[block.key]}
+                      open={railOpen(block.key, block.replayed)}
                       onToggle={() => setRailClosed(prev => ({ ...prev, [block.key]: !prev[block.key] }))}
                     />
                   );

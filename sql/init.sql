@@ -495,6 +495,8 @@ CREATE TABLE IF NOT EXISTS workbench_chat_message (
     latency_ms  INT,
     -- 这一轮联网搜索的来源 [{url,title}]，只有搜过的 assistant 行有值
     sources     JSONB,
+    -- 这一轮的过程事件（阶段/工具调用/搜索/子运行），和推给前端的 SSE 帧同形，只有 assistant 行有值
+    steps       JSONB,
     -- 这一轮结束时的上下文用量（对话框底栏计量条），只有正常作答的 assistant 行有值
     context_tokens    BIGINT,
     context_window    INT,
@@ -509,6 +511,8 @@ COMMENT ON COLUMN workbench_chat_message.model_label IS '这一轮用的对话�
 COMMENT ON COLUMN workbench_chat_message.total_tokens IS '本轮主agent与整理上下文的模型调用token合计(后台子运行另记账,不在内);NULL=上游端点没返回usage或本轮被中断账不可信,不是0';
 COMMENT ON COLUMN workbench_chat_message.latency_ms IS '本轮墙钟耗时:准入与建叶子之后开跑起算;比[TurnMetrics]日志多一帧session与user行落库';
 COMMENT ON COLUMN workbench_chat_message.sources IS '这一轮联网搜索搜到/引用的来源 [{url,title}],按url去重;答案底部展示;没搜过或老数据为NULL';
+ALTER TABLE workbench_chat_message ADD COLUMN IF NOT EXISTS steps JSONB;
+COMMENT ON COLUMN workbench_chat_message.steps IS '这一轮的过程事件数组[{type,...}](阶段/工具调用/搜索/子运行),与SSE帧同形;重开历史时前端据它重建过程轨;老数据与user行为NULL';
 COMMENT ON COLUMN workbench_chat_message.context_tokens IS '这一轮结束时的上下文用量(token):最后一次模型调用的输入+输出,上游没报就按字数估;给对话框底栏计量条用;中断的轮与老数据为NULL';
 COMMENT ON COLUMN workbench_chat_message.context_window IS '这一轮时对话主模型端点配的上下文窗口(token)';
 COMMENT ON COLUMN workbench_chat_message.context_estimated IS 'TRUE=上游没报用量,context_tokens是按字数估的(界面显示约数)';

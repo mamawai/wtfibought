@@ -714,6 +714,8 @@ export interface WorkbenchChatMessage {
   meta?: TurnMeta | null;
   /** 这一轮联网搜索的来源；没搜过或老数据是 null */
   sources?: SearchSource[] | null;
+  /** 这一轮的过程事件（阶段/工具调用/搜索/子运行），和 SSE 帧同形；user 行与老数据是 null */
+  steps?: WorkbenchEvent[] | null;
   /**
    * 后端自己写进历史的特殊行的码（服务端 ChatRowKind），普通行为 null：
    * deferred=补答行（不给重新生成）、hitlResume=批准后自动补发的续跑指令（还原成过程轨）。

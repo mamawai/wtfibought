@@ -196,7 +196,7 @@ class ChatWakeTest {
 
         String header = ChatTestEndpoints.PROMPTS.get(AgentLang.ZH, "chat.wake.header");
         verify(history, never()).append(any(), anyLong(), eq("user"), any());
-        verify(history).append(eq(SESSION), eq(1L), eq("assistant"), eq(header + "\n\n补充内容"), any(), any());
+        verify(history).append(eq(SESSION), eq(1L), eq("assistant"), eq(header + "\n\n补充内容"), any(), any(), any());
         // 标头先于正文作为第一帧答案 token 推出
         assertThat(frames).anyMatch(f -> f.contains(header));
     }

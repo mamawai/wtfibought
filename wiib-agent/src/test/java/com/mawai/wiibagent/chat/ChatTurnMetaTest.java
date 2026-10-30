@@ -21,6 +21,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -126,7 +127,7 @@ class ChatTurnMetaTest {
     private static ChatHistoryService.TurnMeta capturedMeta(ChatHistoryService history) {
         ArgumentCaptor<ChatHistoryService.TurnMeta> captor =
                 ArgumentCaptor.forClass(ChatHistoryService.TurnMeta.class);
-        verify(history).append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), captor.capture(), any());
+        verify(history).append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), captor.capture(), any(), any());
         return captor.getValue();
     }
 
@@ -153,9 +154,13 @@ class ChatTurnMetaTest {
         assertThat(done.get("sources")).extracting(s -> s.path("url").asString(null))
                 .containsExactly("https://a.com/1", "https://b.com/2");
         ArgumentCaptor<List<SearchEvent.Source>> sources = ArgumentCaptor.captor();
-        verify(h.history()).append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), any(), sources.capture());
+        ArgumentCaptor<ArrayNode> steps = ArgumentCaptor.captor();
+        verify(h.history()).append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), any(), sources.capture(), steps.capture());
         assertThat(sources.getValue()).extracting(SearchEvent.Source::url)
                 .containsExactly("https://a.com/1", "https://b.com/2");
+        // 搜索过程随答案落库：开搜、搜完两步，引用不算过程轨的一步
+        assertThat(steps.getValue()).extracting(s -> s.path("type").asString(null) + ":" + s.path("phase").asString(null))
+                .containsExactly("search:searching", "search:searched");
     }
 
     /** 这一轮结束时的上下文用量随 done 下发并落库：刷新后底栏计量条还在 */
@@ -199,7 +204,7 @@ class ChatTurnMetaTest {
         ArgumentCaptor<ChatHistoryService.TurnMeta> captor =
                 ArgumentCaptor.forClass(ChatHistoryService.TurnMeta.class);
         verify(h.history(), org.mockito.Mockito.times(2))
-                .append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), captor.capture(), any());
+                .append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), captor.capture(), any(), any());
         ChatHistoryService.TurnMeta meta = captor.getAllValues().get(0);
         assertThat(meta.modelLabel()).isEqualTo(LABEL);
         assertThat(meta.modelCalls()).isEqualTo(2);
