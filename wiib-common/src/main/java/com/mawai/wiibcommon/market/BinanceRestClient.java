@@ -3,6 +3,8 @@ import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 import com.mawai.wiibcommon.config.BinanceProperties;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.client.ClientHttpRequestInterceptor;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
@@ -38,9 +40,33 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
      */
     private final AtomicLong blockedUntil = new AtomicLong();
 
+    /** 合约站的已用权重读数，每个合约站回包更新 */
+    private final BinanceWeightMeter weight = new BinanceWeightMeter();
+
     public BinanceRestClient(BinanceProperties props) {
         this.props = props;
         this.restTemplate = createRestTemplate(5000, 10000);
+        this.restTemplate.setInterceptors(List.of(weightInterceptor(weight, hostOf(props.getFuturesRestBaseUrl()))));
+    }
+
+    /** 每个回包（含 429 的）都经过这里：打到合约站的，把已用权重头读进读数；现货站是另一套计数，跳过 */
+    static ClientHttpRequestInterceptor weightInterceptor(BinanceWeightMeter meter, String futuresHost) {
+        return (request, body, execution) -> {
+            ClientHttpResponse response = execution.execute(request, body);
+            if (futuresHost != null && futuresHost.equals(request.getURI().getHost())) {
+                meter.record(response.getHeaders().getFirst(BinanceWeightMeter.HEADER));
+            }
+            return response;
+        };
+    }
+
+    /** 没配合约站地址就 null */
+    private static String hostOf(String baseUrl) {
+        return baseUrl == null || baseUrl.isBlank() ? null : URI.create(baseUrl).getHost();
+    }
+
+    public BinanceWeightMeter weight() {
+        return weight;
     }
 
     /**

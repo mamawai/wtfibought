@@ -9,6 +9,7 @@ import com.mawai.wiibagent.runtime.AiAgentRuntimeManager;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -35,7 +36,8 @@ class AiAgentAdminControllerTest {
     private final ByokModelBuilder builder = mock(ByokModelBuilder.class);
     private final AiAgentAdminController controller = new AiAgentAdminController(runtime, configMapper,
             mock(AiModelAssignmentMapper.class), builder, mock(NewsEventCollector.class), mock(JevPlatformConfig.class),
-            mock(JevPredictionSwitch.class), mock(JevPredictionRuns.class), new MessageCatalog());
+            mock(JevPredictionSwitch.class), mock(JevPredictionRuns.class), new MessageCatalog(),
+            mock(BinanceRestClient.class));
 
     private static AiRuntimeConfig saved() {
         AiRuntimeConfig c = new AiRuntimeConfig();

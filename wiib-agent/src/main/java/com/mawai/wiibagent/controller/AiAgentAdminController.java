@@ -9,6 +9,8 @@ import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
+import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibcommon.market.BinanceWeightMeter;
 import com.mawai.wiibagent.jev.JevPlatformConfig;
 import com.mawai.wiibagent.jev.predictor.JevPredictionRuns;
 import com.mawai.wiibagent.jev.predictor.JevPredictionSwitch;
@@ -53,6 +55,15 @@ public class AiAgentAdminController {
     private final JevPredictionRuns jevRuns;
     /** 管理页的校验与回执跟界面语言 */
     private final MessageCatalog messages;
+    private final BinanceRestClient binanceRestClient;
+
+    // ========== Binance 权重 ==========
+
+    @GetMapping("/binance-weight")
+    @Operation(summary = "Binance 合约站（fapi）当前已用权重（按 IP 算、每分钟归零；60 秒没新回包按 0）")
+    public Result<BinanceWeightMeter.Reading> binanceWeight() {
+        return Result.ok(binanceRestClient.weight().reading());
+    }
 
     // ========== API Key 管理 ==========
 
