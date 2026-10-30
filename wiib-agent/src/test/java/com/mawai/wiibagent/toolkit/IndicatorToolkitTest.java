@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class IndicatorToolkitTest {
@@ -58,6 +59,19 @@ class IndicatorToolkitTest {
 
         // [openTime,open,high,low,close,volume]，尾随零砍掉
         assertThat(out).isEqualTo("[[1720000000000,100,110,95,105,1000]]");
+    }
+
+    /** 2025-09-04 23:33 北京 = 15:33:00 UTC = 1_756_999_980_000 */
+    @Test
+    void 传截止时间_按北京时间换成毫秒交给取数层_不传就是截止现在() {
+        KlineFetcher fetcher = mock(KlineFetcher.class);
+        when(fetcher.fetch("BTCUSDT", "1h", 192, 1_756_999_980_000L))
+                .thenReturn(List.of(bar(1_756_996_800_000L, "100", "110", "95", "105", "1000")));
+        IndicatorToolkit toolkit = new IndicatorToolkit(fetcher);
+
+        assertThat(toolkit.klines("BTCUSDT", "1h", "2025-09-04 23:33")).contains("1756996800000");
+        assertThat(toolkit.klines("BTCUSDT", "1h", null)).contains("unavailable");
+        verify(fetcher).fetch("BTCUSDT", "1h", 192, null);
     }
 
     // ==================== kline_structure 工具层 ====================
@@ -123,7 +137,7 @@ class IndicatorToolkitTest {
 
     @Test
     void klineStructureReturnsNeutralBlocks() {
-        String out = toolkitWith(80).klineStructure("BTCUSDT", "5m", null, null, null);
+        String out = toolkitWith(80).klineStructure("BTCUSDT", "5m", null, null, null, null);
         JsonNode o = MAPPER.readTree(out);
 
         assertThat(o.get("errors")).isEmpty();
@@ -143,9 +157,9 @@ class IndicatorToolkitTest {
         IndicatorToolkit toolkit = toolkitWith(300);
 
         BigDecimal fromStructure = MAPPER.readTree(
-                        toolkit.klineStructure("BTCUSDT", "1h", null, null, false))
+                        toolkit.klineStructure("BTCUSDT", "1h", null, null, false, null))
                 .get("volatility").path("atr14").asDecimal(null);
-        BigDecimal fromIndicators = MAPPER.readTree(toolkit.indicators("BTCUSDT", "1h"))
+        BigDecimal fromIndicators = MAPPER.readTree(toolkit.indicators("BTCUSDT", "1h", null))
                 .path("atr14").asDecimal(null);
 
         assertThat(fromStructure).isEqualByComparingTo(fromIndicators);
@@ -169,7 +183,7 @@ class IndicatorToolkitTest {
         IndicatorToolkit toolkit = toolkitWith(192);
         toolkit.nowMs = () -> LAST_OPEN + 1_000L;
 
-        assertThat(toolkit.indicators("BTCUSDT", "5m")).isEqualTo(expectedIndicators(191));
+        assertThat(toolkit.indicators("BTCUSDT", "5m", null)).isEqualTo(expectedIndicators(191));
     }
 
     @Test
@@ -178,7 +192,7 @@ class IndicatorToolkitTest {
         IndicatorToolkit toolkit = toolkitWith(192);
         toolkit.nowMs = () -> LAST_CLOSE + 1L;
 
-        assertThat(toolkit.indicators("BTCUSDT", "5m")).isEqualTo(expectedIndicators(192));
+        assertThat(toolkit.indicators("BTCUSDT", "5m", null)).isEqualTo(expectedIndicators(192));
     }
 
     @Test
@@ -187,16 +201,16 @@ class IndicatorToolkitTest {
         IndicatorToolkit toolkit = toolkitWith(192);
         toolkit.nowMs = () -> LAST_OPEN + 1_000L;
 
-        JsonNode structure = MAPPER.readTree(toolkit.klineStructure("BTCUSDT", "5m", null, null, false));
+        JsonNode structure = MAPPER.readTree(toolkit.klineStructure("BTCUSDT", "5m", null, null, false, null));
         assertThat(structure.get("meta").path("bar_count").asInt(0)).isEqualTo(191);
         assertThat(structure.get("meta").path("end_time_ms").asLong(0)).isEqualTo(LAST_OPEN - 300_000L);
-        assertThat(MAPPER.readTree(toolkit.klines("BTCUSDT", "5m"))).hasSize(192);
+        assertThat(MAPPER.readTree(toolkit.klines("BTCUSDT", "5m", null))).hasSize(192);
     }
 
     @Test
     void klineStructureDropsFocusBarsOnRequest() {
         String out = toolkitWith(80)
-                .klineStructure("BTCUSDT", "5m", null, null, false);
+                .klineStructure("BTCUSDT", "5m", null, null, false, null);
 
         assertThat(MAPPER.readTree(out).has("focus_bars")).isFalse();
     }
@@ -205,7 +219,7 @@ class IndicatorToolkitTest {
     void klineStructureClampsAbsurdSwingWindow() {
         // 窗口开到比数据还长时 swings 会空，但不许炸——夹取后照常出其余字段
         String out = toolkitWith(80)
-                .klineStructure("BTCUSDT", "5m", 9999, -5, null);
+                .klineStructure("BTCUSDT", "5m", 9999, -5, null, null);
         JsonNode o = MAPPER.readTree(out);
 
         assertThat(o.get("errors")).isEmpty();
@@ -215,14 +229,14 @@ class IndicatorToolkitTest {
     @Test
     void klineStructureDegradesWhenDataUnavailable() {
         // 熔断/网络失败时 getFuturesKlines 给 null，工具要报不可用而不是抛异常
-        String out = toolkitUnavailable().klineStructure("BTCUSDT", "5m", null, null, null);
+        String out = toolkitUnavailable().klineStructure("BTCUSDT", "5m", null, null, null, null);
 
         assertThat(MAPPER.readTree(out).path("available").asBoolean(false)).isFalse();
     }
 
     @Test
     void klineStructureRejectsBadInterval() {
-        String out = toolkitWith(80).klineStructure("BTCUSDT", "1m", null, null, null);
+        String out = toolkitWith(80).klineStructure("BTCUSDT", "1m", null, null, null, null);
 
         assertThat(MAPPER.readTree(out).path("reason").asString(null)).contains("interval");
     }

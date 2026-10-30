@@ -83,6 +83,8 @@ tool:
     末行是否走完按 openTime 判断：openTime 加一个周期晚于现在就还在走。只有这个工具带着在走的那根；
     `indicators` 与 `kline_structure` 都只按已收盘的算。
     interval：5m/15m/1h/4h/1d——192 根分别覆盖 16小时 / 2天 / 8天 / 32天 / 192天。
+    可选 endTime（北京时间 yyyy-MM-dd HH:mm）：窗口改为以那个时刻结尾（含它所在那根），看过去某一天、
+    某次事件前后用；不传就是截止现在。三个工具传同一个 endTime 还是同一段数据。
     当你的方法需要逐根读 K 线时才调它：验证 K 线形态、套用你自己的摆动/结构定义、
     或细看 `kline_structure` 指给你的某一段。这是唯一给全每一根的工具——`kline_structure`
     也带原始 K 线，但只有最近的和各关键点附近的。
@@ -91,7 +93,8 @@ tool:
 
   indicators: |-
     获取标的的全套经典技术指标，按指定周期（5m/15m/1h/4h/1d）用与 `klines` 同一段 192 根窗口里已收盘的 K 线计算；
-    还在走的那根不算进来，下文说的"末根"一律指刚收盘的那根。字段：
+    还在走的那根不算进来，下文说的"末根"一律指刚收盘的那根。传了 endTime 就按以它结尾的那段历史窗口算，
+    和传同一个 endTime 的 `klines` 是同一段。字段：
     ma7/ma25/ma99 + ema12/ema20/ema26（均线）；ma_alignment：1=MA7>MA25>MA99 多头排列，-1=空头排列，0=纠缠；
     rsi14 + rsi14_trend（>70 超买，<30 超卖）；
     macd_dif/dea/hist + macd_hist_trend（动量）；macd_cross 只在末根刚发生金叉/死叉时出现（golden/death），没发生就没这个字段；
@@ -105,6 +108,7 @@ tool:
   kline_structure: |-
     与 `klines` 同一段 192 根窗口里已收盘 K 线的结构摘要——路径、分段、量价分布与关键价位，都替你算好；
     `klines` 末行那根在走的不算进来。只给中性事实：不下趋势/反转结论，判断是你的事。
+    传了 endTime 就是以它结尾的那段历史窗口，和传同一个 endTime 的 `klines` 是同一段。
     用数字前先读这几条：
     - atr14 是 Wilder RMA——与 `indicators` 工具报的完全同值。avg_tr_* 是 True Range 的
       简单算术平均：记忆更短、更贴当前波动，但它不是 ATR，两者绝不能混用。
@@ -153,6 +157,18 @@ tool:
     - entryClusters / liqClusters：按开仓价 / 按强平价分桶，每边各给名义最大的 5 桶（bucketWidth 是现价的
       0.25% / 0.5%，price 是桶下界）。均价会把双峰抹平，看桶才看得出成本分布
     样本小、鲸鱼主导（看 count、top1Share、coverage），场外对冲看不到。
+
+  # ---- 跨资产快照（chat 主 agent 挂）：Yahoo 取的美股、美元、美债、VIX、黄金、原油报价 ----
+  cross_asset_snapshot: |-
+    宏观跨资产快照（Yahoo Finance）：标普 500 与纳斯达克综合指数（现货指数，只在美股交易时段动）、
+    标普 500 与纳斯达克 100 期货（接近 24 小时交易）、美元指数、美国十年期国债收益率（单位 %）、VIX、
+    黄金期货（美元/盎司）、WTI 原油期货（美元/桶）。每个品种给 price 现价、changePct1d 相对昨收的涨跌幅（%）、
+    changePct5d 相对 5 个交易日前收盘的涨跌幅（%）、time 报价时刻（北京时间）。
+    十年美债那行的涨跌是收益率数值本身的百分比变化，不是基点。
+    拿 time 和 now 比：美股休市时现货指数就是上次收盘价。非官方来源，报价可能延迟最多 15 分钟。
+    黄金、原油平台上也有合约（XAUUSDT / CLUSDT），那是平台合约价，用 market_snapshot 查。
+
+  # ---- trader 只读档案工具（chat 主 agent 持有；userId 建叶子时烤死）----
   trader_overview: |-
     获取当前用户 AI 交易员的概况：状态（RUNNING/PAUSED/LIQUIDATED 及原因）、权益与初始资金、
     轮次、交易标的、唤醒周期、仓位规格、上次/下次唤醒时刻与当前不能唤醒的原因（能唤醒为 null），

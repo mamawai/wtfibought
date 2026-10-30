@@ -61,6 +61,7 @@ trader:
       · the last bar of klines is usually still forming (its openTime plus one interval is later than
         now); the closed bar is the one before it. kline_structure and indicators use closed bars only
         and leave the forming one out
+      · all three take an optional endTime ("yyyy-MM-dd HH:mm", UTC+8) that ends the window there instead of now
       When you want both, pass includeBars=false to kline_structure so you do not pay for the same bars twice
     - market_snapshot / funding_history / orderbook_depth / option_iv: funding, open interest, long/short ratio, liquidations, order book, IV
     - news_search: the recent news flashes in full (no parameters, no keyword search)

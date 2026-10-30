@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.toolkit;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 
+import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.market.indicator.CryptoIndicatorCalculator;
@@ -13,6 +14,8 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +60,13 @@ public class IndicatorToolkit {
     private static final int KLINE_BARS = 192;
     /** swing 半窗上限：window*2+1 得装得下，192 根理论到 95；卡 50 是不让模型把窗口开到没有 swing 可出 */
     private static final int MAX_SWING_WINDOW = 50;
+    /** 截止时间参数的格式，按北京时间读 */
+    private static final DateTimeFormatter END_TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    /** 三个工具共用的截止时间参数说明 */
+    private static final String END_TIME_DESC = """
+            Optional window end, "yyyy-MM-dd HH:mm" in UTC+8 (Beijing time): the 192 bars then end at the
+            bar containing that moment instead of now. Use it for a past stretch (a specific day, around an
+            event). Omit for the latest bars ending now.""";
 
     private final KlineFetcher klineFetcher;
     /** 墙钟注入点：末根走没走完要测得了 */
@@ -71,6 +81,8 @@ public class IndicatorToolkit {
             than now means it is still running. This is the only tool that includes that forming row;
             `indicators` and `kline_structure` work on closed bars only.
             interval: 5m/15m/1h/4h/1d — 192 bars span 16h / 2d / 8d / 32d / 192d respectively.
+            endTime (optional) ends the window at a past moment instead of now; the three tools called
+            with the same endTime still read one shared window.
             Call it when your method requires reading the candles bar by bar: verifying candle
             patterns, applying your own swing or structure definition, or inspecting a stretch
             that `kline_structure` pointed you at. This is the only tool that gives you every
@@ -79,13 +91,14 @@ public class IndicatorToolkit {
             If you also call `kline_structure` on the same symbol+interval, pass
             includeBars=false there so its focus_bars don't repeat these rows.""")
     public String klines(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
-                         @ToolParam(description = "Interval: 5m/15m/1h/4h/1d") String interval) {
+                         @ToolParam(description = "Interval: 5m/15m/1h/4h/1d") String interval,
+                         @ToolParam(required = false, description = END_TIME_DESC) String endTime) {
         String err = validateInterval(interval);
         if (err != null) {
             return error(err);
         }
         String sym = QuantConstants.normalizeSymbolLenient(symbol);
-        List<KlineBar> bars = klineFetcher.fetch(sym, interval, KLINE_BARS);
+        List<KlineBar> bars = klineFetcher.fetch(sym, interval, KLINE_BARS, endTimeMs(endTime));
         return bars.isEmpty() ? error("kline data unavailable") : toCompactRows(bars);
     }
 
@@ -93,7 +106,8 @@ public class IndicatorToolkit {
             Get the full classic technical indicator set for a crypto perpetual symbol, computed
             on the requested interval (5m/15m/1h/4h/1d) over the closed candles of the same 192-bar
             window `klines` returns. The still-forming candle is left out, so "last bar" below always
-            means the bar that just closed. Fields:
+            means the bar that just closed. With endTime the window ends at that past moment instead
+            (the same window `klines` gives for the same endTime). Fields:
             ma7/ma25/ma99 + ema12/ema20/ema26 (moving averages); ma_alignment: 1 = MA7>MA25>MA99 bullish
             stacking, -1 = bearish stacking, 0 = tangled;
             rsi14 + rsi14_trend (>70 overbought, <30 oversold);
@@ -109,13 +123,14 @@ public class IndicatorToolkit {
             close_trend. Every *_trend field is one of rising_5 (5 consecutive rises), falling_5, mostly_up,
             mostly_down, sideways.""")
     public String indicators(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
-                             @ToolParam(description = "Interval: 5m/15m/1h/4h/1d") String interval) {
+                             @ToolParam(description = "Interval: 5m/15m/1h/4h/1d") String interval,
+                             @ToolParam(required = false, description = END_TIME_DESC) String endTime) {
         String err = validateInterval(interval);
         if (err != null) {
             return error(err);
         }
         String sym = QuantConstants.normalizeSymbolLenient(symbol);
-        List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, interval, KLINE_BARS), nowMs.getAsLong());
+        List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, interval, KLINE_BARS, endTimeMs(endTime)), nowMs.getAsLong());
         if (bars.isEmpty()) {
             return error("kline data unavailable");
         }
@@ -126,7 +141,8 @@ public class IndicatorToolkit {
             Structural summary of the closed candles in the same 192-bar window that `klines`
             returns — path, segments, volume-by-price and key levels, computed for you. The
             still-forming last row of `klines` is left out. Neutral facts only: no trend or
-            reversal calls, that judgement is yours.
+            reversal calls, that judgement is yours. With endTime the window ends at that past
+            moment instead (the same window `klines` gives for the same endTime).
             Read these before using the numbers:
             - atr14 is Wilder RMA — the exact same value the `indicators` tool reports. avg_tr_* is a
               plain arithmetic mean of True Range: shorter memory, tracks current volatility, and is
@@ -154,7 +170,8 @@ public class IndicatorToolkit {
             @ToolParam(required = false, description = """
                     Include focus_bars — raw candles for the last N plus those around the high /
                     low / max-volume bar (default true). Pass false if you already called klines.""")
-            Boolean includeBars) {
+            Boolean includeBars,
+            @ToolParam(required = false, description = END_TIME_DESC) String endTime) {
         String err = validateInterval(interval);
         if (err != null) {
             return error(err);
@@ -167,7 +184,7 @@ public class IndicatorToolkit {
         boolean withBars = includeBars == null || includeBars;
         // 与 klines 同一个 KLINE_BARS 窗口：两边 idx 才对得上，
         // 模型看到"最大量在 idx=128"能直接回 klines 那份数据里翻第 128 行
-        List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, interval, KLINE_BARS), nowMs.getAsLong());
+        List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, interval, KLINE_BARS, endTimeMs(endTime)), nowMs.getAsLong());
         if (bars.isEmpty()) {
             return error("kline data unavailable");
         }
@@ -203,6 +220,12 @@ public class IndicatorToolkit {
             }
         }
         return MAPPER.writeValueAsString(out);
+    }
+
+    /** 模型传的截止时间 → 毫秒；没传就是截止现在。格式不对抛出，由 FailureAsResult 原样报给模型 */
+    private static Long endTimeMs(String endTime) {
+        return endTime == null || endTime.isBlank() ? null
+                : LocalDateTime.parse(endTime.strip(), END_TIME_FMT).atZone(WakeWindow.ZONE).toInstant().toEpochMilli();
     }
 
     /** 返回 null=合法；否则给模型看的错误说明。 */

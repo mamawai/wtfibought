@@ -23,6 +23,7 @@ import com.mawai.wiibagent.llm.ModelCallLimiter;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.llm.WebSearchTool;
+import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
@@ -83,6 +84,7 @@ public class ChatAgentFactory {
     private final EconCalendarToolkit econCalendarToolkit;
     private final WhaleToolkit whaleToolkit;
     private final DerivativesToolkit derivativesToolkit;
+    private final CrossAssetToolkit crossAssetToolkit;
     private final DeepAnalysisService deepAnalysisService;
     /** 行为分析的准入层（缓存/负缓存/并发闸门都在它那儿），工具只经它跑 */
     private final BehaviorAnalysisService behaviorAnalysisService;
@@ -131,6 +133,7 @@ public class ChatAgentFactory {
                             EconCalendarToolkit econCalendarToolkit,
                             WhaleToolkit whaleToolkit,
                             DerivativesToolkit derivativesToolkit,
+                            CrossAssetToolkit crossAssetToolkit,
                             DeepAnalysisService deepAnalysisService,
                             BehaviorAnalysisService behaviorAnalysisService,
                             TraderChatService traderChatService,
@@ -148,6 +151,7 @@ public class ChatAgentFactory {
         this.econCalendarToolkit = econCalendarToolkit;
         this.whaleToolkit = whaleToolkit;
         this.derivativesToolkit = derivativesToolkit;
+        this.crossAssetToolkit = crossAssetToolkit;
         this.deepAnalysisService = deepAnalysisService;
         this.behaviorAnalysisService = behaviorAnalysisService;
         this.traderChatService = traderChatService;
@@ -274,13 +278,14 @@ public class ChatAgentFactory {
                 .maxAttempts(3).initialDelay(500).maxDelay(4000);
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         toolsWithSearch(client, endpoint, deep, lang,
-                // 行情 ×4 / K线与指标 ×3 / 衍生品序列 / 新闻 / 财经日历 / 大户持仓 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
+                // 行情 ×4 / K线与指标 ×3 / 衍生品序列 / 新闻 / 财经日历 / 大户持仓 / 跨资产快照 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
                 marketToolkit,
                 indicatorToolkit,
                 derivativesToolkit,
                 newsToolkit.boundTo(lang),
                 econCalendarToolkit,
                 whaleToolkit,
+                crossAssetToolkit,
                 new DeepAnalysisToolkit(deepBase, deepAnalysisService, childRuns, prompts, userId, lang),
                 new TraderQueryToolkit(traderChatService, userId, lang),
                 new TraderActionToolkit(runRegistry, userId, prompts, lang),

@@ -11,6 +11,7 @@ import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.WorkerKind;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
+import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
@@ -54,6 +55,7 @@ class ChatAgentFactoryTest {
         return new ChatAgentFactory(chatModelFactory,
                 mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
+                mock(CrossAssetToolkit.class),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
                 mock(WorkbenchRunRegistry.class), ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
@@ -106,7 +108,7 @@ class ChatAgentFactoryTest {
                 .map(ToolCallback::getToolDefinition).map(d -> d.name()).toList();
     }
 
-    /** 行情 ×4 / K线与指标 ×3 / 衍生品序列 / 新闻 / 财经日历 / 大户持仓 / 深研判 / trader 只读 ×5 / trader 动作 ×3 / 行为分析 / 派子 agent，全在主 agent 一张表上 */
+    /** 行情 ×4 / K线与指标 ×3 / 衍生品序列 / 新闻 / 财经日历 / 大户持仓 / 跨资产快照 / 深研判 / trader 只读 ×5 / trader 动作 ×3 / 行为分析 / 派子 agent，全在主 agent 一张表上 */
     @Test
     void 主agent工具表齐全() {
         ChatModel model = ChatTestEndpoints.model();
@@ -119,7 +121,7 @@ class ChatAgentFactoryTest {
                 "klines", "indicators", "kline_structure",
                 "derivatives_history",
                 "news_search",
-                "econ_calendar", "whale_positions",
+                "econ_calendar", "whale_positions", "cross_asset_snapshot",
                 "run_deep_analysis",
                 "trader_overview", "trader_positions", "trader_decisions", "trader_plans", "trader_trades",
                 "wake_trader", "review_trader_now", "leave_note_to_trader",

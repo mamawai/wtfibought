@@ -64,6 +64,39 @@ class KlineFetcherTest {
     }
 
     @Test
+    void 截止时间进缓存键_同一截止时间共用一份_不同的各拉各的() {
+        when(client.getFuturesKlines(anyString(), anyString(), anyInt(), eq(1_700_000_000_000L))).thenReturn(rawKlines(192));
+        when(client.getFuturesKlines(anyString(), anyString(), anyInt(), eq(1_700_003_600_000L))).thenReturn(rawKlines(192));
+        KlineFetcher f = fetcher();
+
+        f.fetch("BTCUSDT", "1h", 192, 1_700_000_000_000L);
+        f.fetch("BTCUSDT", "1h", 192, 1_700_000_000_000L);
+        f.fetch("BTCUSDT", "1h", 192, 1_700_003_600_000L);
+
+        verify(client, times(1)).getFuturesKlines("BTCUSDT", "1h", 192, 1_700_000_000_000L);
+        verify(client, times(1)).getFuturesKlines("BTCUSDT", "1h", 192, 1_700_003_600_000L);
+    }
+
+    @Test
+    void 已收盘的历史窗口存一天_截止时间落在当前这根的按实时规则() {
+        long closedEnd = HOUR_BOUNDARY - 5 * 3_600_000L;   // 5 小时前那根，早收盘了
+        long formingEnd = HOUR_BOUNDARY + 600_000L;         // 落在整点后这根，还在走
+        when(client.getFuturesKlines(anyString(), anyString(), anyInt(), eq(closedEnd))).thenReturn(rawKlines(192));
+        when(client.getFuturesKlines(anyString(), anyString(), anyInt(), eq(formingEnd))).thenReturn(rawKlines(192));
+        KlineFetcher f = fetcher();
+        f.nowMs = () -> HOUR_BOUNDARY + 10_000L;
+
+        f.fetch("BTCUSDT", "1h", 192, closedEnd);
+        f.fetch("BTCUSDT", "1h", 192, formingEnd);
+        f.nowMs = () -> HOUR_BOUNDARY + 3 * 3_600_000L;
+        f.fetch("BTCUSDT", "1h", 192, closedEnd);
+        f.fetch("BTCUSDT", "1h", 192, formingEnd);
+
+        verify(client, times(1)).getFuturesKlines("BTCUSDT", "1h", 192, closedEnd);
+        verify(client, times(2)).getFuturesKlines("BTCUSDT", "1h", 192, formingEnd);
+    }
+
+    @Test
     void shorterRequestSlicesFromLongerCache() {
         // 这是整层的核心收益：klines 拉过 192 之后，indicators 要 120 根不该再打网络
         when(client.getFuturesKlines(anyString(), anyString(), eq(192), isNull())).thenReturn(rawKlines(192));

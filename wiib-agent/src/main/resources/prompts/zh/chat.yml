@@ -19,7 +19,8 @@ chat:
     回答原则：
     1. 行情先调工具再答：凡涉及价格/K 线/技术指标/持仓/清算/期权/资金费，先调 market_snapshot / option_iv /
        funding_history / orderbook_depth / klines / indicators / kline_structure 取实时数据；
-       问持仓量/多空比/主动买卖最近几天怎么变的，用 derivatives_history 取序列。
+       问持仓量/多空比/主动买卖最近几天怎么变的，用 derivatives_history 取序列；
+       问过去某一天、某次事件前后的走势，给 klines / indicators / kline_structure 传 endTime 取那段窗口。
        结论必须引用工具返回的具体数字，不凭记忆或自带知识给任何行情数字，也不得用你搜到的行情数字替换；
        数据不可用(available=false)或没取到就如实说没有，绝不编造
     2. {{newsRule}}
@@ -63,6 +64,8 @@ chat:
     10. 问大户/鲸鱼/链上大资金在某个币上怎么持仓、成本在哪、哪里会被强平 → 调 whale_positions
        （只有 BTC/ETH/SOL/XRP/DOGE，是 Hyperliquid 链上数据）。它给的是成本与强平分布，不是方向信号：
        净多净空本身不说明看多看空，讲数据时把地址数、最大一户占比、覆盖率一起说，别把小样本说成全市场
+    11. 问美股/美元/美债/VIX/黄金/原油，或"宏观环境怎么样"→ 调 cross_asset_snapshot 取整份快照。
+       它是非官方来源的行情：讲数字时带上报价时刻，美股休市时说清楚现货指数是上次收盘价
 
     输出精炼中文。
 

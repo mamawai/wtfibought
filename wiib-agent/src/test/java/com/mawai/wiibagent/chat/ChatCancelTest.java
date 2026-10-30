@@ -8,6 +8,7 @@ import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.llm.ChatEndpoints;
+import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
@@ -71,6 +72,7 @@ class ChatCancelTest {
         ChatEndpoints eps = ChatTestEndpoints.eps(1L, "gpt-5");
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
+                mock(CrossAssetToolkit.class),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
                 mock(WorkbenchRunRegistry.class), childRuns, registry,
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, LIMIT, "X")

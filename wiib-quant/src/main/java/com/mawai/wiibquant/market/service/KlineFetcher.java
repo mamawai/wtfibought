@@ -20,7 +20,7 @@ import java.util.function.LongSupplier;
  * K 线取数层：工具层共用的那一份行情，带 TTL 缓存；同一份数据并发要时只放一个去拉。
  * <p>
  * 缓存建在取数层而不是各工具结果上，这么写为了挡住网络那一侧：
- * 键只有 symbol+interval，一份数据能同时喂 klines / indicators / kline_structure 的任意参数组合。
+ * 键是 symbol+interval（历史窗口再带上截止时间），一份数据能同时喂 klines / indicators / kline_structure 的任意参数组合。
  * <p>
  * <b>按 symbol+interval 存一份，根数够就切片</b>：Binance 返回的是"最近 N 根"，
  * 所以 192 根天然含着 120 根。谁先拉了长的，后面要短的直接切，不再打网络。
@@ -28,6 +28,7 @@ import java.util.function.LongSupplier;
  * <p>
  * <b>缓存活不过 K 线边界</b>：TTL 和下一根边界取早的，末根一收盘就得重拉（见 {@link CacheExpiry}）；
  * 在途合并也只在同一根里——边界后来的调用不等边界前发出的请求。
+ * 截止时间那根已经收盘的历史窗口例外：一根都不会变，存一天。
  * <p>
  * <b>同一份数据只放一个线程去拉，其余等它</b>：几十个 trader 在同一个 5m 边界一起醒来、
  * 首轮又都被强制调工具，缓存这时必然已过期（TTL 60s < 唤醒周期 300s），
@@ -42,6 +43,9 @@ public class KlineFetcher {
      * 模型查什么就存什么——没有上限就是无界增长。128 够装下白名单几个币的全部周期还有富余。
      */
     private static final int MAX_ENTRIES = 128;
+
+    /** 已收盘的历史窗口的有效期 */
+    static final long CLOSED_WINDOW_TTL_MS = 86_400_000L;
 
     /** 周期的毫秒数，按它找 K 线边界 */
     private static final Map<String, Long> INTERVAL_MS = Map.of(
@@ -80,7 +84,12 @@ public class KlineFetcher {
      * 取不到时返回空表，调用方按"数据不可用"降级。
      */
     public List<KlineBar> fetch(String symbol, String interval, int limit) {
-        String key = symbol + ":" + interval;
+        return fetch(symbol, interval, limit, null);
+    }
+
+    /** @param endTimeMs 窗口以这个时刻结尾（含它所在那根）；null 就是截止现在 */
+    public List<KlineBar> fetch(String symbol, String interval, int limit, Long endTimeMs) {
+        String key = symbol + ":" + interval + (endTimeMs == null ? "" : ":" + endTimeMs);
         List<KlineBar> hit = fromCache(key, limit);
         if (hit != null) {
             return hit;
@@ -103,11 +112,11 @@ public class KlineFetcher {
                 return again;
             }
             List<KlineBar> bars = List.copyOf(KlineHistoryStore.parseRawFuturesKlines(
-                    binanceRestClient.getFuturesKlines(symbol, interval, limit, null)));
+                    binanceRestClient.getFuturesKlines(symbol, interval, limit, endTimeMs)));
             // 空表不进缓存：熔断/网络失败时存进去，接下来 60s 全都拿不到数据。
             // 有效期按发请求那一刻算：请求跨过边界才回来的，回包可能是边界前的
             if (!bars.isEmpty()) {
-                put(key, bars, CacheExpiry.at(now, ttlMillis, intervalMs));
+                put(key, bars, expireAt(now, intervalMs, endTimeMs));
             }
             mine.complete(bars);
             return bars;
@@ -118,6 +127,12 @@ public class KlineFetcher {
         } finally {
             inFlight.remove(flightKey, mine);
         }
+    }
+
+    /** 截止时间那根已收盘的窗口存一天；没传截止时间、或截止时间落在还在走的这根，按实时规则 */
+    private long expireAt(long now, long intervalMs, Long endTimeMs) {
+        boolean closed = endTimeMs != null && CacheExpiry.edge(endTimeMs, intervalMs) + intervalMs <= now;
+        return closed ? now + CLOSED_WINDOW_TTL_MS : CacheExpiry.at(now, ttlMillis, intervalMs);
     }
 
     /** 新鲜且根数够才算命中；返回最近 limit 根。 */

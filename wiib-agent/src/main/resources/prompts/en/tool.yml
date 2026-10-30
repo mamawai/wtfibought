@@ -100,6 +100,9 @@ tool:
     than now means it is still running. This is the only tool that includes that forming row;
     `indicators` and `kline_structure` work on closed bars only.
     interval: 5m/15m/1h/4h/1d — 192 bars span 16h / 2d / 8d / 32d / 192d respectively.
+    Optional endTime ("yyyy-MM-dd HH:mm", UTC+8) ends the window at that past moment instead of now
+    (the bar containing it is the last one) — for a specific day or the stretch around an event.
+    The three tools called with the same endTime still read one shared window.
     Call it when your method requires reading the candles bar by bar: verifying candle
     patterns, applying your own swing or structure definition, or inspecting a stretch
     that `kline_structure` pointed you at. This is the only tool that gives you every
@@ -112,7 +115,8 @@ tool:
     Get the full classic technical indicator set for a crypto perpetual symbol, computed
     on the requested interval (5m/15m/1h/4h/1d) over the closed candles of the same 192-bar
     window `klines` returns. The still-forming candle is left out, so "last bar" below always
-    means the bar that just closed. Fields:
+    means the bar that just closed. With endTime the window ends at that past moment instead
+    (the same window `klines` gives for the same endTime). Fields:
     ma7/ma25/ma99 + ema12/ema20/ema26 (moving averages); ma_alignment: 1 = MA7>MA25>MA99 bullish
     stacking, -1 = bearish stacking, 0 = tangled;
     rsi14 + rsi14_trend (>70 overbought, <30 oversold);
@@ -132,7 +136,8 @@ tool:
     Structural summary of the closed candles in the same 192-bar window that `klines`
     returns — path, segments, volume-by-price and key levels, computed for you. The
     still-forming last row of `klines` is left out. Neutral facts only: no trend or
-    reversal calls, that judgement is yours.
+    reversal calls, that judgement is yours. With endTime the window ends at that past moment
+    instead (the same window `klines` gives for the same endTime).
     Read these before using the numbers:
     - atr14 is Wilder RMA — the exact same value the `indicators` tool reports. avg_tr_* is a
       plain arithmetic mean of True Range: shorter memory, tracks current volatility, and is
@@ -196,6 +201,18 @@ tool:
       an average hides a two-peaked cost base, the clusters show it
     The sample is small and whale-dominated (read count, top1Share, coverage) and off-platform hedges
     are invisible.
+
+  # ---- Cross-asset snapshot (on the chat main agent): US equities, the dollar, Treasuries, VIX, gold and oil via Yahoo ----
+  cross_asset_snapshot: |-
+    Macro cross-asset snapshot (Yahoo Finance): S&P 500 and Nasdaq Composite (cash indices, move only
+    in US hours), S&P 500 and Nasdaq 100 futures (trade nearly 24h), US Dollar Index, US 10-year
+    Treasury yield (in %), VIX, gold futures (USD/oz) and WTI crude futures (USD/bbl). Per instrument:
+    price, changePct1d = change vs the previous close in %, changePct5d = change vs the close 5 sessions
+    ago in %, time = quote time (UTC+8). For the 10Y yield the changes are % moves of the yield level
+    itself, not basis points. Compare time with now: outside US hours a cash index is just the last
+    close. Unofficial source; quotes may lag by up to 15 minutes.
+    Gold and oil also trade as platform contracts (XAUUSDT / CLUSDT); that is the platform contract
+    price, looked up with market_snapshot.
 
   # ---- The trader read-only profile tools (held by the chat main agent; userId baked in at leaf build) ----
   trader_overview: |-

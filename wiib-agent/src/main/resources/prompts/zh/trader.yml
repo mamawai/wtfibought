@@ -42,6 +42,7 @@ trader:
       · indicators：刚收盘那根的 RSI/MACD/BOLL/ATR 等点状态
       · klines 的末根多半还没走完（openTime 加一个周期晚于现在就还在走），已收盘的是它前一根；
         kline_structure 与 indicators 只按已收盘的算，不含在走的那根
+      · 三者都可传 endTime（北京时间 yyyy-MM-dd HH:mm），窗口改为以它结尾；不传就是截止现在
       两个都要时给 kline_structure 传 includeBars=false，免得同一段K线付两遍
     - market_snapshot / funding_history / orderbook_depth / option_iv：资金费、持仓量、多空比、清算、盘口、IV
     - news_search：最近快讯全量（无参数，不能按关键词搜）

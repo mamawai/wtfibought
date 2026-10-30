@@ -128,7 +128,7 @@ POST /api/ai/workbench/chat
 
 | 叶子 | 模型 | 工具 | 特别之处 |
 |---|---|---|---|
-| `main`（主 agent） | 深 | 22 个（行情 4 + 指标 3 + `derivatives_history` + `news_search` + `econ_calendar` + `whale_positions` + 深研判 + trader 只读 5 + trader 动作 3 + 行为分析 + `delegate`） | `streaming(true)`，带 HITL 闸门、保险丝两样；同批 tool_call 并发；trader 工具与子运行的 userId 建叶子时烤死；不强制 `tool_choice`（Opus 5.5 这类模型不收 any / required），"先取数再答"写在系统提示词里 |
+| `main`（主 agent） | 深 | 23 个（行情 4 + 指标 3 + `derivatives_history` + `news_search` + `econ_calendar` + `whale_positions` + `cross_asset_snapshot` + 深研判 + trader 只读 5 + trader 动作 3 + 行为分析 + `delegate`） | `streaming(true)`，带 HITL 闸门、保险丝两样；同批 tool_call 并发；trader 工具与子运行的 userId 建叶子时烤死；不强制 `tool_choice`（Opus 5.5 这类模型不收 any / required），"先取数再答"写在系统提示词里 |
 | worker `researcher` | 轻 | `news_search` + 服务端搜索许可（看浅模型那条端点） | 无闸门，任务书是它唯一的用户消息，看不到主对话 |
 | worker `analyst` | 轻 | 行情 4 + 指标 3（`klines` / `indicators` / `kline_structure`） | 同上 |
 
@@ -179,7 +179,7 @@ childRuns.attachTurn(sessionId, inbox)   先挂收件箱
 - **先挂收件箱再读历史**：挂上之后到的报告进收件箱，`ReactLoop` 下一次调模型前追加到尾部；挂上之前到的已经在库里，随历史读进来。顺序反了就有一个窗口的报告两头都接不到。
 - **上下文连同两样东西一起存**（`ChatContextStore.State`）：上一轮结束时的用量读数，和这份历史是在哪套系统提示词与工具、哪条主模型端点下跑出来的（`LlmClient.fingerprint`）。指纹对不上（改了提示词、切了语言、改了联网搜索、换了主模型端点或 key）就把历史里的原始内容（思考块、搜索块）去掉、按文本重建一次——Anthropic 的思考块和这段前缀绑死，Responses 的加密推理和组织绑死，照旧回放会 400。读上下文失败直接报错，不当成空历史跑（跑完会覆盖掉整段上下文）。
 - **整理上下文只在两轮之间做**（`ContextCompactor`）：判据是随上下文存的用量读数（中断、出错、回退过的没有，连系统提示词和工具定义一起按字数估），到主模型端点窗口的 90%（`compact-trigger-ratio`）就整理。请求 = 整段历史原样 + 末尾一条整理指令（`chat.compact.instruction`），走 `leaves.mainClient()`，请求前缀与上一轮相同、整段命中提示缓存。产物是一条摘要（用户消息）+ 上一问起到末尾的对话：用户消息原样（之后到的子运行报告、唤醒指令都在），回答只留文本，工具过程和原始内容（思考块、搜索密文）丢掉。整理走流式，点停止当场掐断、这次整理作废；整段发出去失败就去掉原始内容、工具回执截到 2000 字再发一次；还不行或模型没给文本就沿用原历史，下一轮再试。工具循环中间不动历史：各家都要求模型输出只往后追加、原样回放。
-- **取什么数由主 agent 自己定**：行情、指标、衍生品序列、日历、大户持仓、快讯、trader 只读全是它手里的工具，同一批 tool_call 并发执行（第 3 章）。以前的路由 + 专家那一层没了——路由本身每轮要烧一次浅模型调用，而"要不要查行情"这个判断深模型顺手就做了。
+- **取什么数由主 agent 自己定**：行情、指标、衍生品序列、日历、大户持仓、跨资产、快讯、trader 只读全是它手里的工具，同一批 tool_call 并发执行（第 3 章）。以前的路由 + 专家那一层没了——路由本身每轮要烧一次浅模型调用，而"要不要查行情"这个判断深模型顺手就做了。
 - **`childRuns.settle()` 是每条出路的必经**：正常收尾、用户中断、`streamMain` 抛异常都从它走。剩余报告非空就是这轮没答过的，`TurnResult.pending` 为真，前端空闲时发起唤醒轮。摔了先把 working 落库再抛：用户消息此刻只在内存里，不落库的话下一轮就不知道这句问过。
 
 进模型前垫的最后一条消息（`turnTail`）恒为**用户侧**——整段输入以 assistant 结尾，模型只会补一句"没什么可补充的"。按钮意图（`ChatIntent`）的动作指令也垫在这条里：该做什么已写死，不让模型再猜。这条消息里的**输出语言硬收尾必须排在最后**：用户打的字不翻译，聊天输入随时是另一门语言，而近因权重最高。

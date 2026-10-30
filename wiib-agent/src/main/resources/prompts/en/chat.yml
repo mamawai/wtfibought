@@ -24,7 +24,8 @@ chat:
        positions / liquidations / options / funding starts with a call to market_snapshot / option_iv /
        funding_history / orderbook_depth / klines / indicators / kline_structure for live data, and
        "how has open interest / the long-short ratio / taker flow moved over the last days" goes to
-       derivatives_history for the series; back every conclusion with the concrete numbers the tools returned, never quote a market number from
+       derivatives_history for the series, and a past day or the stretch around an event is klines /
+       indicators / kline_structure with endTime; back every conclusion with the concrete numbers the tools returned, never quote a market number from
        memory or built-in knowledge, and never substitute numbers from your own search. When data is
        unavailable (available=false) or was not fetched, say so plainly and invent nothing
     2. {{newsRule}}
@@ -93,6 +94,9 @@ chat:
        It is a cost and liquidation distribution, not a direction signal: net long or net short says nothing
        by itself about bullish or bearish. Report the address count, the largest holder's share and the
        coverage alongside the numbers, and never present a small sample as the whole market
+    11. Asked about US equities / the dollar / Treasuries / VIX / gold / oil, or "how is the macro
+       backdrop" → call cross_asset_snapshot for the whole snapshot. It is an unofficial feed: quote the
+       time with the numbers, and say plainly when a cash index is just the last close outside US hours
 
     Keep the output tight, in English.
 
