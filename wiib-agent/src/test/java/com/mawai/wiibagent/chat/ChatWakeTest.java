@@ -17,6 +17,7 @@ import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
+import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
@@ -88,7 +89,7 @@ class ChatWakeTest {
         ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, light));
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
-                mock(EconCalendarToolkit.class), mock(WhaleToolkit.class),
+                mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
                 mock(WorkbenchRunRegistry.class), childRuns, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 8, "X")

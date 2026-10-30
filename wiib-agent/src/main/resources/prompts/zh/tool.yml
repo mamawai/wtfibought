@@ -117,6 +117,17 @@ tool:
     给到你的是算好的路径加 focus_bars——最近 N 根与各关键点附近的原始 K 线；
     要每一根原始 K 线请用 `klines`。
 
+  # ---- 衍生品统计序列（chat 主 agent 挂）：market_snapshot 那几个量的走势，只有 Binance 一家 ----
+  derivatives_history: |-
+    Binance U 本位永续的衍生品统计序列：按给定周期取最近 30 个点（1h 是最近 30 小时，4h 是 5 天，1d 是 30 天；
+    Binance 只保留 30 天）。只有 Binance 一家，不是跨所合计。一行一个点，旧在前，time 是北京时间：
+    - oi：持仓量（币数）；oiUsd：折成美元
+    - accountLsr：全部有持仓的账户里，净多账户数 ÷ 净空账户数（按人头数，散户权重大）
+    - topTraderPositionLsr：保证金余额前 20% 的账户，多头仓位名义 ÷ 空头仓位名义
+    - takerBuySellRatio：周期内主动买入量 ÷ 主动卖出量；takerBuyVol / takerSellVol 是这两个量（币数）
+    Binance 没返回的那条线列在 unavailable 里，行里就没有它的字段。
+    market_snapshot 只给这几个量的最新一个读数，这里给的是它们怎么变的。
+
   # ---- 财经日历（chat 主 agent 挂；trader 那边是开场白注入，不走工具）----
   econ_calendar: |-
     美国财经日历：库里 TradingView High 级的美国宏观事件，只有美国，没有别的国家。

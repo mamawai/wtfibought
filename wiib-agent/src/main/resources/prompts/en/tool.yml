@@ -147,6 +147,22 @@ tool:
     What you get is the computed path plus focus_bars — the last N candles and the ones
     around each key point; `klines` is the tool that hands you every raw bar instead.
 
+  # ---- Derivatives statistics series (on the chat main agent): how the market_snapshot quantities moved, Binance only ----
+  derivatives_history: |-
+    Time series of Binance USDT-M perpetual derivatives statistics for a crypto symbol: the last 30
+    points at the given period (1h = the last 30 hours, 4h = 5 days, 1d = 30 days; Binance keeps
+    only 30 days). Binance only, not a cross-exchange total. One row per point, oldest first, time
+    in UTC+8:
+    - oi: open interest in coins; oiUsd: the same in USD
+    - accountLsr: among all accounts holding a position, net-long accounts / net-short accounts
+      (a head count, so retail-weighted)
+    - topTraderPositionLsr: the top 20% of accounts by margin balance, long position notional /
+      short position notional
+    - takerBuySellRatio: taker buy volume / taker sell volume within the period; takerBuyVol /
+      takerSellVol are those two volumes in coins
+    A series Binance did not return is listed in `unavailable` and its fields are missing from the
+    rows. market_snapshot gives only the latest reading of these; this gives how they moved.
+
   # ---- Economic calendar (on the chat main agent; the trader gets it injected into its opening message, not as a tool) ----
   econ_calendar: |-
     US macro economic calendar: TradingView high-impact US events only, no other countries.

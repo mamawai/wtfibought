@@ -48,6 +48,9 @@ public class MarketDataService {
     /** 资金费上下文的兜底上限：里面装着标记价，是实时价；一刻钟前的还能当"大致现价"，再久就是误导 */
     private static final long PREMIUM_MAX_STALE_MS = Duration.ofMinutes(15).toMillis();
 
+    /** 衍生品序列的兜底上限：序列按周期出点，一小时内的旧序列最多少最新那一两个点 */
+    private static final long DERIV_MAX_STALE_MS = Duration.ofHours(1).toMillis();
+
     /**
      * 两个缓存都得有上限：入口是宽松归一（{@link QuantConstants#normalizeSymbolLenient}），
      * <b>不校验白名单</b>——模型问哪个币就存哪个，采集失败的 unavailable 也照样进缓存。
@@ -55,10 +58,10 @@ public class MarketDataService {
      * <p>
      * 整装快照给 32：一条里装着各周期 K 线原文加全套特征，是这里最占地方的东西，
      * 而白名单统共几个币，32 够覆盖它们再加上临时问到的。
-     * rawCache 给 128：每个 symbol 最多三条（funding / premium / depth），值是几 KB 的 JSON，可以宽松些。
+     * rawCache 给 256：每个 symbol 三条（funding / premium / depth）加衍生品序列每个周期 4 条，值是几 KB 的 JSON，可以宽松些。
      */
     private static final int MAX_ASSEMBLY_ENTRIES = 32;
-    private static final int MAX_RAW_ENTRIES = 128;
+    private static final int MAX_RAW_ENTRIES = 256;
 
     private final BinanceRestClient binanceRestClient;
     private final DepthStreamCache depthStreamCache;
@@ -183,6 +186,23 @@ public class MarketDataService {
         String normalized = QuantConstants.normalizeSymbolLenient(symbol);
         return rawCached("premium:" + normalized, ttlMillis, FUNDING_MS, PREMIUM_MAX_STALE_MS,
                 () -> binanceRestClient.getPremiumIndex(normalized));
+    }
+
+    /** 衍生品统计序列的四条线，各对 Binance 一个 /futures/data 接口 */
+    public enum DerivSeries {
+        OPEN_INTEREST, ACCOUNT_LSR, TOP_TRADER_POSITION_LSR, TAKER_LSR
+    }
+
+    /** 一条衍生品统计序列（最近 limit 个点的原始 JSON 数组），失败返回 null；兜过期那份最多一小时 */
+    public String derivativesSeries(DerivSeries kind, String symbol, String period, int limit) {
+        String normalized = QuantConstants.normalizeSymbolLenient(symbol);
+        return rawCached("deriv:" + kind + ":" + normalized + ":" + period, ttlMillis, 0, DERIV_MAX_STALE_MS,
+                () -> switch (kind) {
+                    case OPEN_INTEREST -> binanceRestClient.getOpenInterestHist(normalized, period, limit);
+                    case ACCOUNT_LSR -> binanceRestClient.getLongShortRatio(normalized, period, limit);
+                    case TOP_TRADER_POSITION_LSR -> binanceRestClient.getTopTraderPositionRatio(normalized, period, limit);
+                    case TAKER_LSR -> binanceRestClient.getTakerLongShortRatio(normalized, period, limit);
+                });
     }
 
     /**

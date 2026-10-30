@@ -193,6 +193,21 @@ class MarketDataServiceTest {
         verify(binanceRestClient, times(2)).getFundingRateHistory("BTCUSDT", 30);
     }
 
+    /** 衍生品序列也在 ReAct 循环里反复调：每条线、每个周期各一个缓存键，TTL 内只打一次真请求 */
+    @Test
+    void 衍生品序列在TTL内复用不重复请求() {
+        when(binanceRestClient.getOpenInterestHist("BTCUSDT", "1h", 30)).thenReturn("[]");
+        MarketDataService service = service(60_000);
+
+        service.derivativesSeries(MarketDataService.DerivSeries.OPEN_INTEREST, "btcusdt", "1h", 30);
+        service.derivativesSeries(MarketDataService.DerivSeries.OPEN_INTEREST, "BTCUSDT", "1h", 30);
+        service.derivativesSeries(MarketDataService.DerivSeries.ACCOUNT_LSR, "BTCUSDT", "1h", 30);
+
+        verify(binanceRestClient, times(1)).getOpenInterestHist("BTCUSDT", "1h", 30);
+        verify(binanceRestClient, times(1)).getLongShortRatio("BTCUSDT", "1h", 30);
+        verifyNoMoreInteractions(binanceRestClient);
+    }
+
     /**
      * 采集线程炸了不能把等待者一起拖走：赢家自己把异常抛出去，等待者拿降级快照继续走，
      * 否则一个 symbol 的畸形数据会顺着 join() 打断所有等它的对话/交易线程。
@@ -528,7 +543,7 @@ class MarketDataServiceTest {
             service.premiumIndex("FAKE" + i + "USDT");
         }
 
-        assertThat(cacheSize(service, "rawCache")).isLessThanOrEqualTo(128);
+        assertThat(cacheSize(service, "rawCache")).isLessThanOrEqualTo(256);
     }
 
     private static int cacheSize(MarketDataService service, String field) {

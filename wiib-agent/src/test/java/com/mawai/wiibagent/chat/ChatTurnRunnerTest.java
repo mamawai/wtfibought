@@ -10,6 +10,7 @@ import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
+import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
@@ -119,7 +120,7 @@ class ChatTurnRunnerTest {
         ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, light));
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), newsToolkit,
-                mock(EconCalendarToolkit.class), mock(WhaleToolkit.class),
+                mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
                 mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,

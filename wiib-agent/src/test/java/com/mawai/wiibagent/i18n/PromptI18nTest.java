@@ -143,7 +143,8 @@ class PromptI18nTest {
                 "tool.run_deep_analysis", "tool.news_search", "tool.web_search",
                 // 已搬进词表的工具描述：英文侧不许混中文
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
-                "tool.klines", "tool.indicators", "tool.kline_structure", "tool.econ_calendar", "tool.whale_positions",
+                "tool.klines", "tool.indicators", "tool.kline_structure", "tool.derivatives_history",
+                "tool.econ_calendar", "tool.whale_positions",
                 "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions", "tool.trader_plans",
                 "tool.trader_trades",
                 "tool.wake_trader", "tool.review_trader_now", "tool.leave_note_to_trader",
@@ -336,7 +337,8 @@ class PromptI18nTest {
                 "chat.turn.timeMark", "chat.traderQuery.kindNote", "llm.callLimit.notExecuted",
                 // 已搬进词表的工具描述：中文侧真有译文而不是英文原样两份
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
-                "tool.klines", "tool.indicators", "tool.kline_structure", "tool.econ_calendar", "tool.whale_positions",
+                "tool.klines", "tool.indicators", "tool.kline_structure", "tool.derivatives_history",
+                "tool.econ_calendar", "tool.whale_positions",
                 "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions", "tool.trader_plans",
                 "tool.trader_trades",
                 "tool.wake_trader", "tool.review_trader_now", "tool.leave_note_to_trader",

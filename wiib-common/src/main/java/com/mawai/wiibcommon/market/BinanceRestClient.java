@@ -287,17 +287,14 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         return getGuarded(uri);
     }
 
+    /** 全市场账户多空比，5m × 288 = 24h，LSR 滚动百分位用 */
     public String getLongShortRatio(String symbol) {
-        String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return null;
-        URI uri = UriComponentsBuilder
-                .fromUriString(baseUrl + "/futures/data/globalLongShortAccountRatio")
-                .queryParam("symbol", symbol)
-                .queryParam("period", "5m")
-                .queryParam("limit", LONG_SHORT_RATIO_5M_LIMIT)
-                .build().toUri();
-        log.info("Binance REST longShortRatio: {}", uri);
-        return getGuarded(uri);
+        return getLongShortRatio(symbol, "5m", LONG_SHORT_RATIO_5M_LIMIT);
+    }
+
+    public String getLongShortRatio(String symbol, String period, int limit) {
+        return callFuturesApi("/futures/data/globalLongShortAccountRatio", "longShortRatio",
+                b -> b.queryParam("symbol", symbol).queryParam("period", period).queryParam("limit", limit));
     }
 
     // ==================== 新增数据源 ====================

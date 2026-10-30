@@ -11,6 +11,7 @@ import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.llm.AnthropicChatModel;
 import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.SearchEvent;
+import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
@@ -105,7 +106,7 @@ class ChatTurnContextTest {
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, deep));
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class),
                 mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(), mock(EconCalendarToolkit.class),
-                mock(WhaleToolkit.class), mock(DeepAnalysisService.class),
+                mock(WhaleToolkit.class), mock(DerivativesToolkit.class), mock(DeepAnalysisService.class),
                 mock(BehaviorAnalysisService.class), mock(TraderChatService.class), runRegistry, childRuns,
                 new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, 8, "X")
                 .leavesFor(ChatTestEndpoints.eps(1L, "gpt-5"), AgentLang.ZH);
