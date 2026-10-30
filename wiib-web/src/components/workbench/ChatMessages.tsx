@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity, Bot, ChartCandlestick, Check, ChevronRight, Copy, Gauge, Globe, Layers, Loader2, Newspaper, Percent,
@@ -25,8 +25,15 @@ const CHILD_ICON: Record<ChildRunKind, LucideIcon> = { DELEGATE: Sparkles, DEEP_
 /** 工具参数摘要只挑这几个字段、按这个顺序：整份参数铺出来太长 */
 const ARG_KEYS = ['symbol', 'interval', 'kind', 'limit', 'query'];
 
-/** 慢转的小橙星 */
-const SPIN_STAR = 'w-3 h-3 shrink-0 text-primary fill-current animate-[wiib-star-spin_2.4s_linear_infinite] motion-reduce:animate-none';
+/** 研判中的星环：Polaris 星不动，一道橙弧沿外圈转（.wiib-star-sweep）。size 是整体边长 px，星占中间 64% */
+function StarSweep({ size }: { size: number }) {
+  return (
+    <span aria-hidden className="relative inline-block shrink-0" style={{ width: size, height: size }}>
+      <Sparkle className="absolute inset-[18%] w-[64%] h-[64%] text-primary fill-current" strokeWidth={1.5} />
+      <span className="absolute inset-0 rounded-full wiib-star-sweep" style={{ '--sweep-w': size >= 20 ? '1.5px' : '1px' } as CSSProperties} />
+    </span>
+  );
+}
 
 /** 来源链接的展示名：域名（去 www.），解析不了的原样给 */
 function domainOf(url: string): string {
@@ -264,12 +271,12 @@ function ChildRow({ item, open, onToggle }: { item: ChildItem; open: boolean; on
   );
 }
 
-/** 一条过程都还没有时的等待行：小星慢转 + 扫光文字 + 计时（刷新后发现的后台轮没有起点，不计） */
+/** 一条过程都还没有时的等待行：星环 + 扫光文字 + 计时（刷新后发现的后台轮没有起点，不计） */
 export function ThinkingRow({ text, since }: { text: string; since: number | null }) {
   const now = useClock(since != null);
   return (
     <div className="flex items-center gap-2 text-[13px]">
-      <Sparkle className={SPIN_STAR} />
+      <StarSweep size={20} />
       <span className="wiib-shimmer font-semibold">{text}</span>
       {since != null && <span className="ml-auto microlabel num">{fmtClock(now - since)}</span>}
     </div>
@@ -402,7 +409,7 @@ export function AssistantAnswer({ item, canRegenerate, onRegenerate }: {
  * 工作过程：一行摘要 + 一列条目（图标 + 做了什么 + 参数 + 右侧状态）。
  * 默认展开——收不收由用户点，别在他正看过程时自己收起来；子运行那条默认收着，点开看里面。
  * <p>
- * 摘要：live（本轮还在跑、答案没开始）时"正在研判 · N 步"扫光 + 小星慢转 + 从本轮开跑起算的秒表
+ * 摘要：live（本轮还在跑、答案没开始）时"正在研判 · N 步"扫光 + 星环 + 从本轮开跑起算的秒表
  * （和"分析问题中"那行的表接得上）；有后台任务在跑就报几个；都完了报搜了几个站，不显示时长——答案底部的读数里有耗时。
  * label：调用方自己定的摘要文案，不给就用"研判"那套。
  */
@@ -432,7 +439,7 @@ export function ProcessRail({ steps, live, since, open, onToggle, label }: {
         {live ? (
           <>
             <span className="wiib-shimmer">{label?.live ?? t('rail.live', { count: steps.length })}</span>
-            <Sparkle className={SPIN_STAR} />
+            <StarSweep size={12} />
           </>
         ) : (
           <>

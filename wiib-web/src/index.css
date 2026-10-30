@@ -197,6 +197,16 @@ html.pwa nav a {
     animation: wiib-ball-sweep 1.15s linear infinite;
   }
 
+  /* 研判中的星环（等待行、过程轨头，见 ChatMessages.StarSweep）：星不动，一道橙弧沿外圈转，
+     和悬浮球那道白弧同一套做法。--sweep-w 是环带宽度 */
+  @keyframes wiib-star-sweep { to { transform: rotate(360deg) } }
+  .wiib-star-sweep {
+    background: conic-gradient(from 0deg, transparent 0deg, var(--color-primary) 90deg, transparent 150deg);
+    -webkit-mask: radial-gradient(circle closest-side, transparent calc(100% - var(--sweep-w, 1.5px) - .5px), #000 calc(100% - var(--sweep-w, 1.5px)));
+            mask: radial-gradient(circle closest-side, transparent calc(100% - var(--sweep-w, 1.5px) - .5px), #000 calc(100% - var(--sweep-w, 1.5px)));
+    animation: wiib-star-sweep 1.3s linear infinite;
+  }
+
   /* 做着的那条文字扫光：灰字上一道亮光从左到右扫过，对话面板里"正在干活"的标记 */
   @keyframes wiib-shimmer { from { background-position: 150% 0 } to { background-position: -50% 0 } }
   .wiib-shimmer {
@@ -231,6 +241,7 @@ html.pwa nav a {
   @media (prefers-reduced-motion: reduce) {
     .wiib-ball-ping { animation: none; opacity: 0 }
     .wiib-ball-sweep { animation: none; opacity: 0 }
+    .wiib-star-sweep { animation: none; opacity: 0 }
     .wiib-orb-hop, .wiib-orb-shade { animation: none }
     /* 扫光退回普通前景色 */
     .wiib-shimmer { animation: none; background: none; color: var(--color-foreground) }
