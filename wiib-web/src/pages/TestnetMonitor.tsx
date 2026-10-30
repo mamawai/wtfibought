@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type ElementType, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Navigate } from 'react-router-dom';
 import { testnetApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
 import { useUserStore } from '../stores/userStore';
@@ -306,10 +307,17 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
 }
 
 /* ========== Main ========== */
+/** 只给管理员；user 为 null 是 fetchUser 还没回来，先不渲染（同 Admin 页） */
 export function TestnetMonitor() {
+  const user = useUserStore((s) => s.user);
+  if (!user) return null;
+  if (user.id !== 1) return <Navigate to="/" replace />;
+  return <TestnetMonitorPage />;
+}
+
+function TestnetMonitorPage() {
   const { t } = useTranslation(['strategy', 'common']);
   const { toast } = useToast();
-  const user = useUserStore((s) => s.user);
   const [overview, setOverview] = useState<TnOverview | null>(null);
   const [trades, setTrades] = useState<TnTrade[]>([]);          // 近 30 天：成交列表、胜率
   const [gridTrades, setGridTrades] = useState<TnTrade[]>([]);  // 近 90 天：跟网格同跨度，点格子下钻用
@@ -413,8 +421,8 @@ export function TestnetMonitor() {
         </div>
       )}
 
-      {/* 接口自检面板（仅 admin=1 可见；后端再做一次 admin 门控） */}
-      {user?.id === 1 && <ManualTradePanel onDone={load} />}
+      {/* 接口自检面板 */}
+      <ManualTradePanel onDone={load} />
 
       {/* 空态提示 */}
       {isEmpty && (

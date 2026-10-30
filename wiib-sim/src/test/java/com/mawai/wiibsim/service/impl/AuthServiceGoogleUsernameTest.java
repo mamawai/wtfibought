@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibcommon.limiter.TokenBucketLimiter;
 import com.mawai.wiibsim.config.GoogleConfig;
 import com.mawai.wiibsim.config.LinuxDoConfig;
 import com.mawai.wiibsim.mapper.InviteCodeMapper;
@@ -36,7 +37,8 @@ class AuthServiceGoogleUsernameTest {
         when(userService.findByUsername("John_Smith")).thenReturn(new User());
         when(userService.findByUsername("abcdefghijklmnopqrst")).thenReturn(new User());
         AuthServiceImpl service = new AuthServiceImpl(userService, mock(LinuxDoConfig.class), mock(RestTemplate.class),
-                mock(GoogleConfig.class), mock(RestTemplate.class), mock(InviteCodeMapper.class), mock(MessageCatalog.class));
+                mock(GoogleConfig.class), mock(RestTemplate.class), mock(InviteCodeMapper.class), mock(MessageCatalog.class),
+                mock(TokenBucketLimiter.class));
 
         assertThat(service.googleUsername("Alice")).isEqualTo("Alice");
         assertThat(service.googleUsername("John Smith")).matches("John_Smith_\\d{4}");

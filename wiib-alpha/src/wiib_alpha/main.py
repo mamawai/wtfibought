@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, AsyncIterator
+from urllib.parse import urlsplit
 
 import numpy as np
 import pandas as pd
@@ -1247,9 +1248,18 @@ async def _spec_of(app: FastAPI, role: str, body: ModelSave) -> ModelSpec:
         row = (await app.state.store.models()).get(role)
         if row is None:
             raise HTTPException(400, "第一次配要填 API key")
+        # 留空沿用已存 key 时，地址的 scheme、主机、端口得和存它时一样
+        if _origin(row["base_url"]) != _origin(body.baseUrl):
+            raise HTTPException(400, "baseUrl 换了主机、端口或 http/https，要重新填 API key")
         key = row["api_key"]
     return ModelSpec(protocol=protocol, base_url=body.baseUrl.strip(), model=body.model.strip(), api_key=key,
                      effort=body.effort.strip())
+
+
+def _origin(base_url: str) -> tuple[str, str | None, int | None]:
+    """留空的 baseUrl 是 ("", None, None)，即 SDK 默认地址"""
+    u = urlsplit(base_url.strip())
+    return u.scheme.lower(), u.hostname, u.port
 
 
 class FamilyItem(BaseModel):

@@ -20,6 +20,7 @@ agent:
     effortTooLong: "思考档位最长 {{max}} 字符，留空=不传"
     contextWindowInvalid: "上下文窗口需在 {{min}}K ~ {{max}}K 之间"
     apiKeyRequired: apiKey不能为空
+    apiKeyRequiredNewHost: baseUrl 换了主机、端口或 http/https，要重新填 apiKey
     connectFailed: "模型连通性测试失败：{{reason}}"
     # 勾了联网搜索的端点：测试连通性、新增、刚勾上搜索或改了协议/地址/模型/key/思考档位/Antigravity 来源的保存，都会探一次搜索
     searchUnsupported: "连通正常，但这个端点或模型不支持联网搜索，请取消勾选「联网搜索」。上游原因：{{reason}}"
@@ -35,6 +36,7 @@ agent:
   # 管理员：LLM 配置与功能位分配
   admin:
     apiKeyRequired: apiKey不能为空
+    apiKeyRequiredNewHost: baseUrl 换了主机、端口或 http/https，要重新填 apiKey
     baseUrlRequired: baseUrl不能为空
     nameRequired: 名称不能为空
     modelRequired: model不能为空

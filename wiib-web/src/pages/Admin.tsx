@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi, jevPredictionApi } from '../api';
-import type { AiKeyConfig, AiModelAssignment, InviteCode, JevSwitchState } from '../types';
+import type { AiKeyConfig, AiKeyView, AiModelAssignment, InviteCode, JevSwitchState } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -44,10 +44,10 @@ export function Admin() {
   const [rateLoading, setRateLoading] = useState(false);
 
   // AI Key管理
-  const [aiKeys, setAiKeys] = useState<AiKeyConfig[]>([]);
+  const [aiKeys, setAiKeys] = useState<AiKeyView[]>([]);
   const [aiKeysLoading, setAiKeysLoading] = useState(false);
   // null=收起；没 id=新增
-  const [editingKey, setEditingKey] = useState<{ id?: number; form: LlmEndpointValue } | null>(null);
+  const [editingKey, setEditingKey] = useState<{ id?: number; keyTail?: string; form: LlmEndpointValue } | null>(null);
 
   // 模型分配
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
@@ -175,7 +175,8 @@ export function Admin() {
   const handleSaveKey = async () => {
     if (!editingKey) return;
     const { name, apiKey, baseUrl, model } = editingKey.form;
-    if (!name.trim() || !apiKey.trim() || !baseUrl.trim() || !model.trim()) {
+    // 改已有配置 key 可以留空（不换）
+    if (!name.trim() || (!editingKey.id && !apiKey.trim()) || !baseUrl.trim() || !model.trim()) {
       toast(t('admin.llm.required'), 'error');
       return;
     }
@@ -261,10 +262,6 @@ export function Admin() {
 
   /** 配置行上的协议徽标 */
   const PROTO_BADGE: Record<string, string> = { openai: 'ChatCompletions', responses: 'Responses', anthropic: 'Anthropic', gemini: 'Gemini' };
-  const maskKey = (key: string) => {
-    if (key.length <= 8) return '****';
-    return key.slice(0, 4) + '****' + key.slice(-4);
-  };
 
   // ========== 邀请码操作 ==========
 
@@ -488,16 +485,16 @@ export function Admin() {
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-bold">{key.configName}</span>
-                      <Badge variant="outline" className="text-[10px]">{maskKey(key.apiKey)}</Badge>
+                      <Badge variant="outline" className="text-[10px]">****{key.apiKeyTail}</Badge>
                       {key.model && <Badge variant="secondary" className="text-[10px]">{key.model}</Badge>}
                       <Badge variant="outline" className="text-[10px]">{PROTO_BADGE[key.apiProtocol || 'openai'] ?? key.apiProtocol}</Badge>
                       {key.reasoningEffort && <Badge variant="secondary" className="text-[10px]">{t('admin.llm.effortBadge', { value: key.reasoningEffort })}</Badge>}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 truncate">{key.baseUrl}</div>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => setEditingKey({ id: key.id, form: {
+                  <Button variant="ghost" size="sm" onClick={() => setEditingKey({ id: key.id, keyTail: key.apiKeyTail, form: {
                     name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
-                    model: key.model || '', reasoningEffort: key.reasoningEffort || '', apiKey: key.apiKey, webSearch: false,
+                    model: key.model || '', reasoningEffort: key.reasoningEffort || '', apiKey: '', webSearch: false,
                     antigravity: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
                   } })}>
                     <Pencil className="w-3.5 h-3.5" />
@@ -512,12 +509,14 @@ export function Admin() {
               {editingKey && (
                 <div className="p-4 rounded-lg border-2 border-primary/30 bg-primary/5 space-y-3">
                   <div className="text-sm font-bold">{editingKey.id ? t('admin.llm.editTitle') : t('admin.llm.addTitle')}</div>
-                  {/* 与 BYOK 同一份表单；拉模型/测连通直接用表单里的 key，不用先存 */}
+                  {/* 与 BYOK 同一份表单；拉模型/测连通用表单里的 key，不用先存，改已有配置时 key 留空就用已存的 */}
                   {/* key：换编辑对象就重建，别把上一条检测到的模型清单带过来 */}
                   <LlmEndpointForm
                     key={editingKey.id ?? 'new'}
                     value={editingKey.form}
                     onChange={patch => setEditingKey(prev => prev ? { ...prev, form: { ...prev.form, ...patch } } : prev)}
+                    exists={!!editingKey.id}
+                    keyTail={editingKey.keyTail}
                     platform
                     onDetect={() => adminApi.listAiKeyModels(toKeyConfig(editingKey.id, editingKey.form))}
                     onTest={() => adminApi.testAiKey(toKeyConfig(editingKey.id, editingKey.form))}

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Locale;
@@ -70,6 +71,20 @@ public class BaseUrlGuard {
             }
         }
         return null;
+    }
+
+    /** 两个 baseUrl 的 scheme、主机、端口是否都一样；解析不了或没主机的算不一样 */
+    public static boolean sameOrigin(String saved, String target) {
+        try {
+            URI a = new URI(saved.trim());
+            URI b = new URI(target.trim());
+            return a.getScheme() != null && a.getHost() != null
+                    && a.getScheme().equalsIgnoreCase(b.getScheme())
+                    && a.getHost().equalsIgnoreCase(b.getHost())
+                    && a.getPort() == b.getPort();
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     private static boolean isBlocked(InetAddress a) {

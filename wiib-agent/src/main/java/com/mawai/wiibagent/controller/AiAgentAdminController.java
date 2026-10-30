@@ -12,6 +12,7 @@ import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibagent.jev.JevPlatformConfig;
 import com.mawai.wiibagent.jev.predictor.JevPredictionRuns;
 import com.mawai.wiibagent.jev.predictor.JevPredictionSwitch;
+import com.mawai.wiibagent.llm.BaseUrlGuard;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.news.NewsEventCollector;
 import com.mawai.wiibagent.runtime.AiAgentRuntimeManager;
@@ -56,17 +57,14 @@ public class AiAgentAdminController {
     // ========== API Key 管理 ==========
 
     @GetMapping("/keys")
-    @Operation(summary = "获取所有API Key配置")
-    public Result<List<AiRuntimeConfig>> listKeys() {
-        return Result.ok(configMapper.selectAllConfigs());
+    @Operation(summary = "获取所有API Key配置（key 只回尾 4 位）")
+    public Result<List<KeyView>> listKeys() {
+        return Result.ok(configMapper.selectAllConfigs().stream().map(KeyView::of).toList());
     }
 
     @PostMapping("/keys")
-    @Operation(summary = "新增/修改API Key配置")
-    public Result<AiRuntimeConfig> saveKey(@RequestBody KeyRequest req) {
-        if (req.getApiKey() == null || req.getApiKey().isBlank()) {
-            return Result.fail(messages.get("agent.admin.apiKeyRequired"));
-        }
+    @Operation(summary = "新增/修改API Key配置（改的时候 apiKey 留空=不换）")
+    public Result<KeyView> saveKey(@RequestBody KeyRequest req) {
         if (req.getBaseUrl() == null || req.getBaseUrl().isBlank()) {
             return Result.fail(messages.get("agent.admin.baseUrlRequired"));
         }
@@ -101,9 +99,14 @@ public class AiAgentAdminController {
             config.setEnabled(true);
             config.setCreatedAt(LocalDateTime.now());
         }
+        AiRuntimeConfig saved = req.getId() == null ? null : config;
+        String apiKey = keyOf(req, saved);
+        if (apiKey == null) {
+            return Result.fail(missingKey(saved));
+        }
 
         config.setConfigName(req.getConfigName().trim());
-        config.setApiKey(req.getApiKey().trim());
+        config.setApiKey(apiKey);
         config.setBaseUrl(baseUrl);
         config.setModel(req.getModel().trim());
         config.setReasoningEffort(effort);
@@ -120,21 +123,23 @@ public class AiAgentAdminController {
         if (!aiAgentRuntimeManager.refresh()) {
             return Result.fail(messages.get("agent.admin.savedButRefreshFailed"));
         }
-        return Result.ok(config);
+        return Result.ok(KeyView.of(config));
     }
 
-    /** 探测都用表单里的明文 key，不用先保存。平台位要连内网网关（CPA），不走 BYOK 那道内网地址拦截 */
+    /** 探测用表单里的 key，不用先保存；改已有配置时 key 留空=用它已存的。平台位要连内网网关（CPA），不走 BYOK 那道内网地址拦截 */
     @PostMapping("/keys/models")
     @Operation(summary = "拉取LLM配置可用模型清单")
     public Result<List<String>> listModels(@RequestBody KeyRequest req) {
         if (req.getBaseUrl() == null || req.getBaseUrl().isBlank()) {
             return Result.fail(messages.get("agent.admin.baseUrlRequired"));
         }
-        if (req.getApiKey() == null || req.getApiKey().isBlank()) {
-            return Result.fail(messages.get("agent.admin.apiKeyRequired"));
+        AiRuntimeConfig saved = savedOf(req);
+        String apiKey = keyOf(req, saved);
+        if (apiKey == null) {
+            return Result.fail(missingKey(saved));
         }
         try {
-            return Result.ok(modelBuilder.listModels(req.getApiProtocol(), baseUrlOf(req), req.getApiKey().trim()));
+            return Result.ok(modelBuilder.listModels(req.getApiProtocol(), baseUrlOf(req), apiKey));
         } catch (Exception e) {
             return Result.fail(reason(e));
         }
@@ -147,8 +152,10 @@ public class AiAgentAdminController {
         if (req.getBaseUrl() == null || req.getBaseUrl().isBlank()) {
             return Result.fail(messages.get("agent.admin.baseUrlRequired"));
         }
-        if (req.getApiKey() == null || req.getApiKey().isBlank()) {
-            return Result.fail(messages.get("agent.admin.apiKeyRequired"));
+        AiRuntimeConfig saved = savedOf(req);
+        String apiKey = keyOf(req, saved);
+        if (apiKey == null) {
+            return Result.fail(missingKey(saved));
         }
         if (req.getModel() == null || req.getModel().isBlank()) {
             return Result.fail(messages.get("agent.admin.modelRequired"));
@@ -158,7 +165,7 @@ public class AiAgentAdminController {
             return Result.fail(messages.get("agent.admin.protocolUnsupported"));
         }
         try {
-            modelBuilder.build(protocol, baseUrlOf(req), req.getApiKey().trim(), req.getModel().trim(),
+            modelBuilder.build(protocol, baseUrlOf(req), apiKey, req.getModel().trim(),
                     effortOf(req), false).call(new Prompt(new UserMessage("ping")));
             return Result.ok(null);
         } catch (Exception e) {
@@ -315,6 +322,24 @@ public class AiAgentAdminController {
         return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     }
 
+    /** 带 id 是在改已有配置；查不到当新建 */
+    private AiRuntimeConfig savedOf(KeyRequest req) {
+        return req.getId() == null ? null : configMapper.selectById(req.getId());
+    }
+
+    /** 表单里的 key；留空就沿用已存的，但地址的 scheme、主机、端口得和存它时一样。拿不到 key 返回 null */
+    private static String keyOf(KeyRequest req, AiRuntimeConfig saved) {
+        if (req.getApiKey() != null && !req.getApiKey().isBlank()) {
+            return req.getApiKey().trim();
+        }
+        return saved != null && BaseUrlGuard.sameOrigin(saved.getBaseUrl(), req.getBaseUrl()) ? saved.getApiKey() : null;
+    }
+
+    /** 新建没填 key 是必填；改已有配置拿不到 key 只能是地址换了 */
+    private String missingKey(AiRuntimeConfig saved) {
+        return messages.get(saved == null ? "agent.admin.apiKeyRequired" : "agent.admin.apiKeyRequiredNewHost");
+    }
+
     /** 上游报错原文截短回给管理员看 */
     private static String reason(Exception e) {
         String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
@@ -323,10 +348,23 @@ public class AiAgentAdminController {
 
     // ========== DTO ==========
 
+    /** 下发给页面的配置：key 只给尾 4 位，完整 key 不出服务端 */
+    public record KeyView(Long id, String configName, String apiKeyTail, String baseUrl, String model,
+                          String reasoningEffort, String apiProtocol) {
+
+        static KeyView of(AiRuntimeConfig c) {
+            String key = c.getApiKey();
+            String tail = key.length() > 4 ? key.substring(key.length() - 4) : "****";
+            return new KeyView(c.getId(), c.getConfigName(), tail, c.getBaseUrl(), c.getModel(),
+                    c.getReasoningEffort(), c.getApiProtocol());
+        }
+    }
+
     @Data
     public static class KeyRequest {
         private Long id;
         private String configName;
+        /** 改已有配置时留空=不换 */
         private String apiKey;
         private String baseUrl;
         private String model;

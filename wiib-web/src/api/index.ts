@@ -6,7 +6,7 @@ import type { LedgerEntry, LedgerBizTypeOption, PublicTrade, UserProfile, Positi
 import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose } from '../types';
 import type { JevPredictionOverview, JevPredictionDecisionView, JevBet, JevSwitchState } from '../types';
 import type { PromptGenEvent, PromptGenView } from '../types';
-import type { User, PageResult, RankingItem, CommentItem, NotificationItem, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderExperience, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, WorkbenchPrefs, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
+import type { User, PageResult, RankingItem, CommentItem, NotificationItem, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiKeyView, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderExperience, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, WorkbenchPrefs, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -223,8 +223,8 @@ export const adminApi = {
     api.post<unknown, number>('/admin/task/margin/daily-interest-rate', { dailyInterestRate }),
   assetSnapshot: () => api.post<unknown, void>('/admin/task/asset-snapshot'),
   // AI Key管理
-  listAiKeys: () => api.get<unknown, AiKeyConfig[]>('/admin/ai-agent/keys'),
-  saveAiKey: (key: AiKeyConfig) => api.post<unknown, AiKeyConfig>('/admin/ai-agent/keys', key),
+  listAiKeys: () => api.get<unknown, AiKeyView[]>('/admin/ai-agent/keys'),
+  saveAiKey: (key: AiKeyConfig) => api.post<unknown, AiKeyView>('/admin/ai-agent/keys', key),
   deleteAiKey: (id: number) => api.delete<unknown, void>(`/admin/ai-agent/keys/${id}`),
   /** 拉模型清单 / 测连通：用表单里的 key，不用先保存 */
   listAiKeyModels: (key: AiKeyConfig) => api.post<unknown, string[]>('/admin/ai-agent/keys/models', key),

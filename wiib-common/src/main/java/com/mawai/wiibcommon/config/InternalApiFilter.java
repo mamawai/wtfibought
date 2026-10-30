@@ -28,7 +28,8 @@ public class InternalApiFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain chain)
             throws ServletException, IOException {
-        if (request.getRequestURI().startsWith("/internal/")) {
+        // 按 Tomcat 解码、规范化后的 servletPath 判断：/%69nternal/、/internal;a=b/ 也算 /internal/
+        if (request.getServletPath().startsWith("/internal/")) {
             String token = request.getHeader("X-Internal-Token");
             if (internalToken == null || internalToken.isBlank() || !internalToken.equals(token)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

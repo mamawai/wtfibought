@@ -1,6 +1,7 @@
 import {
   AU, BR, CA, CH, CN, DE, ES, EU, FR, GB, HK, IN, IT, JP, KR, MX, NO, NZ, RU, SE, SG, TR, US, ZA,
 } from 'country-flag-icons/string/3x2';
+import { escapeHtml } from './utils';
 
 // 国旗数据与 class 常量单独成文件：components/CountryFlag.tsx 才能只导出组件，满足 react-refresh 约束
 
@@ -13,8 +14,8 @@ export const FLAGS: Record<string, string> = {
 export const FLAG_CLS = 'inline-block w-[18px] h-[12px] shrink-0 align-[-1px] [&>svg]:block [&>svg]:size-full';
 export const CODE_CLS = 'inline-block shrink-0 px-0.5 border border-border text-[9px] font-bold leading-[10px] align-[-1px]';
 
-/** 画布弹窗的 innerHTML 用 */
+/** 画布弹窗的 innerHTML 用；国家码来自外部日历数据，没映射的照原样显示前先转义 */
 export function flagHtml(code: string): string {
   const svg = FLAGS[code];
-  return svg ? `<span class="${FLAG_CLS}">${svg}</span>` : `<span class="${CODE_CLS}">${code}</span>`;
+  return svg ? `<span class="${FLAG_CLS}">${svg}</span>` : `<span class="${CODE_CLS}">${escapeHtml(code)}</span>`;
 }

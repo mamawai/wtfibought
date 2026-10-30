@@ -6,6 +6,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/** 拼进 innerHTML 的文本先过这个：外部数据、URL 参数都不可信 */
+export function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
+
 /**
  * 当前是否走中文口径。语言码可能带地区（zh-CN/zh-TW），只认前缀。
  * <p>只给"两套数字分档不一样"的地方用（{@link fmtMoney} 的万/亿 vs K/M/B）；

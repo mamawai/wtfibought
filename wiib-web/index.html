@@ -34,7 +34,7 @@
       .sp-top { top: 0; height: 56%; z-index: 1 }
       .sp-bot { top: calc(56% - 1px); bottom: 0 }
 
-      /* logo 窗口下沿贴着线，logo 从线后面升上来（onload 才挂 .in，免得图没到过渡先播完） */
+      /* logo 窗口下沿贴着线，logo 从线后面升上来（图加载完才挂 .in，免得图没到过渡先播完） */
       .sp-mark { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); overflow: hidden; padding-bottom: 30px }
       .sp-mark img { display: block; width: min(220px, 46vw); height: auto; transform: translateY(calc(100% + 30px)) }
       .sp-mark img.in { transform: none; transition: transform .8s cubic-bezier(.16, 1, .3, 1) .15s }
@@ -57,6 +57,7 @@
         #splash.out .sp-top, #splash.out .sp-bot { transform: none }
       }
     </style>
+    <!-- 本页两段内联脚本的 sha256 写在服务器 nginx 的 CSP 里：改了脚本内容（含空白），那边的哈希要跟着重算 -->
     <script>
       // 阻塞式执行：必须赶在首帧之前定主题，否则暗色用户每次冷启动都要闪一下白
       (function() {
@@ -81,7 +82,7 @@
     <!-- 开屏放在 #root 前：解析到就上屏，不等 bundle -->
     <div id="splash" aria-hidden="true">
       <div class="sp-top">
-        <div class="sp-mark"><img src="/logo.png" alt="" fetchpriority="high" onload="this.classList.add('in')" /></div>
+        <div class="sp-mark"><img src="/logo.png" alt="" fetchpriority="high" /></div>
         <div class="sp-rule"><i></i></div>
       </div>
       <div class="sp-bot"></div>
@@ -91,6 +92,11 @@
         var el = document.getElementById('splash');
         void el.offsetWidth;           // 先把线的起点落定，下一句挂 .go 才有过渡可播
         el.classList.add('go');
+
+        // logo 加载完再挂 .in；缓存命中时跑到这里已经加载完了。不写成 img 上的 onload：CSP 不让内联事件
+        var logo = el.querySelector('.sp-mark img');
+        if (logo.complete) logo.classList.add('in');
+        else logo.addEventListener('load', function () { logo.classList.add('in'); });
 
         // 放行协议：应用就绪喊 __wiibSplashDone → 线补满 → 沿线裂开 → 移除。
         // 至少亮 0.95s 等 logo 升完：缓存命中时应用秒就绪，不压一下就是一闪；

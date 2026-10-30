@@ -453,9 +453,11 @@ export interface BehaviorAnalysisReport {
   suggestions: string[];
 }
 
+/** Admin 平台 LLM 配置的入参：新增/修改/拉模型/测连通共用 */
 export interface AiKeyConfig {
   id?: number;
   configName: string;
+  /** 改已有配置时传空=不换（baseUrl 换了主机要重填） */
   apiKey: string;
   baseUrl: string;
   model?: string;
@@ -463,7 +465,17 @@ export interface AiKeyConfig {
   reasoningEffort?: string;
   /** 上游协议 openai=/v1/chat/completions，responses=/v1/responses；空=openai */
   apiProtocol?: string;
-  enabled?: boolean;
+}
+
+/** Admin 平台 LLM 配置的列表项：key 只有尾 4 位 */
+export interface AiKeyView {
+  id: number;
+  configName: string;
+  apiKeyTail: string;
+  baseUrl: string;
+  model?: string;
+  reasoningEffort?: string;
+  apiProtocol?: string;
 }
 
 /** 邀请码（Admin 管理） */

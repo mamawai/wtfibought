@@ -7,9 +7,13 @@ import cn.hutool.crypto.digest.BCrypt;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.enums.RateLimiterType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.i18n.RequestLang;
+import com.mawai.wiibcommon.limiter.TokenBucketLimiter;
+import com.mawai.wiibcommon.limiter.TokenBucketLimiter.Bucket;
+import com.mawai.wiibcommon.util.ClientIp;
 import com.mawai.wiibsim.config.GoogleConfig;
 import com.mawai.wiibsim.config.LinuxDoConfig;
 import com.mawai.wiibsim.config.OAuthClientConfig;
@@ -64,6 +68,8 @@ public class AuthServiceImpl implements AuthService {
     private final InviteCodeMapper inviteCodeMapper;
     /** 登录多半发生在未登录态，语言只能取自请求头（见 RequestLang） */
     private final MessageCatalog messages;
+    /** 密码登录、注册的限流 */
+    private final TokenBucketLimiter limiter;
 
     public AuthServiceImpl(
             UserService userService,
@@ -72,7 +78,8 @@ public class AuthServiceImpl implements AuthService {
             GoogleConfig googleConfig,
             @Qualifier("googleRestTemplate") RestTemplate googleRestTemplate,
             InviteCodeMapper inviteCodeMapper,
-            MessageCatalog messages
+            MessageCatalog messages,
+            TokenBucketLimiter limiter
     )
     {
         this.userService = userService;
@@ -82,6 +89,7 @@ public class AuthServiceImpl implements AuthService {
         this.googleRestTemplate = googleRestTemplate;
         this.inviteCodeMapper = inviteCodeMapper;
         this.messages = messages;
+        this.limiter = limiter;
     }
 
     @Value("${trading.initial-balance:10000}")
@@ -304,6 +312,8 @@ public class AuthServiceImpl implements AuthService {
         if (!passwordLoginEnabled) {
             throw new BizException(messages.get("auth.passwordLoginDisabled"));
         }
+        // 格式不对的也算一次，猜邀请码的每次都扣
+        limiter.acquire(new Bucket(RateLimiterType.REGISTER_IP, ClientIp.currentForLimit()));
         String name = username == null ? "" : username.trim();
         if (!name.matches("[" + USERNAME_CHARS + "]{2," + USERNAME_MAX + "}")) {
             throw new BizException(messages.get("auth.usernameFormat"));
@@ -343,6 +353,10 @@ public class AuthServiceImpl implements AuthService {
         if (!passwordLoginEnabled) {
             throw new BizException(messages.get("auth.passwordLoginDisabled"));
         }
+        // 桶 key 里的用户名截到 20 字（有效用户名最长 20）
+        String bucketName = StrUtil.sub(StrUtil.nullToEmpty(username).trim(), 0, USERNAME_MAX);
+        limiter.acquire(new Bucket(RateLimiterType.LOGIN_IP, ClientIp.currentForLimit()),
+                new Bucket(RateLimiterType.LOGIN_USERNAME, bucketName));
         User user = username == null ? null : userService.findByUsername(username.trim());
         // 统一文案，不暴露"账号存在但密码错"；OAuth 用户 password_hash 为空，同样拒绝
         if (user == null || user.getPasswordHash() == null

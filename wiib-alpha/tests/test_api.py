@@ -779,10 +779,17 @@ async def test_model_config(bare, monkeypatch):
     # key 只回尾 4 位；协议归小写；存过就把建好的模型丢掉
     assert view["apiKeyTail"] == "1234" and view["protocol"] == "anthropic" and view["model"] == "claude"
     assert "sk-abcd1234" not in json.dumps(view) and app.state.models is None
-    # 再存留空 key 就沿用
-    view = data(await bare.put("/api/alpha/models/gen", json={**body, "model": "claude-2"}, headers=ADMIN))
-    assert view["apiKeyTail"] == "1234" and view["model"] == "claude-2"
+    # 再存留空 key 就沿用，同主机换路径也算
+    view = data(await bare.put("/api/alpha/models/gen", json={**body, "model": "claude-2", "baseUrl": "https://up.test/v2"},
+                               headers=ADMIN))
+    assert view["apiKeyTail"] == "1234" and view["model"] == "claude-2" and view["baseUrl"] == "https://up.test/v2"
     assert (await app.state.store.models())["gen"]["api_key"] == "sk-abcd1234"
+    # 换了主机的保存和测试连通都要重填
+    moved = {**body, "baseUrl": "https://other.test"}
+    for resp in (await bare.put("/api/alpha/models/gen", json=moved, headers=ADMIN),
+                 await bare.post("/api/alpha/models/gen/test", json=moved, headers=ADMIN)):
+        assert resp.status_code == 400 and "重新填" in resp.json()["msg"]
+    assert (await app.state.store.models())["gen"]["base_url"] == "https://up.test/v2"
     # 只配了一个角色开不了 campaign（fixture 把 build_models 换成了假的，这里换回真的）
     monkeypatch.setattr(m, "build_models", REAL_BUILD_MODELS)
     resp = await bare.post("/api/alpha/campaigns", json={"k": 1}, headers=ADMIN)

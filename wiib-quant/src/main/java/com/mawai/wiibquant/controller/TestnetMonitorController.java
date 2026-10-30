@@ -1,5 +1,6 @@
 package com.mawai.wiibquant.controller;
 
+import com.mawai.wiibcommon.annotation.RequireAdmin;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibquant.external.binance.model.UserTrade;
 import com.mawai.wiibquant.strategy.monitor.TestnetMonitorService;
@@ -19,11 +20,13 @@ import java.util.List;
 /**
  * Binance Testnet 模拟盘监测看板 API。
  * 数据全部实时直拉 testnet（仅交易走 testnet，行情仍主网），用于验证 fibo 策略能否跑通/赚钱。
+ * 只给管理员（看的是平台 testnet 账户）。
  */
 @Slf4j
 @RestController
 @RequestMapping("/api/testnet")
 @RequiredArgsConstructor
+@RequireAdmin
 public class TestnetMonitorController {
 
     /** days 上限：下游按 ≤7 天一段滚动翻页拉 testnet，天数即翻页次数；看板最长视图 90 天。 */

@@ -473,7 +473,7 @@
     "baseUrlPh": "baseUrl，不带 /v1；留空用官方地址",
     "effortPh": "思考档位，留空走默认",
     "keyPh": "API key",
-    "keyKept": "已存 ****{{tail}}，留空不换",
+    "keyKept": "已存 ****{{tail}}，留空不换；换了主机要重填",
     "test": "测试连通性",
     "save": "保存",
     "saved": "{{role}}的模型已保存",

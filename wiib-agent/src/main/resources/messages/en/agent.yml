@@ -20,6 +20,7 @@ agent:
     effortTooLong: "The reasoning level is at most {{max}} characters; leave it blank to omit it"
     contextWindowInvalid: "The context window must be between {{min}}K and {{max}}K"
     apiKeyRequired: apiKey is required
+    apiKeyRequiredNewHost: The baseUrl now has a different host, port or http/https - re-enter the apiKey
     connectFailed: "Model connectivity test failed: {{reason}}"
     # Endpoints with web search ticked: the connectivity test, creating, and saving an edit that just ticked search or
     # changed protocol/URL/model/key/reasoning effort/Antigravity source all probe search once
@@ -36,6 +37,7 @@ agent:
   # Admin: LLM configs and feature-slot assignment
   admin:
     apiKeyRequired: apiKey is required
+    apiKeyRequiredNewHost: The baseUrl now has a different host, port or http/https - re-enter the apiKey
     baseUrlRequired: baseUrl is required
     nameRequired: A name is required
     modelRequired: model is required

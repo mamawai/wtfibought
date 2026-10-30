@@ -371,4 +371,18 @@ class LlmEndpointServiceTest {
         assertThat(r.models()).containsExactly("m1");
         verify(builder).listModels("openai", "https://8.8.8.8", "sk-plain");
     }
+
+    /** 留空沿用已存 key：换了主机的保存、测连通、拉模型都要求重填，存的 key 一次都不解密 */
+    @Test
+    void 地址换了主机不沿用已存key() {
+        when(endpointMapper.selectById(1L)).thenReturn(ep(1, true));   // 存的是 https://8.8.8.8
+        LlmEndpointService.SaveReq moved = new LlmEndpointService.SaveReq("主力", "openai", "https://1.1.1.1", "m", "", "",
+                null, null, null);
+
+        assertThat(service.update(1L, 1L, moved)).contains("重新填");
+        assertThat(service.testConnection(1L, 1L, moved)).contains("重新填");
+        assertThat(service.listModels(1L, 1L, moved).error()).contains("重新填");
+        verify(endpointMapper, never()).updateById(any(UserLlmEndpoint.class));
+        verify(crypto, never()).decrypt(any());
+    }
 }

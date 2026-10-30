@@ -147,7 +147,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
           </span>
           <input value={value.apiKey} onChange={e => onChange({ apiKey: e.target.value })}
                  type="password"
-                 placeholder={exists ? t('endpoint.keyPhExists') : t('endpoint.keyPh')}
+                 placeholder={exists ? t('endpoint.keyPhExists') : t(platform ? 'endpoint.keyPhPlatform' : 'endpoint.keyPh')}
                  className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
         </label>
       </div>

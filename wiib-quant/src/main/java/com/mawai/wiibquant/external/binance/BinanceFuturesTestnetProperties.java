@@ -1,6 +1,7 @@
 package com.mawai.wiibquant.external.binance;
 
 import lombok.Data;
+import lombok.ToString;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -20,8 +21,10 @@ public class BinanceFuturesTestnetProperties {
     private String restBaseUrl = "https://demo-fapi.binance.com";
 
     /** 在 https://testnet.binancefuture.com/ 用 GitHub 登录后申请 */
+    @ToString.Exclude
     private String apiKey;
 
+    @ToString.Exclude
     private String secretKey;
 
     /** 接收窗口毫秒，Binance 服务端时间与请求 timestamp 差 ≤ recvWindow 才接受 */

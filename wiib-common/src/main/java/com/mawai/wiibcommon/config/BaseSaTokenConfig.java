@@ -41,7 +41,7 @@ public abstract class BaseSaTokenConfig implements WebMvcConfigurer {
         config.setIsShare(false);       // 每次登录签发独立token，一端退出不影响另一端
         config.setMaxLoginCount(2);     // 最多两端在线，第三端登录顶掉最早那个（仅 isConcurrent+非share 时生效）
         config.setTokenStyle("uuid");
-        config.setIsLog(true);
+        config.setIsLog(false);         // 开了会把登录 token 明文打进日志
         config.setIsReadCookie(false);
         config.setIsReadHeader(true);
         return config;

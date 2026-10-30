@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.annotation.RateLimiter;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.enums.RateLimiterType;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.limiter.TokenBucketLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
@@ -59,7 +60,7 @@ class RateLimiterAspectTest {
     void setUp() {
         AspectJProxyFactory f = new AspectJProxyFactory(target);
         f.setProxyTargetClass(true);
-        f.addAspect(new RateLimiterAspect(redis));
+        f.addAspect(new RateLimiterAspect(new TokenBucketLimiter(redis)));
         proxy = f.getProxy();
     }
 

@@ -62,7 +62,7 @@ public class LlmEndpointService {
     private static final String NOT_SEARCHED = "the search-only request came back without groundingMetadata (no search was run)";
 
     /**
-     * apiKey 传空=沿用已存的 key（只在 update/探测已有端点时合法）；webSearch 只在能声明服务端搜索的协议下入库；
+     * apiKey 传空=沿用已存的 key（只在 update/探测已有端点、且地址的 scheme/主机/端口没变时合法）；webSearch 只在能声明服务端搜索的协议下入库；
      * antigravity 只在 gemini 协议且勾了搜索时入库；contextWindow 传空=默认 256K
      */
     public record SaveReq(String name, String apiProtocol, String baseUrl, String model,
@@ -210,6 +210,9 @@ public class LlmEndpointService {
         }
         boolean keyChanged = req.apiKey() != null && !req.apiKey().isBlank();
         String err = validate(req, false);
+        if (err == null) {
+            err = reuseKeyError(cur, req);
+        }
         if (err != null) {
             return err;
         }
@@ -289,7 +292,12 @@ public class LlmEndpointService {
         if (ssrf != null) {
             return new ListModelsResult(ssrf, List.of());
         }
-        String keyEnc = keyEncFor(userId, id, req.apiKey());
+        UserLlmEndpoint cur = id == null ? null : get(userId, id);
+        String reuseErr = reuseKeyError(cur, req);
+        if (reuseErr != null) {
+            return new ListModelsResult(reuseErr, List.of());
+        }
+        String keyEnc = keyEncFor(cur, req.apiKey());
         if (keyEnc == null) {
             return new ListModelsResult(messages.get("agent.endpoint.apiKeyRequired"), List.of());
         }
@@ -309,7 +317,12 @@ public class LlmEndpointService {
         if (err != null) {
             return err;
         }
-        String keyEnc = keyEncFor(userId, id, req.apiKey());
+        UserLlmEndpoint cur = id == null ? null : get(userId, id);
+        String reuseErr = reuseKeyError(cur, req);
+        if (reuseErr != null) {
+            return reuseErr;
+        }
+        String keyEnc = keyEncFor(cur, req.apiKey());
         if (keyEnc == null) {
             return messages.get("agent.endpoint.apiKeyRequired");
         }
@@ -404,13 +417,21 @@ public class LlmEndpointService {
                 .eq(UserLlmEndpoint::getId, id).set(UserLlmEndpoint::getIsDefault, true));
     }
 
-    /** 新 key 加密；传空则回落到 id 指向端点已存的密文；两头都没有 → null */
-    private String keyEncFor(long userId, Long id, String apiKey) {
+    /** 新 key 加密；传空则回落到已有端点存的密文；两头都没有 → null */
+    private String keyEncFor(UserLlmEndpoint cur, String apiKey) {
         if (apiKey != null && !apiKey.isBlank()) {
             return apiKeyCrypto.encrypt(apiKey.trim());
         }
-        UserLlmEndpoint cur = id == null ? null : get(userId, id);
         return cur == null ? null : cur.getApiKeyEnc();
+    }
+
+    /** 留空沿用已存 key 时，地址的 scheme、主机、端口得和存它时一样，变了要重填 key */
+    private String reuseKeyError(UserLlmEndpoint cur, SaveReq req) {
+        boolean reuse = req.apiKey() == null || req.apiKey().isBlank();
+        if (!reuse || cur == null || BaseUrlGuard.sameOrigin(cur.getBaseUrl(), req.baseUrl())) {
+            return null;
+        }
+        return messages.get("agent.endpoint.apiKeyRequiredNewHost");
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.mawai.wiibcommon.aspect;
 
+import com.mawai.wiibcommon.util.ClientIp;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -54,7 +55,7 @@ public class LogAspect {
             HttpServletRequest req = attrs.getRequest();
             url = req.getRequestURL().toString();
             httpMethod = req.getMethod();
-            ip = realIp(req);
+            ip = ClientIp.of(req);
         }
 
         String className = point.getSignature().getDeclaringTypeName();
@@ -99,13 +100,5 @@ public class LogAspect {
 
             throw e;
         }
-    }
-
-    private static String realIp(HttpServletRequest req) {
-        String ip = req.getHeader("X-Forwarded-For");
-        if (ip != null && !ip.isEmpty()) return ip.split(",")[0].trim();
-        ip = req.getHeader("X-Real-IP");
-        if (ip != null && !ip.isEmpty()) return ip;
-        return req.getRemoteAddr();
     }
 }

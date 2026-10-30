@@ -473,7 +473,7 @@
     "baseUrlPh": "baseUrl without /v1; empty = official endpoint",
     "effortPh": "reasoning effort, empty = default",
     "keyPh": "API key",
-    "keyKept": "saved ****{{tail}}; leave empty to keep",
+    "keyKept": "saved ****{{tail}}; leave empty to keep, re-enter if the host changes",
     "test": "Test connection",
     "save": "Save",
     "saved": "{{role}} model saved",

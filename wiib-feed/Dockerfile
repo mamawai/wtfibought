@@ -1,6 +1,7 @@
 # feed 行情上游：币安 WS 摄入 → 写 Redis
 # JDK 非 JRE：保留 jstack/jmap 诊断工具
-FROM eclipse-temurin:25-jdk-alpine
+# 版本钉死，升 JDK 三个 Dockerfile 一起改这一行
+FROM eclipse-temurin:25.0.5_8-jdk-alpine
 
 WORKDIR /app
 RUN mkdir -p /dumps

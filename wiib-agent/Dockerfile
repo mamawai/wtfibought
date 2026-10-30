@@ -1,6 +1,7 @@
 # agent AI 交易员：LLM Graph 并行 + 策略实盘(quant 库)。三进程最吃内存
 # JDK 非 JRE：保留 jstack/jmap 诊断工具
-FROM eclipse-temurin:25-jdk-alpine
+# 版本钉死，升 JDK 三个 Dockerfile 一起改这一行
+FROM eclipse-temurin:25.0.5_8-jdk-alpine
 
 WORKDIR /app
 RUN mkdir -p /dumps

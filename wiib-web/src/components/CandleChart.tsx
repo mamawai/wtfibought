@@ -1,4 +1,4 @@
-import { cn, fmtNum, fmtDateTime } from '../lib/utils';
+import { cn, escapeHtml, fmtNum, fmtDateTime } from '../lib/utils';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n, { currentLang } from '../i18n';
@@ -298,10 +298,6 @@ const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
 
 /** 手机竖屏画布高：主图 360，每开一个副图加 120，和主图:副图 3:1 的 stretch 对上 */
 const PHONE_PLOT_H = ['phone:h-[360px]', 'phone:h-[480px]', 'phone:h-[600px]'];
-
-/** 快讯是外部内容，进 innerHTML 前必须转义（标题/正文/URL 都不可信） */
-const esc = (s: string) => s.replace(/[&<>"']/g, c =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
 /** 贴价格轴的仓位小签：挨得近的往下推，不叠在一起 */
 const LABEL_GAP = 16;
@@ -650,7 +646,7 @@ export function CandleChart({
       els.main.style.whiteSpace = compact ? 'normal' : 'nowrap';
       els.main.style.right = compact ? `${chart.priceScale('right').width() + 4}px` : '';
       els.main.innerHTML =
-        `<div><b style="font-weight:800;font-size:12.5px">${symbol}</b> <span class="mute">${compact ? interval : `${interval} · ${marketLabelRef.current}`}</span></div>`
+        `<div><b style="font-weight:800;font-size:12.5px">${escapeHtml(symbol)}</b> <span class="mute">${compact ? interval : `${interval} · ${marketLabelRef.current}`}</span></div>`
         + `<div class="num ${up ? 'up' : 'dn'}">`
         + cell(i18n.t('market:chart.open'), fmtNum(bar.open, decimals))
         + cell(i18n.t('market:chart.high'), fmtNum(bar.high, decimals))
@@ -661,7 +657,7 @@ export function CandleChart({
 
       if (els.vol) {
         els.vol.innerHTML = `<span class="num" style="${LG_SP}"><i class="mute" style="${LG_LABEL}">${i18n.t('market:chart.vol')}</i>`
-          + `<b class="${bar.close >= bar.open ? 'up' : 'dn'}">${fmtVol(bar.volume)}</b> ${base}</span>`;
+          + `<b class="${bar.close >= bar.open ? 'up' : 'dn'}">${fmtVol(bar.volume)}</b> ${escapeHtml(base)}</span>`;
       }
 
       const ind = indRef.current;
@@ -984,14 +980,14 @@ export function CandleChart({
     /** 实际 · 预测 · 前值，有哪个拼哪个；讲话类三个都没有就空串 */
     const values = (e: EconCalendarEvent) => ([['actual', e.actual], ['forecast', e.forecast], ['previous', e.previous]] as const)
       .filter(([, v]) => v)
-      .map(([k, v]) => `${i18n.t(`home:calendar.${k}`)} ${esc(v!)}`).join(' · ');
+      .map(([k, v]) => `${i18n.t(`home:calendar.${k}`)} ${escapeHtml(v!)}`).join(' · ');
     const showPopup = (rect: { x: number; y: number; w: number }, events: EconCalendarEvent[]) => {
       const tip = econTipRef.current; if (!tip || !events.length) return;
       tip.innerHTML = events.map(e => {
         const nums = values(e);
         return '<div style="padding:6px 0;border-bottom:1px solid var(--color-border)">'
-          + `<div class="mute" style="font-weight:700;margin-bottom:2px">${fmtClock(e.eventTime)} · ${flagHtml(e.country)} ${esc(e.country)} / ${esc(e.currency)}</div>`
-          + `<div style="font-weight:700;margin-bottom:2px">${esc(e.title)}</div>`
+          + `<div class="mute" style="font-weight:700;margin-bottom:2px">${fmtClock(e.eventTime)} · ${flagHtml(e.country)} ${escapeHtml(e.country)} / ${escapeHtml(e.currency)}</div>`
+          + `<div style="font-weight:700;margin-bottom:2px">${escapeHtml(e.title)}</div>`
           + (nums ? `<div class="mute num">${nums}</div>` : '')
           + '</div>';
       }).join('');
