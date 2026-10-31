@@ -379,11 +379,11 @@ async def _observing(app: FastAPI) -> tuple[combo.Combo, dict[str, str]]:
 
 
 async def _warm(app: FastAPI) -> None:
-    """装载完、入库后先把观察区的值和库算好：手填评估、campaign 第一次用到时不用再现算；
-    交易员 00:05 调仓也不该现算整个库"""
+    """装载完、入库后先把观察区的值、库和交易员的组合权重、方向算好：手填评估、campaign 第一次用到时不用再现算；
+    交易员 00:05 调仓也不该现算整个库和权重"""
     try:
         await _observing(app)
-        await _library(app)
+        await scheduler.board_factors(app, await _library(app))
     except Exception:
         logger.exception("预热失败")
 
@@ -454,10 +454,14 @@ async def _check(app: FastAPI, action: str) -> None:
 
 async def _load(app: FastAPI, cfg: Config) -> None:
     """装载数据；参照网格缺了或比面板旧就后台补算，算好挂到这份 data 上（中途又刷新换了 data 也不串）"""
+    # 还在跑的预热是按上一份数据算的，停掉
+    task = app.state.library_task
+    if task is not None and not task.done():
+        task.cancel()
     universe = await app.state.store.universe()
     app.state.data = data = await asyncio.to_thread(load_data, cfg, app.state.standard.params, universe)
     if data is not None:
-        asyncio.create_task(_warm(app))
+        app.state.library_task = asyncio.create_task(_warm(app))
     job = app.state.runs.jobs["grid"]
     if data is None or data.reference_grid is not None or job.get("running"):
         return
@@ -594,7 +598,7 @@ async def data_refresh(request: Request):
 
 
 async def _start_refresh(app: FastAPI) -> None:
-    """起刷新的后台任务：页面上点的和交易员调度月初自动起的都走这里"""
+    """起刷新的后台任务：页面上点的和调度每天自动起的都走这里"""
     await _check(app, "refresh")
     job = app.state.runs.jobs["refresh"]
     # 上一轮留下的阶段、进度、币数全清掉，页面不会先看到旧值
@@ -1719,7 +1723,7 @@ async def lifespan(app: FastAPI):
     app.state.models = None
     app.state.library = None
     app.state.library_lock = asyncio.Lock()
-    # 库列表接口起的后台算库任务，没算完不重复起
+    # 后台预热任务（装载完、库列表接口发现库变了都会起），没算完不重复起；数据重装时停掉在跑的
     app.state.library_task = None
     # 观察区候选在搜索段上的值：(装载时刻, 候选 id → 值)
     app.state.observing = (None, {})
@@ -1754,7 +1758,7 @@ async def lifespan(app: FastAPI):
         thresholds = replace(thresholds, **await store.overrides())
         app.state.standard = await _standard(app, Standard(params, thresholds, (await store.carry())["share"]))
         await _load(app, cfg)
-        # 交易员的后台循环：整点记净值，每天 UTC 00:05 起补尾巴、00:15 下单，每月 1 日 UTC 14 点起自动刷新数据
+        # 交易员的后台循环：整点记净值，每天 UTC 00:05 起补尾巴、00:15 下单，每天 UTC 14 点起自动刷新数据
         trader = asyncio.create_task(scheduler.loop(app, _library, _start_refresh))
         yield
     finally:

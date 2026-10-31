@@ -213,6 +213,12 @@ def describe(panel: pd.DataFrame) -> dict[str, Any]:
     return out
 
 
+def published_at(data_dir: str | Path) -> int:
+    """当前版面板换上来的时刻（ms），panel.current 的修改时间；还没刷成过一版是 0"""
+    current = Path(data_dir) / CURRENT
+    return current.stat().st_mtime_ns // 1_000_000 if current.exists() else 0
+
+
 class PanelStore:
     def __init__(self, data_dir: str | Path, version: str | None = None):
         """version 不给就是当前那版；raw/ 各版共用"""
@@ -240,17 +246,14 @@ class PanelStore:
 
     def grow(self, dataset: str, symbol: str, fetch: Callable[[str, int, int], pd.DataFrame],
              earliest: int, now_ms: int) -> pd.DataFrame:
-        """有缓存就从最后一条之后接着拉，没有就从 earliest 拉；想拉更早的删掉这个文件重来"""
+        """有缓存就从最后一条之后接着拉，没有就从 earliest 拉；想拉更早的删掉这个文件重来。没拉到新的不重写文件"""
         time_col = RAW_DATASETS[dataset]
         old = self.load_raw(dataset, symbol)
         start = earliest if old is None or old.empty else int(old[time_col].max()) + 1
         new = fetch(symbol, start, now_ms)
-        if old is None:
-            df = new
-        elif new.empty:
-            df = old
-        else:
-            df = pd.concat([old, new], ignore_index=True)
+        if old is not None and new.empty:
+            return old
+        df = new if old is None else pd.concat([old, new], ignore_index=True)
         df = df.drop_duplicates(time_col).sort_values(time_col).reset_index(drop=True)
         self.save_raw(dataset, symbol, df)
         return df

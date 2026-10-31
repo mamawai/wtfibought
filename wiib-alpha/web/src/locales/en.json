@@ -70,8 +70,8 @@
     "references": "Reference factors",
     "refresh": "Refresh data",
     "refreshing": "Refreshing",
-    "refreshHint": "Pulls market data from Binance, ranks the pool and assembles the panels. Runs by itself from 14:00 UTC on the 1st of each month to bring in that month's pool.",
-    "refreshMore": "Steps: list contracts → pull daily bars to rank the pool → pull 15m bars, funding, premium, open interest and long/short ratios, plus the 15m bars of the matching spot pair, per symbol → assemble panels → build the reference grid (for the redundancy check).\nThe first run is long; a rerun only fills what is missing. A failed automatic run is retried an hour later, and while another job is running it waits for it to finish.",
+    "refreshHint": "Pulls market data from Binance, ranks the pool and assembles the panels. Runs by itself once a day from 14:00 UTC; the run on the 1st brings in that month's pool.",
+    "refreshMore": "Steps: list contracts → pull daily bars to rank the pool → pull 15m bars, funding, premium, open interest and long/short ratios, plus the 15m bars of the matching spot pair, per symbol → assemble panels → build the reference grid (for the redundancy check).\nThe first run is long; a rerun only fills what is missing. A failed automatic run is retried an hour later; while another job is running it waits for that to finish; after 22:00 UTC it waits for the next day.",
     "stage": {
       "symbols": "Listing contracts",
       "daily": "Daily bars and pool ranking",

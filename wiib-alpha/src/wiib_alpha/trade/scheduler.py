@@ -7,8 +7,8 @@
 跑完不管成败都落一条 trade_run；一笔单都没成的（Binance、sim 一时不通，或者下了单全失败），01:00 之前下一分钟再来，成了一笔的当天不再跑；
 进程在半路退出就不落，重启后同一天重跑（下单 ID 不变，sim 去重）。
 刷新期间不跑；调仓、因子对比跑着的时候刷新接口拒绝（main 里那串互斥）。
-月初自动刷新数据：每月 1 日 UTC 14 点起，当月币池还没排出来（这个月还没刷成过）就起一次，换上当月币池；
-有 campaign 或别的后台任务占着就下一分钟再看，刷失败了隔一小时再起，不分白天晚上。
+每天自动刷新数据：UTC 14 点起，当前面板不是今天 14 点后刷的就起一次（月初那次顺带排出当月币池）；
+有 campaign 或别的后台任务占着就下一分钟再看，刷失败了隔一小时再起；22 点后不再起，等明天。
 按腿归因（attrib）：调仓时段之外，出过目标、下一次调仓已经发生、还没归因的调仓日，拉价格和资金费算一遍存进 trade_run。
 组合权重和方向（全部历史、24h 档、晚一根成交的答案学的）按装载时刻缓存，骨架就是挖掘装载的那份：库因子的值取自 main 的库缓存，不每天全池重算。
 """
@@ -25,9 +25,10 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 
+from ..config import config
 from ..data import universe as universe_table
-from ..data.binance import BAR_MS, DAY_MS, Binance, day_name, ms, utc
-from ..data.panel import BENCHMARK, FEATURE_COLUMNS, PanelStore
+from ..data.binance import BAR_MS, DAY_MS, Binance, day_name
+from ..data.panel import BENCHMARK, FEATURE_COLUMNS, PanelStore, published_at
 from ..data.pool import month_label, month_of
 from ..dsl import Expr, parse
 from ..eval.params import EvalParams
@@ -42,8 +43,10 @@ HOUR_MS = 3_600_000
 PREPARE_AFTER_MS = 5 * 60_000
 TRADE_AT_MS = 15 * 60_000
 GIVE_UP_AFTER_MS = 60 * 60_000
-# 月初自动刷新从 1 日 UTC 14 点起：上个月最后一天的日度归档 8~12 点才出齐，再早排当月币池的 30 天日线缺一天
+# 每天的自动刷新从 UTC 14 点起：昨天的日度归档 8~12 点才出齐（月初排当月币池的 30 天日线也要它）；
+# 22 点后不再起：刷一次一两个小时，别压住 00:05 的调仓
 REFRESH_AFTER_MS = 14 * HOUR_MS
+REFRESH_UNTIL_MS = 22 * HOUR_MS
 
 # main._library：库因子在当前数据上的派生物（带全量骨架上的值）
 Library = Callable[[FastAPI], Awaitable[Any]]
@@ -65,18 +68,18 @@ async def tick(app: FastAPI, library: Library, refresh: Refresh, now: int) -> No
     store: Store = app.state.store
     if (await store.last_equity_ts() or 0) // HOUR_MS < now // HOUR_MS:
         await snapshot(app, now)
-    trade_window = PREPARE_AFTER_MS <= now % DAY_MS < GIVE_UP_AFTER_MS
+    today = now - now % DAY_MS
+    trade_window = PREPARE_AFTER_MS <= now - today < GIVE_UP_AFTER_MS
     if (trade_window and app.state.data is not None and not app.state.runs.jobs["refresh"].get("running")
             and _due(await store.trade_run(day_name(now)))):
         await rebalance(app, library, now)
-    start = utc(now).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month = f"{start:%Y-%m}"
-    # 当月币池还没排出来就起刷新；上一次（点的或自动的）起了不到一小时不再起，失败的隔一小时再试
-    if (now - ms(start) >= REFRESH_AFTER_MS and now - app.state.runs.jobs["refresh"].get("startedAt", 0) >= HOUR_MS
-            and not await store.has_universe(month)):
+    # 今天 14 点后还没刷成过就起刷新；上一次（点的或自动的）起了不到一小时不再起，失败的隔一小时再试
+    if (REFRESH_AFTER_MS <= now - today < REFRESH_UNTIL_MS
+            and now - app.state.runs.jobs["refresh"].get("startedAt", 0) >= HOUR_MS
+            and published_at(config().data_dir) < today + REFRESH_AFTER_MS):
         try:
             await refresh(app)
-            logger.info("%s 的币池还没排出来，自动刷新数据", month)
+            logger.info("今天还没刷过数据，自动刷新")
         except HTTPException:
             # 还在刷、有 campaign 或别的后台任务占着：下一分钟再看
             pass

@@ -439,10 +439,6 @@ class Store:
     async def universe(self) -> list[dict[str, Any]]:
         return await self._all("SELECT * FROM universe ORDER BY month, rank", ())
 
-    async def has_universe(self, month: str) -> bool:
-        """这个月（YYYY-MM）的榜单排出来没有"""
-        return await self._one("SELECT 1 FROM universe WHERE month = ? LIMIT 1", (month,)) is not None
-
     # ========== 模型端点 ==========
 
     async def set_model(self, role: str, spec: ModelSpec) -> None:

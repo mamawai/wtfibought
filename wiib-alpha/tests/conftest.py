@@ -48,9 +48,9 @@ def planted_universe(panels: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["month", "symbol", "rank", "avg_quote_volume"])
 
 
-def write_store(root, panels: dict[str, pd.DataFrame]) -> PanelStore:
-    """面板落成 parquet，再写 status.json 和参照网格（网格要比 status 新）"""
-    store = PanelStore(root)
+def write_store(root, panels: dict[str, pd.DataFrame], version: str | None = None) -> PanelStore:
+    """面板落成 parquet，再写 status.json 和参照网格（网格要比 status 新）；version 给了写进那一版目录，不切换"""
+    store = PanelStore(root, version)
     for s, p in panels.items():
         store.save_panel(s, p)
     store.write_status({s: {"rows": len(p)} for s, p in panels.items()})

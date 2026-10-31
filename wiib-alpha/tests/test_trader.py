@@ -1,16 +1,17 @@
 import json
+import os
 
 import httpx
 import pandas as pd
 import pytest
-from conftest import POOL_SYMBOLS
+from conftest import POOL_SYMBOLS, write_store
 from fakes import FakeFapi, FakeSim
 from test_api import ADMIN, bare, client, data, prepared, wait_until  # noqa: F401  fixtures
 
 from wiib_alpha import main as m
 from wiib_alpha.data import binance as b
 from wiib_alpha.data.binance import DAY_MS
-from wiib_alpha.data.panel import FEATURE_COLUMNS, PanelStore
+from wiib_alpha.data.panel import CURRENT, FEATURE_COLUMNS, PanelStore
 from wiib_alpha.data.refresh import RefreshResult
 from wiib_alpha.dsl import parse
 from wiib_alpha.trade import attrib, executor, scheduler
@@ -328,7 +329,7 @@ async def test_tick_rebalances_between_0005_and_0100_and_records_equity_every_ho
     assert curve[0] == {"ts": t0 + 60_000, "equity": 10000, "balance": 10000, "long_notional": 0, "short_notional": 0}
 
 
-async def test_tick_refreshes_after_1400_utc_until_the_month_has_its_pool(client, monkeypatch):
+async def test_tick_refreshes_once_a_day_from_1400_utc(client, planted_panels, monkeypatch):
     store, jobs = m.app.state.store, m.app.state.runs.jobs
     hour = scheduler.HOUR_MS
     # 刷新的开始时刻跟着调度的时钟走
@@ -339,9 +340,11 @@ async def test_tick_refreshes_after_1400_utc_until_the_month_has_its_pool(client
 
     def pull(cfg, job):
         pulls.append(clock["now"])
-        # 前两次归档连不上，第三次排出 4 月的榜单
+        # 前两次归档连不上；刷成的发布新一版面板，切换时刻拨到调度的时钟，榜单多出 4 月
         if len(pulls) < 3:
             raise RuntimeError("归档连不上")
+        write_store(cfg.data_dir, planted_panels, PanelStore(cfg.data_dir).next_version().panels.name).publish()
+        os.utime(os.path.join(cfg.data_dir, CURRENT), ns=(clock["now"] * 1_000_000,) * 2)
         return RefreshResult(pd.concat([table, table[table["month"] == "2025-03"].assign(month="2025-04")]), {})
 
     monkeypatch.setattr(m, "_refresh_panels", pull)
@@ -355,24 +358,30 @@ async def test_tick_refreshes_after_1400_utc_until_the_month_has_its_pool(client
 
         await wait_until(settled)
 
-    april = DAY + 31 * DAY_MS
-    # 3 月的池子在：不刷；4 月 1 日 14 点前不刷
-    await tick(DAY + 15 * hour)
-    await tick(april + 14 * hour - 60_000)
+    # 14 点前不刷
+    await tick(DAY + 14 * hour - 60_000)
     # 参照集在跑（刷新接口 409）：下一分钟再看
     jobs["reference"]["running"] = True
-    await tick(april + 14 * hour)
+    await tick(DAY + 14 * hour)
     jobs["reference"]["running"] = False
     assert pulls == []
-    # 刷失败了隔一小时再起，2 日 14 点前也起；排出 4 月的池子就不再起
-    await tick(april + 14 * hour + 60_000)
+    # 刷失败了隔一小时再起；刷成了当天不再起，数据重装
+    await tick(DAY + 14 * hour + 60_000)
     assert jobs["refresh"]["error"] == "归档连不上"
-    await tick(april + 15 * hour)
-    await tick(april + 15 * hour + 60_000)
-    await tick(april + DAY_MS + 2 * hour)
-    await tick(april + DAY_MS + 4 * hour)
-    assert pulls == [april + 14 * hour + 60_000, april + 15 * hour + 60_000, april + DAY_MS + 2 * hour]
-    assert await store.has_universe("2025-04") and jobs["refresh"]["error"] is None
+    await tick(DAY + 15 * hour)
+    await tick(DAY + 15 * hour + 60_000)
+    await tick(DAY + 16 * hour + 60_000)
+    await tick(DAY + 18 * hour)
+    assert pulls == [DAY + 14 * hour + 60_000, DAY + 15 * hour + 60_000, DAY + 16 * hour + 60_000]
+    assert jobs["refresh"]["error"] is None and m.app.state.data.loaded_at == DAY + 16 * hour + 60_000
+    assert "2025-04" in {r["month"] for r in await store.universe()}
+    # 第二天 22 点后不再起；第三天 14 点起刷；重启（任务记录清空）后看的是面板换上来的时刻，不重刷
+    await tick(DAY + DAY_MS + 22 * hour)
+    await tick(DAY + 2 * DAY_MS + 14 * hour)
+    jobs["refresh"].clear()
+    jobs["refresh"]["running"] = False
+    await tick(DAY + 2 * DAY_MS + 15 * hour)
+    assert pulls[3:] == [DAY + 2 * DAY_MS + 14 * hour]
 
 
 async def test_daily_pnl_runs_from_one_rebalance_to_the_next_and_drawdown_uses_hourly_snapshots(client):

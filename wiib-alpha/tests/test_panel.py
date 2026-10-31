@@ -224,11 +224,13 @@ def test_store_grows_incrementally_and_leaves_no_tmp(tmp_path):
         return klines(N, 100.0).iloc[k0:]
 
     now = close_time(N - 1) + 1
+    path = tmp_path / "raw" / "klines_15m" / "X.parquet"
     first = store.grow("klines_15m", "X", fetch, BASE, now)
+    written = path.stat().st_mtime_ns
     again = store.grow("klines_15m", "X", fetch, BASE, now)
-    # 第二次从最后一根之后接着拉，对面没新的就原样保留
+    # 第二次从最后一根之后接着拉，对面没新的就原样保留，文件不重写
     assert calls == [BASE, now] and len(first) == N and len(again) == N
-    assert (tmp_path / "raw" / "klines_15m" / "X.parquet").exists()
+    assert path.stat().st_mtime_ns == written
     assert not list((tmp_path / "raw" / "klines_15m").glob("*.tmp"))
 
 

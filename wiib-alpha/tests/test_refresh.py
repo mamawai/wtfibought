@@ -7,7 +7,7 @@ import pytest
 from wiib_alpha import reference
 from wiib_alpha.data import refresh as r
 from wiib_alpha.data.binance import BAR_MS, DAY_MS, KLINE_COLUMNS, METRICS_COLUMNS
-from wiib_alpha.data.panel import POOL_COLUMN, PanelStore
+from wiib_alpha.data.panel import POOL_COLUMN, PanelStore, published_at
 from wiib_alpha.dsl import parse
 
 
@@ -98,10 +98,11 @@ def run(store: PanelStore, api: FakeBinance, now_ms: int, progress: dict | None 
 
 def test_refresh_builds_pool_and_panels(tmp_path):
     old, api, progress = PanelStore(tmp_path), FakeBinance(), {}
+    assert published_at(tmp_path) == 0
     result = run(old, api, NOW, progress)
     # 面板写进新的一版并换成当前版；刷新前打开的还读原来那版
     store = PanelStore(tmp_path)
-    assert store.panels != old.panels and not old.has("BTCUSDT")
+    assert store.panels != old.panels and not old.has("BTCUSDT") and published_at(tmp_path) > 0
 
     table = result.universe
     by_month = {m: g.sort_values("rank")["symbol"].tolist() for m, g in table.groupby("month")}
