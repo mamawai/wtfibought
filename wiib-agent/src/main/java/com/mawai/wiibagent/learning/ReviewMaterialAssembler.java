@@ -4,15 +4,20 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
+import com.mawai.wiibagent.trader.trade.TradeTools;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibagent.trader.wakeup.WatchText;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.entity.AiTraderExperienceVerdict;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
@@ -43,7 +48,7 @@ import java.util.Set;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 复盘素材组装（纯代码）：战绩表、本局论点战绩、案例素材（每笔事实表按单子类型分组）、本期行情、经验账本。
+ * 复盘素材组装（纯代码）：战绩表、本局论点战绩、案例素材（每笔事实表按单子类型分组）、本期行情、盯盘布防、经验账本。
  * 事实裁定归代码、模型只解读。素材窗口 = (上次成功 REVIEW 的 wake_time, 本日线边界]。
  * <p>
  * 段标签全在 {@link PromptCatalog} 的 {@code reviewer.label.*}；配对与了结方式在 {@link TradePairing}，
@@ -67,6 +72,8 @@ public class ReviewMaterialAssembler {
             DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(WakeWindow.ZONE);
     private static final DateTimeFormatter HM_FMT =
             DateTimeFormatter.ofPattern("HH:mm").withZone(WakeWindow.ZONE);
+    /** 盯盘命中那轮的该币结论段最多带多少字 */
+    static final int MAX_SECTION = 240;
 
     private final AiTraderDecisionMapper decisionMapper;
     private final AiTraderPlanMapper planMapper;
@@ -75,10 +82,12 @@ public class ReviewMaterialAssembler {
     private final CaseFileBuilder caseFiles;
     private final ExperienceLedger ledger;
     private final PlayStatsAssembler playStats;
+    private final TraderWatchStore watchStore;
+    private final DecisionText decisionText;
 
-    /** 五块素材文本 + 已了结笔数（调用方日志用）+ 本期仓位 id 按单子类型分组（未标类型键为空串），结论流水记 position_ids 用 */
+    /** 六块素材文本 + 已了结笔数（调用方日志用）+ 本期仓位 id 按单子类型分组（未标类型键为空串），结论流水记 position_ids 用 */
     public record ReviewMaterial(String statsBlock, String playStatsBlock, String casesBlock,
-                                 String marketBlock, String ledgerBlock, int closedTrades,
+                                 String marketBlock, String watchBlock, String ledgerBlock, int closedTrades,
                                  Map<String, List<Long>> positionIdsByPlay) {
     }
 
@@ -134,6 +143,7 @@ public class ReviewMaterialAssembler {
                 stats == null ? "" : stats,
                 casesBlock(CaseFileBuilder.groups(cases), lang),
                 marketBlock(trader, fromMs, toMs, lang),
+                watchBlock(trader, fromMs, toMs, lang),
                 ledgerBlock(trader, lang),
                 visible.size(),
                 idsByPlay);
@@ -354,6 +364,94 @@ public class ReviewMaterialAssembler {
                     "range", w.lowToHighPct()))).append('\n');
         }
         return sb.toString();
+    }
+
+    // ==================== 盯盘布防 ====================
+
+    /** 期间布的盯盘条件、命中，以及得知命中那轮的交易动作与该币结论；整期没布过条件的币点名 */
+    private String watchBlock(AiTrader t, long fromMs, long toMs, AgentLang lang) {
+        List<AiTraderWatch> rows = watchStore.inWindow(t.getId(), t.getRoundNo(), fromMs, toMs);
+        List<AiTraderWatch> created = rows.stream()
+                .filter(w -> w.getCreatedWakeTime() > fromMs && w.getCreatedWakeTime() <= toMs).toList();
+        List<AiTraderWatch> fired = rows.stream()
+                .filter(w -> w.getFiredAt() != null && w.getFiredAt() > fromMs && w.getFiredAt() <= toMs)
+                .sorted(Comparator.comparingLong(AiTraderWatch::getFiredAt)).toList();
+        List<AiTraderWatch> armed = watchStore.armed(t.getId(), t.getRoundNo());
+        // 期间布过的币；窗口前布下、现在还在盯的也算有条件
+        Set<String> createdSymbols = new LinkedHashSet<>();
+        created.forEach(w -> createdSymbols.add(w.getSymbol()));
+        Set<String> covered = new LinkedHashSet<>(createdSymbols);
+        armed.forEach(w -> covered.add(w.getSymbol()));
+        List<String> idle = Arrays.stream(t.getSymbols().split(",")).map(String::trim)
+                .filter(s -> !s.isEmpty() && !covered.contains(s)).toList();
+        StringBuilder sb = new StringBuilder(prompts.get(lang, "reviewer.label.watchHeader")).append('\n');
+        sb.append(prompts.get(lang, "reviewer.label.watchSummary", Map.of(
+                "n", created.size(),
+                "symbols", createdSymbols.isEmpty() ? prompts.get(lang, "reviewer.label.none") : String.join(", ", createdSymbols),
+                "hits", fired.size(),
+                "armed", armed.size(),
+                "idle", idle.isEmpty() ? ""
+                        : prompts.get(lang, "reviewer.label.watchIdle", Map.of("symbols", String.join(", ", idle)))))).append('\n');
+        for (AiTraderWatch w : fired) {
+            sb.append(prompts.get(lang, "reviewer.label.watchHit", Map.of(
+                    "firedAt", TIME_FMT.format(Instant.ofEpochMilli(w.getFiredAt())),
+                    "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
+                    "note", w.getNote(),
+                    "followUp", followUp(t, w, lang)))).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** 得知命中的那轮（woke_at 对应的决策行）：时刻、唤醒类型、交易动作、该币的结论段 */
+    private String followUp(AiTrader t, AiTraderWatch w, AgentLang lang) {
+        if (w.getWokeAt() == null) {
+            return prompts.get(lang, "reviewer.label.watchUnreported");
+        }
+        // 日线边界上 REVIEW 行与例行轮同一个 wake_time，只认唤醒轮
+        AiTraderDecision d = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
+                .eq(AiTraderDecision::getTraderId, t.getId())
+                .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
+                .eq(AiTraderDecision::getWakeTime, w.getWokeAt())
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
+                .last("LIMIT 1"));
+        String none = prompts.get(lang, "reviewer.label.none");
+        return prompts.get(lang, "reviewer.label.watchFollowUp", Map.of(
+                "wokeAt", TIME_FMT.format(Instant.ofEpochMilli(w.getWokeAt())),
+                "kind", d == null ? none : d.getKind(),
+                "actions", d == null ? none : tradeActions(d.getActionsJson(), lang),
+                "section", d == null ? none : symbolSection(d.getReasoning(), w.getSymbol(), none)));
+    }
+
+    /** 那轮的交易动作：工具名列表；被护栏拒的、sim 报错的、结果未知的各带标，没标的才是做成了 */
+    private String tradeActions(String actionsJson, AgentLang lang) {
+        List<String> out = new ArrayList<>();
+        if (actionsJson != null && !actionsJson.isBlank()) {
+            for (JsonNode a : MAPPER.readTree(actionsJson)) {
+                String tool = a.path("tool").asString(null);
+                if (tool == null || !TradeTools.SERIAL_TOOLS.contains(tool)) {
+                    continue;
+                }
+                String status = a.path("status").asString("");
+                String key = a.has("rejected") ? "watchRejected"
+                        : "error".equals(status) ? "watchFailed"
+                        : "unknown".equals(status) ? "watchUnknown" : null;
+                out.add(key == null ? tool : prompts.get(lang, "reviewer.label." + key, Map.of("tool", tool)));
+            }
+        }
+        return out.isEmpty() ? prompts.get(lang, "reviewer.label.watchNoAction") : String.join(", ", out);
+    }
+
+    /** 那轮结论里该币的段，压成一行 */
+    private String symbolSection(String reasoning, String symbol, String none) {
+        String block = decisionText.conclusionBlock(reasoning);
+        if (block == null) {
+            return none;
+        }
+        return DecisionText.splitSegments(block).stream()
+                .filter(s -> symbol.equals(s.symbol()))
+                .map(s -> s.body().strip().replaceAll("\\s+", " "))
+                .map(s -> s.length() > MAX_SECTION ? s.substring(0, MAX_SECTION) + "…" : s)
+                .findFirst().orElse(none);
     }
 
     // ==================== 经验账本 ====================

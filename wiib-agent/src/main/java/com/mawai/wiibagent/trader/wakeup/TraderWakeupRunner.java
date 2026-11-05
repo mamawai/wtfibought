@@ -408,7 +408,12 @@ public class TraderWakeupRunner {
                 List<Long> told = new ArrayList<>(triggerWatchIds);
                 hitsNow.forEach(w -> told.add(w.getId()));
                 quiet.forEach(w -> told.add(w.getId()));
-                watchStore.markWoken(told, decision.getWakeTime());
+                try {
+                    watchStore.markWoken(told, decision.getWakeTime());
+                } catch (Exception e) {
+                    // 记账失败不改这一轮的结局；没标上的下一轮开场白再报一次
+                    log.warn("[Wakeup] 盯盘命中标记已告知失败 traderId={} msg={}", decision.getTraderId(), e.toString());
+                }
             }
         }
         if (outcome.modelCalls() >= MAX_MODEL_CALLS) {
@@ -591,12 +596,8 @@ public class TraderWakeupRunner {
                 "type", e.type(),
                 "symbol", String.valueOf(e.symbol()),
                 "side", String.valueOf(e.side()),
-                "qty", num(e.quantity()),
-                "price", num(e.price())));
-    }
-
-    private static String num(BigDecimal v) {
-        return v == null ? "?" : v.stripTrailingZeros().toPlainString();
+                "qty", WatchText.num(e.quantity()),
+                "price", WatchText.num(e.price())));
     }
 
     /**

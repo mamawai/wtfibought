@@ -130,14 +130,14 @@ public class WatchSentinel implements MessageListener {
         return hits;
     }
 
-    /** 库里 CAS 成功才算命中，并从名单摘掉 */
+    /** 库里 CAS 成功才算命中。不论成败都从名单摘掉：CAS 失败说明库里已经不是 ARMED（命中过或被替换），不用再盯 */
     private boolean fire(AiTraderWatch w, BigDecimal price, long at) {
-        if (!watchStore.fire(w.getId(), at, price)) {
-            return false;
-        }
+        boolean fired = watchStore.fire(w.getId(), at, price);
         remove(w);
-        log.info("[Watch] 命中 traderId={} {} {} {} @{}", w.getTraderId(), w.getSymbol(), w.getKind(), w.getLevel(), price);
-        return true;
+        if (fired) {
+            log.info("[Watch] 命中 traderId={} {} {} {} @{}", w.getTraderId(), w.getSymbol(), w.getKind(), w.getLevel(), price);
+        }
+        return fired;
     }
 
     private synchronized void remove(AiTraderWatch w) {

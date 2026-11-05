@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader.trade;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
@@ -89,5 +90,19 @@ class TraderWatchStoreTest {
 
         verify(mapper).update(isNull(), any(LambdaUpdateWrapper.class));
         verify(mapper, never()).insert(any(AiTraderWatch.class));
+    }
+
+    /** 复盘窗口查询：布下时刻或命中时刻落在 (from, to] 任一个就算 */
+    @Test
+    void inWindowMatchesCreatedOrFired() {
+        store.inWindow(7L, 1, 1785110400000L, 1785196800000L);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderWatch>> q = ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
+        verify(mapper).selectList(q.capture());
+        String sql = q.getValue().getSqlSegment();
+        assertThat(sql).contains("created_wake_time >").contains("created_wake_time <=")
+                .contains("OR").contains("fired_at >").contains("fired_at <=");
+        assertThat(q.getValue().getParamNameValuePairs()).containsValue(7L).containsValue(1785110400000L).containsValue(1785196800000L);
     }
 }

@@ -108,6 +108,40 @@ class PlayStatsAssemblerTest {
         assertThat(out).contains("NEWS：2笔（样本不足，不作参考）");
         // 排序按笔数降序：PULLBACK 行在 NEWS 行之前
         assertThat(out.indexOf("PULLBACK")).isLessThan(out.indexOf("NEWS"));
+        // 没有一笔记了入场方式：不出那一行
+        assertThat(out).doesNotContain("按入场方式");
+    }
+
+    /** 按入场方式分桶：限价 5 笔达样本线给胜负与合计，市价 2 笔只给笔数，没记方式的另计 */
+    @Test
+    void bucketsByEntryTypeFromEntryContext() {
+        List<FuturesPositionDTO> positions = new ArrayList<>();
+        List<AiTraderPlan> plans = new ArrayList<>();
+        String[] limitPnls = {"50", "40", "-10", "30", "-5"};
+        for (int i = 0; i < limitPnls.length; i++) {
+            long open = T0 + i * 7200_000L;
+            positions.add(pos(limitPnls[i], open));
+            AiTraderPlan pl = plan("PULLBACK", open, false);
+            pl.setEntryCtxJson("{\"orderType\":\"LIMIT\",\"leverage\":10}");
+            plans.add(pl);
+        }
+        for (int i = 0; i < 2; i++) {
+            long open = T0 + (10 + i) * 7200_000L;
+            positions.add(pos("-20", open));
+            AiTraderPlan pl = plan("PULLBACK", open, false);
+            pl.setEntryCtxJson("{\"orderType\":\"MARKET\",\"leverage\":10}");
+            plans.add(pl);
+        }
+        long open = T0 + 20 * 7200_000L;
+        positions.add(pos("7", open));
+        plans.add(plan("PULLBACK", open, false));
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(positions);
+        when(planMapper.selectList(any())).thenReturn(plans);
+
+        String out = assembler.assemble(trader(), AgentLang.ZH);
+
+        assertThat(out).contains("PULLBACK：8笔 4胜4负 盈亏合计+72.00 USDT");
+        assertThat(out).contains("按入场方式：限价 5笔 3胜2负 合计+105.00 USDT ｜ 市价 2笔（样本不足）；另 1 笔未记录入场方式");
     }
 
     /**

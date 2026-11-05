@@ -341,7 +341,7 @@
   "ledger": {
     "title": "Experience ledger",
     "summary": "{{active}} active · {{findings}} findings · {{retired}} retired",
-    "intro": "Kept by code after each daily review: a hypothesis supported 3 times becomes a rule; entries opposed repeatedly or untested for long are flagged, and the model audits them to keep / revise / split / retire. Pinned entries are never flagged; retired ones stay on the list, are no longer injected, and can be revived or deleted any time.",
+    "intro": "Kept by code after each daily review: a hypothesis supported 3 times becomes a rule, and only then is it injected into the trader (hypotheses and findings are not); entries opposed repeatedly or untested for long are flagged, and the model audits them to keep / revise / split / retire. Pinned entries are never flagged; retired ones stay on the list, are no longer injected, and can be revived or deleted any time.",
     "empty": "The ledger is still empty — it fills after the first daily review with trades",
     "loadFailed": "Could not load the ledger",
     "retry": "Retry",

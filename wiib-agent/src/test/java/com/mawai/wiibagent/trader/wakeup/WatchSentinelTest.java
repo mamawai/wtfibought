@@ -77,15 +77,17 @@ class WatchSentinelTest {
         verify(store, times(1)).fire(anyLong(), anyLong(), any());
     }
 
-    /** 库里 CAS 没赢（刚被替换 / 并发 tick 别人先到）：不报 */
+    /** 库里 CAS 没赢（刚被替换 / 并发 tick 别人先到）：不报，也从名单摘掉，下一个 tick 不再去碰库 */
     @Test
-    void casLostMeansNoPublish() {
+    void casLostMeansNoPublishAndEntryDropped() {
         armed(watch(1L, AiTraderWatch.TOUCH_BELOW, "62000", null, null));
         when(store.fire(anyLong(), anyLong(), any())).thenReturn(false);
 
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("61900"), 1_786_200_000_000L);
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("61800"), 1_786_200_001_000L);
 
         verify(events, never()).publishEvent(any(Object.class));
+        verify(store, times(1)).fire(anyLong(), anyLong(), any());
     }
 
     /** 收盘类只认自己周期的边界：一刻钟上的 5m 收盘不算 1h 收盘；1h 边界上收盘价没跌破也不算；命中一次就摘掉 */

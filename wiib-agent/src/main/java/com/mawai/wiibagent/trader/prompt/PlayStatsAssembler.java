@@ -18,7 +18,10 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 本局论点战绩统计（纯代码，可单测）：sim 已平仓位 ⟵配对⟶ 本局计划，按论点标签聚合成
@@ -59,6 +62,9 @@ public class PlayStatsAssembler {
             // 配对走 pairAll 统一入口；sim 按 updatedAt 倒序返回，顺序遍历即最近优先
             Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
             Map<String, List<BigDecimal>> byPlay = new LinkedHashMap<>();
+            // 同一批了结再按入场方式（限价 / 市价）分一次桶；入场上下文里没记的另计笔数
+            Map<String, List<BigDecimal>> byEntry = new LinkedHashMap<>();
+            int unknownEntry = 0;
             int taken = 0;
             for (FuturesPositionDTO pos : closed) {
                 AiTraderPlan plan = planByPos.get(pos);
@@ -69,6 +75,12 @@ public class PlayStatsAssembler {
                     continue;
                 }
                 byPlay.computeIfAbsent(plan.getPlayType(), k -> new ArrayList<>()).add(pos.getClosedPnl());
+                String entry = entryType(plan);
+                if (entry == null) {
+                    unknownEntry++;
+                } else {
+                    byEntry.computeIfAbsent(entry, k -> new ArrayList<>()).add(pos.getClosedPnl());
+                }
                 if (++taken >= MAX_TRADES) {
                     break;
                 }
@@ -81,6 +93,9 @@ public class PlayStatsAssembler {
             byPlay.entrySet().stream()
                     .sorted((a, b) -> b.getValue().size() - a.getValue().size())
                     .forEach(e -> sb.append(row(e.getKey(), e.getValue(), lang)).append('\n'));
+            if (!byEntry.isEmpty()) {
+                sb.append(entryLine(byEntry, unknownEntry, lang)).append('\n');
+            }
             sb.append(prompts.get(lang, "trader.label.playStatsFooter")).append('\n');
             return sb.toString();
         } catch (Exception e) {
@@ -89,16 +104,49 @@ public class PlayStatsAssembler {
         }
     }
 
+    /** 入场方式从计划的入场上下文里取（EntryContext 记的 orderType）：LIMIT / MARKET，没记返回 null */
+    private static String entryType(AiTraderPlan plan) {
+        if (plan.getEntryCtxJson() == null) {
+            return null;
+        }
+        String type = MAPPER.readTree(plan.getEntryCtxJson()).path("orderType").asString(null);
+        return "LIMIT".equals(type) || "MARKET".equals(type) ? type : null;
+    }
+
     private String row(String play, List<BigDecimal> pnls, AgentLang lang) {
         int n = pnls.size();
         if (n < MIN_SAMPLE) {
             return prompts.get(lang, "trader.label.playStatsRowSmall", Map.of("play", play, "n", n));
         }
         long wins = pnls.stream().filter(p -> p.signum() > 0).count();
-        BigDecimal sum = pnls.stream().reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
-        String signed = sum.signum() >= 0 ? "+" + sum.toPlainString() : sum.toPlainString();
         return prompts.get(lang, "trader.label.playStatsRow", Map.of(
-                "play", play, "n", n, "wins", wins, "losses", n - wins, "pnl", signed));
+                "play", play, "n", n, "wins", wins, "losses", n - wins, "pnl", signedSum(pnls)));
+    }
+
+    /** 按入场方式一行：限价、市价各自的笔数、胜负、合计；样本不足的只给笔数 */
+    private String entryLine(Map<String, List<BigDecimal>> byEntry, int unknown, AgentLang lang) {
+        StringBuilder rows = new StringBuilder();
+        for (Map.Entry<String, List<BigDecimal>> e : byEntry.entrySet()) {
+            String method = prompts.get(lang, "trader.label.playStatsEntry." + e.getKey().toLowerCase(Locale.ROOT));
+            int n = e.getValue().size();
+            if (!rows.isEmpty()) {
+                rows.append(prompts.get(lang, "trader.label.playStatsEntrySep"));
+            }
+            if (n < MIN_SAMPLE) {
+                rows.append(prompts.get(lang, "trader.label.playStatsEntryRowSmall", Map.of("method", method, "n", n)));
+            } else {
+                long wins = e.getValue().stream().filter(p -> p.signum() > 0).count();
+                rows.append(prompts.get(lang, "trader.label.playStatsEntryRow", Map.of(
+                        "method", method, "n", n, "wins", wins, "losses", n - wins, "pnl", signedSum(e.getValue()))));
+            }
+        }
+        return prompts.get(lang, "trader.label.playStatsEntryLine", Map.of(
+                "rows", rows.toString(),
+                "unknown", unknown == 0 ? "" : prompts.get(lang, "trader.label.playStatsEntryUnknown", Map.of("n", unknown))));
+    }
+
+    private static String signedSum(List<BigDecimal> pnls) {
+        BigDecimal sum = pnls.stream().reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
+        return sum.signum() >= 0 ? "+" + sum.toPlainString() : sum.toPlainString();
     }
 }

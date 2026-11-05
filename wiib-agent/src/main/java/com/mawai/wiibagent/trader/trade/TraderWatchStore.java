@@ -54,6 +54,16 @@ public class TraderWatchStore {
                 .orderByAsc(AiTraderWatch::getFiredAt));
     }
 
+    /** 复盘窗口 (fromMs, toMs] 里布下的或命中的条件，按 id 先后 */
+    public List<AiTraderWatch> inWindow(long traderId, int roundNo, long fromMs, long toMs) {
+        return mapper.selectList(new LambdaQueryWrapper<AiTraderWatch>()
+                .eq(AiTraderWatch::getTraderId, traderId)
+                .eq(AiTraderWatch::getRoundNo, roundNo)
+                .and(w -> w.gt(AiTraderWatch::getCreatedWakeTime, fromMs).le(AiTraderWatch::getCreatedWakeTime, toMs)
+                        .or(x -> x.gt(AiTraderWatch::getFiredAt, fromMs).le(AiTraderWatch::getFiredAt, toMs)))
+                .orderByAsc(AiTraderWatch::getId));
+    }
+
     /** 这几条命中已经在 wakeTime 那轮告诉过模型了 */
     public void markWoken(Collection<Long> ids, long wakeTime) {
         if (ids.isEmpty()) {
@@ -110,6 +120,15 @@ public class TraderWatchStore {
                 .set(AiTraderWatch::getFiredAt, at)
                 .set(AiTraderWatch::getFiredPrice, price)
                 .set(AiTraderWatch::getUpdatedAt, LocalDateTime.now())) == 1;
+    }
+
+    /** 主人改了币种：不在新名单里的币，还在盯的作废 */
+    public void retireSymbolsNotIn(long traderId, int roundNo, Collection<String> symbols) {
+        retire(new LambdaUpdateWrapper<AiTraderWatch>()
+                .eq(AiTraderWatch::getTraderId, traderId)
+                .eq(AiTraderWatch::getRoundNo, roundNo)
+                .notIn(AiTraderWatch::getSymbol, symbols));
+        events.publishEvent(new WatchesChanged(traderId));
     }
 
     /** 重置开新局：本局还在盯的全部作废 */

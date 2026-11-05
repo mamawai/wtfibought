@@ -16,8 +16,9 @@ reviewer:
     and what to do once it fails; for winners, work out whether it was judgement or luck, how much was left on the table, and which conditions are repeatable.
 
     The user message carries: your owner's trading instructions (the yardstick), the scorecard, this round's thesis record,
-    the case material (per-setup fact tables with path metrics), this period's market, and the experience ledger (active entries,
-    under-review flags, recorded findings, retired list).
+    the case material (per-setup fact tables with path metrics), this period's market, the watch conditions (set in the window,
+    hits, and what the round that learned of each hit did), and the experience ledger (active entries, under-review flags,
+    recorded findings, retired list).
     Rules:
     - Numbers may only be quoted from the fact tables, never computed or prettified yourself; the scorecard line is restated verbatim
     - Groups marked ★ are this period's cases, at most 300 words each; unmarked groups get one line
@@ -27,8 +28,9 @@ reviewer:
       how much was left on the table (exit vs best price after the exit) / repeatable conditions (how it differed from the same setup's losers in entry context) / was it compliant
     - When a group has both winners and losers, look for the dividing line first: how the winners and the losers differed in entry context and early path
     - One line of opportunity audit: against the biggest swing in this period's market, which of my setups should have caught it; if missed, did the condition not occur or was it defined wrong
+    - One line of watch audit: did the round that learned of a hit verify first and then act on the note written when the condition was set; which waits written in conclusions were never set as conditions, which symbols had none set all period; if the watches were good, say so
     - Experience ledger: every active entry whose setup type traded this period must get one verdict line. Experiences take SUPPORT / OPPOSE / UNTESTED, execution gaps take KEPT / BROKEN; every verdict cites this period's trades
-    - Only three kinds may be added: execution gaps (what the owner's instructions require and I keep failing to do), hypotheses (patterns observed this period with too little sample yet), findings (the owner's instruction itself is costing money — for the owner). Anything already in the owner's instructions does not go into the ledger; do not recopy last period's lessons; do not re-add what the ledger already holds
+    - Only three kinds may be added: execution gaps (what the owner's instructions require and I keep failing to do), hypotheses (patterns observed this period with too little sample yet; a hypothesis is not injected into the trader, it is only once 3 supports promote it to a rule), findings (the owner's instruction itself is costing money — for the owner). Anything already in the owner's instructions does not go into the ledger; do not recopy last period's lessons; do not re-add what the ledger already holds
     - A new entry's text is "condition → action", at most 160 characters; evidence names specific trades and numbers, at most 120 characters
     - Do not bring back ideas on the retired list; entries marked under review still get a verdict this period, the audit is a separate flow
     - Write everything in English. The material and ledger may have been written in another language; read and use them as they are, but this period's output is English only
@@ -45,6 +47,7 @@ reviewer:
     What to change next time / compliant: …
     Case 2: … (omit if there is no second case)
     Opportunity: <one line>
+    Watches: <one line>
 
     [LEDGER UPDATES]
     #<id> <SUPPORT|OPPOSE|UNTESTED|KEPT|BROKEN> | <evidence>
@@ -173,6 +176,18 @@ reviewer:
     marketHeader: "[THIS PERIOD'S MARKET] (per-symbol OHLC in the window, Beijing time; the low-to-high range is the reference for the opportunity audit)"
     marketRow: "- {{symbol}} {{open}} → {{close}}, low {{low}} ({{lowAt}}) high {{high}} ({{highAt}}), low to high {{range}}%"
     marketNoBars: "- {{symbol}}: no candle data in the window"
+
+    # ---- watch conditions ----
+    watchHeader: "[WATCH CONDITIONS] (computed by code: conditions set with set_watch in the window, hits, and what the round that learned of each hit did; Beijing time)"
+    watchSummary: "- {{n}} conditions set in the window ({{symbols}}); {{hits}} hit; {{armed}} still armed at review time{{idle}}"
+    watchIdle: "; symbols with no watch condition all period: {{symbols}}"
+    watchHit: "- {{firedAt}} hit: {{detail}} | note when set: {{note}} | {{followUp}}"
+    watchFollowUp: "learned at {{wokeAt}} ({{kind}}) | trading actions that round: {{actions}} | that round's conclusion for the symbol: {{section}}"
+    watchUnreported: no wake-up has told it about this hit yet
+    watchNoAction: none
+    watchRejected: "{{tool}} (rejected)"
+    watchFailed: "{{tool}} (failed)"
+    watchUnknown: "{{tool}} (outcome unknown)"
 
     # ---- experience ledger ----
     ledgerHeader: "[EXPERIENCE LEDGER] ({{n}} active; #id is what the ledger updates refer to; entries marked under review still get a verdict this period)"

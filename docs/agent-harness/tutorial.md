@@ -428,7 +428,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL/EVENT，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
 | 财经日历 | `EconCalendarAssembler` | 三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
-| 经验账本 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本） | 账本首行带用法说明：假设只供参考，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
+| 经验账本 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本） | 只注入规律与执行缺口，假设升成规律才注入；账本首行带用法说明，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
 | 休眠提示 | `sleepNotice` | 时段内末次唤醒才有。明说休眠本身不是任何方向动作的理由——"13 小时看不见"既诱导睡前减仓，也诱导赶在休眠前多开一笔 |
 
 ### 5.5 动手面
@@ -480,7 +480,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | 位置 | 看什么 |
 |---|---|
 | `ReviewMaterialAssembler.hasNewMaterial` | 窗口内有了结仓位、或有过 `open_position` 动作（被拒的也算）才复盘；都没有**静默跳过不烧钱**，窗口并入下次 |
-| `ReviewMaterialAssembler.assemble` | 纯代码算五块素材：战绩表 / 本局论点战绩 / 案例事实表 / 本期行情 / 经验账本。素材窗口 =（上次成功 REVIEW 的 wake_time, 本日线边界]。案例按单子类型分组，两笔以上的组在前、再按净额绝对值，只展开前两组（★），其余一行带过 |
+| `ReviewMaterialAssembler.assemble` | 纯代码算六块素材：战绩表 / 本局论点战绩（含按入场方式分桶）/ 案例事实表 / 本期行情 / 盯盘布防（期间布的条件、命中、得知命中那轮的动作与该币结论段）/ 经验账本。素材窗口 =（上次成功 REVIEW 的 wake_time, 本日线边界]。案例按单子类型分组，两笔以上的组在前、再按净额绝对值，只展开前两组（★），其余一行带过 |
 | `CaseFileBuilder.path` | 一笔交易在 5m K 线上的路径指标：最大浮盈 / 最大逆向（占计划目标 / 止损距离的比例）、到目标 25%·50% 用时、首次收回入场价、出场后 4h·24h 最有利价。配上 `EntryContext` 在开仓那一刻存下的 regime / ATR / 事件距离 / 时段 / 资金费，模型才答得出"赢单和亏单差在哪" |
 | `ReviewRunner.review` | 一次调用进去出来，无工具无循环；有待复审条目再调一次 `audit`；旧自由文本 memory 第一次跑时 `needsMigration` / `migrate` 压成账本行。迁移 / 复盘 / 复审三次调用共用 600 秒总预算 |
 | `ExperienceOpParser` | 两段固定格式：【本期复盘】→ REVIEW 决策行公开上时间线；【经验更新】→ 逐行翻成账本操作（`#id 支持/反对/未测试/守/破`、`新增 …`、`发现 …`、`删除 #id`），认不出的行丢掉。**一行都解析不出时 REVIEW 行照存、账本不动**——一次格式失守不污染记忆 |
@@ -574,7 +574,7 @@ trader 那条链的前端另在两处：
 | `LlmClientTest` | 韧性分层、options 契约、中断掐流与不反向取消信号（用 mock 模型跑，真到 WebClient 那一段只能真跑验，见附录 B） |
 | `TraderLiveHubTest` / `WakeTraceTest` | 现场扇出与轨迹帧、落库形状（见 5.7） |
 | `TraderPlanStoreTest` | 计划对账 `reconcile` 的三条规则（了结报结局并归档/续立、限价成交绑仓、无仓无挂单归档）与 `open`/`cover` 写路径 |
-| `ReviewMaterialAssemblerTest` / `CaseFileBuilderTest` | 复盘五块素材的数字与成文（战绩 / 案例事实表与路径指标 / 行情 / 账本）、stale 在配对之后过滤、`TradePairing` 配对算法 |
+| `ReviewMaterialAssemblerTest` / `CaseFileBuilderTest` | 复盘六块素材的数字与成文（战绩 / 案例事实表与路径指标 / 行情 / 盯盘布防 / 账本）、stale 在配对之后过滤、`TradePairing` 配对算法 |
 | `ExperienceLedgerTest` / `ReviewRunnerTest` / `ReviewLoopTest` | 账本记账规则（升级 / 举旗 / 上限 / 复审四结论 / 带入 / 清理）、复盘回路的落账与降级、真 assembler + 真账本 + mock 模型贯通一遍 |
 | `TraderWakeupLoopTest` | mock 模型跑通真 ReactLoop 唤醒回路 |
 | `TraderSchedulerTest` | 交接两阶段时序、停工窗口挡四入口、异常不卡死窗口 |

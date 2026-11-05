@@ -99,8 +99,7 @@ public class TraderScheduler {
         }
         long dayBoundary = boundaryOf(event.closeTime(), "1d");
         if (dayBoundary > 0) {
-            // 只进队列不领：阶段0的例行轮马上要来，命中排在它后面；交接期间领不到的由下一轮开场白补报
-            hits.forEach(t -> pendingTriggers.computeIfAbsent(t.watch().getTraderId(), _ -> new ConcurrentLinkedQueue<>()).add(t));
+            // 命中已落库：阶段0的例行轮开场白把这根收盘的命中并进去念，档位对不上的由之后的开场白补报
             startDailyHandover(dayBoundary);
             return;
         }
@@ -249,10 +248,10 @@ public class TraderScheduler {
         });
     }
 
-    /** 盯盘哨兵在 tick 上命中的（触及 / 到时刻）：广播过来，走非例行入口 */
+    /** 盯盘哨兵在 tick 上命中的（触及 / 到时刻）：广播过来，走非例行入口。哨兵在行情线程上广播，领触发要查库，挪到虚拟线程 */
     @EventListener
     public void onWatchHit(WatchTrigger trigger) {
-        tryTriggerWake(trigger.watch().getTraderId(), trigger);
+        Thread.startVirtualThread(() -> tryTriggerWake(trigger.watch().getTraderId(), trigger));
     }
 
     /** 这根 5m 收盘命中的收盘类盯盘条件（CAS 已标 FIRED）；哨兵那边出错不许连累例行唤醒 */
@@ -331,6 +330,10 @@ public class TraderScheduler {
         } finally {
             if (!started) {
                 inFlight.remove(traderId);
+                // 领的过程里又来了触发、它抢位失败：这里再领一次，不然要等下一轮结束才有人领
+                if (!queue.isEmpty()) {
+                    drainTriggers(traderId);
+                }
             }
         }
     }

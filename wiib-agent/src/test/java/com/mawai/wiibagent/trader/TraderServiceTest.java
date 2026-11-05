@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -394,6 +395,7 @@ class TraderServiceTest {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
+        t.setRoundNo(1);
         t.setStatus(AiTrader.STATUS_RUNNING);
         when(traderMapper.selectOne(any())).thenReturn(t);
         when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
@@ -415,6 +417,8 @@ class TraderServiceTest {
         assertThat(sqlSet).contains("wake_window");
         assertThat(sqlSet).doesNotContain("status").doesNotContain("consecutive_failures").doesNotContain("api_key");
         verify(endpointService).bind(1L, UserLlmBinding.TRADER, null);   // 跟随默认 = 解绑
+        // 不在新币种名单里的盯盘条件作废
+        verify(watchStore).retireSymbolsNotIn(7L, 1, Set.of("BTCUSDT"));
     }
 
     /** 换到另一条端点：先测连通，通过后绑定并逐出模型缓存 */
@@ -423,6 +427,7 @@ class TraderServiceTest {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
+        t.setRoundNo(1);
         when(traderMapper.selectOne(any())).thenReturn(t);
         when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
         when(modelFactory.endpointFor(t)).thenReturn(endpoint(5, "deepseek-chat"));

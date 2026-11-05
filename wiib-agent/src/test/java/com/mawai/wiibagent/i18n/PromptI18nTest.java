@@ -16,9 +16,11 @@ import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
+import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -598,7 +600,7 @@ class PromptI18nTest {
         AiTrader t = enTrader();
         t.setSymbols("BTCUSDT");
         return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, prompts, new CaseFileBuilder(store),
-                ledger, new PlayStatsAssembler(sim, planMapper, prompts))
+                ledger, new PlayStatsAssembler(sim, planMapper, prompts), mock(TraderWatchStore.class), new DecisionText(prompts))
                 .assemble(t, FROM, TO, AgentLang.EN);
     }
 

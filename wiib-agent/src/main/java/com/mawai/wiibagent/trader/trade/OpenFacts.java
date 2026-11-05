@@ -17,14 +17,13 @@ final class OpenFacts {
     private OpenFacts() {
     }
 
-    /** @param atr 心跳周期的 ATR14；取不到传 null，ATR 相关的项就不出 */
-    static ObjectNode of(TradeGuard.OpenReq req, BigDecimal entryRef, BigDecimal equity,
-                         String atrInterval, BigDecimal atr) {
+    /** 纯算术的几项；ATR 那几项成交后另加（{@link #addAtr}） */
+    static ObjectNode of(TradeGuard.OpenReq req, BigDecimal entryRef, BigDecimal equity) {
         BigDecimal notional = req.quantity().multiply(entryRef);
         // 开仓腿按下单方式（限价 maker、市价 taker），平仓腿按 taker：止损止盈触发都是 taker 成交
         BigDecimal openRate = "LIMIT".equals(req.orderType()) ? FuturesFeeRates.MAKER : FuturesFeeRates.TAKER;
         BigDecimal fee = notional.multiply(openRate.add(FuturesFeeRates.TAKER));
-        BigDecimal stopDist = entryRef.subtract(req.stopLossPrice()).abs();
+        BigDecimal stopDist = stopDistance(req, entryRef);
         BigDecimal targetDist = req.takeProfitPrice().subtract(entryRef).abs();
         BigDecimal lossAtStop = stopDist.multiply(req.quantity()).add(fee);
         BigDecimal gainAtTarget = targetDist.multiply(req.quantity()).subtract(fee);
@@ -33,16 +32,25 @@ final class OpenFacts {
         f.put("notional", usdt(notional));
         f.put("feeRoundTrip", usdt(fee));
         f.put("stopDistancePct", pct(stopDist, entryRef));
-        if (atr != null) {
-            f.put("atrInterval", atrInterval);
-            f.put("atr14", atr);
-            f.put("stopDistanceAtr", stopDist.divide(atr, 2, RoundingMode.HALF_UP));
-        }
         f.put("lossAtStop", usdt(lossAtStop));
         f.put("gainAtTarget", usdt(gainAtTarget));
         f.put("rewardRiskAfterFees", gainAtTarget.divide(lossAtStop, 2, RoundingMode.HALF_UP));
         f.put("riskPctOfEquity", pct(lossAtStop, equity));
         return f;
+    }
+
+    /** 心跳周期的 ATR14 与止损距离是它的几倍；atr 取不到（null）就不加 */
+    static void addAtr(ObjectNode facts, TradeGuard.OpenReq req, BigDecimal entryRef, String atrInterval, BigDecimal atr) {
+        if (atr == null) {
+            return;
+        }
+        facts.put("atrInterval", atrInterval);
+        facts.put("atr14", atr);
+        facts.put("stopDistanceAtr", stopDistance(req, entryRef).divide(atr, 2, RoundingMode.HALF_UP));
+    }
+
+    private static BigDecimal stopDistance(TradeGuard.OpenReq req, BigDecimal entryRef) {
+        return entryRef.subtract(req.stopLossPrice()).abs();
     }
 
     private static BigDecimal usdt(BigDecimal v) {

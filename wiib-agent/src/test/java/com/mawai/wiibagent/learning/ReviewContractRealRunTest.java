@@ -127,6 +127,6 @@ class ReviewContractRealRunTest {
                         Map.entry("play", "PULLBACK"), Map.entry("text", lang == AgentLang.ZH ? "量比大于 1.5 的回踩才做" : "take the pullback only when volume ratio is above 1.5"),
                         Map.entry("supports", 2), Map.entry("opposes", 0), Map.entry("untested", 0),
                         Map.entry("evidence", lang == AgentLang.ZH ? "10-07 两笔" : "two trades on 10-07"), Map.entry("flagged", ""))) + "\n";
-        return new ReviewMaterialAssembler.ReviewMaterial(stats, "", cases, market, ledger, 2, Map.of());
+        return new ReviewMaterialAssembler.ReviewMaterial(stats, "", cases, market, "", ledger, 2, Map.of());
     }
 }

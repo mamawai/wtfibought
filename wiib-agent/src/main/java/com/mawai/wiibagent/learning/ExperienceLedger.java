@@ -382,10 +382,11 @@ public class ExperienceLedger {
 
     // ==================== 注入 trader ====================
 
-    /** 现役经验渲染成紧凑文本：标题行 + 按单子类型分组的条目行（不含发现）；一条都没有返回 null */
+    /** 现役的规律与执行缺口渲染成紧凑文本：标题行 + 按单子类型分组的条目行。假设和发现不注入；一条都没有返回 null */
     public String render(long traderId, int roundNo, AgentLang lang) {
         List<AiTraderExperience> list = active(traderId, roundNo).stream()
-                .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
+                .filter(e -> AiTraderExperience.KIND_RULE.equals(e.getKind()) || AiTraderExperience.KIND_GAP.equals(e.getKind()))
+                .toList();
         if (list.isEmpty()) {
             return null;
         }

@@ -175,7 +175,7 @@ class PromptMarkParsingTest {
         t.setRoundNo(1);
         t.setMemory("【经验账本】\n#1 规律");
         ReviewMaterialAssembler.ReviewMaterial material = new ReviewMaterialAssembler.ReviewMaterial(
-                "stats", "plays", "cases", "market", "ledger", 1, Map.of());
+                "stats", "plays", "cases", "market", "watches", "ledger", 1, Map.of());
         ReviewRunner review = new ReviewRunner(mock(ReviewMaterialAssembler.class), null, null,
                 prompts, mock(UserLangResolver.class), mock(ExperienceLedger.class), parser, null);
 

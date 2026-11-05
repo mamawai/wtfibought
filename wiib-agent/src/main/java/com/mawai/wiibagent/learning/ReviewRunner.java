@@ -281,7 +281,7 @@ public class ReviewRunner {
         }
     }
 
-    /** 复盘的用户消息：主人指令 + 战绩 + 论点战绩 + 案例素材 + 行情 + 账本 + 收尾 */
+    /** 复盘的用户消息：主人指令 + 战绩 + 论点战绩 + 案例素材 + 行情 + 盯盘布防 + 账本 + 收尾 */
     // 包私有非 private：输出语言硬收尾那条钉子（PromptMarkParsingTest）要拿成文验它在末尾
     String userPrompt(AiTrader trader, ReviewMaterialAssembler.ReviewMaterial m, long fromMs, long toMs, AgentLang lang) {
         String from = fromMs == 0 ? prompts.get(lang, "reviewer.label.windowStart")
@@ -299,6 +299,7 @@ public class ReviewRunner {
         }
         sb.append(m.casesBlock()).append('\n');
         sb.append(m.marketBlock()).append('\n');
+        sb.append(m.watchBlock()).append('\n');
         sb.append(m.ledgerBlock()).append('\n');
         sb.append(prompts.get(lang, "reviewer.label.closing"));
         // 输出语言硬收尾：用户消息最末一行，排在素材与账本之后——它们可能是另一门语言

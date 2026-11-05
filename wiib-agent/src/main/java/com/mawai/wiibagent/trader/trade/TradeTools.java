@@ -211,9 +211,8 @@ public class TradeTools {
         boolean coversPlan = sameSide != null || acct.pendingOpen(req.symbol(), req.side());
         // 入场参考价：限价单按限价、市价单按标记价；计划的入场价与回执里的事实都按它算
         BigDecimal entryRef = "LIMIT".equals(req.orderType()) ? req.limitPrice() : mark;
-        // 这笔的事实（facts）在下单前算好：下单之后这条路上只剩落计划和回执
-        ObjectNode facts = OpenFacts.of(req, entryRef, equity, ctx.interval(),
-                entryContext.atr14(req.symbol(), ctx.interval(), System.currentTimeMillis()));
+        // 这笔的事实（facts）算术部分在下单前算好；ATR 成交后再取，行情调用不挡下单、取不到也不影响回执
+        ObjectNode facts = OpenFacts.of(req, entryRef, equity);
         try {
             FuturesOpenRequest openReq = new FuturesOpenRequest();
             openReq.setSymbol(req.symbol());
@@ -239,6 +238,8 @@ public class TradeTools {
             }
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
             persistPlan(req, entryRef, coversPlan, sameSide, resp);
+            OpenFacts.addAtr(facts, req, entryRef, ctx.interval(),
+                    entryContext.atr14(req.symbol(), ctx.interval(), System.currentTimeMillis()));
             // 回执＝sim 的订单响应 + facts
             ObjectNode receipt = MAPPER.valueToTree(resp);
             receipt.set("facts", facts);

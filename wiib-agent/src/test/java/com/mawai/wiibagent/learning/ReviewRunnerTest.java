@@ -103,6 +103,7 @@ class ReviewRunnerTest {
                         "————— 本局论点战绩 —————\nPULLBACK：6笔 4胜2负 盈亏合计+7946 USDT\n",
                         "【案例素材】\n★ PULLBACK（2 笔，1 胜，净 -300）\n- BTCUSDT LONG …\n",
                         "【本期行情】\n- BTCUSDT 81144 → 86579，低到高 8.1%\n",
+                        "【盯盘布防】\n- 期间布防 0 条（—）；命中 0 条；复盘时仍在盯 0 条\n",
                         "【经验账本】（现役 1 条）\n#1 规律 盈利处理 执行型 PULLBACK ｜ 出场只认目标位 ｜ 支持 5 反对 1 未测试 0 ｜ 证据 x\n", 2,
                         Map.of("PULLBACK", List.of(42L))));
     }

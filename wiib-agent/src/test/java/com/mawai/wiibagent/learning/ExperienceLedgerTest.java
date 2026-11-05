@@ -399,12 +399,24 @@ class ExperienceLedgerTest {
     @Test
     void renderOmitsRecentBreakdownUpToFiveChecks() {
         when(expMapper.selectList(any())).thenReturn(List.of(
-                exp(1L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.DIR_OPPORTUNITY, "BREAKOUT", 3, 2)));
+                exp(1L, AiTraderExperience.KIND_RULE, AiTraderExperience.DIR_OPPORTUNITY, "BREAKOUT", 3, 2)));
         when(verdictMapper.selectList(any())).thenReturn(verdicts("S", "S", "O", "S", "O"));
 
         assertThat(ledger.render(7L, 1, AgentLang.ZH))
-                .contains("#1 假设·机会型 ｜ t1 ｜ 支持 3 反对 2\n")
+                .contains("#1 规律·机会型 ｜ t1 ｜ 支持 3 反对 2\n")
                 .doesNotContain("最近");
+    }
+
+    /** 假设不注入：只有假设时整段为 null，有规律时假设那行不出现 */
+    @Test
+    void renderSkipsHypotheses() {
+        AiTraderExperience hyp = exp(1L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.DIR_OPPORTUNITY, "BREAKOUT", 2, 0);
+        when(expMapper.selectList(any())).thenReturn(List.of(hyp));
+        assertThat(ledger.render(7L, 1, AgentLang.ZH)).isNull();
+
+        when(expMapper.selectList(any())).thenReturn(List.of(hyp,
+                exp(2L, AiTraderExperience.KIND_RULE, AiTraderExperience.DIR_EXECUTION, "BREAKOUT", 5, 0)));
+        assertThat(ledger.render(7L, 1, AgentLang.ZH)).contains("#2 规律").doesNotContain("#1 ");
     }
 
     @Test

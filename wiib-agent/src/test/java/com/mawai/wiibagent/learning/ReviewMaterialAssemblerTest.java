@@ -6,8 +6,10 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -15,6 +17,7 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.entity.AiTraderExperienceVerdict;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -69,10 +72,11 @@ class ReviewMaterialAssemblerTest {
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final KlineHistoryStore historyStore = mock(KlineHistoryStore.class);
     private final ExperienceLedger ledger = mock(ExperienceLedger.class);
+    private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
 
     private final ReviewMaterialAssembler assembler = new ReviewMaterialAssembler(
             decisionMapper, planMapper, simTradeClient, prompts, new CaseFileBuilder(historyStore), ledger,
-            new PlayStatsAssembler(simTradeClient, planMapper, prompts));
+            new PlayStatsAssembler(simTradeClient, planMapper, prompts), watchStore, new DecisionText(prompts));
 
     private AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -614,5 +618,79 @@ class ReviewMaterialAssemblerTest {
         review.setReasoning("【本期复盘】\n战绩：……");
         when(decisionMapper.selectOne(any())).thenReturn(review);
         assertThat(assembler.lastReview(7L, 1).getWakeTime()).isEqualTo(FROM);
+    }
+
+    // ==================== 盯盘布防 ====================
+
+    /** 期间布的条件、命中，以及得知命中那轮的交易动作与该币结论段都进块；整期没布过的币点名 */
+    @Test
+    void watchBlockListsHitsAndFollowUp() {
+        AiTrader t = trader();
+        t.setSymbols("BTCUSDT,ETHUSDT");
+        AiTraderWatch hit = watch(31L, AiTraderWatch.CLOSE_ABOVE, FROM + H);
+        hit.setStatus(AiTraderWatch.STATUS_FIRED);
+        hit.setFiredAt(FROM + 3 * H);
+        hit.setFiredPrice(new BigDecimal("63120"));
+        hit.setWokeAt(FROM + 3 * H + 1);
+        AiTraderWatch armed = watch(32L, AiTraderWatch.TOUCH_BELOW, FROM + 2 * H);
+        when(watchStore.inWindow(7L, 1, FROM, TO)).thenReturn(List.of(hit, armed));
+        when(watchStore.armed(7L, 1)).thenReturn(List.of(armed));
+        AiTraderDecision woke = new AiTraderDecision();
+        woke.setKind(AiTraderDecision.KIND_WATCH);
+        woke.setActionsJson("[{\"tool\":\"indicators\"},{\"tool\":\"open_position\",\"status\":\"ok\"},{\"tool\":\"set_watch\",\"rejected\":\"太多\"},"
+                + "{\"tool\":\"close_position\",\"status\":\"error\",\"error\":\"x\"}]");
+        woke.setReasoning("先看结构…\n" + prompts.get(AgentLang.ZH, "trader.mark.conclusion")
+                + "\n总评：顺势\n[BTCUSDT]\n判断：1h 收盘站上 63000，突破确认\n动作：开多 0.01\n等待：无\n[ETHUSDT]\n判断：跟随\n动作：HOLD\n等待：无");
+        // 第一次 selectOne 是战绩表取起始权益，第二次才是得知命中的那轮
+        when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM, "10000"), woke);
+
+        String block = assembler.assemble(t, FROM, TO, AgentLang.ZH).watchBlock();
+
+        assertThat(block).startsWith("【盯盘布防】")
+                .contains("- 期间布防 2 条（BTCUSDT）；命中 1 条；复盘时仍在盯 1 条；整期没有盯盘条件的币：ETHUSDT")
+                .contains("- " + TIME.format(Instant.ofEpochMilli(FROM + 3 * H))
+                        + " 命中：BTCUSDT 1h 收盘 63120 站上 63000 ｜ 布时备注：突破确认 ｜ 得知于 "
+                        + TIME.format(Instant.ofEpochMilli(FROM + 3 * H + 1))
+                        + "（WATCH）｜ 那轮交易动作：open_position, set_watch（被拒）, close_position（失败） ｜ 那轮该币结论：判断：1h 收盘站上 63000，突破确认 动作：开多 0.01 等待：无");
+    }
+
+    /** 窗口里一条都没布也要说（窗口前布下还在盯的币不算没条件）；命中了还没哪轮告诉过它的照样列出来 */
+    @Test
+    void watchBlockWithoutWatchesOrUnreportedHit() {
+        when(watchStore.inWindow(7L, 1, FROM, TO)).thenReturn(List.of());
+        when(watchStore.armed(7L, 1)).thenReturn(List.of());
+        when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM, "10000"));
+
+        assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).watchBlock())
+                .contains("- 期间布防 0 条（—）；命中 0 条；复盘时仍在盯 0 条；整期没有盯盘条件的币：BTCUSDT");
+
+        when(watchStore.armed(7L, 1)).thenReturn(List.of(watch(30L, AiTraderWatch.TOUCH_BELOW, FROM - H)));
+        assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).watchBlock())
+                .contains("- 期间布防 0 条（—）；命中 0 条；复盘时仍在盯 1 条\n")
+                .doesNotContain("整期没有盯盘条件");
+
+        AiTraderWatch hit = watch(33L, AiTraderWatch.TOUCH_ABOVE, FROM + H);
+        hit.setStatus(AiTraderWatch.STATUS_FIRED);
+        hit.setFiredAt(FROM + 2 * H);
+        hit.setFiredPrice(new BigDecimal("64000"));
+        when(watchStore.inWindow(7L, 1, FROM, TO)).thenReturn(List.of(hit));
+
+        assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).watchBlock())
+                .contains("命中：BTCUSDT 标记价 64000 触及 63000 以上 ｜ 布时备注：突破确认 ｜ 命中后还没有哪轮唤醒告诉过它");
+    }
+
+    private static AiTraderWatch watch(long id, String kind, long createdWakeTime) {
+        AiTraderWatch w = new AiTraderWatch();
+        w.setId(id);
+        w.setTraderId(7L);
+        w.setRoundNo(1);
+        w.setSymbol("BTCUSDT");
+        w.setKind(kind);
+        w.setLevel(new BigDecimal("63000"));
+        w.setPeriod(kind.startsWith("CLOSE_") ? "1h" : null);
+        w.setNote("突破确认");
+        w.setStatus(AiTraderWatch.STATUS_ARMED);
+        w.setCreatedWakeTime(createdWakeTime);
+        return w;
     }
 }

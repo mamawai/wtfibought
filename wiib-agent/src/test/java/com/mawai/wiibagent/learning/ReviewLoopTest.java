@@ -10,7 +10,9 @@ import com.mawai.wiibagent.mapper.AiTraderExperienceMapper;
 import com.mawai.wiibagent.mapper.AiTraderExperienceVerdictMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TraderModelFactory;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -82,7 +84,8 @@ class ReviewLoopTest {
 
     private final ReviewRunner runner = new ReviewRunner(
             new ReviewMaterialAssembler(decisionMapper, planMapper, simTradeClient, prompts,
-                    new CaseFileBuilder(historyStore), ledger, new PlayStatsAssembler(simTradeClient, planMapper, prompts)),
+                    new CaseFileBuilder(historyStore), ledger, new PlayStatsAssembler(simTradeClient, planMapper, prompts),
+                    mock(TraderWatchStore.class), new DecisionText(prompts)),
             modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), simTradeClient);
 
     {
@@ -185,7 +188,24 @@ class ReviewLoopTest {
         hyp.setFlagged(false);
         hyp.setPinned(false);
         hyp.setVerdictsSinceAudit(1);
-        List<AiTraderExperience> active = new ArrayList<>(List.of(hyp));
+        // 再放一条规律：假设不注入，memory 里只该见到它
+        AiTraderExperience rule = new AiTraderExperience();
+        rule.setId(4L);
+        rule.setTraderId(7L);
+        rule.setRoundNo(1);
+        rule.setKind(AiTraderExperience.KIND_RULE);
+        rule.setSlot(AiTraderExperience.SLOT_RISK);
+        rule.setDirection(AiTraderExperience.DIR_EXECUTION);
+        rule.setText("止损距离不小于 1 个 1h ATR");
+        rule.setEvidence("10-01 三笔");
+        rule.setSupports(4);
+        rule.setOpposes(0);
+        rule.setUntested(0);
+        rule.setStatus(AiTraderExperience.STATUS_ACTIVE);
+        rule.setFlagged(false);
+        rule.setPinned(false);
+        rule.setVerdictsSinceAudit(0);
+        List<AiTraderExperience> active = new ArrayList<>(List.of(rule, hyp));
         when(expMapper.selectList(any())).thenAnswer(inv -> new ArrayList<>(active));
         when(expMapper.selectById(5L)).thenReturn(hyp);
         when(expMapper.insert(any(AiTraderExperience.class))).thenAnswer(inv -> {
@@ -248,9 +268,10 @@ class ReviewLoopTest {
         ArgumentCaptor<LambdaUpdateWrapper<AiTraderDecision>> snap = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
         verify(decisionMapper).update(isNull(), snap.capture());
         assertThat(snap.getValue().getSqlSet()).contains("memory_after");
+        // 假设（#5、新增的 #6）不注入，只有规律 #4
         assertThat(dec.getValue().getMemoryAfter()).startsWith("【经验账本】")
-                .contains("#5 假设·执行型 ｜ 突破单两根 1h 收不出新高即判失败 ｜ 支持 2 反对 0")
-                .contains("#6 假设·执行型 ｜ 浮盈过目标 40% 又收回入场价即当轮市价平");
+                .contains("#4 规律·执行型 ｜ 止损距离不小于 1 个 1h ATR ｜ 支持 4 反对 0")
+                .doesNotContain("#5 ").doesNotContain("#6 ");
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> up = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
         verify(traderMapper).update(any(), up.capture());
