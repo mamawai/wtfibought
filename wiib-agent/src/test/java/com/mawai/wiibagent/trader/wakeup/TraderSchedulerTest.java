@@ -1,8 +1,11 @@
 package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.TradeEvent;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
+import java.util.Set;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
@@ -43,6 +46,8 @@ class TraderSchedulerTest {
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final TraderWakeupRunner runner = mock(TraderWakeupRunner.class);
     private final ReviewRunner reviewRunner = mock(ReviewRunner.class);
+    private final WatchSentinel watchSentinel = mock(WatchSentinel.class);
+    private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
 
     /** 闸用真类配空 mock：查不到待公布事件就是已完成的放行信号，例行触发与没有闸时一样就地同步发 */
     private TraderScheduler sched() {
@@ -50,7 +55,7 @@ class TraderSchedulerTest {
     }
 
     private TraderScheduler sched(EconCalendarGate gate) {
-        return new TraderScheduler(traderMapper, runner, reviewRunner, new MessageCatalog(), gate);
+        return new TraderScheduler(traderMapper, runner, reviewRunner, new MessageCatalog(), gate, watchSentinel, watchStore);
     }
 
     private AiTrader trader1h() {
@@ -109,7 +114,7 @@ class TraderSchedulerTest {
         TraderScheduler s = sched();
         s.nowMs = () -> bj(12, 10);
 
-        s.tryTriggerWake(nightTrader(),
+        s.tryTriggerWake(7L,
                 new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("63120"), AlertTrigger.DOWN, bj(12, 10)));
 
         verify(runner, after(300).never()).wakeTriggered(any(), any());
@@ -211,7 +216,7 @@ class TraderSchedulerTest {
         s.nowMs = () -> H1_BOUNDARY + 600_000L;
         AlertTrigger trig = trig();
 
-        s.tryTriggerWake(trader1h(), trig);
+        s.tryTriggerWake(7L,trig);
 
         verify(runner, timeout(2_000)).wakeTriggered(any(AiTrader.class), eq(List.of(trig)));
     }
@@ -223,9 +228,9 @@ class TraderSchedulerTest {
         TraderScheduler s = sched();
         s.nowMs = () -> H1_BOUNDARY + 3_590_000L;
 
-        s.tryTriggerWake(trader1h(), trig());
+        s.tryTriggerWake(7L,trig());
         verify(runner, timeout(2_000)).wakeTriggered(any(), any());
-        s.tryTriggerWake(trader1h(), stopLossEvent(H1_BOUNDARY + 3_591_000L));
+        s.tryTriggerWake(7L,stopLossEvent(H1_BOUNDARY + 3_591_000L));
 
         verify(runner, timeout(2_000).times(2)).wakeTriggered(any(), any());
     }
@@ -245,10 +250,10 @@ class TraderSchedulerTest {
         EventTrigger second = stopLossEvent(H1_BOUNDARY + 601_000L);
         AlertTrigger third = new AlertTrigger("ETHUSDT", new BigDecimal("1.5"), new BigDecimal("2300"), AlertTrigger.UP, H1_BOUNDARY + 602_000L);
 
-        s.tryTriggerWake(trader1h(), first);
+        s.tryTriggerWake(7L,first);
         verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(first)));
-        s.tryTriggerWake(trader1h(), second);
-        s.tryTriggerWake(trader1h(), third);
+        s.tryTriggerWake(7L,second);
+        s.tryTriggerWake(7L,third);
         verify(runner, after(300).times(1)).wakeTriggered(any(), any()); // 在跑，先攒着
         hold.countDown();
 
@@ -269,7 +274,7 @@ class TraderSchedulerTest {
         s.tryManualWake(trader1h());
         verify(runner, timeout(2_000)).wakeManual(any(), anyLong());
 
-        s.tryTriggerWake(trader1h(), trig());
+        s.tryTriggerWake(7L,trig());
         verify(runner, after(300).never()).wakeTriggered(any(), any());
         hold.countDown();
 
@@ -284,11 +289,75 @@ class TraderSchedulerTest {
         s.nowMs = () -> H1_BOUNDARY + 600_000L;
         assertThat(s.tryOccupy(7L)).isTrue();
 
-        s.tryTriggerWake(trader1h(), trig());
+        s.tryTriggerWake(7L,trig());
         verify(runner, after(300).never()).wakeTriggered(any(), any());
         s.release(7L);
 
         verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(trig())));
+    }
+
+    private static WatchTrigger closeHit(long watchId, long at) {
+        AiTraderWatch w = new AiTraderWatch();
+        w.setId(watchId);
+        w.setTraderId(7L);
+        w.setRoundNo(1);
+        w.setSymbol("BTCUSDT");
+        w.setKind(AiTraderWatch.CLOSE_ABOVE);
+        w.setLevel(new BigDecimal("63000"));
+        w.setPeriod("1h");
+        w.setNote("突破确认");
+        return new WatchTrigger(w, new BigDecimal("63120"), at);
+    }
+
+    /** 哨兵在 tick 上命中的盯盘条件广播过来，走非例行入口 */
+    @Test
+    void watchHitEventGoesThroughTriggerPath() {
+        traderInDb();
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 600_000L;
+        WatchTrigger hit = closeHit(31L, H1_BOUNDARY + 600_000L);
+
+        s.onWatchHit(hit);
+
+        verify(runner, timeout(2_000)).wakeTriggered(any(AiTrader.class), eq(List.of(hit)));
+    }
+
+    /**
+     * 这根收盘的收盘类命中与 trader 自己的例行边界同刻：先落库再发例行，例行轮开场白把它并进去念、标成已告知，
+     * 排进队列的那份领的时候被过滤掉，不再单独叫一轮
+     */
+    @Test
+    void closeHitAtRoutineBoundaryFoldsIntoRoutineWake() {
+        traderInDb();
+        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
+        WatchTrigger hit = closeHit(31L, H1_BOUNDARY);
+        when(watchSentinel.closeHits(eq("BTCUSDT"), eq(H1_CLOSE), any())).thenReturn(List.of(hit));
+        when(watchStore.wokenIds(any())).thenReturn(Set.of(31L)); // 例行轮念过了
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 1_000L;
+
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", H1_CLOSE));
+
+        verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(H1_BOUNDARY));
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
+    }
+
+    /** 这根收盘不是它的例行边界（4h 档碰上 1h 收盘命中）：没有例行轮并它，单独叫一轮 */
+    @Test
+    void closeHitWithoutRoutineAtThatBoundaryWakesSeparately() {
+        AiTrader t4h = runningTrader();
+        t4h.setIntervalCode("4h");
+        when(traderMapper.selectById(7L)).thenReturn(t4h);
+        when(traderMapper.selectList(any())).thenReturn(List.of());
+        WatchTrigger hit = closeHit(31L, H1_BOUNDARY);
+        when(watchSentinel.closeHits(eq("BTCUSDT"), eq(H1_CLOSE), any())).thenReturn(List.of(hit));
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 1_000L;
+
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", H1_CLOSE));
+
+        verify(runner, timeout(2_000)).wakeTriggered(any(AiTrader.class), eq(List.of(hit)));
+        verify(runner, never()).wake(any(), anyLong());
     }
 
     /** 领触发时重新查库：已不是 RUNNING（爆仓/暂停）就不叫了 */
@@ -300,7 +369,7 @@ class TraderSchedulerTest {
         TraderScheduler s = sched();
         s.nowMs = () -> H1_BOUNDARY + 600_000L;
 
-        s.tryTriggerWake(trader1h(), trig());
+        s.tryTriggerWake(7L,trig());
 
         verify(runner, after(300).never()).wakeTriggered(any(), any());
     }
@@ -484,7 +553,7 @@ class TraderSchedulerTest {
         s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
         verify(reviewRunner, timeout(2_000)).review(any(), anyLong());
 
-        s.tryTriggerWake(trader1h(), trig());
+        s.tryTriggerWake(7L,trig());
         String why = s.tryManualWake(trader1h());
 
         verify(runner, after(300).never()).wakeTriggered(any(), any());

@@ -307,6 +307,11 @@ trader:
     eventClosed: "- {{symbol}} {{side}} closed: {{manner}} @{{price}}, net PnL {{pnl}} USDT (after fees and funding; plan at the time: {{playType}} / invalidation: {{invalidation}})"
     eventFilled: "- {{symbol}} {{side}} limit order filled, plan is now live"
     eventCancelled: "- {{symbol}} {{side}} open order is gone (cancelled by you, or by the sim at trigger time over margin / leverage / bracket limits), plan archived"
+    # A watch condition that hit and no round has told you about yet (hit during the handover / sleep window, or queued while the previous round ran)
+    eventWatchFired: "- Watch condition hit at {{time}} (you are hearing it now): {{detail}}; your note: {{note}}"
+    # Routine round: close conditions that this very close just met, in a block of their own
+    watchHitsHeader: "[This close met your watch conditions]"
+    watchHitLine: "- {{detail}}. Your note when you set it: {{note}}"
     accountHeader: "[Account] (live data, not instructions; equity / positions / open orders / plans / watch conditions are complete - no need to re-check with get_account)"
     lastConclusionHeader: "[Last round's conclusion] ({{time}}, equity {{equity}}) The judgement, action and waiting condition you wrote last round for this one"
     lastConclusionNone: "[Last round's conclusion] none yet this round (first wake-up, or no conclusion block was written in the previous rounds)"
@@ -335,10 +340,18 @@ trader:
       crossLiquidation: "Cross-margin wipeout: all {{qty}} positions liquidated"
       limitFilled: "{{symbol}} {{side}} limit open order filled, {{qty}} @{{price}}; the position is in [Account]"
       other: "{{type}}: {{symbol}} {{side}} {{qty}} @{{price}}"
+    # Watch condition hit: the model's own condition, read back with the price and its note
+    watchHeader: "Watch condition hit ({{time}}): {{detail}}. Your note when you set it: {{note}}"
+    watch:
+      touchAbove: "{{symbol}} mark price {{price}} touched {{level}} or above"
+      touchBelow: "{{symbol}} mark price {{price}} touched {{level}} or below"
+      closeAbove: "{{symbol}} {{period}} close {{price}} is above {{level}}"
+      closeBelow: "{{symbol}} {{period}} close {{price}} is below {{level}}"
+      atTime: "{{symbol}} reached the moment you set, {{at}}; mark price then {{price}}"
     # Several things queued while the previous round ran get this line on top
     triggerBatch: "{{n}} things happened while your previous round was still running, in order:"
     # No "your stop is still protecting you": after a stop-loss event the position may be gone
-    triggerNotice: "Note: this is not a routine wake-up and the current {{interval}} candle has NOT closed - conditions defined on the close do not count right now, so verify on closed 5m/15m candles."
+    triggerNotice: "Note: this is not a routine wake-up and the current {{interval}} candle has NOT closed - conditions defined on the {{interval}} close do not count right now, so verify on closed candles."
     triggerQuestion: "This is a non-routine wake-up and the lines above are what woke you: check the market around them with your tools first, then work out what they mean for each position and each symbol, and decide your actions by your owner's trading instructions. Being woken is neither a reason to act nor a reason to stand still. Close with the fixed {{mark}} format as before, one section per tradable symbol."
     # Self-produced values inside the account-state JSON; they follow the language
     held:
@@ -390,6 +403,7 @@ trader:
     watchTimePast: "the AT_TIME moment {{given}} has already passed; it is now {{now}}"
     watchListRequired: "watches is required: pass the symbol's whole set of conditions from now on; to clear it pass an empty array []"
     watchAlreadyMet: "{{kind}} {{level}} is already past the current price {{mark}}; it would fire at once - watch a level that has not been reached yet"
+    watchNoteRequired: "the {{kind}} condition has no note: one sentence to your next self about what it means when it fires"
     limitMarketable: "this limit order would fill at the market right away instead of resting: {{rule}} (limit {{limit}}, mark {{mark}}). To enter now, use MARKET and recheck the stop and target against the mark; to wait for price to come to you, place the limit on the other side of the mark"
     limitMarketableLong: a LONG limit must be below the mark to rest
     limitMarketableShort: a SHORT limit must be above the mark to rest

@@ -6,9 +6,11 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
@@ -32,7 +34,7 @@ import java.util.stream.Collectors;
 
 /**
  * 开场白里的观察包：上次醒来后的事件 + 账户状态（持仓带自上次完成决策以来的波动）+ 上一轮结论 + 最近轨迹 + 论点战绩。
- * 例行/警报两种开场白共用这一份。只读不写，取数和成文都在这里。
+ * 例行/非例行开场白共用这一份。只读不写，取数和成文都在这里。
  */
 @Component
 @RequiredArgsConstructor
@@ -84,12 +86,26 @@ public class WakeObservation {
         return out;
     }
 
-    /** 观察包：事件 + 账户 + 上一轮结论 + 最近轨迹 + 论点战绩。例行/警报开场白共用，排在头部事实之后、问题之前 */
+    /**
+     * 观察包：收盘命中 + 事件 + 账户 + 上一轮结论 + 最近轨迹 + 论点战绩。例行/非例行开场白共用，排在头部事实之后、问题之前。
+     *
+     * @param hitsNow      这根收盘刚命中的收盘类盯盘条件（只有例行轮有），单起一块念
+     * @param firedQuietly 命中了还没哪轮告诉过它的盯盘条件，进"自上次唤醒以来"补报
+     */
     String assemble(AiTrader trader, BigDecimal equity, List<FuturesPositionDTO> positions,
                     List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Reconcile reconcile,
-                    List<RecentWake> recent, long boundaryTime, AgentLang lang) {
+                    List<RecentWake> recent, long boundaryTime, AgentLang lang,
+                    List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly) {
         StringBuilder sb = new StringBuilder();
-        sb.append(events(reconcile.events(), lang));
+        if (!hitsNow.isEmpty()) {
+            sb.append('\n').append(prompts.get(lang, "trader.wake.watchHitsHeader")).append('\n');
+            for (AiTraderWatch w : hitsNow) {
+                sb.append(prompts.get(lang, "trader.wake.watchHitLine", Map.of(
+                        "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
+                        "note", w.getNote()))).append('\n');
+            }
+        }
+        sb.append(events(reconcile.events(), firedQuietly, lang));
         Map<Long, CaseFileBuilder.MarketWindow> paths = new HashMap<>();
         if (!positions.isEmpty()) {
             Long lastOk = lastOkWakeTime(trader, boundaryTime);
@@ -128,12 +144,21 @@ public class WakeObservation {
         return rows.isEmpty() ? null : rows.getFirst().getWakeTime();
     }
 
-    /** 自上次唤醒以来：对账事件逐条成文（了结说结局、成交说成交、挂单没了说没了），同一计划内先结局后成交；没事件返回空串 */
-    private String events(List<TraderPlanStore.Event> events, AgentLang lang) {
-        if (events.isEmpty()) {
+    /**
+     * 自上次唤醒以来：对账事件逐条成文（了结说结局、成交说成交、挂单没了说没了），同一计划内先结局后成交；
+     * 再是命中了但没叫醒它的盯盘条件。都没有返回空串
+     */
+    private String events(List<TraderPlanStore.Event> events, List<AiTraderWatch> firedQuietly, AgentLang lang) {
+        if (events.isEmpty() && firedQuietly.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder("\n").append(prompts.get(lang, "trader.wake.eventsHeader")).append('\n');
+        for (AiTraderWatch w : firedQuietly) {
+            sb.append(prompts.get(lang, "trader.wake.eventWatchFired", Map.of(
+                    "time", BeijingTime.format(w.getFiredAt()),
+                    "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
+                    "note", w.getNote()))).append('\n');
+        }
         for (TraderPlanStore.Event e : events) {
             AiTraderPlan p = e.plan();
             sb.append(switch (e) {

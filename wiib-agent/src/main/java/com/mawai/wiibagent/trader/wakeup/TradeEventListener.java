@@ -62,7 +62,7 @@ public class TradeEventListener implements MessageListener {
                 .eq(AiTrader::getSimUserId, event.userId())
                 .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING));
         for (AiTrader t : traders) {
-            scheduler.tryTriggerWake(t, new EventTrigger(event));
+            scheduler.tryTriggerWake(t.getId(), new EventTrigger(event));
         }
     }
 }

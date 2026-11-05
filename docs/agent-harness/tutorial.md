@@ -20,7 +20,7 @@
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
-| **trader agent** | ReAct 循环（18 工具） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 手动 | `trader/`（现场流与轨迹见 5.7） |
+| **trader agent** | ReAct 循环（18 工具） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 盯盘条件命中 / 手动 | `trader/`（现场流与轨迹见 5.7） |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | ✓ | 用户提问 | `chat/`（子运行在 `chat/run/`） |
 | **reviewer workflow** | 单次调用，无工具 | ✗ | 日线交接第二阶段 / 点播 | `learning/ReviewRunner` |
 | **behavior workflow** | 单次调用，无工具 | ✗ | 对话里的 `analyze_my_behavior` | `behavior/` |
@@ -335,7 +335,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 | 入口 | 方法 | 治理 |
 |---|---|---|
 | 例行 | `onKlineClosed` → `fireInterval` → `fireTrader` | 对齐 interval 边界 → `WakeWindow` 时段过滤（时段外静默跳过，**不写 SKIPPED**）→ 边界去重 → 每 trader 互斥 |
-| 波动警报 / 持仓事件 | `tryTriggerWake` | 进队列 → 领的时候判停工窗口 / 仍是 RUNNING / 时段；上一轮在跑就先排着（先来后到，任何一轮结束都来领，排队期间的几条合成一轮）；没叫的持仓事件由下一次唤醒的对账块兜底 |
+| 波动警报 / 持仓事件 / 盯盘条件命中 | `tryTriggerWake` | 进队列 → 领的时候判停工窗口 / 仍是 RUNNING / 时段；上一轮在跑就先排着（先来后到，任何一轮结束都来领，排队期间的几条合成一轮）；没叫的持仓事件和盯盘命中由下一次唤醒的【自上次唤醒以来】兜底 |
 | 手动 | `tryManualWake` | `manualWakeBlockedReason` 预检（面板显示的拒因就是真点下去会拿到的那句）→ 再抢一次互斥 |
 | 点播复盘 | `tryOccupy` / `release` | 借同一个 inFlight，两边才不会对同一个 trader 各跑一篇复盘把 memory 互相覆盖 |
 
@@ -355,7 +355,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 `phase()` 里 inFlight 抢不到就跳过该 trader 本阶段：硬等会拖住全体，而复盘明天还有机会；这也是复盘不脏读的第二道闸（窗口挡新唤醒，inFlight 挡残留的旧唤醒）。
 
-配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL）、`AlertTrigger`、`TradeEventListener`（sim 在止损/止盈/强平/限价成交时发的 `TradeEvent` → `EventTrigger`，决策行 kind=EVENT）、`WakeWindow`（北京时间写死 `Asia/Shanghai`，不跟 systemDefault 漂）。
+配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL；边沿触发，一段行情每人只报一次，回落到基准八成以下才算结束）、`AlertTrigger`、`TradeEventListener`（sim 在止损/止盈/强平/限价成交时发的 `TradeEvent` → `EventTrigger`，决策行 kind=EVENT）、`WatchSentinel`（模型 `set_watch` 布的条件：触及 / 到时刻看 tick，周期收盘看 5m 收盘落在哪个边界；命中是库里 ARMED→FIRED 的 CAS，赢了才叫 → `WatchTrigger`，kind=WATCH；名单在内存，`WatchesChanged` 事件整份重载）、`WakeWindow`（北京时间写死 `Asia/Shanghai`，不跟 systemDefault 漂）。
 
 ### 5.2 四层外生停止条件 · `TraderWakeupRunner` 顶部常量
 

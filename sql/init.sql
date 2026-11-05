@@ -762,7 +762,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
 CREATE INDEX IF NOT EXISTS idx_atd_trader_time ON ai_trader_decision(trader_id, wake_time DESC);
 COMMENT ON TABLE ai_trader_decision IS 'AI Trader每次唤醒一行：推理全文+动作(含play_type论点标签)+权益快照——竞技场决策时间线与净值曲线数据源';
 COMMENT ON COLUMN ai_trader_decision.status IS 'OK/ERROR/SKIPPED（上一唤醒未完被跳过）';
-COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） EVENT=持仓事件唤醒（sim止损/止盈/强平/限价成交当场叫醒，wake_time=事件时刻） REVIEW=reviewer复盘（reasoning=复盘全文，无equity）';
+COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） EVENT=持仓事件唤醒（sim止损/止盈/强平/限价成交当场叫醒） WATCH=模型自己布的盯盘条件命中（ai_trader_watch） REVIEW=reviewer复盘（reasoning=复盘全文，无equity）';
 COMMENT ON COLUMN ai_trader_decision.memory_after IS '仅REVIEW行：本期学习完的记忆快照存档（学习演进史,append-only）；ai_trader.memory是滚动覆盖的生效版本,历史版本只在这里';
 COMMENT ON COLUMN ai_trader_decision.equity IS '本轮动作落地后的账户权益USDT';
 COMMENT ON COLUMN ai_trader_decision.model_calls IS '本轮模型调用次数：ReAct是循环，一次唤醒会调很多次（上限见ModelCallLimiter）';
@@ -821,6 +821,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_watch (
     status          VARCHAR(8) NOT NULL DEFAULT 'ARMED',
     fired_at        BIGINT,
     fired_price     NUMERIC(20,8),
+    woke_at         BIGINT,
     created_wake_time BIGINT NOT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -831,6 +832,7 @@ COMMENT ON TABLE ai_trader_watch IS 'AI Trader 盯盘条件：模型用 set_watc
 COMMENT ON COLUMN ai_trader_watch.kind IS 'TOUCH_ABOVE/TOUCH_BELOW=标记价触及level；CLOSE_ABOVE/CLOSE_BELOW=period周期收盘站上/跌破level；AT_TIME=到at_time时刻';
 COMMENT ON COLUMN ai_trader_watch.note IS '模型给下一轮自己的备注：这条命中意味着什么，命中唤醒的开场白原样念给它';
 COMMENT ON COLUMN ai_trader_watch.status IS 'ARMED=在盯 FIRED=命中过（fired_at/fired_price记命中时刻与价） REPLACED=被整组替换或重置作废';
+COMMENT ON COLUMN ai_trader_watch.woke_at IS '模型得知这次命中的那轮唤醒时刻ms（当作触发叫醒它，或开场白里补报）；为空=命中了但还没哪轮告诉过它，下一轮开场白补报';
 
 -- ============================================
 -- 31.1 AI Trader 经验账本（复盘沉淀的经验，一条一行，代码记账）

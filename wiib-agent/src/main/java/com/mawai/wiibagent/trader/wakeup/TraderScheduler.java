@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibagent.learning.ReviewRunner;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import lombok.Getter;
@@ -54,6 +55,10 @@ public class TraderScheduler {
     /** 手动唤醒的拦因当场回给用户，跟界面语言 */
     private final MessageCatalog messages;
     private final EconCalendarGate calendarGate;
+    /** 盯盘哨兵：5m 收盘时问它这根收盘命中了哪些收盘类条件，命中先落库，同一刻的例行轮开场白就能并进去念 */
+    private final WatchSentinel watchSentinel;
+    /** 领排队触发时，别的轮已经告诉过模型的盯盘命中不再单独叫 */
+    private final TraderWatchStore watchStore;
 
     /** 同一 trader 不并行的拒因；预检与真占位两处共用一份措辞 */
 
@@ -88,17 +93,20 @@ public class TraderScheduler {
         }
         long dayBoundary = boundaryOf(event.closeTime(), "1d");
         if (dayBoundary > 0) {
-            startDailyHandover(dayBoundary);
+            startDailyHandover(dayBoundary, event);
             return;
         }
         // 撞上数据公布时刻先等实际值再发本轮；没有待公布的 future 已完成，thenRun 就地同步执行，与不等一样。
         calendarGate.released(event.closeTime() + 1).thenRun(() -> {
+            // 收盘类盯盘命中先落库，再发例行：同一刻醒的例行轮开场白里就带着它们；排进队列的那份等例行轮结束后被过滤掉
+            List<WatchTrigger> hits = closeHits(event);
             for (String ic : WAKE_INTERVALS) {
                 long boundary = boundaryOf(event.closeTime(), ic);
                 if (boundary > 0) {
                     fireInterval(ic, boundary);
                 }
             }
+            hits.forEach(t -> tryTriggerWake(t.watch().getTraderId(), t));
         }).exceptionally(e -> {
             log.error("[TraderSched] 例行触发失败 closeTime={} msg={}", event.closeTime(), e.toString());
             return null;
@@ -110,7 +118,7 @@ public class TraderScheduler {
      * 阶段0 全体例行唤醒发出 → 【停工窗口开】→ 等交易跑完 → 阶段1 全体复盘并行 → 等全部复盘落库 → 【停工窗口关】。
      * 窗口保证复盘读的是定格数据。各阶段单人超时都有硬顶（唤醒600s/复盘600s），join 不会永久卡住。
      */
-    private void startDailyHandover(long boundary) {
+    private void startDailyHandover(long boundary, KlineClosedEvent event) {
         // 原子抢占：日线边界的多 symbol 事件里只有一个赢家启动交接
         long prev = lastHandoverBoundary.get();
         if (prev >= boundary || !lastHandoverBoundary.compareAndSet(prev, boundary)) {
@@ -119,11 +127,14 @@ public class TraderScheduler {
         Thread.startVirtualThread(() -> {
             // 阶段0 同样过闸：日线边界撞上数据公布也先等实际值
             calendarGate.released(boundary).join();
+            List<WatchTrigger> hits = closeHits(event);
             // 阶段0：日线边界同时是四档的边界，全体例行唤醒照常发出
             List<Thread> wakes = new ArrayList<>();
             for (String ic : WAKE_INTERVALS) {
                 wakes.addAll(fireInterval(ic, boundary));
             }
+            // 没并进阶段0的命中进队列：交接期间领不到，结束后由下一轮开场白补报
+            hits.forEach(t -> tryTriggerWake(t.watch().getTraderId(), t));
             // 发完就关门：在途的照跑，新来的K线/警报/手动全拒——不然 5m 档在阶段0期间又醒一次占住 inFlight，复盘就被跳过
             handoverActive = true;
             log.info("[TraderSched] 日线交接开始 boundary={}，停工窗口开", boundary);
@@ -235,15 +246,31 @@ public class TraderScheduler {
         });
     }
 
+    /** 盯盘哨兵在 tick 上命中的（触及 / 到时刻）：广播过来，走非例行入口 */
+    @EventListener
+    public void onWatchHit(WatchTrigger trigger) {
+        tryTriggerWake(trigger.watch().getTraderId(), trigger);
+    }
+
+    /** 这根 5m 收盘命中的收盘类盯盘条件（CAS 已标 FIRED）；哨兵那边出错不许连累例行唤醒 */
+    private List<WatchTrigger> closeHits(KlineClosedEvent event) {
+        try {
+            return watchSentinel.closeHits(event.symbol(), event.closeTime(), event.bar());
+        } catch (Exception e) {
+            log.warn("[TraderSched] 收盘类盯盘条件匹配失败 {} closeTime={} msg={}", event.symbol(), event.closeTime(), e.toString());
+            return List.of();
+        }
+    }
+
     /**
-     * 非例行唤醒（波动警报 / 持仓事件）：进队列，然后立刻尝试领走。只有两种情况不叫：日线交接停工（复盘要读定格的一天）
-     * 和主人配的休眠时段，都在领的时候判。上一轮还在跑就先排着，先来后到，它一结束立刻补醒；
+     * 非例行唤醒（波动警报 / 持仓事件 / 盯盘命中）：进队列，然后立刻尝试领走。只有两种情况不叫：日线交接停工
+     * （复盘要读定格的一天）和主人配的休眠时段，都在领的时候判。上一轮还在跑就先排着，先来后到，它一结束立刻补醒；
      * 排队期间攒下的几条合成一轮一起报。跑过例行边界时那根的例行轮跳过（SKIPPED 留痕）——突发行情里这一轮比按点醒更要紧。
-     * 没叫的持仓事件不会丢：下一次唤醒开头对账照样报。
+     * 没叫的持仓事件和盯盘命中不会丢：下一次唤醒开头照样报。
      */
-    public void tryTriggerWake(AiTrader trader, WakeTrigger trigger) {
-        pendingTriggers.computeIfAbsent(trader.getId(), _ -> new ConcurrentLinkedQueue<>()).add(trigger);
-        drainTriggers(trader.getId());
+    public void tryTriggerWake(long traderId, WakeTrigger trigger) {
+        pendingTriggers.computeIfAbsent(traderId, _ -> new ConcurrentLinkedQueue<>()).add(trigger);
+        drainTriggers(traderId);
     }
 
     /**
@@ -265,6 +292,10 @@ public class TraderScheduler {
             for (WakeTrigger t; (t = queue.poll()) != null; ) {
                 batch.add(t);
             }
+            // 排队期间别的轮（多半是同一刻的例行轮）已经把这条盯盘命中告诉过模型的，不再单独叫
+            Set<Long> told = watchStore.wokenIds(batch.stream()
+                    .filter(t -> t instanceof WatchTrigger).map(t -> ((WatchTrigger) t).watch().getId()).toList());
+            batch.removeIf(t -> t instanceof WatchTrigger w && told.contains(w.watch().getId()));
             if (batch.isEmpty()) {
                 return;
             }

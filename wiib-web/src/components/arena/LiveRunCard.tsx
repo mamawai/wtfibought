@@ -5,9 +5,9 @@ import { cn, fmtTime } from '../../lib/utils';
 import type { WakeKind } from '../../types';
 import { WakeTraceView } from './WakeTraceView';
 
-/** 是什么把它叫醒的：例行K线 / 哨兵警报 / 主人手动 / 持仓事件。存词表 key 不存文案 */
+/** 是什么把它叫醒的：例行K线 / 哨兵警报 / 主人手动 / 持仓事件 / 盯盘条件命中。存词表 key 不存文案 */
 const KIND_KEY: Record<WakeKind, string> = {
-  TRADE: 'decision.ok', ALERT: 'decision.alert', MANUAL: 'term.manualWake', EVENT: 'decision.event',
+  TRADE: 'decision.ok', ALERT: 'decision.alert', MANUAL: 'term.manualWake', EVENT: 'decision.event', WATCH: 'decision.watch',
 };
 
 /**

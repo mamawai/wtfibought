@@ -35,8 +35,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 经 {@link TraderScheduler#tryTriggerWake}（在跑则排队，结束后合成一轮）触发一次警报唤醒。
  * 例行 K 线唤醒的补充而非替代——只认"世界变了"级别的波动，空仓者不惊动。
  * <p>
- * 边沿触发：振幅从基准线下穿上去算一段行情开始，回落到基准线下算结束。一段行情里每个 trader 最多被叫一次
- * （振幅碰到它自己的阈值那一刻），持续高位不重复叫；回落后再穿上来才是新一段。
+ * 边沿触发：振幅从基准线下穿上去算一段行情开始，回落到基准线的八成以下算结束（{@link #REARM_RATIO}，
+ * 在基准线附近来回蹭不算几段）。一段行情里每个 trader 最多被叫一次（振幅碰到它自己的阈值那一刻），
+ * 持续高位不重复叫；结束后再穿上来才是新一段。
  * <p>
  * 基准阈值 180 天历史校准（2026-08-08，kline_history 5m bar 振幅口径），
  * 目标包络：波动日 10~20 次/日、平日 <10 次/日。市场性状变了可重跑校准：
@@ -66,6 +67,8 @@ public class VolatilitySentinel implements MessageListener {
 
     static final long WINDOW_MS = 5 * 60_000L;
     private static final long SAMPLE_INTERVAL_MS = 1_000L;
+    /** 回落余量：振幅跌到基准线的八成以下这段行情才算完；八成线到基准线之间既不开新段也不结束 */
+    static final BigDecimal REARM_RATIO = new BigDecimal("0.8");
 
     private final RedisMessageListenerContainer listenerContainer;
     private final AiTraderMapper traderMapper;
@@ -79,7 +82,7 @@ public class VolatilitySentinel implements MessageListener {
      */
     private final Map<String, PriceWindow> windows = new ConcurrentHashMap<>();
     private final Map<String, Long> lastSampleAt = new ConcurrentHashMap<>();
-    /** 每币进行中的一段行情；振幅回落到基准线下就摘掉 */
+    /** 每币进行中的一段行情；振幅回落到基准线八成以下就摘掉 */
     private final Map<String, Incident> incidents = new ConcurrentHashMap<>();
 
     @PostConstruct
@@ -121,16 +124,19 @@ public class VolatilitySentinel implements MessageListener {
         PriceWindow window = windows.computeIfAbsent(symbol, k -> new PriceWindow());
         window.add(now, price);
         BigDecimal amp = window.amplitudePct();
-        if (amp.compareTo(base) < 0) {
-            // 回落到基准线下：这段行情结束，下次再穿上来算新一段
+        if (amp.compareTo(base.multiply(REARM_RATIO)) < 0) {
+            // 回落到八成线下：这段行情结束，下次再穿上基准线算新一段
             incidents.remove(symbol);
+            return;
+        }
+        if (amp.compareTo(base) < 0) {
             return;
         }
         // 穿越的那一刻查一次库定下名单，之后振幅碰到谁的阈值就报谁
         Incident incident = incidents.computeIfAbsent(symbol, this::candidates);
         for (AiTrader t : incident.due(amp)) {
             if (engaged(t, symbol)) {
-                scheduler.tryTriggerWake(t, new AlertTrigger(symbol, amp, price, window.direction(), now));
+                scheduler.tryTriggerWake(t.getId(), new AlertTrigger(symbol, amp, price, window.direction(), now));
             }
         }
     }

@@ -62,6 +62,9 @@ public class AiTraderWatch {
 
     private BigDecimal firedPrice;
 
+    /** 模型得知这次命中的那轮唤醒时刻 ms（当作触发叫醒它，或在开场白里补报给它）；还没哪轮告诉过它则为空 */
+    private Long wokeAt;
+
     /** 布下它的那轮唤醒时刻 ms */
     private Long createdWakeTime;
 

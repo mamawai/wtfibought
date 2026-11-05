@@ -10,7 +10,9 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 
+import java.math.BigDecimal;
 import java.time.ZonedDateTime;
 import java.util.List;
 
@@ -21,8 +23,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-/** 盯盘条件存取：整组替换把该币旧的标 REPLACED、新的插成 ARMED；各类型只落自己那几列 */
+/** 盯盘条件存取：整组替换把该币旧的标 REPLACED、新的插成 ARMED、广播变更；各类型只落自己那几列；命中是 CAS */
 class TraderWatchStoreTest {
 
     @BeforeAll
@@ -31,7 +34,8 @@ class TraderWatchStoreTest {
     }
 
     private final AiTraderWatchMapper mapper = mock(AiTraderWatchMapper.class);
-    private final TraderWatchStore store = new TraderWatchStore(mapper);
+    private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+    private final TraderWatchStore store = new TraderWatchStore(mapper, events);
 
     @Test
     void replaceRetiresOldAndInsertsNew() {
@@ -56,6 +60,26 @@ class TraderWatchStoreTest {
         assertThat(timed.getLevel()).isNull();
         assertThat(timed.getAtTime()).isEqualTo(
                 ZonedDateTime.of(2026, 7, 27, 20, 20, 0, 0, WakeWindow.ZONE).toInstant().toEpochMilli());
+        verify(events).publishEvent(new WatchesChanged(7L));
+    }
+
+    /** 标"已告诉过"：没 id 不碰库，有 id 才更新 */
+    @Test
+    void markWokenSkipsEmptyIds() {
+        store.markWoken(List.of(), 1785171600000L);
+        verify(mapper, never()).update(isNull(), any(LambdaUpdateWrapper.class));
+
+        store.markWoken(List.of(31L, 32L), 1785171600000L);
+        verify(mapper).update(isNull(), any(LambdaUpdateWrapper.class));
+    }
+
+    /** 命中是对 ARMED 的 CAS：第二个到的（并发 tick / 刚被替换）拿不到 */
+    @Test
+    void fireIsCasOnArmed() {
+        when(mapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1, 0);
+
+        assertThat(store.fire(31L, 1785171600000L, new BigDecimal("63120"))).isTrue();
+        assertThat(store.fire(31L, 1785171600000L, new BigDecimal("63120"))).isFalse();
     }
 
     /** 传空只清掉，不插任何行 */

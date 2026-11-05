@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
@@ -105,6 +106,7 @@ class TraderWakeupLoopTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTrader.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderDecision.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderPlan.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderWatch.class);
     }
 
     private final TraderModelFactory modelFactory = mock(TraderModelFactory.class);
@@ -124,7 +126,9 @@ class TraderWakeupLoopTest {
     private final TraderLiveHub hub = new TraderLiveHub();
     private final ExperienceLedger ledger = mock(ExperienceLedger.class);
 
-    private final TraderWatchStore watchStore = new TraderWatchStore(mock(AiTraderWatchMapper.class));
+    private final AiTraderWatchMapper watchMapper = mock(AiTraderWatchMapper.class);
+    private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper,
+            mock(org.springframework.context.ApplicationEventPublisher.class));
 
     /** 与 runner 共用同一份 decisionMapper 和 playStats：selectList 打桩、insert 断言都还落在原处 */
     private final WakeObservation wakeObservation =
@@ -1118,9 +1122,78 @@ class TraderWakeupLoopTest {
                 .contains("尚未收盘").doesNotContain("止损单仍在").contains("被叫醒本身不是动作的理由");
     }
 
+    /** 盯盘条件命中唤醒：kind=WATCH，开场白首行念回条件、命中价和它自己的备注 */
+    @Test
+    void watchWakeUsesWatchInstructionAndKind() {
+        stubHealthyAccount();
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
+        when(simTradeClient.getBalance(99L)).thenReturn(new BigDecimal("9987"));
+        when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9987", "frozenBalance", "0"));
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        long at = 1785171600000L + 600_000L;
+        runner.nowMs = () -> at;
+        AiTraderWatch w = new AiTraderWatch();
+        w.setId(31L);
+        w.setTraderId(7L);
+        w.setRoundNo(1);
+        w.setSymbol("BTCUSDT");
+        w.setKind("CLOSE_ABOVE");
+        w.setLevel(new BigDecimal("63000"));
+        w.setPeriod("1h");
+        w.setNote("突破确认，看回踩做多");
+
+        runner.wakeTriggered(trader(), List.of(new WatchTrigger(w, new BigDecimal("63120"), at)));
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getKind()).isEqualTo(AiTraderDecision.KIND_WATCH);
+        ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(prompts.capture());
+        String firstCall = prompts.getAllValues().get(0).getInstructions().stream()
+                .map(org.springframework.ai.chat.messages.Message::getText)
+                .reduce("", String::concat);
+        assertThat(firstCall).contains("盯盘条件命中").contains("BTCUSDT 1h 收盘 63120 站上 63000")
+                .contains("突破确认，看回踩做多").contains("被叫醒本身不是动作的理由");
+    }
+
+    /** 这根收盘刚命中的收盘类条件并进例行轮：开场白单起一块念，念过就在库里标成已告知 */
+    @Test
+    void routineWakeFoldsInCloseHitsAtThisBoundary() {
+        stubHealthyAccount();
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTraderWatch hit = new AiTraderWatch();
+        hit.setId(31L);
+        hit.setTraderId(7L);
+        hit.setRoundNo(1);
+        hit.setSymbol("BTCUSDT");
+        hit.setKind("CLOSE_ABOVE");
+        hit.setLevel(new BigDecimal("63000"));
+        hit.setPeriod("1h");
+        hit.setNote("突破确认，看回踩做多");
+        hit.setStatus(AiTraderWatch.STATUS_FIRED);
+        hit.setFiredAt(1785171600000L);
+        hit.setFiredPrice(new BigDecimal("63120"));
+        hit.setCreatedWakeTime(1785168000000L);
+        when(watchMapper.selectList(any())).thenReturn(List.of(hit));
+
+        runner.wake(trader(), 1785171600000L);
+
+        ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(prompts.capture());
+        String firstCall = prompts.getAllValues().get(0).getInstructions().stream()
+                .map(org.springframework.ai.chat.messages.Message::getText)
+                .reduce("", String::concat);
+        assertThat(firstCall).contains("【这根收盘命中了你布的盯盘条件】")
+                .contains("BTCUSDT 1h 收盘 63120 站上 63000").contains("突破确认，看回踩做多")
+                .doesNotContain("本轮才告诉你");
+        verify(watchMapper).update(any(), any());
+    }
+
     /**
-     * recent 回注窗口只认交易行白名单（TRADE/ALERT/MANUAL/EVENT）：REVIEW 的产出已经走
-     * memory 注入，混进 5 条窗口就是重复占字数；ALERT/MANUAL/EVENT 是真实交易决策必须保留。
+     * 开场白对决策行的查询（recent 回注窗口、上次 OK 唤醒时刻）只认唤醒行白名单：REVIEW 的产出已经走
+     * memory 注入，混进 5 条窗口就是重复占字数；ALERT/MANUAL/EVENT/WATCH 是真实交易决策必须保留。
      */
     @Test
     void recentDecisionsQueryExcludesReviewRows() {
@@ -1133,12 +1206,14 @@ class TraderWakeupLoopTest {
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AiTraderDecision>> q =
                 ArgumentCaptor.forClass((Class) com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class);
-        verify(decisionMapper).selectList(q.capture());
-        assertThat(q.getValue().getSqlSegment()).contains("kind IN");
-        var values = q.getValue().getParamNameValuePairs().values();
-        assertThat(values).contains(AiTraderDecision.KIND_TRADE,
-                AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
-        assertThat(values).doesNotContain(AiTraderDecision.KIND_REVIEW);
+        verify(decisionMapper, atLeastOnce()).selectList(q.capture());
+        for (var wrapper : q.getAllValues()) {
+            assertThat(wrapper.getSqlSegment()).contains("kind IN");
+            var values = wrapper.getParamNameValuePairs().values();
+            assertThat(values).contains(AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT,
+                    AiTraderDecision.KIND_MANUAL, AiTraderDecision.KIND_EVENT, AiTraderDecision.KIND_WATCH);
+            assertThat(values).doesNotContain(AiTraderDecision.KIND_REVIEW);
+        }
     }
 
     @Test

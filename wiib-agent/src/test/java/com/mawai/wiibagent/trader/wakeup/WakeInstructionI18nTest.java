@@ -61,7 +61,8 @@ class WakeInstructionI18nTest {
     private final BinanceRestClient binance = mock(BinanceRestClient.class);
 
     /** 观察包成文走真实词表；取数侧（决策行/战绩）给 mock，走空数据路径 */
-    private final TraderWatchStore watchStore = new TraderWatchStore(mock(AiTraderWatchMapper.class));
+    private final TraderWatchStore watchStore = new TraderWatchStore(mock(AiTraderWatchMapper.class),
+            mock(org.springframework.context.ApplicationEventPublisher.class));
     private final WakeObservation wakeObservation = new WakeObservation(
             mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts,
             mock(PositionPath.class), watchStore);
@@ -205,7 +206,7 @@ class WakeInstructionI18nTest {
     @Test
     void 观察包中英文案无中文() {
         String en = wakeObservation.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
-                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN);
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of());
         PromptI18nAssertions.assertNoCjk("英文观察包", en);
         PromptI18nAssertions.assertNoCjk("英文例行开场白（带观察包）",
                 runner.routineInstruction(trader(), BOUNDARY, en, "", null, AgentLang.EN, ""));
@@ -214,7 +215,7 @@ class WakeInstructionI18nTest {
         assertThat(en).contains("[Account]").contains("[Last round's conclusion]");
 
         String zh = wakeObservation.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
-                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH);
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of());
         assertThat(zh).contains("【当前账户】").contains("\"equity\":10000.00")
                 .contains("【上一轮结论】本局还没有上一轮结论");
     }
@@ -266,7 +267,7 @@ class WakeInstructionI18nTest {
         assertThat(runner.triggerInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, AgentLang.ZH))
                 .isEqualTo("行情波动警报（" + time + "）：BTCUSDT 5分钟内波动 5.2%（方向：上涨，现价 100000）\n"
                         + "你上次唤醒本局还没有过唤醒，距下一次例行唤醒还有约 60 分钟。\n"
-                        + "注意：本次不是例行唤醒，当前 1h K线尚未收盘——按收盘定义的条件此刻不作数，求证请用已收盘的 5m/15m K线。\n"
+                        + "注意：本次不是例行唤醒，当前 1h K线尚未收盘——按 1h 收盘定义的条件此刻不作数，求证请用已收盘的K线。\n"
                         + "本次是非例行唤醒，上面列的就是把你叫醒的事：先用工具看清它们前后的行情，再判断对各持仓与各币意味着什么，按主人的交易指令决定动作。"
                         + "被叫醒本身不是动作的理由，也不是不动的理由。最后仍用[本轮结论]固定格式收尾（每个可交易币各一段）。");
     }

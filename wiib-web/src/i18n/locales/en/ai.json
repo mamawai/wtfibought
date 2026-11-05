@@ -178,7 +178,8 @@
     "skipped": "Skipped",
     "reviewFailed": "Review failed",
     "alert": "Volatility alert",
-    "event": "Position event"
+    "event": "Position event",
+    "watch": "Watch hit"
   },
   "live": {
     "scene": "Live · waking up",

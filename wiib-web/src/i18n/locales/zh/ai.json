@@ -174,7 +174,8 @@
     "skipped": "跳过",
     "reviewFailed": "复盘失败",
     "alert": "波动警报",
-    "event": "持仓事件"
+    "event": "持仓事件",
+    "watch": "盯盘命中"
   },
   "live": {
     "scene": "现场 · 唤醒中",

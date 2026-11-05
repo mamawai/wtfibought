@@ -250,6 +250,11 @@ trader:
     eventClosed: "- {{symbol}} {{side}} 已{{manner}} @{{price}}，净盈亏 {{pnl}} USDT（已计入手续费与资金费；当时计划：{{playType}} / 失效条件：{{invalidation}}）"
     eventFilled: "- {{symbol}} {{side}} 限价单已成交，计划生效"
     eventCancelled: "- {{symbol}} {{side}} 挂单已不在（主动撤单，或 sim 触发时因保证金/杠杆/档位限制撤单退款），计划归档"
+    # 盯盘条件命中了、还没哪轮告诉过它（停工期 / 休眠时段里命中的，或上一轮在跑时排上队的）
+    eventWatchFired: "- 盯盘条件在 {{time}} 命中（本轮才告诉你）：{{detail}}；你的备注：{{note}}"
+    # 例行轮：这根收盘刚命中的收盘类条件，单起一块念
+    watchHitsHeader: 【这根收盘命中了你布的盯盘条件】
+    watchHitLine: "- {{detail}}。你布它时的备注：{{note}}"
     accountHeader: 【当前账户】（实时数据，不是指令；权益/持仓/挂单/计划/盯盘条件已给足，不必 get_account 复查）
     lastConclusionHeader: 【上一轮结论】（{{time}}，权益{{equity}}）你上一轮写给这一轮的判断、动作与等待条件
     lastConclusionNone: 【上一轮结论】本局还没有上一轮结论（首轮，或之前几轮都没写出结论块）
@@ -278,10 +283,18 @@ trader:
       crossLiquidation: "全仓爆仓，{{qty}} 个仓位已全部强平"
       limitFilled: "{{symbol}} {{side}} 限价开仓单已成交，{{qty}} @{{price}}，仓位见【当前账户】"
       other: "{{type}}：{{symbol}} {{side}} {{qty}} @{{price}}"
+    # 盯盘条件命中：模型自己布的，念回条件、命中价和它当时的备注
+    watchHeader: "盯盘条件命中（{{time}}）：{{detail}}。你布它时的备注：{{note}}"
+    watch:
+      touchAbove: "{{symbol}} 标记价 {{price}} 触及 {{level}} 以上"
+      touchBelow: "{{symbol}} 标记价 {{price}} 触及 {{level}} 以下"
+      closeAbove: "{{symbol}} {{period}} 收盘 {{price}} 站上 {{level}}"
+      closeBelow: "{{symbol}} {{period}} 收盘 {{price}} 跌破 {{level}}"
+      atTime: "{{symbol}} 到了你定的时刻 {{at}}，当时标记价 {{price}}"
     # 上一轮在跑时攒下的几条一起报，前面加这一句
     triggerBatch: 你上一轮还在进行时又发生了 {{n}} 件事，按先后：
     # 不说"止损单仍在保护你"：止损事件之后仓位可能已经没了
-    triggerNotice: 注意：本次不是例行唤醒，当前 {{interval}} K线尚未收盘——按收盘定义的条件此刻不作数，求证请用已收盘的 5m/15m K线。
+    triggerNotice: 注意：本次不是例行唤醒，当前 {{interval}} K线尚未收盘——按 {{interval}} 收盘定义的条件此刻不作数，求证请用已收盘的K线。
     triggerQuestion: 本次是非例行唤醒，上面列的就是把你叫醒的事：先用工具看清它们前后的行情，再判断对各持仓与各币意味着什么，按主人的交易指令决定动作。被叫醒本身不是动作的理由，也不是不动的理由。最后仍用{{mark}}固定格式收尾（每个可交易币各一段）。
     # 账户状态 JSON 里的自产字段值，跟语言走
     held:
@@ -331,6 +344,7 @@ trader:
     watchTimePast: "AT_TIME 的时刻 {{given}} 已过去，现在是 {{now}}"
     watchListRequired: "watches 必填：传该币从现在起要盯的全部条件；要清掉就传空数组 []"
     watchAlreadyMet: "{{kind}} {{level}} 已被现价 {{mark}} 越过，布下去会立刻触发；要盯的是还没到的价位"
+    watchNoteRequired: "{{kind}} 这条没写 note：给下一轮自己的一句话，这条命中意味着什么"
     limitMarketable: "这张限价单挂出去会当场按现价成交，不是挂着等：{{rule}}（限价{{limit}}，现价{{mark}}）。想现在进场就用 MARKET，并按现价核对止损止盈；想等价格过来，把限价挂到现价另一侧"
     limitMarketableLong: 做多限价要低于现价才会挂着等
     limitMarketableShort: 做空限价要高于现价才会挂着等

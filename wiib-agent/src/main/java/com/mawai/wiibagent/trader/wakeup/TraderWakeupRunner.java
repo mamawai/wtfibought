@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -21,6 +22,7 @@ import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.ToolCallTraceHook;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
@@ -112,6 +114,9 @@ public class TraderWakeupRunner {
             DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(WakeWindow.ZONE);
     /** 结论里引用账本条目的写法：#编号 */
     private static final Pattern LEDGER_REF = Pattern.compile("#(\\d{1,18})(?!\\d)");
+    /** 一批触发合成一轮时决策行的 kind：按要紧程度，持仓事件 > 盯盘命中 > 波动警报 */
+    private static final List<String> TRIGGER_KIND_PRIORITY =
+            List.of(AiTraderDecision.KIND_EVENT, AiTraderDecision.KIND_WATCH, AiTraderDecision.KIND_ALERT);
 
     private final TraderModelFactory modelFactory;
     private final TraderPromptAssembler promptAssembler;
@@ -190,9 +195,9 @@ public class TraderWakeupRunner {
     public void wakeTriggered(AiTrader trader, List<WakeTrigger> triggers) {
         long wakeTime = nowMs.getAsLong();
         AiTraderDecision decision = baseDecision(trader, wakeTime);
-        // 一批里有持仓事件就标 EVENT：止损/成交比同批的波动警报要紧，不能被盖住
-        decision.setKind(triggers.stream().anyMatch(t -> t instanceof EventTrigger)
-                ? AiTraderDecision.KIND_EVENT : triggers.getFirst().kind());
+        // 一批里的 kind 按要紧程度取：持仓事件 > 盯盘命中 > 波动警报
+        decision.setKind(TRIGGER_KIND_PRIORITY.stream()
+                .filter(k -> triggers.stream().anyMatch(t -> k.equals(t.kind()))).findFirst().orElseThrow());
         doWake(trader, wakeTime, MAX_WAKE_SECONDS, decision, triggers, userLangResolver.of(trader.getUserId()));
     }
 
@@ -314,8 +319,16 @@ public class TraderWakeupRunner {
         List<WakeObservation.RecentWake> recent = wakeObservation.recentWakes(trader, boundaryTime, plans);
         // system 提示词：平台模板 + 经验账本 + 自定义指令 + 固定收尾格式 + 输出语言
         String prompt = promptAssembler.assemble(trader, lang);
+        // 命中了还没哪轮告诉过模型的盯盘条件，分三份：本轮触发源里的（首行念）、这根收盘刚命中的收盘类（例行轮并进去念）、其余的（对账块补报）
+        Set<Long> triggerWatchIds = triggers == null ? Set.of() : triggers.stream()
+                .filter(WatchTrigger.class::isInstance).map(t -> ((WatchTrigger) t).watch().getId()).collect(Collectors.toSet());
+        List<AiTraderWatch> unreported = watchStore.firedUnreported(trader.getId(), trader.getRoundNo());
+        List<AiTraderWatch> hitsNow = triggers != null ? List.of() : unreported.stream()
+                .filter(w -> w.getFiredAt() == boundaryTime).toList();
+        List<AiTraderWatch> quiet = unreported.stream()
+                .filter(w -> !triggerWatchIds.contains(w.getId()) && !hitsNow.contains(w)).toList();
         // 观察包：自己的状态事实，进开场白。上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 最近轨迹 + 论点战绩
-        String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang);
+        String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang, hitsNow, quiet);
         // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报/事件轮在 K 线中间，主人留的话多半是按收盘说的
         String ownerNote = triggers != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
 
@@ -394,6 +407,11 @@ public class TraderWakeupRunner {
             // 保险丝收束不算失败（已有动作真实生效），但必须留痕——否则时间线上像正常决策
             decision.setError(prompts.get(lang, "trader.error.callLimit", Map.of("limit", MAX_MODEL_CALLS)));
         }
+        // 本轮念给它的盯盘命中（触发源里的、这根收盘的、补报的）都算告诉过了，别的轮不再重复
+        List<Long> told = new ArrayList<>(triggerWatchIds);
+        hitsNow.forEach(w -> told.add(w.getId()));
+        quiet.forEach(w -> told.add(w.getId()));
+        watchStore.markWoken(told, decision.getWakeTime());
         return outcome.reasoning();
     }
 
@@ -534,7 +552,7 @@ public class TraderWakeupRunner {
                 .toString();
     }
 
-    /** 一条触发的一句话：警报报振幅/方向/现价，事件报币/方向/量/价，都带自己的时刻 */
+    /** 一条触发的一句话：警报报振幅/方向/现价，事件报币/方向/量/价，盯盘命中报条件与命中价和备注，都带自己的时刻 */
     private String triggerLine(WakeTrigger t, AgentLang lang) {
         String time = TIME_FMT.format(Instant.ofEpochMilli(t.triggeredAt()));
         return switch (t) {
@@ -547,6 +565,11 @@ public class TraderWakeupRunner {
             case EventTrigger e -> prompts.get(lang, "trader.wake.eventHeader", Map.of(
                     "time", time,
                     "detail", eventDetail(e.event(), lang)));
+            // 盯盘条件的时刻全按北京时间，和它条件里的时刻、账户块的 nowBeijing 同一口径
+            case WatchTrigger w -> prompts.get(lang, "trader.wake.watchHeader", Map.of(
+                    "time", BeijingTime.format(w.triggeredAt()),
+                    "detail", WatchText.detail(w.watch(), w.price(), prompts, lang),
+                    "note", w.watch().getNote()));
         };
     }
 

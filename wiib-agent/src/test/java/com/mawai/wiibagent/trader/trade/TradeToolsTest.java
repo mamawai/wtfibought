@@ -21,6 +21,7 @@ import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.support.ToolCallbacks;
+import org.springframework.context.ApplicationEventPublisher;
 import java.util.Arrays;
 import java.util.Collections;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -71,7 +72,7 @@ class TradeToolsTest {
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
     private final AiTraderWatchMapper watchMapper = mock(AiTraderWatchMapper.class);
-    private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper);
+    private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper, mock(ApplicationEventPublisher.class));
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
             positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
             new TraderPlanStore(planMapper, PROMPTS), watchStore,

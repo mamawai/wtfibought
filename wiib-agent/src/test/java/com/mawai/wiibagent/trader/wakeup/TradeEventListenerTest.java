@@ -13,6 +13,7 @@ import java.util.List;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.after;
@@ -51,7 +52,7 @@ class TradeEventListenerTest {
 
         listener.onEvent(event());
 
-        verify(scheduler).tryTriggerWake(eq(t),
+        verify(scheduler).tryTriggerWake(eq(7L),
                 argThat((WakeTrigger tr) -> tr instanceof EventTrigger e && e.event().equals(event())));
     }
 
@@ -62,7 +63,7 @@ class TradeEventListenerTest {
 
         listener.onEvent(event());
 
-        verify(scheduler, never()).tryTriggerWake(any(), any());
+        verify(scheduler, never()).tryTriggerWake(anyLong(), any());
     }
 
     /** Redis 消息体原样读回成 TradeEvent；坏消息只丢本条 */
@@ -75,7 +76,7 @@ class TradeEventListenerTest {
         listener.onMessage(new DefaultMessage(channel, "not json".getBytes(StandardCharsets.UTF_8)), null);
         listener.onMessage(new DefaultMessage(channel, MAPPER.writeValueAsBytes(event())), null);
 
-        verify(scheduler, timeout(2_000)).tryTriggerWake(eq(t), any(EventTrigger.class));
-        verify(scheduler, after(300).times(1)).tryTriggerWake(any(), any());
+        verify(scheduler, timeout(2_000)).tryTriggerWake(eq(7L), any(EventTrigger.class));
+        verify(scheduler, after(300).times(1)).tryTriggerWake(anyLong(), any());
     }
 }

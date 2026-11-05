@@ -259,6 +259,11 @@ public final class TradeGuard {
                         Map.of("kind", s.kind(), "level", plain(level), "mark", plain(markPrice)));
             }
         }
+        for (WatchSpec s : specs) {
+            if (s.note() == null || s.note().isBlank()) {
+                return prompts.get(lang, "trader.guard.watchNoteRequired", Map.of("kind", s.kind()));
+            }
+        }
         return null;
     }
 

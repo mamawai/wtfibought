@@ -136,15 +136,43 @@ class VolatilitySentinelTest {
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("100800"), t0 + 2_000); // 0.8%：还在高位，没人新报
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("100950"), t0 + 3_000); // 0.95%：够到 picky 的阈值
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("101000"), t0 + 4_000); // 1.0%：都报过了
-        verify(scheduler, times(1)).tryTriggerWake(eq(plain), any());
-        verify(scheduler, times(1)).tryTriggerWake(eq(picky), any());
+        verify(scheduler, times(1)).tryTriggerWake(eq(7L), any());
+        verify(scheduler, times(1)).tryTriggerWake(eq(8L), any());
 
         // 窗口滚过 5 分钟，旧 tick 全部出窗，振幅归零：这段行情结束
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("101000"), t0 + VolatilitySentinel.WINDOW_MS + 5_000);
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("101700"), t0 + VolatilitySentinel.WINDOW_MS + 6_000); // 0.69%：新一段，plain 再报
-        verify(scheduler, times(2)).tryTriggerWake(eq(plain), any());
-        verify(scheduler, times(1)).tryTriggerWake(eq(picky), any());
+        verify(scheduler, times(2)).tryTriggerWake(eq(7L), any());
+        verify(scheduler, times(1)).tryTriggerWake(eq(8L), any());
         // 名单只在穿越那一刻查库：两段行情两次
+        verify(mapper, times(2)).selectList(any());
+    }
+
+    /** 回落余量：振幅跌到基准线下但还在八成线上，这段行情没完，再穿上基准线不算新一段；跌破八成线才重新武装 */
+    @Test
+    void incidentEndsOnlyBelowRearmLine() {
+        AiTraderMapper mapper = mock(AiTraderMapper.class);
+        SimTradeClient sim = mock(SimTradeClient.class);
+        TraderScheduler scheduler = mock(TraderScheduler.class);
+        VolatilitySentinel sentinel = new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim, scheduler);
+        AiTrader plain = alertTrader(7L, "1.0");
+        when(mapper.selectList(any())).thenReturn(List.of(plain));
+        FuturesPositionDTO btc = mock(FuturesPositionDTO.class);
+        when(btc.getSymbol()).thenReturn("BTCUSDT");
+        when(sim.getAllPositions(any())).thenReturn(List.of(btc));
+
+        long t0 = 1_786_200_000_000L;
+        long w = VolatilitySentinel.WINDOW_MS;
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100000"), t0);
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100650"), t0 + 1_000);       // 0.65%：穿上基准线，报
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100130"), t0 + w + 1_000);   // 首 tick 出窗，0.52%：基准线下、八成线（0.48%）上，这段没完
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100800"), t0 + w + 2_000);   // 0.67%：又上基准线，还是同一段，不再报
+        verify(scheduler, times(1)).tryTriggerWake(eq(7L), any());
+        verify(mapper, times(1)).selectList(any());
+
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100800"), t0 + 2 * w + 2_000); // 只剩两根同价 tick，振幅 0：跌破八成线，这段结束
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("101410"), t0 + 2 * w + 3_000); // 0.605%：新一段，再报
+        verify(scheduler, times(2)).tryTriggerWake(eq(7L), any());
         verify(mapper, times(2)).selectList(any());
     }
 
