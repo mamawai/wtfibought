@@ -10,6 +10,7 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -24,17 +25,18 @@ class PromptGenFactsTest {
     private final PromptGenFacts facts = new PromptGenFacts(
             new TraderPromptAssembler(mock(AiTraderMapper.class), prompts, mock(ExperienceLedger.class)), prompts);
 
-    /** 默认规格：杠杆 3~20、保证金 5%~20% */
+    /** 默认规格：杠杆 3~20、保证金上限 20%；1h 噪音线 0.6% */
     @Test
-    void riskTableSpansLeverageAndMarginRange() {
-        List<PromptGenFacts.RiskRow> rows = PromptGenFacts.riskTable(TraderRiskConfig.of(new AiTrader()));
+    void riskTableFromFullSizeAndNoiseLine() {
+        List<PromptGenFacts.RiskRow> rows = PromptGenFacts.riskTable(TraderRiskConfig.of(new AiTrader()), new BigDecimal("0.6"));
 
         assertThat(rows).extracting(PromptGenFacts.RiskRow::style)
                 .containsExactly("conservative", "balanced", "aggressive");
-        assertThat(rows.get(1).stopMin()).isEqualByComparingTo("0.25");
-        assertThat(rows.get(1).stopMax()).isEqualByComparingTo("6.67");
+        // 1% 风险：顶格 20 倍 × 20% → 止损 0.25%；止损放在 0.6% 噪音线、20 倍 → 占比缩到 8.33%
+        assertThat(rows.get(1).stopAtFull()).isEqualByComparingTo("0.25");
+        assertThat(rows.get(1).shareAtNoise()).isEqualByComparingTo("8.33");
         // 0.125 四舍五入是 0.13，不是银行家舍入的 0.12
-        assertThat(rows.get(0).stopMin()).isEqualByComparingTo("0.13");
+        assertThat(rows.get(0).stopAtFull()).isEqualByComparingTo("0.13");
     }
 
     @Test
@@ -86,6 +88,6 @@ class PromptGenFactsTest {
         String writer = facts.prompts(null, false, AgentLang.ZH, AgentLang.EN).writer();
 
         assertThat(writer).contains(PromptGenFacts.NOTES_MARK).contains("英文").contains("4000")
-                .contains("0.25% ~ 6.67%").contains("0.6%");
+                .contains("止损距离 0.25%").contains("占比缩到 8.33%").contains("0.6%").contains("超过上限 20%");
     }
 }

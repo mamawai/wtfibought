@@ -2,6 +2,7 @@ package com.mawai.wiibsim.config;
 
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.market.FuturesFeeRates;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -21,13 +22,13 @@ public class TradingConfig {
     private BigDecimal cryptoCommissionRate = new BigDecimal("0.001");
 
     /** 合约开仓手续费率（maker口径，默认0.02%） */
-    private BigDecimal futuresOpenCommissionRate = new BigDecimal("0.0002");
+    private BigDecimal futuresOpenCommissionRate = FuturesFeeRates.MAKER;
 
     /** 合约平仓手续费率（maker口径，默认0.02%） */
-    private BigDecimal futuresCloseCommissionRate = new BigDecimal("0.0002");
+    private BigDecimal futuresCloseCommissionRate = FuturesFeeRates.MAKER;
 
-    /** 合约taker手续费率（默认0.04%，市价/强平成交） */
-    private BigDecimal futuresTakerCommissionRate = new BigDecimal("0.0004");
+    /** 合约taker手续费率（默认0.04%，市价/止损止盈触发/强平成交） */
+    private BigDecimal futuresTakerCommissionRate = FuturesFeeRates.TAKER;
 
     /** 杠杆/融资配置 */
     private Margin margin = new Margin();

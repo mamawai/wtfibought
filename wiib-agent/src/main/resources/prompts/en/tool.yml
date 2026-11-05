@@ -296,9 +296,9 @@ tool:
     Open a futures position on your sim account (cross margin). Hard rules (violations are rejected
     with a reason you can fix, and the rejection tells you the exact allowed range): leverage must land
     INSIDE the range your owner configured — it is a range, not a ceiling, so picking too low is
-    rejected too; when opening a NEW position the margin (=quantity*price/leverage) must land
-    inside the configured percent-of-equity band (adds are exempt); same-symbol leverage must
-    match any position or pending order already on that symbol;
+    rejected too; when opening a NEW position the margin (=quantity*price/leverage) must not exceed
+    the configured percent-of-equity cap — there is no lower bound (adds are exempt); same-symbol
+    leverage must match any position or pending order already on that symbol;
     LIMIT price within 5% of mark and resting on the far side of it (LONG below, SHORT above) — a LIMIT
     that would fill at once is rejected, use MARKET for that; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
     playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
@@ -306,7 +306,9 @@ tool:
     invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
     number); it becomes part of your position's plan.
     Stop, take-profit (= the plan's target) and invalidation condition are all filed into the plan and
-    injected back into your next opening message.
+    injected back into your next opening message. The receipt carries a facts block for this order:
+    the round-trip fee estimate, the stop distance in % and in ATR14 of your heartbeat interval, the
+    reward-to-risk after fees, and the loss at the stop as a percentage of equity.
 
   close_position: |-
     Close (part of) an open position by positionId (from the [Account] block in your opening message, or get_account), at market price.

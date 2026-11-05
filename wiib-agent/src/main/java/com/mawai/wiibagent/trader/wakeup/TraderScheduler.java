@@ -87,15 +87,16 @@ public class TraderScheduler {
         if (!"5m".equalsIgnoreCase(event.interval())) {
             return;
         }
+        // 收盘类盯盘命中先落库，再发例行：同一刻醒的例行轮开场白里就带着它们；排进队列的那份等例行轮念过后被过滤掉。
+        // 每个币的收盘事件都要评估，不只日线交接抢到启动权的那个；交接停工期也评估，命中落库（FIRED、woke_at 空）
+        List<WatchTrigger> hits = closeHits(event);
         if (handoverActive) {
             // 窗口内的K线事件直接丢弃不补跑：与"不做兜底补漏"同一条哲学——陈旧信号没有意义。
-            // 代价是 15m 档最多跳过 1 根K线（窗口上界＝唤醒600s＋复盘600s），每天只有一次，可接受
+            // 代价是 15m 档最多跳过 1 根K线（窗口上界＝唤醒600s＋复盘600s），每天只有一次，可接受。
+            // 刚落库的命中窗口内不叫，下一轮开场白补报
             log.info("[TraderSched] 日线交接中，丢弃K线事件 {} closeTime={}", event.symbol(), event.closeTime());
             return;
         }
-        // 收盘类盯盘命中先落库，再发例行：同一刻醒的例行轮开场白里就带着它们；排进队列的那份等例行轮念过后被过滤掉。
-        // 每个币的收盘事件都要评估，不只日线交接抢到启动权的那个
-        List<WatchTrigger> hits = closeHits(event);
         long dayBoundary = boundaryOf(event.closeTime(), "1d");
         if (dayBoundary > 0) {
             // 只进队列不领：阶段0的例行轮马上要来，命中排在它后面；交接期间领不到的由下一轮开场白补报

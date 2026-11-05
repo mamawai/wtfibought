@@ -84,13 +84,13 @@ trader:
       conclusion. You may request several tools in one reply (kline_structure for several symbols at
       once); one tool per reply will not get you through a multi-timeframe check
 
-    Position spec (hard parameters set by your owner; the guard rejects on them. The ranges themselves
-    are not yours to judge; where to sit inside a range follows your owner's instructions):
+    Position spec (hard parameters set by your owner; the guard rejects on them. The numbers themselves
+    are not yours to judge; where to sit inside them follows your owner's instructions):
     - Leverage must land inside {{leverageMin}}x~{{leverageMax}}x. A range, not a ceiling: with a range of
       50~100, picking 20 is rejected just the same
-    - Margin for a new position must be {{marginPctMin}}%~{{marginPctMax}}% of current equity (adds are
-      exempt). quantity = equity × share × leverage ÷ entry price; keep the share away from both edges
-      of the band, an edge value gets rejected on rounding
+    - Margin for a new position may be at most {{marginPctMax}}% of current equity, with no lower bound
+      (adds are exempt). quantity = equity × share × leverage ÷ entry price; keep the share off the cap,
+      an edge value gets rejected on rounding
     - Leverage must stay consistent per symbol: whatever multiple the existing position or open order on
       that symbol uses, an add-on has to use the same (exchange rule)
     {{positionRule}}
@@ -132,7 +132,9 @@ trader:
     Costs: fees are charged on notional — taker (market orders, stop-loss and take-profit fills,
     liquidation) 0.04% per side, maker (limit fills) 0.02% per side; one market-order round trip is about
     0.08%. Example: 1000U of margin at 10x is 10000U notional, so the round trip is about 8U = 0.8% of the
-    margin. An open position settles funding on its notional at the contract's own interval (8h for most,
+    margin. Every open_position receipt carries a facts block for that order: the round-trip fee estimate,
+    the stop distance in % and in ATR14 of your heartbeat interval, the reward-to-risk after fees, and the
+    loss at the stop as a percentage of equity. An open position settles funding on its notional at the contract's own interval (8h for most,
     4h or 1h for some; next settlement time is in funding_history): a positive rate means longs pay shorts,
     a negative one the reverse; a 0.01% rate at 10x = 0.1% of margin per settlement, and in extreme
     conditions ten times that.
@@ -412,7 +414,7 @@ trader:
     symbolLeverageMismatch: "{{symbol}} already has a position/order at {{lev}}x; leverage must match across one symbol (exchange rule), so use {{lev}}x here too"
     singlePositionOnly: "your owner allows only one position at a time and the slot is taken: {{occupied}}. Close it before switching symbols"
     hedgeNotAllowed: "{{symbol}} already has an opposite position and your owner has not enabled hedging - one symbol cannot be long and short at once"
-    marginOutOfRange: margin {{margin}} is {{pct}}% of equity, outside your owner's {{min}}~{{max}}% range. At {{lev}}x the quantity should be between {{qtyLo}} and {{qtyHi}}
+    marginOverMax: margin {{margin}} is {{pct}}% of equity, above your owner's {{max}}% cap. At {{lev}}x the quantity can be at most {{qtyMax}}
     stopLossRequired: a stop-loss price is required (decide where you are wrong before you enter)
     stopLossPositive: "the stop-loss price must be positive; you gave {{given}} (most likely stopLossPrice was dropped on a retry). Entry reference {{entry}}, {{hint}}"
     stopLossHintLong: a LONG stop must sit between 0 and the entry price, e.g. {{example}}

@@ -265,8 +265,8 @@
       "body": "This is a range, not a cap — set 50~100 and a 20x attempt is rejected; it has to be 50 or above.\n\nIt has no right to decide that is \"too high\" and quietly dial it down. Your numbers stand.\n\nNote: the exchange caps leverage by position notional tier, so high leverage on a large position gets rejected."
     },
     "margin": {
-      "title": "How much margin per entry",
-      "body": "A percentage of current equity. With 10000U equity and 10%, margin for each new position is 1000U.\n\nA range again, and the AI must land inside it. The small line below computes the notional live — check it before you commit.\n\nThis only governs new positions; how much it adds later is a separate matter, see the next two steps."
+      "title": "How much margin per entry, at most",
+      "body": "A cap, as a percentage of current equity. With 10000U equity and 20%, margin for each new position is at most 2000U.\n\nA cap with no floor: how small to go is the AI's call. The small line below computes the notional cap live — check it before you commit.\n\nThis only governs new positions; how much it adds later is a separate matter, see the next two steps."
     },
     "positionRules": {
       "title": "How many positions / hedging allowed",
@@ -304,10 +304,10 @@
     "symbols": "Symbols",
     "symbolsHint": "Up to {{max}}: tool budget and attention are split per symbol",
     "specTitle": "Position spec (enforced, the AI cannot bend it)",
-    "specHint": "A range means it must pick from inside, not a cap",
+    "specHint": "Leverage is a range it must pick from inside; the margin share is a cap only",
     "leverage": "Leverage range (1~125x)",
-    "marginPct": "Margin per entry, % of equity (0.1~100)",
-    "notional": "On 10000U equity, margin per new position is <0>{{minMargin}}</0>~<1>{{maxMargin}}</1>U and notional <2>{{minNotional}}</2>~<3>{{maxNotional}}</3>U. New positions only; add size is the AI's call. At high leverage the exchange caps by notional tier and rejects anything above it.",
+    "marginPct": "Margin cap per new position, % of equity (0.1~100)",
+    "notional": "On 10000U equity, margin per new position is at most <0>{{maxMargin}}</0>U, a notional of at most <2>{{maxNotional}}</2>U at <1>{{leverageMax}}</1>x. A cap with no floor: how small to go is the AI's call. New positions only; add size is the AI's call too. At high leverage the exchange caps by notional tier and rejects anything above it.",
     "multiPos": "Allow multiple positions",
     "multiPosHint": "Off = one position account-wide, the AI picks the coin; unfilled orders take the slot too",
     "hedge": "Allow hedging",
@@ -336,7 +336,7 @@
     "resetDefaultPromptConfirm": "Replace the current instructions with the platform default?",
     "save": "Save config",
     "create": "Create Trader",
-    "rules": "Rules: it wakes once per candle (extreme moves may wake it early, plus one review a day) on your key and your tokens. You set the position spec — leverage/margin ranges, position count, hedging, self-managed adds and reduces; the AI obeys without comment and out-of-range calls are rejected on the spot. Stop loss and invalidation are mandatory; stops may only tighten. Every entry files a trade plan, fed back verbatim on each wake-up; how it enters and exits follows the trading instructions you write (a new trader starts with the platform default, edit or delete it as you like). Paper trading, no real money; arena decision logs and plan revisions are public. Do not expect it to make money — watching how it thinks is the point."
+    "rules": "Rules: it wakes once per heartbeat candle to review; stop-loss / take-profit fills, its own watch conditions, position events and extreme moves wake it any time, plus one review a day — on your key and your tokens. You set the position spec — leverage range, margin cap, position count, hedging, self-managed adds and reduces; the AI obeys without comment and out-of-range calls are rejected on the spot. Stop loss and invalidation are mandatory; stops may only tighten. Every entry files a trade plan, fed back verbatim on each wake-up; how it enters and exits follows the trading instructions you write (a new trader starts with the platform default, edit or delete it as you like). Paper trading, no real money; arena decision logs and plan revisions are public. Do not expect it to make money — watching how it thinks is the point."
   },
   "ledger": {
     "title": "Experience ledger",
@@ -376,7 +376,7 @@
     "dataHint": "Read-only; interval 5m / 15m / 1h / 4h / 1d on all of them",
     "foot": "Each wake it picks tools on its own — higher timeframe for direction, own timeframe for location, verify, decide. Account state, plans and the experience ledger are injected every round and cost no calls. Every timeline entry lists what it read and what it did.",
     "desc": {
-      "open_position": "Market/limit long or short; a trade plan (thesis · evidence · invalidation) is filed on entry. <0>Stop-loss required</0>; leverage and new-position margin must land inside your bands; limit price within 5% of mark.",
+      "open_position": "Market/limit long or short; a trade plan (thesis · evidence · invalidation) is filed on entry. <0>Stop-loss required</0>; leverage inside your range, new-position margin under your cap; limit price within 5% of mark. The receipt carries the round-trip fee, stop distance, reward-to-risk after fees and risk as % of equity.",
       "close_position": "Close all or part of a position at market, with a one-line reason. With self-reduce off it becomes a request awaiting your approval.",
       "set_stop_loss": "<0>Tighten only</0>: long stops move up, short stops move down. Reason required; goes into the public plan revision history.",
       "set_take_profit": "<0>Away only</0>: long targets move up, short targets move down. To leave early, cite the invalidation and close instead.",

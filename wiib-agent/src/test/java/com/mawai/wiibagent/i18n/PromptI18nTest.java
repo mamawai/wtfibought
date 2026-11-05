@@ -328,7 +328,7 @@ class PromptI18nTest {
                 // 落库即公开展示的暂停原因：四种来源必须都有英文，漏一种就是面板上一行中文
                 "trader.pause.manual", "trader.error.keyInvalid", "trader.error.liquidatedReason",
                 // 护栏拒因既回给模型也公开在时间线上；修订标签同理
-                "trader.guard.leverageRange", "trader.guard.stopLossRequired", "trader.guard.marginOutOfRange",
+                "trader.guard.leverageRange", "trader.guard.stopLossRequired", "trader.guard.marginOverMax",
                 "trader.reject.stopOnlyTighter", "trader.reject.expired", "trader.reject.planAlreadyExists",
                 "trader.revise.moveStop",
                 "trader.revise.addOnNote",

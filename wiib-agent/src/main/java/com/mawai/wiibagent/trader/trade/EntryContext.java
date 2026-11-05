@@ -26,7 +26,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 开仓那一刻的上下文快照，写进计划的 entry_ctx_json，复盘按维度对照用。
  * 字段：orderType / leverage / hourBj / stopPct 必有；regime / atr1h / stopAtr / eventMin / eventTitle / funding
- * 取不到就缺席。任何外部数据失败只记 warn，不挡下单。
+ * 取不到就缺席（ATR 固定按 1h，各档 trader 的复盘才能横向比）。任何外部数据失败只记 warn，不挡下单。
+ * 开仓回执里按心跳周期算的 ATR 也从这里取（{@link #atr14}）。
  */
 @Slf4j
 @Component
@@ -35,7 +36,7 @@ public class EntryContext {
 
     /** 找最近 High 事件的前后范围 */
     static final long EVENT_LOOKAROUND_MS = 12 * 3_600_000L;
-    /** 1h ATR 用的根数，与工具层同一窗口 */
+    /** ATR 用的根数，与工具层同一窗口 */
     private static final int ATR_BARS = 192;
 
     private final MarketDataService dataService;
@@ -60,17 +61,10 @@ public class EntryContext {
         } catch (Exception e) {
             log.warn("[EntryContext] regime 取不到 {} msg={}", sym, e.getMessage());
         }
-        try {
-            List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, "1h", ATR_BARS), nowMs);
-            if (!bars.isEmpty()) {
-                if (CryptoIndicatorCalculator.calcAll(IndicatorToolkit.toCalcRows(bars)).get("atr14") instanceof BigDecimal atr
-                        && atr.signum() > 0) {
-                    out.put("atr1h", atr);
-                    out.put("stopAtr", stopDist.divide(atr, 2, RoundingMode.HALF_UP));
-                }
-            }
-        } catch (Exception e) {
-            log.warn("[EntryContext] 1h ATR 取不到 {} msg={}", sym, e.getMessage());
+        BigDecimal atr = atr14(sym, "1h", nowMs);
+        if (atr != null) {
+            out.put("atr1h", atr);
+            out.put("stopAtr", stopDist.divide(atr, 2, RoundingMode.HALF_UP));
         }
         try {
             calendarMapper.selectWindow(nowMs - EVENT_LOOKAROUND_MS, nowMs + EVENT_LOOKAROUND_MS).stream()
@@ -91,5 +85,21 @@ public class EntryContext {
             log.warn("[EntryContext] 资金费取不到 {} msg={}", sym, e.getMessage());
         }
         return MAPPER.writeValueAsString(out);
+    }
+
+    /** 这个周期上刚收盘那根的 ATR14，与 indicators 工具同一窗口同一算法；取不到给 null */
+    public BigDecimal atr14(String symbol, String interval, long nowMs) {
+        String sym = QuantConstants.normalizeSymbolLenient(symbol);
+        try {
+            List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, interval, ATR_BARS), nowMs);
+            if (!bars.isEmpty()
+                    && CryptoIndicatorCalculator.calcAll(IndicatorToolkit.toCalcRows(bars)).get("atr14") instanceof BigDecimal atr
+                    && atr.signum() > 0) {
+                return atr;
+            }
+        } catch (Exception e) {
+            log.warn("[EntryContext] {} ATR 取不到 {} msg={}", interval, sym, e.getMessage());
+        }
+        return null;
     }
 }

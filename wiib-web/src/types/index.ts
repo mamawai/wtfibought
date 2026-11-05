@@ -1093,14 +1093,13 @@ export interface TraderExperience {
 
 /**
  * 仓位规格：主人设的硬参数，模型只能遵守不能评价。
- * 区间是"允许集合"而非上限——配 50~100 时模型选 20 也会被护栏拒。
+ * 杠杆区间是"允许集合"而非上限——配 50~100 时模型选 20 也会被护栏拒；保证金占比只有上限。
  */
 export interface TraderSpec {
   /** 杠杆区间，1~125；实际可用还受交易所按名义价值分档限制 */
   leverageMin: number;
   leverageMax: number;
-  /** 单笔保证金占权益%区间，0.1~100；只约束开新仓，加仓量由模型自己斟酌 */
-  marginPctMin: number;
+  /** 单笔保证金占权益%上限，0.1~100，没有下限；只约束开新仓，加仓量由模型自己斟酌 */
   marginPctMax: number;
   /** 允许同时持有多个仓位；关=全账户至多一仓（挂单也占坑） */
   allowMultiPosition: boolean;

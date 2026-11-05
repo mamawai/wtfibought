@@ -104,7 +104,7 @@ public class TraderChatService {
                 .put("wakeBlockedReason", wake.blockedReason())
                 .put("leverageRange", prompts.get(lang, "chat.traderQuery.leverage",
                         Map.of("min", t.getLeverageMin(), "max", t.getLeverageMax())))
-                .put("marginPctRange", plain(t.getMarginPctMin()) + "~" + plain(t.getMarginPctMax()) + "%")
+                .put("marginPctMax", plain(t.getMarginPctMax()) + "%")
                 .put("memory", t.getMemory())
                 .put("memoryNote", prompts.get(lang, "chat.traderQuery.memoryNote"))
                 .put("customPrompt", t.getCustomPrompt())

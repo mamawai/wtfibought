@@ -100,17 +100,15 @@ public class TraderController {
     }
 
     /** 仓位规格：配置回显与提示词预览共用一个形状，前端改一处两边同步。 */
-    public record TraderSpec(int leverageMin, int leverageMax,
-                             BigDecimal marginPctMin, BigDecimal marginPctMax,
+    public record TraderSpec(int leverageMin, int leverageMax, BigDecimal marginPctMax,
                              boolean allowMultiPosition, boolean allowHedge) {
         TraderRiskConfig toConfig() {
-            return new TraderRiskConfig(leverageMin, leverageMax, marginPctMin, marginPctMax,
-                    allowMultiPosition, allowHedge);
+            return new TraderRiskConfig(leverageMin, leverageMax, marginPctMax, allowMultiPosition, allowHedge);
         }
 
         static TraderSpec of(AiTrader t) {
             TraderRiskConfig c = TraderRiskConfig.of(t);
-            return new TraderSpec(c.leverageMin(), c.leverageMax(), c.marginPctMin(), c.marginPctMax(),
+            return new TraderSpec(c.leverageMin(), c.leverageMax(), c.marginPctMax(),
                     c.allowMultiPosition(), c.allowHedge());
         }
     }
@@ -174,7 +172,7 @@ public class TraderController {
             return new TraderService.UpsertReq(name, symbols, intervalCode, customPrompt,
                     llmEndpointId,
                     s == null ? null : s.leverageMin(), s == null ? null : s.leverageMax(),
-                    s == null ? null : s.marginPctMin(), s == null ? null : s.marginPctMax(),
+                    s == null ? null : s.marginPctMax(),
                     s == null ? null : s.allowMultiPosition(), s == null ? null : s.allowHedge(),
                     alertEnabled, alertThresholdMult, reviewEnabled, learnedRestrictionHold, wakeWindow);
         }

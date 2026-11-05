@@ -54,8 +54,8 @@ public class PromptGenFacts {
     public record Prompts(String agent, String writer) {
     }
 
-    /** 一档风险对应的止损距离可取范围（%） */
-    record RiskRow(String style, BigDecimal riskPct, BigDecimal stopMin, BigDecimal stopMax) {
+    /** 一档风险：顶格仓位（杠杆上限 × 占比上限）时的止损距离（%），和止损放在噪音线上时占比要缩到多少（%） */
+    record RiskRow(String style, BigDecimal riskPct, BigDecimal stopAtFull, BigDecimal shareAtNoise) {
     }
 
     /**
@@ -112,33 +112,38 @@ public class PromptGenFacts {
     }
 
     private String riskBlock(TraderRiskConfig risk, String interval, AgentLang lang) {
-        String rows = riskTable(risk).stream()
+        BigDecimal noise = noiseStopPct(interval);
+        String rows = riskTable(risk, noise).stream()
                 .map(row -> prompts.get(lang, "promptgen.riskRow", Map.of(
                         "style", prompts.get(lang, "promptgen.style." + row.style()),
                         "risk", plain(row.riskPct()),
-                        "stopMin", plain(row.stopMin()),
-                        "stopMax", plain(row.stopMax()))))
+                        "levMax", risk.leverageMax(),
+                        "marginMax", plain(risk.marginPctMax()),
+                        "stopAtFull", plain(row.stopAtFull()),
+                        "noise", plain(noise),
+                        "shareAtNoise", plain(row.shareAtNoise()))))
                 .collect(Collectors.joining("\n"));
         return prompts.get(lang, "promptgen.risk", Map.of(
-                "rows", rows, "interval", interval, "noise", plain(noiseStopPct(interval))));
+                "rows", rows, "interval", interval, "noise", plain(noise), "marginMax", plain(risk.marginPctMax())));
     }
 
     /**
-     * 风险 = 止损距离% × 杠杆 × 保证金占比 → 止损距离 = 风险 / (杠杆 × 占比)。
-     * 杠杆与占比都取到区间两端，算出整段可取范围。
+     * 风险 = 止损距离% × 杠杆 × 保证金占比。顶格仓位（杠杆上限 × 占比上限）反算止损距离；
+     * 止损放在噪音线上、杠杆取上限，反算占比。占比没有下限，止损再远都能靠缩仓位把风险压回这一档；
+     * 反算出的占比超过上限，就是止损放在噪音线上这档风险做不满（提示词里让生成器点明）。
      */
-    static List<RiskRow> riskTable(TraderRiskConfig risk) {
+    static List<RiskRow> riskTable(TraderRiskConfig risk, BigDecimal noiseStopPct) {
         return STYLES.stream()
                 .map(style -> new RiskRow(style.getKey(), style.getValue(),
-                        stopPct(style.getValue(), risk.leverageMax(), risk.marginPctMax()),
-                        stopPct(style.getValue(), risk.leverageMin(), risk.marginPctMin())))
+                        solve(style.getValue(), risk.leverageMax(), risk.marginPctMax()),
+                        solve(style.getValue(), risk.leverageMax(), noiseStopPct)))
                 .toList();
     }
 
-    /** marginPct 是百分数（20 = 20%） */
-    private static BigDecimal stopPct(BigDecimal riskPct, int leverage, BigDecimal marginPct) {
+    /** 风险 = 止损距离% × 杠杆 × 占比%：止损距离与占比里已知一个（百分数），反算另一个（百分数） */
+    private static BigDecimal solve(BigDecimal riskPct, int leverage, BigDecimal knownPct) {
         return riskPct.multiply(BigDecimal.valueOf(100))
-                .divide(BigDecimal.valueOf(leverage).multiply(marginPct), 2, RoundingMode.HALF_UP);
+                .divide(BigDecimal.valueOf(leverage).multiply(knownPct), 2, RoundingMode.HALF_UP);
     }
 
     /** 这个周期上止损距离的噪音线（%）：interval 形如 5m / 1h / 4h */

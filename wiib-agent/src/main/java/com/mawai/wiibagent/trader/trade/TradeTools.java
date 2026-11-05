@@ -40,10 +40,11 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 public class TradeTools {
 
     /**
-     * 唤醒上下文：计划落库与风险护栏所需的 trader 侧信息；deadlineMs＝本轮预算耗尽的墙钟时刻。
+     * 唤醒上下文：计划落库与风险护栏所需的 trader 侧信息；interval＝心跳周期，开仓回执里的 ATR 按它算；
+     * deadlineMs＝本轮预算耗尽的墙钟时刻。
      * lang＝这只 trader 主人的语言：拒因既回给模型也公开在竞技场时间线上，两处都得跟它走。
      */
-    public record WakeCtx(long traderId, int roundNo, long boundaryTime, long deadlineMs,
+    public record WakeCtx(long traderId, int roundNo, String interval, long boundaryTime, long deadlineMs,
                           TraderRiskConfig risk, AgentLang lang) {
     }
 
@@ -149,9 +150,9 @@ public class TradeTools {
             Open a futures position on your sim account (cross margin). Hard rules (violations are rejected
             with a reason you can fix, and the rejection tells you the exact allowed range): leverage must land
             INSIDE the range your owner configured — it is a range, not a ceiling, so picking too low is
-            rejected too; when opening a NEW position the margin (=quantity*price/leverage) must land
-            inside the configured percent-of-equity band (adds are exempt); same-symbol leverage must
-            match any position or pending order already on that symbol;
+            rejected too; when opening a NEW position the margin (=quantity*price/leverage) must not exceed
+            the configured percent-of-equity cap — there is no lower bound (adds are exempt); same-symbol
+            leverage must match any position or pending order already on that symbol;
             LIMIT price within 5% of mark and resting on the far side of it (LONG below, SHORT above) — a LIMIT
             that would fill at once is rejected, use MARKET for that; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
             playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
@@ -159,7 +160,9 @@ public class TradeTools {
             invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
             number); it becomes part of your position's plan.
             Stop, take-profit (= the plan's target) and invalidation condition are all filed into the plan and
-            injected back into your next opening message.""")
+            injected back into your next opening message. The receipt carries a facts block for this order:
+            the round-trip fee estimate, the stop distance in % and in ATR14 of your heartbeat interval, the
+            reward-to-risk after fees, and the loss at the stop as a percentage of equity.""")
     public String openPosition(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                                @ToolParam(description = "LONG or SHORT") String side,
                                @ToolParam(description = "MARKET or LIMIT") String orderType,
@@ -206,6 +209,11 @@ public class TradeTools {
         // 同向已有仓位或开仓挂单：计划走覆盖而不是新立，旧论点进修订历史
         FuturesPositionDTO sameSide = acct.sameSide(req.symbol(), req.side());
         boolean coversPlan = sameSide != null || acct.pendingOpen(req.symbol(), req.side());
+        // 入场参考价：限价单按限价、市价单按标记价；计划的入场价与回执里的事实都按它算
+        BigDecimal entryRef = "LIMIT".equals(req.orderType()) ? req.limitPrice() : mark;
+        // 这笔的事实（facts）在下单前算好：下单之后这条路上只剩落计划和回执
+        ObjectNode facts = OpenFacts.of(req, entryRef, equity, ctx.interval(),
+                entryContext.atr14(req.symbol(), ctx.interval(), System.currentTimeMillis()));
         try {
             FuturesOpenRequest openReq = new FuturesOpenRequest();
             openReq.setSymbol(req.symbol());
@@ -230,8 +238,11 @@ public class TradeTools {
                 openReq.setTakeProfits(List.of(tp));
             }
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
-            persistPlan(req, mark, coversPlan, sameSide, resp);
-            return ok("open_position", argSummary, MAPPER.writeValueAsString(resp));
+            persistPlan(req, entryRef, coversPlan, sameSide, resp);
+            // 回执＝sim 的订单响应 + facts
+            ObjectNode receipt = MAPPER.valueToTree(resp);
+            receipt.set("facts", facts);
+            return ok("open_position", argSummary, receipt);
         } catch (SimOrderRetry.UnknownOutcome e) {
             return unknown("open_position", argSummary, e);
         } catch (Exception e) {
@@ -243,7 +254,7 @@ public class TradeTools {
      * 成交/挂单即落计划（下轮唤醒回注）：同键已有持仓或挂单走覆盖，否则新立。
      * 写失败只记日志不回错——交易已真实发生，回错误会诱导模型重复开仓。
      */
-    private void persistPlan(TradeGuard.OpenReq req, BigDecimal mark, boolean coversPlan,
+    private void persistPlan(TradeGuard.OpenReq req, BigDecimal entryRef, boolean coversPlan,
                              FuturesPositionDTO sameSide, FuturesOrderResponse resp) {
         try {
             AiTraderPlan plan = new AiTraderPlan();
@@ -254,7 +265,6 @@ public class TradeTools {
             plan.setPlayType(req.playType());
             plan.setSignalsUsed(req.signalsUsed());
             plan.setInvalidationCondition(req.invalidationCondition());
-            BigDecimal entryRef = "LIMIT".equals(req.orderType()) ? req.limitPrice() : mark;
             plan.setEntryPrice(entryRef);
             plan.setStopLossPrice(req.stopLossPrice());
             plan.setTakeProfitPrice(req.takeProfitPrice());
@@ -686,9 +696,9 @@ public class TradeTools {
     private String ok(String tool, ObjectNode args, Object payload) {
         String s = payload instanceof String str ? str : MAPPER.writeValueAsString(payload);
         ObjectNode action = action(tool, args).put("status", "ok");
-        // 轨迹里只存摘要，防止 get_account 大 JSON 把决策行撑爆
-        if (s.length() > 400) {
-            action.put("result", s.substring(0, 400) + "…");
+        // 轨迹里只存摘要，防止 get_account 大 JSON 把决策行撑爆；开仓回执连 facts 约 600 字，整条存
+        if (s.length() > 1000) {
+            action.put("result", s.substring(0, 1000) + "…");
         } else {
             try {
                 action.set("result", MAPPER.readTree(s));

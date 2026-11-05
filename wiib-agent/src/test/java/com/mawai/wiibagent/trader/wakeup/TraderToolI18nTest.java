@@ -83,7 +83,7 @@ class TraderToolI18nTest {
             sym -> BigDecimal.ONE,
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
-            new TradeTools.WakeCtx(1L, 1, 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
+            new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
             mock(EntryContext.class));
 
     private Map<String, String> descriptions(AgentLang lang) {

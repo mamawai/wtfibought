@@ -101,8 +101,7 @@ public class AiTrader {
     private Integer leverageMin;
     private Integer leverageMax;
 
-    /** 单笔保证金占权益%区间；只约束开新仓，加仓量由模型自己斟酌 */
-    private BigDecimal marginPctMin;
+    /** 单笔保证金占权益%上限，没有下限；只约束开新仓，加仓量由模型自己斟酌 */
     private BigDecimal marginPctMax;
 
     /** 允许同时持有多个仓位；false=全账户至多一仓（挂单一并计数） */

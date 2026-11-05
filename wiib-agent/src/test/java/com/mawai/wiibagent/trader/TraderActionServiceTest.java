@@ -102,7 +102,6 @@ class TraderActionServiceTest {
         t.setRoundNo(1);
         t.setIntervalCode("1h");
         t.setSymbols("BTCUSDT");
-        t.setMarginPctMin(new BigDecimal("5"));
         t.setMarginPctMax(new BigDecimal("20"));
         return t;
     }

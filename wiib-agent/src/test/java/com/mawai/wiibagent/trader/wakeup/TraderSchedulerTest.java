@@ -567,6 +567,30 @@ class TraderSchedulerTest {
         verify(runner, timeout(2_000).times(2)).wake(any(), anyLong());
     }
 
+    /** 停工窗口内的 5m 收盘照样评估收盘类命中（哨兵落库），窗口内不叫，留给下一轮开场白补报 */
+    @Test
+    void handoverWindowStillEvaluatesCloseHits() throws Exception {
+        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
+        TraderScheduler s = sched();
+        CountDownLatch reviewHold = new CountDownLatch(1);
+        doAnswer(inv -> {
+            reviewHold.await();
+            return null;
+        }).when(reviewRunner).review(any(), anyLong());
+        long inWindow = DAY_BOUNDARY + 300_000L - 1;   // 08:05 那根 5m 收盘
+        when(watchSentinel.closeHits(eq("BTCUSDT"), eq(inWindow), any()))
+                .thenReturn(List.of(closeHit(31L, DAY_BOUNDARY + 300_000L)));
+
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        verify(reviewRunner, timeout(2_000)).review(any(), anyLong());   // 复盘在跑=窗口已开
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", inWindow));
+
+        verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(inWindow), any());
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
+        reviewHold.countDown();
+        awaitWindowClosed(s);
+    }
+
     /** 停工窗口拒绝警报与手动：三个唤醒入口一个都不许漏 */
     @Test
     void handoverWindowBlocksAlertAndManualWake() throws Exception {

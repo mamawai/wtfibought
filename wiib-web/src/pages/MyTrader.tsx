@@ -28,7 +28,7 @@ const SKILL_GROUPS = [
 ] as const;
 
 const DEFAULT_SPEC: TraderSpec = {
-  leverageMin: 3, leverageMax: 20, marginPctMin: 5, marginPctMax: 20,
+  leverageMin: 3, leverageMax: 20, marginPctMax: 20,
   allowMultiPosition: true, allowHedge: false,
 };
 
@@ -411,32 +411,25 @@ export function MyTrader() {
             </label>
             <label className="space-y-1 text-xs" data-tour="margin">
               <span className="text-muted-foreground font-bold">{t('cfg.marginPct')}</span>
-              <div className="flex items-center gap-1.5">
-                <input type="number" min={0.1} max={100} step={0.5} value={form.spec.marginPctMin}
-                       onChange={e => setSpec({ marginPctMin: Number(e.target.value) })}
-                       className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
-                <span className="text-muted-foreground">~</span>
-                <input type="number" min={0.1} max={100} step={0.5} value={form.spec.marginPctMax}
-                       onChange={e => setSpec({ marginPctMax: Number(e.target.value) })}
-                       className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
-              </div>
+              <input type="number" min={0.1} max={100} step={0.5} value={form.spec.marginPctMax}
+                     onChange={e => setSpec({ marginPctMax: Number(e.target.value) })}
+                     className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
             </label>
           </div>
 
-          {/* 配置的后果一眼可见：按 10000U 权益换算成名义价值区间 */}
+          {/* 配置的后果一眼可见：按 10000U 权益换算成保证金与名义价值的上限 */}
           <p className="text-[10px] leading-relaxed text-muted-foreground">
             <Trans
               ns="ai"
               i18nKey="cfg.notional"
               values={{
-                minMargin: fmtNum(form.spec.marginPctMin * 100, 0),
                 maxMargin: fmtNum(form.spec.marginPctMax * 100, 0),
-                minNotional: fmtNum(form.spec.marginPctMin * 100 * form.spec.leverageMin, 0),
+                leverageMax: form.spec.leverageMax,
                 maxNotional: fmtNum(form.spec.marginPctMax * 100 * form.spec.leverageMax, 0),
               }}
               components={[
                 <span className="num text-foreground" />, <span className="num text-foreground" />,
-                <span className="num text-foreground" />, <span className="num text-foreground" />,
+                <span className="num text-foreground" />,
               ]}
             />
           </p>

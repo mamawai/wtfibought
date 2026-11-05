@@ -64,7 +64,6 @@ class TraderChatServiceTest {
         t.setSymbols("BTCUSDT");
         t.setLeverageMin(3);
         t.setLeverageMax(20);
-        t.setMarginPctMin(new BigDecimal("5"));
         t.setMarginPctMax(new BigDecimal("20"));
         t.setMemory("教训：别追高");
         return t;

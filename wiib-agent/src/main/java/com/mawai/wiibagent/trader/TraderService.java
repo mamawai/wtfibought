@@ -79,8 +79,7 @@ public class TraderService {
     /** llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（北京时间），null=全天 */
     public record UpsertReq(String name, String symbols, String intervalCode, String customPrompt,
                             Long llmEndpointId,
-                            Integer leverageMin, Integer leverageMax,
-                            BigDecimal marginPctMin, BigDecimal marginPctMax,
+                            Integer leverageMin, Integer leverageMax, BigDecimal marginPctMax,
                             Boolean allowMultiPosition, Boolean allowHedge,
                             Boolean alertEnabled, BigDecimal alertThresholdMult,
                             Boolean reviewEnabled, Boolean learnedRestrictionHold,
@@ -163,7 +162,6 @@ public class TraderService {
                 .set(AiTrader::getCustomPrompt, probe.getCustomPrompt())
                 .set(AiTrader::getLeverageMin, probe.getLeverageMin())
                 .set(AiTrader::getLeverageMax, probe.getLeverageMax())
-                .set(AiTrader::getMarginPctMin, probe.getMarginPctMin())
                 .set(AiTrader::getMarginPctMax, probe.getMarginPctMax())
                 .set(AiTrader::getAllowMultiPosition, probe.getAllowMultiPosition())
                 .set(AiTrader::getAllowHedge, probe.getAllowHedge())
@@ -521,14 +519,10 @@ public class TraderService {
         if (lmin > lmax) {
             return messages.get("trader.config.leverageInverted");
         }
-        BigDecimal mmin = req.marginPctMin() == null ? TraderRiskConfig.DEF_MARGIN_MIN : req.marginPctMin();
         BigDecimal mmax = req.marginPctMax() == null ? TraderRiskConfig.DEF_MARGIN_MAX : req.marginPctMax();
-        if (mmin.compareTo(TraderRiskConfig.MARGIN_PCT_HARD_MIN) < 0
+        if (mmax.compareTo(TraderRiskConfig.MARGIN_PCT_HARD_MIN) < 0
                 || mmax.compareTo(TraderRiskConfig.MARGIN_PCT_HARD_MAX) > 0) {
             return messages.get("trader.config.marginRange");
-        }
-        if (mmin.compareTo(mmax) > 0) {
-            return messages.get("trader.config.marginInverted");
         }
         // 双开天然要占两个仓位，单仓模式下勾它是自相矛盾的配置，直接拦在入口
         if (Boolean.FALSE.equals(req.allowMultiPosition()) && Boolean.TRUE.equals(req.allowHedge())) {
@@ -548,7 +542,6 @@ public class TraderService {
         t.setCustomPrompt(req.customPrompt());
         t.setLeverageMin(req.leverageMin() == null ? TraderRiskConfig.DEF_LEV_MIN : req.leverageMin());
         t.setLeverageMax(req.leverageMax() == null ? TraderRiskConfig.DEF_LEV_MAX : req.leverageMax());
-        t.setMarginPctMin(req.marginPctMin() == null ? TraderRiskConfig.DEF_MARGIN_MIN : req.marginPctMin());
         t.setMarginPctMax(req.marginPctMax() == null ? TraderRiskConfig.DEF_MARGIN_MAX : req.marginPctMax());
         t.setAllowMultiPosition(!Boolean.FALSE.equals(req.allowMultiPosition()));
         // 单仓+双开这个自相矛盾的组合，validateSpec 已经在入口拒掉了，这里不必再判一次

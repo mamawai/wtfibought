@@ -438,7 +438,8 @@ public class TraderWakeupRunner {
                 sym -> MAPPER.readTree(binanceRestClient.getPremiumIndex(sym)).path("markPrice").asDecimal(null),
                 planStore,
                 watchStore,
-                new TradeTools.WakeCtx(trader.getId(), trader.getRoundNo(), boundaryTime, System.currentTimeMillis() + budgetSeconds * 1000, TraderRiskConfig.of(trader), lang),
+                new TradeTools.WakeCtx(trader.getId(), trader.getRoundNo(), trader.getIntervalCode(), boundaryTime,
+                        System.currentTimeMillis() + budgetSeconds * 1000, TraderRiskConfig.of(trader), lang),
                 prompts,
                 messages,
                 entryContext

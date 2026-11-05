@@ -698,7 +698,6 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     consecutive_failures INT NOT NULL DEFAULT 0,
     leverage_min    INT NOT NULL DEFAULT 3,
     leverage_max    INT NOT NULL DEFAULT 20,
-    margin_pct_min  NUMERIC(5,2) NOT NULL DEFAULT 5,
     margin_pct_max  NUMERIC(5,2) NOT NULL DEFAULT 20,
     allow_multi_position BOOLEAN NOT NULL DEFAULT TRUE,
     allow_hedge     BOOLEAN NOT NULL DEFAULT FALSE,
@@ -717,6 +716,8 @@ COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分�
 COMMENT ON COLUMN ai_trader.interval_code IS '心跳周期 15m/1h/4h：每根该级别K线收盘例行唤醒一次定期复查；两次心跳之间由止损止盈、盯盘条件命中、持仓事件、波动警报叫醒。5m已下线（存量迁15m）';
 -- 5m 档下线：存量迁到 15m（幂等）
 UPDATE ai_trader SET interval_code = '15m' WHERE interval_code = '5m';
+-- 保证金占比下限已删，只留上限（幂等）
+ALTER TABLE ai_trader DROP COLUMN IF EXISTS margin_pct_min;
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：方法/风格/纪律的唯一来源（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
@@ -730,8 +731,7 @@ COMMENT ON COLUMN ai_trader.sim_user_id IS '当前局sim子账户userId，每局
 COMMENT ON COLUMN ai_trader.round_no IS '局数：爆仓/手动重置+1开新局，历史留档';
 COMMENT ON COLUMN ai_trader.leverage_min IS '杠杆区间下界：模型必须从[min,max]里选，越界护栏拒（不截断——悄悄改值会让模型的止损计算失真）';
 COMMENT ON COLUMN ai_trader.leverage_max IS '杠杆区间上界，1~125；实际可用还受sim按名义价值分档限制，超档由sim拒并回传拒因';
-COMMENT ON COLUMN ai_trader.margin_pct_min IS '单笔保证金占权益%下界；只约束开新仓，加仓量由模型自己斟酌';
-COMMENT ON COLUMN ai_trader.margin_pct_max IS '单笔保证金占权益%上界，0.1~100';
+COMMENT ON COLUMN ai_trader.margin_pct_max IS '单笔保证金占权益%上限，0.1~100，没有下限；只约束开新仓，加仓量由模型自己斟酌';
 COMMENT ON COLUMN ai_trader.allow_multi_position IS '允许同时持有多个仓位；false=全账户至多一仓（挂单一并计数，否则挂几单就能绕过）';
 COMMENT ON COLUMN ai_trader.allow_hedge IS '允许同币多空双开；仅在allow_multi_position=true时有意义（双开天然占两个仓位）';
 

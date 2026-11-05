@@ -74,8 +74,9 @@ promptgen:
   risk: |-
     Risk tiers (computed by code from the current spec with "risk = stop distance % x leverage x margin share"; quote them, do not recompute):
     {{rows}}
-    On the {{interval}} interval, a stop distance below {{noise}}% sits inside the noise and gets swept at any time. If a tier's whole range is below that, say the tier is not workable under the current spec and name the tier that is.
-  riskRow: "- {{style}}: risk {{risk}}% of equity per trade -> stop distance {{stopMin}}% to {{stopMax}}%"
+    On the {{interval}} interval, a stop distance below {{noise}}% sits inside the noise and gets swept at any time. The margin share has a cap and no floor: the wider the stop, the smaller the share.
+    If the share a tier shrinks to exceeds the {{marginMax}}% cap, that tier's risk cannot be reached with the stop at the noise line, not even at full size; say so.
+  riskRow: "- {{style}}: risk {{risk}}% of equity per trade -> at full size ({{levMax}}x on {{marginMax}}% of equity) the stop distance is {{stopAtFull}}%; with the stop at the noise line {{noise}}%, the share at {{levMax}}x shrinks to {{shareAtNoise}}%"
   style:
     conservative: Conservative
     balanced: Balanced

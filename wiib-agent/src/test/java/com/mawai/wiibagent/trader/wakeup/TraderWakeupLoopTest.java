@@ -163,10 +163,6 @@ class TraderWakeupLoopTest {
         t.setRoundNo(1);
         t.setSimUserId(99L);
         t.setConsecutiveFailures(0);
-        // 显式声明规格：本类各用例的开仓量是 0.01×100000/10=保证金1%，区间放宽到 1~50% 容得下；
-        // 杠杆仍走默认 3~20，护栏拒绝用例（leverage=50）才拦得住
-        t.setMarginPctMin(new BigDecimal("1"));
-        t.setMarginPctMax(new BigDecimal("50"));
         return t;
     }
 

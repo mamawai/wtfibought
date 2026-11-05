@@ -882,7 +882,7 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
           return ok(res, {
             pub: TRADERS[0],
             llmEndpointId: 12, customPrompt: null,
-            spec: { leverageMin: 2, leverageMax: 10, marginPctMin: 5, marginPctMax: 25, allowMultiPosition: true, allowHedge: false },
+            spec: { leverageMin: 2, leverageMax: 10, marginPctMax: 25, allowMultiPosition: true, allowHedge: false },
             alertEnabled: true, alertThresholdMult: 1,
             reviewEnabled: true, wakeWindow: null,
           });

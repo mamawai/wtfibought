@@ -29,6 +29,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.web.client.ResourceAccessException;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -36,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.as;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.BIG_DECIMAL;
@@ -76,9 +78,9 @@ class TradeToolsTest {
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
             positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
             new TraderPlanStore(planMapper, PROMPTS), watchStore,
-            new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
-                    new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                            true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
+            new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                    new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
+            PROMPTS, MESSAGES, mock(EntryContext.class));
 
     /** 多单：入场10万，当前止损9.5万、止盈11万 */
     private FuturesPositionDTO longPosition() {
@@ -389,6 +391,59 @@ class TradeToolsTest {
         assertThat(cap.getValue().getEntryCtxJson()).isNull();
     }
 
+    /**
+     * 回执带 facts：市价开 taker 0.04% + 平仓 taker 0.04%，名义 1000 → 往返 0.8；
+     * 止损 5000 = 5% = 2.5 倍 1h ATR(2000)；止损打掉亏 50+0.8、到目标赚 100−0.8，R=1.95；亏 50.8 占权益 10000 的 0.51%
+     */
+    @Test
+    void openReceiptCarriesFacts() {
+        EntryContext entryContext = mock(EntryContext.class);
+        when(entryContext.atr14(eq("BTCUSDT"), eq("1h"), anyLong())).thenReturn(new BigDecimal("2000"));
+        TradeTools withAtr = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
+                new TraderPlanStore(planMapper, PROMPTS), watchStore,
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
+                PROMPTS, MESSAGES, entryContext);
+        FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setOrderId(890L);
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
+        when(planMapper.selectOne(any())).thenReturn(null);
+
+        JsonNode receipt = MAPPER.readTree(openOnce(withAtr));
+
+        assertThat(receipt.path("orderId").asLong()).isEqualTo(890L);
+        JsonNode facts = receipt.path("facts");
+        assertThat(facts.path("entryRef").asDecimal()).isEqualByComparingTo("100000");
+        assertThat(facts.path("notional").asDecimal()).isEqualByComparingTo("1000");
+        assertThat(facts.path("feeRoundTrip").asDecimal()).isEqualByComparingTo("0.8");
+        assertThat(facts.path("stopDistancePct").asDecimal()).isEqualByComparingTo("5");
+        assertThat(facts.path("atrInterval").asString(null)).isEqualTo("1h");
+        assertThat(facts.path("stopDistanceAtr").asDecimal()).isEqualByComparingTo("2.5");
+        assertThat(facts.path("lossAtStop").asDecimal()).isEqualByComparingTo("50.8");
+        assertThat(facts.path("gainAtTarget").asDecimal()).isEqualByComparingTo("99.2");
+        assertThat(facts.path("rewardRiskAfterFees").asDecimal()).isEqualByComparingTo("1.95");
+        assertThat(facts.path("riskPctOfEquity").asDecimal()).isEqualByComparingTo("0.51");
+    }
+
+    /** 限价单的事实按限价算、开仓腿按 maker 0.02%：名义 960 → 往返 0.58；ATR 取不到就没有那两项 */
+    @Test
+    void limitReceiptUsesLimitPriceAndMakerFee() {
+        FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setOrderId(891L);
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
+        when(planMapper.selectOne(any())).thenReturn(null);
+
+        JsonNode facts = MAPPER.readTree(tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.01, 10,
+                96000.0, 95000.0, 110000.0, "PULLBACK", "回踩支撑", "1h收盘跌破95000")).path("facts");
+
+        assertThat(facts.path("entryRef").asDecimal()).isEqualByComparingTo("96000");
+        assertThat(facts.path("feeRoundTrip").asDecimal()).isEqualByComparingTo("0.58");
+        assertThat(facts.path("stopDistancePct").asDecimal()).isEqualByComparingTo("1.04");
+        assertThat(facts.has("stopDistanceAtr")).isFalse();
+        assertThat(facts.has("atrInterval")).isFalse();
+    }
+
     /** 开仓上下文异步补写：计划先落库拿 id，虚拟线程抓到后按列写回这条计划的 entry_ctx_json */
     @Test
     void entryContextWrittenAsyncAfterPlanPersisted() {
@@ -403,9 +458,9 @@ class TradeToolsTest {
         TradeTools withCtx = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
-                new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, entryContext);
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
+                PROMPTS, MESSAGES, entryContext);
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setOrderId(889L);
         resp.setPositionId(43L);
@@ -507,9 +562,9 @@ class TradeToolsTest {
         TradeTools late = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
-                new TradeTools.WakeCtx(7L, 1, 1785171600000L, System.currentTimeMillis() - 1,
-                        new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, System.currentTimeMillis() - 1,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
+                PROMPTS, MESSAGES, mock(EntryContext.class));
 
         assertThat(openOnce(late)).startsWith("REJECTED").contains("本轮已超时");
         assertThat(late.closePosition(5L, 0.01, "失效条件触发")).contains("本轮已超时");
@@ -530,9 +585,9 @@ class TradeToolsTest {
                 positions -> new BigDecimal("10000"),
                 sym -> { throw new IllegalStateException("不该发起行情查询"); },
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
-                new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
+                PROMPTS, MESSAGES, mock(EntryContext.class));
 
         String r = strict.openPosition(null, "SHORT", "MARKET", 0.64, 20,
                 null, 64980.0, 64640.0, "BREAKOUT", "突破", "收回箱体");
@@ -652,21 +707,21 @@ class TradeToolsTest {
 
     /**
      * 保证金占比按开仓那一刻现算的权益：同一轮先平后开，护栏要按平完之后的权益算。
-     * 按 10000 权益合法的数量（保证金 4000=40%），权益只剩 5000 时就是 80%，拒且给出允许的数量区间
+     * 按 10000 权益合法的数量（保证金 4000=40%），权益只剩 5000 时就是 80%，拒且给出上限处的数量
      */
     @Test
-    void marginBandUsesEquityAtOpenTime() {
+    void marginCapUsesEquityAtOpenTime() {
         TradeTools poorer = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
                 positions -> new BigDecimal("5000"), sym -> new BigDecimal("100000"),
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
-                new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
+                PROMPTS, MESSAGES, mock(EntryContext.class));
 
         String r = poorer.openPosition("BTCUSDT", "LONG", "MARKET", 0.4, 10,
                 null, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
-        assertThat(r).startsWith("REJECTED").contains("数量应在");
+        assertThat(r).startsWith("REJECTED").contains("数量最多");
         verify(simTradeClient, never()).openPosition(anyLong(), any());
     }
 

@@ -26,15 +26,13 @@ class TradeGuardTest {
     private static final BigDecimal EQUITY = new BigDecimal("10000");
     private static final BigDecimal MARK = new BigDecimal("100000");
 
-    /** 默认配置：杠杆 5~20，保证金 5~20%，多仓位开、双开关 */
+    /** 默认配置：杠杆 5~20，保证金上限 20%，多仓位开、双开关 */
     private TraderRiskConfig cfg() {
-        return new TraderRiskConfig(5, 20, new BigDecimal("5"), new BigDecimal("20"),
-                true, false);
+        return new TraderRiskConfig(5, 20, new BigDecimal("20"), true, false);
     }
 
     private TraderRiskConfig cfg(boolean multi, boolean hedge) {
-        return new TraderRiskConfig(5, 20, new BigDecimal("5"), new BigDecimal("20"),
-                multi, hedge);
+        return new TraderRiskConfig(5, 20, new BigDecimal("20"), multi, hedge);
     }
 
     /** 基准单：0.1×100000/10 = 保证金1000 = 权益10%，落在 5~20% 区间内；止损止盈都带（两者都是硬规则） */
@@ -131,52 +129,47 @@ class TradeGuardTest {
                 .contains("5~20");
     }
 
-    // ---------- 保证金区间 ----------
+    // ---------- 保证金占比上限 ----------
 
     /**
      * 一晚 8 次贴边拒绝的实测教训：拒因里的提示数量必须照抄可过——
-     * 下界向上取整、上界向下取整，模型复制建议值重试不能再次被拒陷入循环。
+     * 向下取整，模型复制建议值重试不能再次被拒陷入循环。
      */
     @Test
-    void marginHintQuantitiesAreCopyPasteSafe() {
-        // 0.05×100000/10=500=5%，低于 cfg 里改设的 10~15 下界 → 拒并给建议数量
-        TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("10"), new BigDecimal("15"),
-                true, false);
-        String reject = validateOpen(withQuantity(base(), new BigDecimal("0.05")),
+    void marginHintQuantityIsCopyPasteSafe() {
+        // 0.3×100000/10=3000=30%，超过 cfg 里改设的 15% 上限 → 拒并给上限处的数量
+        TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("15"), true, false);
+        String reject = validateOpen(withQuantity(base(), new BigDecimal("0.3")),
                 EQUITY, MARK, WL, tight, List.of());
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("数量应在 (\\S+) ~ (\\S+) 之间").matcher(reject);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("数量最多 (\\S+)").matcher(reject);
         assertThat(m.find()).isTrue();
 
         assertThat(validateOpen(withQuantity(base(), new BigDecimal(m.group(1))),
                 EQUITY, MARK, WL, tight, List.of())).isNull();
-        assertThat(validateOpen(withQuantity(base(), new BigDecimal(m.group(2))),
-                EQUITY, MARK, WL, tight, List.of())).isNull();
     }
 
-    /** 9.995% 不许四舍五入显示成"10.00%超出10~15%区间"的自相矛盾——占比原样展示 */
+    /** 占比原样展示：15.005% 不许四舍五入成 15.01% */
     @Test
     void marginPctDisplayedWithoutMisleadingRounding() {
-        TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("10"), new BigDecimal("15"),
-                true, false);
-        // 0.09995×100000/10=999.5 → 9.995%，贴着下界差一丝
-        String r = validateOpen(withQuantity(base(), new BigDecimal("0.09995")),
+        TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("15"), true, false);
+        // 0.15005×100000/10=1500.5 → 15.005%，刚过上限一丝
+        String r = validateOpen(withQuantity(base(), new BigDecimal("0.15005")),
                 EQUITY, MARK, WL, tight, List.of());
-        assertThat(r).contains("9.995%").doesNotContain("10%，超出");
+        assertThat(r).contains("15.005%").doesNotContain("15.01%");
     }
 
-    /** 0.02×100000/10=200=权益2% < 下界5% → 拒，且把该配的数量算给模型 */
+    /** 没有下限：0.001×100000/10=10=权益0.1% 照样放行（交易所最小名义 50 USDT 另算） */
     @Test
-    void marginBelowMinRejected() {
-        String r = validateOpen(withQuantity(base(), new BigDecimal("0.02")), EQUITY, MARK, WL, cfg(), List.of());
-        assertThat(r).contains("占权益2%").contains("数量应在");
+    void noLowerBoundOnMargin() {
+        assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.001")), EQUITY, MARK, WL, cfg(), List.of()))
+                .isNull();
     }
 
-    /** 0.3×100000/10=3000=30% > 上界20% → 拒 */
+    /** 0.3×100000/10=3000=30% > 上限20% → 拒 */
     @Test
     void marginAboveMaxRejected() {
         assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.3")), EQUITY, MARK, WL, cfg(), List.of()))
-                .contains("占权益30%");
+                .contains("占权益30%").contains("上限20%");
     }
 
     // ---------- 交易所过滤器 ----------
@@ -191,40 +184,40 @@ class TradeGuardTest {
     /** 名义价值低于交易所最小 50 USDT：0.001×40000=40 */
     @Test
     void notionalBelowExchangeMinimumRejected() {
-        TraderRiskConfig wide = new TraderRiskConfig(5, 20, new BigDecimal("1"), new BigDecimal("20"), true, false);
         assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.001")), new BigDecimal("100"),
-                new BigDecimal("40000"), WL, wide, List.of()))
+                new BigDecimal("40000"), WL, cfg(), List.of()))
                 .contains("40").contains("50 USDT");
     }
 
     /** 建议数量还得对齐步长：权益不整时会算出 0.123457 这种数，照抄会被 sim 按步长拒 */
     @Test
-    void marginHintQuantitiesAreStepAligned() {
-        TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("10"), new BigDecimal("15"), true, false);
+    void marginHintQuantityIsStepAligned() {
+        TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("15"), true, false);
         BigDecimal equity = new BigDecimal("12345.67");
-        String reject = validateOpen(withQuantity(base(), new BigDecimal("0.05")), equity, MARK, WL, tight, List.of());
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("数量应在 (\\S+) ~ (\\S+) 之间").matcher(reject);
+        String reject = validateOpen(withQuantity(base(), new BigDecimal("0.3")), equity, MARK, WL, tight, List.of());
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("数量最多 (\\S+)").matcher(reject);
         assertThat(m.find()).isTrue();
 
-        for (String q : List.of(m.group(1), m.group(2))) {
-            assertThat(new BigDecimal(q).remainder(new BigDecimal("0.001"))).isZero();
-            assertThat(validateOpen(withQuantity(base(), new BigDecimal(q)), equity, MARK, WL, tight, List.of())).isNull();
-        }
+        BigDecimal q = new BigDecimal(m.group(1));
+        assertThat(q.remainder(new BigDecimal("0.001"))).isZero();
+        assertThat(validateOpen(withQuantity(base(), q), equity, MARK, WL, tight, List.of())).isNull();
     }
 
-    /** 边界含端点：0.05×100000/10=500=正好5% → 放行 */
+    /** 边界含端点：0.2×100000/10=2000=正好20% → 放行 */
     @Test
-    void marginExactlyAtMinPasses() {
-        assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.05")), EQUITY, MARK, WL, cfg(), List.of()))
+    void marginExactlyAtMaxPasses() {
+        assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.2")), EQUITY, MARK, WL, cfg(), List.of()))
                 .isNull();
     }
 
-    /** 限价单按限价算保证金：0.1×96000/10=960=9.6%，仍在区间内 */
+    /** 限价单按限价算保证金：0.205×96000/10=1968=19.68% 放行；同样数量按现价 100000 算是 20.5%，拒 */
     @Test
     void limitOrderMarginUsesLimitPrice() {
-        TradeGuard.OpenReq req = withLimitPrice(withOrderType(base(), "LIMIT"), new BigDecimal("96000"));
-        assertThat(validateOpen(req, EQUITY, MARK, WL, cfg(), List.of())).isNull();
+        TradeGuard.OpenReq limit = withQuantity(withLimitPrice(withOrderType(base(), "LIMIT"), new BigDecimal("96000")),
+                new BigDecimal("0.205"));
+        assertThat(validateOpen(limit, EQUITY, MARK, WL, cfg(), List.of())).isNull();
+        assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.205")), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("占权益20.5%");
     }
 
     // ---------- 限价单必须挂在现价另一侧 ----------
@@ -294,16 +287,16 @@ class TradeGuardTest {
                 .contains("杠杆必须一致").contains("10倍");
     }
 
-    /** 加仓量由模型自己斟酌：0.5 → 保证金5000=50%，远超20%上界也放行 */
+    /** 加仓量由模型自己斟酌：0.5 → 保证金5000=50%，远超20%上限也放行 */
     @Test
-    void addOnSkipsMarginRange() {
+    void addOnSkipsMarginCap() {
         List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, true));
         assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.5")), EQUITY, MARK, WL, cfg(), held))
                 .isNull();
     }
 
     /**
-     * 同向挂单不算加仓：sim 只与已成交持仓并仓，把挂单当加仓等于送出一条绕过保证金区间的路——
+     * 同向挂单不算加仓：sim 只与已成交持仓并仓，把挂单当加仓等于送出一条绕过保证金上限的路——
      * 先挂一个远离现价永不成交的限价单，之后开多大都不受约束。
      */
     @Test

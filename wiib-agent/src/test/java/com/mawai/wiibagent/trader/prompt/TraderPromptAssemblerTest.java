@@ -252,7 +252,7 @@ class TraderPromptAssemblerTest {
 
         assertThat(prompt)
                 .contains("3~20 倍")        // 默认杠杆区间
-                .contains("5%~20%")        // 默认保证金区间
+                .contains("最多占当前权益的 20%")        // 默认保证金上限
                 .contains("不由你评价")     // 规格是主人定的，模型不许评价
                 .contains("BTCUSDT,ETHUSDT")
                 .contains("只做突破，不抄底。");
@@ -293,17 +293,16 @@ class TraderPromptAssemblerTest {
                 .contains("计划不可改写");
     }
 
-    /** 仓位规格随配置渲染，且措辞是"区间里选"而非上限——模型选低了同样被拒 */
+    /** 仓位规格随配置渲染：杠杆措辞是"区间里选"而非上限——模型选低了同样被拒；保证金只有上限 */
     @Test
     void positionSpecRenderedFromTraderConfig() {
         AiTrader custom = trader();
         custom.setLeverageMin(50);
         custom.setLeverageMax(100);
-        custom.setMarginPctMin(new BigDecimal("10"));
         custom.setMarginPctMax(new BigDecimal("10"));
 
         String p = assembler.assemble(custom, AgentLang.ZH);
-        assertThat(p).contains("50~100 倍").contains("10%~10%").contains("不是上限");
+        assertThat(p).contains("50~100 倍").contains("不是上限").contains("最多占当前权益的 10%，没有下限");
     }
 
     /** 单仓模式的措辞要把"挂单也占坑"讲明，否则模型会先挂单绕过 */

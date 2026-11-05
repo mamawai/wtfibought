@@ -191,7 +191,6 @@ public class TraderPromptAssembler {
                 Map.entry("maxCalls", TraderWakeupRunner.MAX_MODEL_CALLS),
                 Map.entry("leverageMin", risk.leverageMin()),
                 Map.entry("leverageMax", risk.leverageMax()),
-                Map.entry("marginPctMin", plain(risk.marginPctMin())),
                 Map.entry("marginPctMax", plain(risk.marginPctMax())),
                 Map.entry("positionRule", positionRule(lang, risk)),
                 Map.entry("hedgeRule", hedgeRule(lang, risk))));

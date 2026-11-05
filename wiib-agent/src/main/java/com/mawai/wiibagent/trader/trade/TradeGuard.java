@@ -16,8 +16,8 @@ import java.util.Set;
 /**
  * 开仓硬校验：AI 会幻觉出荒谬参数，入口一票否决。拒绝原因用中文原样返回给模型——
  * 模型看得懂就能自行修正重试。
- * 杠杆/保证金/仓位数/双开来自主人的 {@link TraderRiskConfig}，越界一律拒不截断：
- * 这是模拟盘，仓位规格是主人说了算的硬参数，区间内取多少由模型自己定。
+ * 杠杆区间/保证金占比上限/仓位数/双开来自主人的 {@link TraderRiskConfig}，越界一律拒不截断：
+ * 这是模拟盘，仓位规格是主人说了算的硬参数，范围内取多少由模型自己定。
  */
 public final class TradeGuard {
 
@@ -146,22 +146,20 @@ public final class TradeGuard {
 
         // 入场参考价：限价单按限价、市价单按现价
         BigDecimal entryRef = isLimit ? req.limitPrice() : markPrice;
-        // 保证金区间只管开新仓：加仓多大由模型自己斟酌（主人的原话）
+        // 保证金占比只有上限，且只管开新仓：加仓多大由模型自己斟酌（主人的原话）
         if (!isAddOn) {
             BigDecimal margin = req.quantity().multiply(entryRef)
                     .divide(BigDecimal.valueOf(req.leverage()), 8, RoundingMode.HALF_UP);
             BigDecimal pct = margin.multiply(new BigDecimal("100"))
                     .divide(equity, 4, RoundingMode.HALF_UP);
-            if (pct.compareTo(cfg.marginPctMin()) < 0 || pct.compareTo(cfg.marginPctMax()) > 0) {
-                // 占比原样展示不四舍五入：9.995% 若显示成"10.00%超出10~15%"是自相矛盾，模型会懵
-                return prompts.get(lang, "trader.guard.marginOutOfRange", Map.of(
+            if (pct.compareTo(cfg.marginPctMax()) > 0) {
+                // 占比原样展示不四舍五入：20.005% 若显示成"20.00%超过上限20%"是自相矛盾，模型会懵
+                return prompts.get(lang, "trader.guard.marginOverMax", Map.of(
                         "margin", margin.setScale(0, RoundingMode.HALF_UP),
                         "pct", pct.stripTrailingZeros().toPlainString(),
-                        "min", cfg.marginPctMin().stripTrailingZeros().toPlainString(),
                         "max", cfg.marginPctMax().stripTrailingZeros().toPlainString(),
                         "lev", req.leverage(),
-                        "qtyLo", qtyFor(cfg.marginPctMin(), equity, req.leverage(), entryRef, RoundingMode.CEILING, filter),
-                        "qtyHi", qtyFor(cfg.marginPctMax(), equity, req.leverage(), entryRef, RoundingMode.FLOOR, filter)));
+                        "qtyMax", qtyAtCap(cfg.marginPctMax(), equity, req.leverage(), entryRef, filter)));
             }
         }
         if (filter != null) {
@@ -286,18 +284,17 @@ public final class TradeGuard {
     }
 
     /**
-     * 拒因里把该配多少数量直接算给模型，省一轮试错。
-     * 下界向上取整、上界向下取整：模型会照抄提示数字重试（一晚 8 次贴边拒绝的实测教训——
-     * HALF_UP 算出的下界被模型截位后又低于下界，陷入拒绝循环）。
+     * 拒因里把上限处的数量直接算给模型，省一轮试错。
+     * 向下取整：模型会照抄提示数字重试（一晚 8 次贴边拒绝的实测教训——HALF_UP 算出的数被模型截位后又越界，陷入拒绝循环）。
      * 再按交易所步长取整，照抄过去 sim 那关也能过。
      */
-    private static String qtyFor(BigDecimal marginPct, BigDecimal equity, int leverage,
-                                 BigDecimal entryRef, RoundingMode mode, TradeFilterDefaults.Filter filter) {
+    private static String qtyAtCap(BigDecimal marginPct, BigDecimal equity, int leverage,
+                                   BigDecimal entryRef, TradeFilterDefaults.Filter filter) {
         BigDecimal qty = equity.multiply(marginPct).divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(leverage))
-                .divide(entryRef, 6, mode);
+                .divide(entryRef, 6, RoundingMode.FLOOR);
         if (filter != null) {
-            qty = qty.divide(filter.stepSize(), 0, mode).multiply(filter.stepSize());
+            qty = qty.divide(filter.stepSize(), 0, RoundingMode.FLOOR).multiply(filter.stepSize());
         }
         return plain(qty);
     }
