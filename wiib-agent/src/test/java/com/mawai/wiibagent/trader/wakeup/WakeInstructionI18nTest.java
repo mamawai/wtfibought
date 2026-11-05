@@ -136,7 +136,7 @@ class WakeInstructionI18nTest {
     @Test
     void 警报开场白的收尾标记与系统提示词同源() {
         for (AgentLang lang : AgentLang.values()) {
-            String opening = runner.alertInstruction(trader(), alert(), null, "", null, lang);
+            String opening = runner.triggerInstruction(trader(), List.of(alert()), BOUNDARY, null,"", null, lang);
             assertThat(opening).as("%s 警报开场白的收尾标记", lang.code())
                     .contains(prompts.get(lang, "trader.mark.conclusion"));
             for (AgentLang other : AgentLang.values()) {
@@ -157,7 +157,7 @@ class WakeInstructionI18nTest {
         PromptI18nAssertions.assertNoCjk("英文例行开场白（带休眠提示）",
                 runner.routineInstruction(windowed, BOUNDARY, "", "", null, AgentLang.EN, ""));
         PromptI18nAssertions.assertNoCjk("英文警报开场白",
-                runner.alertInstruction(trader(), alert(), null, "", null, AgentLang.EN));
+                runner.triggerInstruction(trader(), List.of(alert()), BOUNDARY, null,"", null, AgentLang.EN));
         // 留言段的段头/亲笔提示/footer 都是平台文案，英文用户一个中文字都不许见；正文是主人亲笔，拿英文造
         PromptI18nAssertions.assertNoCjk("英文例行开场白（带留言段）",
                 runner.routineInstruction(trader(), BOUNDARY, "", "", null, AgentLang.EN, noteBlock(AgentLang.EN, "Take profit on ETH now.")));
@@ -188,13 +188,13 @@ class WakeInstructionI18nTest {
     void 财经日历块注入例行与警报开场白() {
         String calendar = "【财经日历】全球 High 级宏观事件\n- 09-04 20:30 US/USD Non Farm Payrolls 实际:206K 预测:205K 前值:207K\n";
         String routine = runner.routineInstruction(trader(), BOUNDARY, "", "", calendar, AgentLang.ZH, "");
-        String alert = runner.alertInstruction(trader(), alert(), null, "", calendar, AgentLang.ZH);
+        String alert = runner.triggerInstruction(trader(), List.of(alert()), BOUNDARY, null,"", calendar, AgentLang.ZH);
 
         assertThat(routine).contains(calendar);
         assertThat(alert).contains(calendar);
         // 事实区位置：问题指令之前——日历是事实不是近因指令，不许挤到收尾
         assertThat(routine.indexOf(calendar)).isLessThan(routine.indexOf("本轮：按主人的交易指令"));
-        assertThat(alert.indexOf(calendar)).isLessThan(alert.indexOf("本次是警报唤醒"));
+        assertThat(alert.indexOf(calendar)).isLessThan(alert.indexOf("本次是非例行唤醒"));
     }
 
     /** 观察包（账户/上一轮结论/轨迹）的文案：英文侧零中文（含全角【】），中文侧段头齐全 */
@@ -206,7 +206,7 @@ class WakeInstructionI18nTest {
         PromptI18nAssertions.assertNoCjk("英文例行开场白（带观察包）",
                 runner.routineInstruction(trader(), BOUNDARY, en, "", null, AgentLang.EN, ""));
         PromptI18nAssertions.assertNoCjk("英文警报开场白（带观察包）",
-                runner.alertInstruction(trader(), alert(), null, en, null, AgentLang.EN));
+                runner.triggerInstruction(trader(), List.of(alert()), BOUNDARY, null,en, null, AgentLang.EN));
         assertThat(en).contains("[Account]").contains("[Last round's conclusion]");
 
         String zh = wakeObservation.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
@@ -224,9 +224,9 @@ class WakeInstructionI18nTest {
         assertThat(routine.indexOf(obs)).isGreaterThan(routine.indexOf("新一根 1h K线已收盘"));
         assertThat(routine.indexOf(obs)).isLessThan(routine.indexOf("行情快照"));
 
-        String alert = runner.alertInstruction(trader(), alert(), null, obs, null, AgentLang.ZH);
+        String alert = runner.triggerInstruction(trader(), List.of(alert()), BOUNDARY, null,obs, null, AgentLang.ZH);
         assertThat(alert.indexOf(obs)).isGreaterThan(alert.indexOf("你上次唤醒"));
-        assertThat(alert.indexOf(obs)).isLessThan(alert.indexOf("注意：当前 1h K线尚未收盘"));
+        assertThat(alert.indexOf(obs)).isLessThan(alert.indexOf("注意：本次不是例行唤醒，当前 1h K线尚未收盘"));
     }
 
     /** 中文侧成文逐字钉死：外置只搬位置，成文一个字不变 */
@@ -250,19 +250,20 @@ class WakeInstructionI18nTest {
         // BOUNDARY 是北京时间 01:00，时段内最后一根；下一边界 02:00 已出时段，再醒是 08:00
         t.setWakeWindow("08:00-01:00");
 
-        assertThat(runner.alertInstruction(t, alert(), null, "", null, AgentLang.ZH))
+        assertThat(runner.triggerInstruction(t, List.of(alert()), BOUNDARY, null, "", null, AgentLang.ZH))
                 .contains("距下一次例行唤醒还有约 420 分钟");
     }
 
     /** 中文警报开场白逐字不变 */
     @Test
     void 中文警报开场白逐字不变() {
-        assertThat(runner.alertInstruction(trader(), alert(), null, "", null, AgentLang.ZH))
-                .isEqualTo("⚠️ 行情波动警报（非例行唤醒）：BTCUSDT 5分钟内波动 5.2%（方向：上涨，现价 100000）。\n"
+        String time = java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
+                .withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(BOUNDARY));
+        assertThat(runner.triggerInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, AgentLang.ZH))
+                .isEqualTo("行情波动警报（" + time + "）：BTCUSDT 5分钟内波动 5.2%（方向：上涨，现价 100000）\n"
                         + "你上次唤醒本局还没有过唤醒，距下一次例行唤醒还有约 60 分钟。\n"
-                        + "注意：当前 1h K线尚未收盘——按收盘定义的条件此刻不作数，"
-                        + "求证请用已收盘的 5m/15m K线。你的止损单仍在自动保护你。\n"
-                        + "本次是警报唤醒，不是例行：先用工具看清这次波动，再判断它对各持仓与各币意味着什么，按主人的交易指令决定动作。"
+                        + "注意：本次不是例行唤醒，当前 1h K线尚未收盘——按收盘定义的条件此刻不作数，求证请用已收盘的 5m/15m K线。\n"
+                        + "本次是非例行唤醒，上面列的就是把你叫醒的事：先用工具看清它们前后的行情，再判断对各持仓与各币意味着什么，按主人的交易指令决定动作。"
                         + "被叫醒本身不是动作的理由，也不是不动的理由。最后仍用[本轮结论]固定格式收尾（每个可交易币各一段）。");
     }
 }

@@ -1,12 +1,11 @@
 package com.mawai.wiibsim.service;
 
 import com.mawai.wiibsim.mapper.NotificationMapper;
+import com.mawai.wiibsim.util.AfterCommit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Map;
 
@@ -26,16 +25,7 @@ public class NotificationPushService {
 
     /** 事务提交后推最新未读数给接收者。多标签页时该用户每条连接都会收到 */
     public void pushUnreadAfterCommit(long receiverId) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            pushUnread(receiverId);
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                pushUnread(receiverId);
-            }
-        });
+        AfterCommit.run(() -> pushUnread(receiverId));
     }
 
     private void pushUnread(long receiverId) {

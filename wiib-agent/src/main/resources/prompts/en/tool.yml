@@ -246,7 +246,7 @@ tool:
 
   trader_decisions: |-
     Get the recent decision timeline of the user's AI trader, newest first. Each entry has
-    kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / REVIEW=daily retrospective),
+    kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / EVENT=position-event wake / REVIEW=daily retrospective),
     status, equity, the tools it called, and its FULL reasoning text. Can be narrowed to one kind.
     Use this to answer "why did it do that trade" - the reasoning text is the answer.
 

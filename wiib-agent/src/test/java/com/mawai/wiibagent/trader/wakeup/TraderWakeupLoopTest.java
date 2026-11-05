@@ -11,6 +11,7 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
@@ -999,6 +1000,37 @@ class TraderWakeupLoopTest {
                 .withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(boundary)) + "）");
     }
 
+    /** 持仓事件开场白：首行报事件本身（币/方向/量/价），提醒未收盘，但不说"止损单仍在保护你"——仓位可能已经没了 */
+    @Test
+    void eventOpeningStatesTheEventWithoutStopLossReassurance() {
+        TradeEvent e = new TradeEvent(TradeEvent.STOP_LOSS, 42L, 9L, null, "ETHUSDT", "SHORT",
+                new BigDecimal("0.50"), new BigDecimal("2377.0"), new BigDecimal("-13.1"), 1785171600000L + 600_000L);
+
+        String opening = runner.triggerInstruction(trader(), List.of(new EventTrigger(e)), e.at(), null, "", null, AgentLang.ZH);
+
+        assertThat(opening).contains("持仓事件（")
+                .contains("ETHUSDT SHORT 止损单已触发，平掉 0.5 @2377")
+                .contains("尚未收盘")
+                .doesNotContain("止损单仍在")
+                .doesNotContain("又发生了");
+        assertThat(new EventTrigger(e).kind()).isEqualTo(AiTraderDecision.KIND_EVENT);
+    }
+
+    /** 排队期间攒下的几条合成一轮：开头说有几件事，逐条按先后列出，各带自己的时刻 */
+    @Test
+    void batchedTriggersListedInOrder() {
+        long base = 1785171600000L;
+        AlertTrigger alert = new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("63120"), AlertTrigger.DOWN, base + 600_000L);
+        EventTrigger event = new EventTrigger(new TradeEvent(TradeEvent.LIMIT_FILLED, 99L, 9L, 100L, "ETHUSDT", "LONG",
+                new BigDecimal("0.5"), new BigDecimal("2300"), null, base + 660_000L));
+
+        String opening = runner.triggerInstruction(trader(), List.of(alert, event), base + 700_000L, null, "", null, AgentLang.ZH);
+
+        assertThat(opening).contains("又发生了 2 件事");
+        assertThat(opening.indexOf("- 行情波动警报")).isLessThan(opening.indexOf("- 持仓事件（"));
+        assertThat(opening).contains("ETHUSDT LONG 限价开仓单已成交，0.5 @2300");
+    }
+
     /** 数据工具（klines等）没有自己的记录点，必须经轨迹收集器进 actionsJson——"调用了哪些工具"要完整。 */
     @Test
     void dataToolCallsTracedIntoActions() {
@@ -1034,8 +1066,8 @@ class TraderWakeupLoopTest {
         long triggeredAt = 1785171600000L + 600_000L; // 1h 边界后 10 分钟哨兵触发
         runner.nowMs = () -> triggeredAt;
 
-        runner.wakeAlert(trader(), new AlertTrigger("BTCUSDT", new BigDecimal("1.2"),
-                new BigDecimal("63120"), AlertTrigger.DOWN, triggeredAt));
+        runner.wakeTriggered(trader(), List.of(new AlertTrigger("BTCUSDT", new BigDecimal("1.2"),
+                new BigDecimal("63120"), AlertTrigger.DOWN, triggeredAt)));
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -1052,9 +1084,39 @@ class TraderWakeupLoopTest {
                 .contains("尚未收盘").contains("被叫醒本身不是动作的理由");
     }
 
+    /** 持仓事件唤醒：kind=EVENT、wake_time=事件时刻；开场白首行是事件本身，不带警报那句"止损单仍在保护你" */
+    @Test
+    void eventWakeUsesEventInstructionAndKind() {
+        stubHealthyAccount();
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
+        when(simTradeClient.getBalance(99L)).thenReturn(new BigDecimal("9987"));
+        when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9987", "frozenBalance", "0"));
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        long at = 1785171600000L + 600_000L; // 1h 边界后 10 分钟止损被打掉
+        runner.nowMs = () -> at;
+
+        runner.wakeTriggered(trader(), List.of(new EventTrigger(new TradeEvent(TradeEvent.STOP_LOSS, 99L, 9L, null,
+                "BTCUSDT", "LONG", new BigDecimal("0.01"), new BigDecimal("62800"), new BigDecimal("-13"), at))));
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getKind()).isEqualTo(AiTraderDecision.KIND_EVENT);
+        assertThat(dec.getValue().getWakeTime()).isEqualTo(at);
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+
+        ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(prompts.capture());
+        String firstCall = prompts.getAllValues().get(0).getInstructions().stream()
+                .map(org.springframework.ai.chat.messages.Message::getText)
+                .reduce("", String::concat);
+        assertThat(firstCall).contains("持仓事件（").contains("BTCUSDT LONG 止损单已触发，平掉 0.01 @62800")
+                .contains("尚未收盘").doesNotContain("止损单仍在").contains("被叫醒本身不是动作的理由");
+    }
+
     /**
-     * recent 回注窗口只认交易行白名单（TRADE/ALERT/MANUAL）：REVIEW 的产出已经走
-     * memory 注入，混进 5 条窗口就是重复占字数；ALERT/MANUAL 是真实交易决策必须保留。
+     * recent 回注窗口只认交易行白名单（TRADE/ALERT/MANUAL/EVENT）：REVIEW 的产出已经走
+     * memory 注入，混进 5 条窗口就是重复占字数；ALERT/MANUAL/EVENT 是真实交易决策必须保留。
      */
     @Test
     void recentDecisionsQueryExcludesReviewRows() {

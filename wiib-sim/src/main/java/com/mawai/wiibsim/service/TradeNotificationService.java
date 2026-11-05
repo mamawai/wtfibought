@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.Notification;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibsim.mapper.NotificationMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -9,7 +10,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 
 /**
- * 交易事件通知：强平 / 止损 / 止盈 / 全仓爆仓。
+ * 交易事件通知：强平 / 止损 / 止盈 / 全仓爆仓。给用户落一条通知，同时发一条 {@link TradeEvent} 给 agent 叫醒 trader。
  * <p>
  * 都是系统触发的，没有 actor 也不指向评论，用户点了不跳转——所以信息必须在通知里写全。
  * <p>
@@ -23,10 +24,11 @@ public class TradeNotificationService {
 
     private final NotificationMapper notificationMapper;
     private final NotificationPushService pushService;
+    private final TradeEventPublisher eventPublisher;
 
     /** 逐仓保证金不足被强平：整个仓位一次没了 */
     public void liquidation(FuturesPosition position, BigDecimal price, BigDecimal pnl) {
-        insert(position.getUserId(), Notification.TYPE_LIQUIDATION,
+        insert(position.getUserId(), Notification.TYPE_LIQUIDATION, TradeEvent.LIQUIDATION, position.getId(),
                 position.getSymbol(), position.getSide(), position.getQuantity(), price, pnl);
     }
 
@@ -40,6 +42,7 @@ public class TradeNotificationService {
                                 BigDecimal pnl, boolean isStopLoss) {
         insert(position.getUserId(),
                 isStopLoss ? Notification.TYPE_STOP_LOSS : Notification.TYPE_TAKE_PROFIT,
+                isStopLoss ? TradeEvent.STOP_LOSS : TradeEvent.TAKE_PROFIT, position.getId(),
                 position.getSymbol(), position.getSide(), closedQty, price, pnl);
     }
 
@@ -50,11 +53,11 @@ public class TradeNotificationService {
      * closedCount 借 quantity 落库——在 type=6 语境下"数量"就是"爆掉的仓位数"。
      */
     public void crossLiquidation(long userId, int closedCount, BigDecimal settle) {
-        insert(userId, Notification.TYPE_CROSS_LIQUIDATION,
+        insert(userId, Notification.TYPE_CROSS_LIQUIDATION, TradeEvent.CROSS_LIQUIDATION, null,
                 null, null, BigDecimal.valueOf(closedCount), null, settle);
     }
 
-    private void insert(long userId, int type, String symbol, String side,
+    private void insert(long userId, int type, String eventType, Long positionId, String symbol, String side,
                         BigDecimal quantity, BigDecimal price, BigDecimal pnl) {
         Notification n = new Notification();
         n.setUserId(userId);
@@ -68,5 +71,8 @@ public class TradeNotificationService {
         notificationMapper.insert(n);
         // 落库归落库，推送等事务提交后再发：回滚了还推的话对方角标加了、点开却是空的
         pushService.pushUnreadAfterCommit(userId);
+        // 同一件事也告诉 agent：这个 sim 用户要是某个 trader 的子账户，当场把它叫醒
+        eventPublisher.publishAfterCommit(new TradeEvent(eventType, userId, positionId, null,
+                symbol, side, quantity, price, pnl, System.currentTimeMillis()));
     }
 }

@@ -60,7 +60,7 @@ public class WakeObservation {
     }
 
     /**
-     * 最近 {@value #RECENT_DECISIONS} 条交易行（例行/警报/手动），最新在前。
+     * 最近 {@value #RECENT_DECISIONS} 条交易行（例行/警报/手动/持仓事件），最新在前。
      * 复盘行不进来：它的产出已经走 memory 注入，再进就是重复占字数。
      * 忽略过滤要按计划生命期判段落归属（同币另一方向没被忽略的段得留），plans 是本局全部计划。
      */
@@ -68,7 +68,7 @@ public class WakeObservation {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
-                .in(AiTraderDecision::getKind, AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL)
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .lt(AiTraderDecision::getWakeTime, boundaryTime)
                 .orderByDesc(AiTraderDecision::getWakeTime)
                 .last("LIMIT " + RECENT_DECISIONS));
@@ -111,12 +111,12 @@ public class WakeObservation {
         return sb.toString();
     }
 
-    /** 本局最近一条 OK 决策行（例行/警报/手动）的唤醒时刻，不限于 recent 那几条；一条都没有给 null */
+    /** 本局最近一条 OK 唤醒行（复盘行不算）的唤醒时刻，不限于 recent 那几条；一条都没有给 null */
     private Long lastOkWakeTime(AiTrader trader, long boundaryTime) {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
-                .in(AiTraderDecision::getKind, AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL)
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
                 .lt(AiTraderDecision::getWakeTime, boundaryTime)
                 .orderByDesc(AiTraderDecision::getWakeTime)

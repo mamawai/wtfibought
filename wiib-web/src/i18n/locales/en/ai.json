@@ -175,7 +175,8 @@
     "error": "Failed",
     "skipped": "Skipped",
     "reviewFailed": "Review failed",
-    "alert": "Volatility alert"
+    "alert": "Volatility alert",
+    "event": "Position event"
   },
   "live": {
     "scene": "Live · waking up",
@@ -311,7 +312,7 @@
     "alertTitle": "Volatility alert (1h/4h intervals only)",
     "alertHint": "Wakes it early when the 5-minute range breaks the threshold on a coin it holds or has an order on",
     "alertOn": "Enable volatility alerts",
-    "alertOnHint": "5-minute cooldown after a wake-up; alerts stand down when a scheduled wake-up is close",
+    "alertOnHint": "One alert per move; while a round is still running it queues and fires right after",
     "alertMult": "Sensitivity multiplier (≥1.0, higher means fewer alerts)",
     "alertBase": "Effective threshold = coin baseline × multiplier. Platform baselines (calibrated on 180 days, can only be raised): {{list}}. At the current multiplier {{mult}}: {{cur}}",
     "noSymbol": "no symbols selected",

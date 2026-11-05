@@ -19,6 +19,7 @@ import tools.jackson.databind.JsonNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -31,8 +32,11 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 波动哨兵（探测层）：feed markPrice tick（~1s）→ 每币 5 分钟滚动窗口振幅，超过
  * "币基准阈值 × trader 灵敏度系数"且该 trader（1h/4h 档）持有该币仓位/挂单时，
- * 经 {@link TraderScheduler#tryAlertWake} 准入（冷静期/互斥/预算）触发一次警报唤醒。
+ * 经 {@link TraderScheduler#tryTriggerWake}（在跑则排队，结束后合成一轮）触发一次警报唤醒。
  * 例行 K 线唤醒的补充而非替代——只认"世界变了"级别的波动，空仓者不惊动。
+ * <p>
+ * 边沿触发：振幅从基准线下穿上去算一段行情开始，回落到基准线下算结束。一段行情里每个 trader 最多被叫一次
+ * （振幅碰到它自己的阈值那一刻），持续高位不重复叫；回落后再穿上来才是新一段。
  * <p>
  * 基准阈值 180 天历史校准（2026-08-08，kline_history 5m bar 振幅口径），
  * 目标包络：波动日 10~20 次/日、平日 <10 次/日。市场性状变了可重跑校准：
@@ -62,8 +66,6 @@ public class VolatilitySentinel implements MessageListener {
 
     static final long WINDOW_MS = 5 * 60_000L;
     private static final long SAMPLE_INTERVAL_MS = 1_000L;
-    /** 每币触发后的重臂间隔：纯技术防抖（防同一段行情每秒扫库），业务节流在调度器冷静期 */
-    private static final long REARM_MS = 60_000L;
 
     private final RedisMessageListenerContainer listenerContainer;
     private final AiTraderMapper traderMapper;
@@ -73,11 +75,12 @@ public class VolatilitySentinel implements MessageListener {
     /**
      * 全都要并发安全：Redis 容器是线程池分发（见 RedisMessageConfig，4~16 线程）、所有币又共用
      * 一个 PRICE channel，同一 symbol 的两个 tick 会真并发进来。1s 采样门是非原子的
-     * get-then-put，挡不住，所以窗口自己 synchronized 守（见 PriceWindow）
+     * get-then-put，挡不住，所以窗口和行情名单自己 synchronized 守（见 PriceWindow / Incident）
      */
     private final Map<String, PriceWindow> windows = new ConcurrentHashMap<>();
     private final Map<String, Long> lastSampleAt = new ConcurrentHashMap<>();
-    private final Map<String, Long> lastFiredAt = new ConcurrentHashMap<>();
+    /** 每币进行中的一段行情；振幅回落到基准线下就摘掉 */
+    private final Map<String, Incident> incidents = new ConcurrentHashMap<>();
 
     @PostConstruct
     public void init() {
@@ -118,38 +121,35 @@ public class VolatilitySentinel implements MessageListener {
         PriceWindow window = windows.computeIfAbsent(symbol, k -> new PriceWindow());
         window.add(now, price);
         BigDecimal amp = window.amplitudePct();
-        // 基准即最低生效阈值（系数≥1）：先挡住绝大多数 tick，不达标不碰 DB
         if (amp.compareTo(base) < 0) {
+            // 回落到基准线下：这段行情结束，下次再穿上来算新一段
+            incidents.remove(symbol);
             return;
         }
-        Long fired = lastFiredAt.get(symbol);
-        if (fired != null && now - fired < REARM_MS) {
-            return;
+        // 穿越的那一刻查一次库定下名单，之后振幅碰到谁的阈值就报谁
+        Incident incident = incidents.computeIfAbsent(symbol, this::candidates);
+        for (AiTrader t : incident.due(amp)) {
+            if (engaged(t, symbol)) {
+                scheduler.tryTriggerWake(t, new AlertTrigger(symbol, amp, price, window.direction(), now));
+            }
         }
-        lastFiredAt.put(symbol, now);
-        dispatch(symbol, amp, price, window.direction(), now);
     }
 
-    /** 触发面收窄：档位 1h/4h + 开关开 + 币在白名单 + 阈值×系数达标 + 持有该币仓位/挂单。 */
-    private void dispatch(String symbol, BigDecimal amplitudePct, BigDecimal price, String direction, long now) {
-        List<AiTrader> candidates = traderMapper.selectList(new LambdaQueryWrapper<AiTrader>()
+    /** 一段行情的名单：1h/4h 档 + 开关开 + 交易这个币的 RUNNING trader，各带自己的生效阈值 */
+    private Incident candidates(String symbol) {
+        List<Candidate> out = new ArrayList<>();
+        for (AiTrader t : traderMapper.selectList(new LambdaQueryWrapper<AiTrader>()
                 .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING)
-                .in(AiTrader::getIntervalCode, ALERT_INTERVALS));
-        for (AiTrader t : candidates) {
+                .in(AiTrader::getIntervalCode, ALERT_INTERVALS))) {
             if (Boolean.FALSE.equals(t.getAlertEnabled())) {
                 continue;
             }
             if (t.getSymbols() == null || !Arrays.asList(t.getSymbols().split(",")).contains(symbol)) {
                 continue;
             }
-            if (amplitudePct.compareTo(effectiveThreshold(symbol, t.getAlertThresholdMult())) < 0) {
-                continue;
-            }
-            if (!engaged(t, symbol)) {
-                continue;
-            }
-            scheduler.tryAlertWake(t, new AlertTrigger(symbol, amplitudePct, price, direction, now));
+            out.add(new Candidate(t, effectiveThreshold(symbol, t.getAlertThresholdMult())));
         }
+        return new Incident(out);
     }
 
     /** 生效阈值 = 币基准 × 灵敏度系数；null/低于 1 回落 1.0（入口有校验，这里兜手工插库）。 */
@@ -168,6 +168,34 @@ public class VolatilitySentinel implements MessageListener {
             // 查不到就不惊动——警报是补充不是义务
             log.warn("[Sentinel] 持仓查询失败 traderId={} msg={}", t.getId(), e.getMessage());
             return false;
+        }
+    }
+
+    /** 名单里的一个人：trader 和它自己的生效阈值 */
+    record Candidate(AiTrader trader, BigDecimal threshold) {
+    }
+
+    /**
+     * 一段行情里还没被叫过的人。振幅碰到谁的阈值就把谁拿走，拿走的不再回来——一段行情每人最多一次。
+     * tick 并发喂进来，所以 synchronized。
+     */
+    static final class Incident {
+        private final List<Candidate> pending;
+
+        Incident(List<Candidate> pending) {
+            this.pending = new ArrayList<>(pending);
+        }
+
+        synchronized List<AiTrader> due(BigDecimal amp) {
+            List<AiTrader> out = new ArrayList<>();
+            pending.removeIf(c -> {
+                if (amp.compareTo(c.threshold()) < 0) {
+                    return false;
+                }
+                out.add(c.trader());
+                return true;
+            });
+            return out;
         }
     }
 

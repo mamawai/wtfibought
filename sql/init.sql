@@ -718,7 +718,7 @@ COMMENT ON COLUMN ai_trader.interval_code IS '唤醒K线级别 5m/15m/1h/4h（5m
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：方法/风格/纪律的唯一来源（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
-COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒';
+COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';
 COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/ETH0.8/XRP0.8/SOL0.9/DOGE1.0%)×本系数，180天历史校准见VolatilitySentinel';
 COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：reviewer每日复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
@@ -762,7 +762,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
 CREATE INDEX IF NOT EXISTS idx_atd_trader_time ON ai_trader_decision(trader_id, wake_time DESC);
 COMMENT ON TABLE ai_trader_decision IS 'AI Trader每次唤醒一行：推理全文+动作(含play_type论点标签)+权益快照——竞技场决策时间线与净值曲线数据源';
 COMMENT ON COLUMN ai_trader_decision.status IS 'OK/ERROR/SKIPPED（上一唤醒未完被跳过）';
-COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） REVIEW=reviewer复盘（reasoning=复盘全文，无equity）';
+COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） EVENT=持仓事件唤醒（sim止损/止盈/强平/限价成交当场叫醒，wake_time=事件时刻） REVIEW=reviewer复盘（reasoning=复盘全文，无equity）';
 COMMENT ON COLUMN ai_trader_decision.memory_after IS '仅REVIEW行：本期学习完的记忆快照存档（学习演进史,append-only）；ai_trader.memory是滚动覆盖的生效版本,历史版本只在这里';
 COMMENT ON COLUMN ai_trader_decision.equity IS '本轮动作落地后的账户权益USDT';
 COMMENT ON COLUMN ai_trader_decision.model_calls IS '本轮模型调用次数：ReAct是循环，一次唤醒会调很多次（上限见ModelCallLimiter）';

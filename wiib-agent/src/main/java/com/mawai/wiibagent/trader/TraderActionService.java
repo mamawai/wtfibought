@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.time.ZoneId;
 
@@ -156,8 +157,7 @@ public class TraderActionService {
 
     public WakeState wakeState(AiTrader t, AgentLang lang) {
         // 时刻取 created_at
-        AiTraderDecision lastWake = latestDecision(t, AiTraderDecision.KIND_TRADE,
-                AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
+        AiTraderDecision lastWake = latestDecision(t, AiTraderDecision.WAKE_KINDS);
         return new WakeState(lastWake == null ? null : epochMs(lastWake.getCreatedAt()),
                 scheduler.nextRoutineWakeAt(t), wakeBlockedReason(t, lang));
     }
@@ -228,7 +228,7 @@ public class TraderActionService {
         }
         WakeState wake = wakeState(t, RequestLang.current());
         // 时刻取 created_at
-        AiTraderDecision lastReview = latestDecision(t, AiTraderDecision.KIND_REVIEW);
+        AiTraderDecision lastReview = latestDecision(t, List.of(AiTraderDecision.KIND_REVIEW));
         String reviewBlocked = reviewBlockedReason(t);
         return new ActionPanel(
                 true, t.getName(), t.getStatus(), t.getPausedReason(),
@@ -243,11 +243,11 @@ public class TraderActionService {
     }
 
     /** 本局最新的一条指定类型决策行；含 ERROR，面板要说得清"上次复盘失败了" */
-    private AiTraderDecision latestDecision(AiTrader t, String... kinds) {
+    private AiTraderDecision latestDecision(AiTrader t, List<String> kinds) {
         return decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
-                .in(AiTraderDecision::getKind, (Object[]) kinds)
+                .in(AiTraderDecision::getKind, kinds)
                 .orderByDesc(AiTraderDecision::getCreatedAt)
                 .last("LIMIT 1"));
     }

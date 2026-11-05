@@ -20,7 +20,7 @@
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
-| **trader agent** | ReAct 循环（17 工具） | ✓ | K 线收盘 / 波动警报 / 手动 | `trader/`（现场流与轨迹见 5.7） |
+| **trader agent** | ReAct 循环（17 工具） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 手动 | `trader/`（现场流与轨迹见 5.7） |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | ✓ | 用户提问 | `chat/`（子运行在 `chat/run/`） |
 | **reviewer workflow** | 单次调用，无工具 | ✗ | 日线交接第二阶段 / 点播 | `learning/ReviewRunner` |
 | **behavior workflow** | 单次调用，无工具 | ✗ | 对话里的 `analyze_my_behavior` | `behavior/` |
@@ -335,7 +335,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 | 入口 | 方法 | 治理 |
 |---|---|---|
 | 例行 | `onKlineClosed` → `fireInterval` → `fireTrader` | 对齐 interval 边界 → `WakeWindow` 时段过滤（时段外静默跳过，**不写 SKIPPED**）→ 边界去重 → 每 trader 互斥 |
-| 波动警报 | `tryAlertWake` | 停工窗口 → 时段 → 冷静期 5min → 预算预检 → 互斥 |
+| 波动警报 / 持仓事件 | `tryTriggerWake` | 进队列 → 领的时候判停工窗口 / 仍是 RUNNING / 时段；上一轮在跑就先排着（先来后到，任何一轮结束都来领，排队期间的几条合成一轮）；没叫的持仓事件由下一次唤醒的对账块兜底 |
 | 手动 | `tryManualWake` | `manualWakeBlockedReason` 预检（面板显示的拒因就是真点下去会拿到的那句）→ 再抢一次互斥 |
 | 点播复盘 | `tryOccupy` / `release` | 借同一个 inFlight，两边才不会对同一个 trader 各跑一篇复盘把 memory 互相覆盖 |
 
@@ -355,7 +355,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 `phase()` 里 inFlight 抢不到就跳过该 trader 本阶段：硬等会拖住全体，而复盘明天还有机会；这也是复盘不脏读的第二道闸（窗口挡新唤醒，inFlight 挡残留的旧唤醒）。
 
-配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL）、`AlertTrigger`、`WakeWindow`（北京时间写死 `Asia/Shanghai`，不跟 systemDefault 漂）。
+配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL）、`AlertTrigger`、`TradeEventListener`（sim 在止损/止盈/强平/限价成交时发的 `TradeEvent` → `EventTrigger`，决策行 kind=EVENT）、`WakeWindow`（北京时间写死 `Asia/Shanghai`，不跟 systemDefault 漂）。
 
 ### 5.2 四层外生停止条件 · `TraderWakeupRunner` 顶部常量
 
@@ -425,7 +425,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 |---|---|---|
 | 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席 |
 | 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。持仓另带 `sinceLastWake`（`PositionPath` 算窗口，极值复用 `CaseFileBuilder.market`）：自本局最近一条 OK 决策行以来本地 5m 的首根开盘、最高最低各在何时、末根收盘、涨跌，from / to 是实际覆盖的起止；还没有 OK 行或仓位是那之后才开的，从开仓所在那根算；窗口里没收盘根就不带。一次给足，工具预算才能留给行情求证 |
-| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
+| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL/EVENT，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
 | 财经日历 | `EconCalendarAssembler` | 三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
 | 经验账本 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本） | 账本首行带用法说明：假设只供参考，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |

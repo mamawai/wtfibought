@@ -23,6 +23,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -50,11 +51,8 @@ public class TraderChatService {
     static final int MAX_TRADES = TradeRecordService.LIMIT;
     static final int DEFAULT_TRADES = 10;
     private static final int RECENT_CLOSED_PLANS = 5;
-    private static final List<String> TRADE_KINDS =
-            List.of(AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
     private static final List<String> ALL_KINDS =
-            List.of(AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL,
-                    AiTraderDecision.KIND_REVIEW);
+            Stream.concat(AiTraderDecision.WAKE_KINDS.stream(), Stream.of(AiTraderDecision.KIND_REVIEW)).toList();
 
     private final TraderService traderService;
     private final TraderModelFactory modelFactory;
@@ -170,7 +168,7 @@ public class TraderChatService {
         ArrayNode arr = MAPPER.createArrayNode();
         for (AiTraderDecision d : traderService.decisions(t.getId(), n, null, null, null, null, kindFilter)) {
             String reasoning = d.getReasoning();
-            boolean tradeRow = TRADE_KINDS.contains(d.getKind());
+            boolean tradeRow = AiTraderDecision.WAKE_KINDS.contains(d.getKind());
             if (tradeRow) {
                 reasoning = decisionText.staleFiltered(d, allPlans);
                 if (reasoning == null) {

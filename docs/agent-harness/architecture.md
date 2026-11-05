@@ -10,7 +10,7 @@
 
 | 装置 | 形态 | 工具 | 循环 | 触发 | 模型来源 | 产出 |
 |---|---|:---:|:---:|---|---|---|
-| **trader agent** | ReAct 循环 | 17 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
+| **trader agent** | ReAct 循环 | 17 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 / 持仓事件 | 主人的 key | 真实开平仓 + 决策行 |
 | **reviewer workflow** | 单次调用（有待复审条目时再加一次） | 0 | ✗ | 日线边界 | 同 trader | 案例复盘 + 经验账本 |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | 24 | ✓ 上限 8 次调用（每个子运行各算各的） | 用户提问 | 用户的 key | 流式回答 |
 | **replay coach** | 单次调用 | 0 | ✗ | 手动复盘里点「AI 提示 / AI 评估」 | 用户的 key | 盘面提示 / 整局操作评估 |
@@ -50,7 +50,7 @@ trader 每次唤醒收到两份注入：平台系统提示词（环境 / 工具 
 ```mermaid
 flowchart LR
     CLK["5m K线收盘事件"] --> SCH{"TraderScheduler<br/>对齐 interval 边界<br/>抢占 + 互斥"}
-    SEN["VolatilitySentinel<br/>5min 振幅超阈值<br/>且持有该币"] -->|"警报（冷静期/预算预检）"| SCH
+    SEN["VolatilitySentinel<br/>5min 振幅超阈值<br/>且持有该币"] -->|"警报（在跑则排队）"| SCH
     SCH --> PA["TraderPromptAssembler<br/>系统提示词 + 账户状态<br/>+ 经验账本"]
     PA --> RA(("ReactLoop<br/>ReAct 循环"))
     RA <--> T1["交易工具 ×7<br/>开平仓/止损止盈/计划"]
@@ -162,7 +162,7 @@ POST /api/ai/workbench/chat
 
 ## 日线边界的时序
 
-一天一次的交接（`TraderScheduler.startDailyHandover`）：先交易，再全体复盘。复盘期间 trader 停工，因为它要读的是"已经定格的一天"，边写边读会读到半截数据。停工窗口挡住全部四个唤醒入口（例行 K 线 / 波动警报 / 手动唤醒 / 点播复盘），窗口内的 K 线事件直接丢弃不补跑。
+一天一次的交接（`TraderScheduler.startDailyHandover`）：先交易，再全体复盘。复盘期间 trader 停工，因为它要读的是"已经定格的一天"，边写边读会读到半截数据。停工窗口挡住全部五个唤醒入口（例行 K 线 / 波动警报 / 持仓事件 / 手动唤醒 / 点播复盘），窗口内的 K 线事件直接丢弃不补跑。
 
 ```mermaid
 sequenceDiagram

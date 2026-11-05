@@ -2,6 +2,7 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
@@ -99,16 +100,19 @@ class TraderSchedulerTest {
         verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(bj(22, 0)));
     }
 
-    /** 时段外警报也不叫 */
+    /** 时段外警报也不叫（领的时候按库里那份配置的时段判） */
     @Test
     void alertSkippedOutsideWindow() {
+        AiTrader night = nightTrader();
+        night.setStatus(AiTrader.STATUS_RUNNING);
+        when(traderMapper.selectById(7L)).thenReturn(night);
         TraderScheduler s = sched();
         s.nowMs = () -> bj(12, 10);
 
-        s.tryAlertWake(nightTrader(),
+        s.tryTriggerWake(nightTrader(),
                 new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("63120"), AlertTrigger.DOWN, bj(12, 10)));
 
-        verify(runner, after(300).never()).wakeAlert(any(), any());
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
     }
 
     /** 手动唤醒不看时段：主人亲手扣扳机 */
@@ -183,39 +187,122 @@ class TraderSchedulerTest {
 
     // ---------- 警报唤醒准入 ----------
 
-    @Test
-    void alertWakePassesAdmissionAndRunsRunner() {
-        TraderScheduler s = sched();
-        s.nowMs = () -> H1_BOUNDARY + 600_000L; // 1h 周期中段，预算充足
-
-        AlertTrigger trig = trig();
-        s.tryAlertWake(trader1h(), trig);
-
-        verify(runner, timeout(2_000)).wakeAlert(any(AiTrader.class), any(AlertTrigger.class));
+    private AiTrader runningTrader() {
+        AiTrader t = trader1h();
+        t.setStatus(AiTrader.STATUS_RUNNING);
+        return t;
     }
 
-    /** 冷静期从任何唤醒算起：刚醒过的 trader 5 分钟内不再被警报打扰 */
+    /** 非例行唤醒领触发时按 id 重新查库，查到 RUNNING 才叫 */
+    private void traderInDb() {
+        when(traderMapper.selectById(7L)).thenReturn(runningTrader());
+    }
+
+    private EventTrigger stopLossEvent(long at) {
+        return new EventTrigger(new TradeEvent(TradeEvent.STOP_LOSS, 42L, 9L, null, "BTCUSDT", "LONG",
+                new BigDecimal("0.5"), new BigDecimal("63120"), new BigDecimal("-120"), at));
+    }
+
+    /** 没人在跑就立刻叫，触发源原样交给 runner（这里一条） */
     @Test
-    void alertBlockedDuringCooldown() {
+    void triggerWakesImmediatelyWhenIdle() {
+        traderInDb();
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 600_000L;
+        AlertTrigger trig = trig();
+
+        s.tryTriggerWake(trader1h(), trig);
+
+        verify(runner, timeout(2_000)).wakeTriggered(any(AiTrader.class), eq(List.of(trig)));
+    }
+
+    /** 没有冷静期，也不给例行让路：刚醒过、距边界只剩 10s，照叫（跑过边界那根例行轮 SKIPPED） */
+    @Test
+    void triggerWakesAgainRightAwayEvenBeforeBoundary() {
+        traderInDb();
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 3_590_000L;
+
+        s.tryTriggerWake(trader1h(), trig());
+        verify(runner, timeout(2_000)).wakeTriggered(any(), any());
+        s.tryTriggerWake(trader1h(), stopLossEvent(H1_BOUNDARY + 3_591_000L));
+
+        verify(runner, timeout(2_000).times(2)).wakeTriggered(any(), any());
+    }
+
+    /** 上一轮在跑：来的触发排队，先来后到，前一轮一结束合成一轮补醒 */
+    @Test
+    void triggersQueuedWhileInFlightThenBatchedAfter() {
+        traderInDb();
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 600_000L;
+        CountDownLatch hold = new CountDownLatch(1);
+        doAnswer(inv -> {
+            hold.await();
+            return null;
+        }).when(runner).wakeTriggered(any(), any());
+        AlertTrigger first = trig();
+        EventTrigger second = stopLossEvent(H1_BOUNDARY + 601_000L);
+        AlertTrigger third = new AlertTrigger("ETHUSDT", new BigDecimal("1.5"), new BigDecimal("2300"), AlertTrigger.UP, H1_BOUNDARY + 602_000L);
+
+        s.tryTriggerWake(trader1h(), first);
+        verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(first)));
+        s.tryTriggerWake(trader1h(), second);
+        s.tryTriggerWake(trader1h(), third);
+        verify(runner, after(300).times(1)).wakeTriggered(any(), any()); // 在跑，先攒着
+        hold.countDown();
+
+        verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(second, third)));
+    }
+
+    /** 排在手动轮（例行轮同理）后面也一样：那轮一结束，排队的触发立刻补醒 */
+    @Test
+    void triggerQueuedBehindManualWakeRunsAfterIt() {
+        traderInDb();
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 600_000L;
+        CountDownLatch hold = new CountDownLatch(1);
+        doAnswer(inv -> {
+            hold.await();
+            return null;
+        }).when(runner).wakeManual(any(), anyLong());
+        s.tryManualWake(trader1h());
+        verify(runner, timeout(2_000)).wakeManual(any(), anyLong());
+
+        s.tryTriggerWake(trader1h(), trig());
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
+        hold.countDown();
+
+        verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(trig())));
+    }
+
+    /** 点播复盘占着位子（tryOccupy）时来的触发排队，release 一放手就补醒 */
+    @Test
+    void triggerQueuedBehindOccupiedSlotRunsOnRelease() {
+        traderInDb();
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 600_000L;
+        assertThat(s.tryOccupy(7L)).isTrue();
+
+        s.tryTriggerWake(trader1h(), trig());
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
+        s.release(7L);
+
+        verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(trig())));
+    }
+
+    /** 领触发时重新查库：已不是 RUNNING（爆仓/暂停）就不叫了 */
+    @Test
+    void triggerDroppedWhenTraderNotRunningAnymore() {
+        AiTrader paused = runningTrader();
+        paused.setStatus(AiTrader.STATUS_PAUSED);
+        when(traderMapper.selectById(7L)).thenReturn(paused);
         TraderScheduler s = sched();
         s.nowMs = () -> H1_BOUNDARY + 600_000L;
 
-        s.tryAlertWake(trader1h(), trig());
-        verify(runner, timeout(2_000)).wakeAlert(any(), any());
+        s.tryTriggerWake(trader1h(), trig());
 
-        s.tryAlertWake(trader1h(), trig());
-        verify(runner, after(300).times(1)).wakeAlert(any(), any()); // 第二次被冷静期拦下
-    }
-
-    /** 例行唤醒将至（距边界不足 1 分钟）警报不抢戏：马上就有新鲜K线信号 */
-    @Test
-    void alertBlockedWhenRoutineWakeImminent() {
-        TraderScheduler s = sched();
-        s.nowMs = () -> H1_BOUNDARY + 3_590_000L; // 距下一 1h 边界仅 10s
-
-        s.tryAlertWake(trader1h(), trig());
-
-        verify(runner, after(300).never()).wakeAlert(any(), any());
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
     }
 
     // ---------- 手动唤醒（对话轨 wake_trader，已过 HITL） ----------
@@ -266,33 +353,6 @@ class TraderSchedulerTest {
 
         assertThat(why).contains("距下一根K线收盘不足");
         verify(runner, after(300).never()).wakeManual(any(), anyLong());
-    }
-
-    /** 警报准入看的是离下一边界还有多久：不足 1 分钟放弃，够 1 分钟就放行 */
-    @Test
-    void alertAdmissionNeedsOneMinuteBeforeBoundary() {
-        TraderScheduler s = sched();
-        s.nowMs = () -> H1_BOUNDARY + 3_600_000L - 59_000L;
-        s.tryAlertWake(trader1h(), trig());
-        verify(runner, after(300).never()).wakeAlert(any(), any());
-
-        s.nowMs = () -> H1_BOUNDARY + 3_600_000L - 61_000L;
-        s.tryAlertWake(trader1h(), trig());
-        verify(runner, timeout(2_000)).wakeAlert(any(), any());
-    }
-
-    /** 手动唤醒也记进冷静期基准：刚被手动叫醒过，紧接着的波动警报没有增量价值 */
-    @Test
-    void manualWakeFeedsAlertCooldown() {
-        TraderScheduler s = sched();
-        s.nowMs = () -> H1_BOUNDARY + 600_000L;
-
-        s.tryManualWake(trader1h());
-        verify(runner, timeout(2_000)).wakeManual(any(), anyLong());
-
-        s.tryAlertWake(trader1h(), trig());
-
-        verify(runner, after(300).never()).wakeAlert(any(), any());
     }
 
     // ---------- 日线交接：两阶段 + 停工窗口 ----------
@@ -424,10 +484,10 @@ class TraderSchedulerTest {
         s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
         verify(reviewRunner, timeout(2_000)).review(any(), anyLong());
 
-        s.tryAlertWake(trader1h(), trig());
+        s.tryTriggerWake(trader1h(), trig());
         String why = s.tryManualWake(trader1h());
 
-        verify(runner, after(300).never()).wakeAlert(any(), any());
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
         assertThat(why).contains("日线交接");
         reviewHold.countDown();
         awaitWindowClosed(s);

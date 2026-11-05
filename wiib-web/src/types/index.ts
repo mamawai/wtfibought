@@ -1140,7 +1140,7 @@ export interface AiTraderPlanView {
 export interface TradeDecisionRef {
   id: number;
   wakeTime: number;
-  kind: 'TRADE' | 'ALERT' | 'MANUAL';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT';
   reasoning: string | null;
   reason: string | null;
 }
@@ -1188,9 +1188,9 @@ export interface AiTraderDecisionView {
   intervalCode: string;
   /**
    * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader）
-   * REVIEW=每日复盘（reasoning=复盘全文，无equity）
+   * EVENT=持仓事件唤醒（止损/止盈/强平/限价成交当场叫醒） REVIEW=每日复盘（reasoning=复盘全文，无equity）
    */
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'REVIEW';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'REVIEW';
   status: 'OK' | 'ERROR' | 'SKIPPED';
   equity: number | null;
   reasoning: string | null;
@@ -1218,7 +1218,7 @@ export interface TraderEquityPoint {
 // ---- 唤醒过程：实时流（/ai/trader/{id}/live、/ai/trader/live）与落库轨迹（trace_json）----
 
 /** 会走实时流的唤醒类型（复盘不进这条通道） */
-export type WakeKind = 'TRADE' | 'ALERT' | 'MANUAL';
+export type WakeKind = 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT';
 /** 工具回执状态：按回执前缀 REJECTED: / ERROR: 判，其余 ok */
 export type WakeToolStatus = 'ok' | 'rejected' | 'error';
 

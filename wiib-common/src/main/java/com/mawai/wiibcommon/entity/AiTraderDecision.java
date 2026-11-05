@@ -5,12 +5,13 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 每次唤醒落一行，只增不改：这轮想了什么（reasoning）、调了什么工具做了什么（actionsJson）、
  * 当时权益多少。wake_time 就是那次唤醒的K线边界。
  * <p>
- * kind 两类：TRADE/ALERT/MANUAL 是唤醒（例行K线/波动警报/主人手动叫醒），有权益；
+ * kind 两类：TRADE/ALERT/MANUAL/EVENT 是唤醒（例行K线/波动警报/主人手动叫醒/持仓事件），有权益；
  * REVIEW 是复盘，reasoning 装的是复盘全文，没权益。
  * status：OK 正常、ERROR 失败、SKIPPED 上轮没跑完或信号迟到——跳过也照写，时间线上不藏。
  * <p>
@@ -28,7 +29,10 @@ public class AiTraderDecision {
     public static final String KIND_TRADE = "TRADE";
     public static final String KIND_ALERT = "ALERT";
     public static final String KIND_MANUAL = "MANUAL";
+    public static final String KIND_EVENT = "EVENT";
     public static final String KIND_REVIEW = "REVIEW";
+    /** 四种唤醒行（有权益、有动作）；复盘行不在内 */
+    public static final List<String> WAKE_KINDS = List.of(KIND_TRADE, KIND_ALERT, KIND_MANUAL, KIND_EVENT);
 
     @TableId(type = IdType.AUTO)
     private Long id;
@@ -37,14 +41,14 @@ public class AiTraderDecision {
 
     private Integer roundNo;
 
-    /** 触发本次唤醒的K线边界时刻(ms)；ALERT 行是哨兵触发时刻，非边界 */
+    /** 触发本次唤醒的K线边界时刻(ms)；ALERT/EVENT 行是触发时刻，非边界 */
     private Long wakeTime;
 
     private String intervalCode;
 
     /**
      * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader，回路与例行相同）
-     * REVIEW=reviewer复盘（reasoning=复盘全文，无equity）
+     * EVENT=持仓事件唤醒（sim 的止损/止盈/强平/限价成交当场叫醒） REVIEW=reviewer复盘（reasoning=复盘全文，无equity）
      */
     private String kind;
 

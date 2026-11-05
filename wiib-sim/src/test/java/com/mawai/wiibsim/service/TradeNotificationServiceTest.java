@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.Notification;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibsim.mapper.NotificationMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,22 +13,25 @@ import java.math.BigDecimal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 
-/** 交易通知的字段填充。重点是各 type 只填自己那几列，以及全仓爆仓的 quantity 语义 */
+/** 交易通知的字段填充。重点是各 type 只填自己那几列，全仓爆仓的 quantity 语义，以及同一件事也发给 agent */
 class TradeNotificationServiceTest {
 
     private NotificationMapper mapper;
     private NotificationPushService push;
+    private TradeEventPublisher events;
     private TradeNotificationService service;
 
     @BeforeEach
     void setUp() {
         mapper = mock(NotificationMapper.class);
         push = mock(NotificationPushService.class);
-        service = new TradeNotificationService(mapper, push);
+        events = mock(TradeEventPublisher.class);
+        service = new TradeNotificationService(mapper, push, events);
     }
 
     private static FuturesPosition position() {
@@ -67,12 +71,18 @@ class TradeNotificationServiceTest {
         assertNull(n.getActorId());
         assertNull(n.getCommentId());
         verify(push).pushUnreadAfterCommit(7L);
+        // 同一件事发给 agent：带仓位 id，提交后才发
+        verify(events).publishAfterCommit(argThat(e -> TradeEvent.LIQUIDATION.equals(e.type())
+                && e.userId() == 7L && e.positionId() == 9L && e.price().compareTo(new BigDecimal("95240")) == 0));
     }
 
     @Test
     void stopLossAndTakeProfitUseDistinctTypes() {
         service.protectiveClose(position(), new BigDecimal("0.2"), new BigDecimal("94000"), new BigDecimal("-100"), true);
         assertEquals(Notification.TYPE_STOP_LOSS, captureInserted().getType());
+        // agent 侧的事件也是止损，量是这次平掉的 0.2 不是仓位总量
+        verify(events).publishAfterCommit(argThat(e -> TradeEvent.STOP_LOSS.equals(e.type())
+                && e.quantity().compareTo(new BigDecimal("0.2")) == 0));
 
         reset(mapper);
         service.protectiveClose(position(), new BigDecimal("0.2"), new BigDecimal("96000"), new BigDecimal("100"), false);

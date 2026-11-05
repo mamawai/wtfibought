@@ -10,6 +10,7 @@ import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
@@ -181,19 +182,20 @@ public class TraderWakeupRunner {
     }
 
     /**
-     * 波动哨兵警报唤醒：kind=ALERT、wake_time=触发时刻（非K线边界）。
-     * 预算就是上限 600s，不按下一边界截：警报跑过边界时那根的例行轮跳过（调度器 SKIPPED 留痕），
-     * 准入侧已保证离边界至少 1 分钟（{@link TraderScheduler#ALERT_MIN_LEAD_MS}）。
+     * 非例行唤醒（波动警报 / 持仓事件）：wake_time=真正醒来的时刻（非K线边界；排过队的晚于触发时刻，
+     * 各条触发自己的时刻写在开场白里）。预算就是上限 600s，不按下一边界截：跑过边界时那根的例行轮跳过（调度器 SKIPPED 留痕）。
      */
-    public void wakeAlert(AiTrader trader, AlertTrigger trigger) {
-        AiTraderDecision decision = baseDecision(trader, trigger.triggeredAt());
-        decision.setKind(AiTraderDecision.KIND_ALERT);
-        doWake(trader, trigger.triggeredAt(), MAX_WAKE_SECONDS, decision, trigger,
-                userLangResolver.of(trader.getUserId()));
+    public void wakeTriggered(AiTrader trader, List<WakeTrigger> triggers) {
+        long wakeTime = nowMs.getAsLong();
+        AiTraderDecision decision = baseDecision(trader, wakeTime);
+        // 一批里有持仓事件就标 EVENT：止损/成交比同批的波动警报要紧，不能被盖住
+        decision.setKind(triggers.stream().anyMatch(t -> t instanceof EventTrigger)
+                ? AiTraderDecision.KIND_EVENT : triggers.getFirst().kind());
+        doWake(trader, wakeTime, MAX_WAKE_SECONDS, decision, triggers, userLangResolver.of(trader.getUserId()));
     }
 
     private void doWake(AiTrader trader, long boundaryTime, long budgetSeconds,
-                        AiTraderDecision decision, AlertTrigger trigger, AgentLang lang) {
+                        AiTraderDecision decision, List<WakeTrigger> triggers, AgentLang lang) {
         long start = System.currentTimeMillis();
         // begin 之前出的异常没有这一轮现场
         TraderLiveHub.Run run = null;
@@ -208,7 +210,7 @@ public class TraderWakeupRunner {
 
             List<FuturesOrderResponse> pendingOrders = simTradeClient.getPendingOrders(trader.getSimUserId(), null);
             run = hub.begin(trader, decision.getKind(), decision.getWakeTime(), budgetSeconds, equity, positions.size(), pendingOrders.size());
-            String reasoning = runAgentSession(trader, boundaryTime, budgetSeconds, positions, pendingOrders, equity, decision, trigger, lang, run);
+            String reasoning = runAgentSession(trader, boundaryTime, budgetSeconds, positions, pendingOrders, equity, decision, triggers, lang, run);
             decision.setStatus(AiTraderDecision.STATUS_OK);
             decision.setReasoning(reasoning);
             try {
@@ -291,11 +293,11 @@ public class TraderWakeupRunner {
 
     /**
      * ReactLoop 会话：备料（工具/计划/最近几轮/提示词）→ 建循环 → 开场白 → 限时执行，过程逐帧推给现场 {@code run}。
-     * 返回模型最终文本；动作轨迹随 decision 一并写入。trigger 非空=警报唤醒（只换开场白）。
+     * 返回模型最终文本；动作轨迹随 decision 一并写入。triggers 非空=非例行唤醒（只换开场白）。
      */
     private String runAgentSession(AiTrader trader, long boundaryTime, long budgetSeconds,
                                    List<FuturesPositionDTO> positions, List<FuturesOrderResponse> pendingOrders,
-                                   BigDecimal equity, AiTraderDecision decision, AlertTrigger trigger,
+                                   BigDecimal equity, AiTraderDecision decision, List<WakeTrigger> triggers,
                                    AgentLang lang, TraderLiveHub.Run run) throws Exception {
         // 用量统计装饰器 每轮新建
         UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
@@ -312,8 +314,8 @@ public class TraderWakeupRunner {
         String prompt = promptAssembler.assemble(trader, lang);
         // 观察包：自己的状态事实，进开场白。上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 最近轨迹 + 论点战绩
         String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang);
-        // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报轮在 K 线中间，主人留的话多半是按收盘说的
-        String ownerNote = trigger != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
+        // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报/事件轮在 K 线中间，主人留的话多半是按收盘说的
+        String ownerNote = triggers != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
 
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
@@ -332,9 +334,9 @@ public class TraderWakeupRunner {
         long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 300_000L);
         long since = boundaryTime - Math.floorMod(boundaryTime, intervalMs) - intervalMs;
         String calendar = econCalendar.assemble(nowMs.getAsLong(), since, lang);
-        String instruction = trigger != null
-                ? alertInstruction(trader, trigger, lastRealWake(recent), observation, calendar, lang)
-                : routineInstruction(trader, boundaryTime, observation, marketSnapshot(whitelist, lang), calendar, lang, ownerNote);
+        String instruction = triggers == null
+                ? routineInstruction(trader, boundaryTime, observation, marketSnapshot(whitelist, lang), calendar, lang, ownerNote)
+                : triggerInstruction(trader, triggers, boundaryTime, lastRealWake(recent), observation, calendar, lang);
         run.prompt(prompt, instruction);
         // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
         CompletableFuture<Void> cancel = new CompletableFuture<>();
@@ -501,18 +503,79 @@ public class TraderWakeupRunner {
     }
 
     /**
-     * 警报唤醒开场白：事实全代码注入（振幅/方向/上次唤醒时间/距例行还有多久），
-     * 明说"未收盘不作数、止损在岗"，被叫醒本身两个方向都不是理由。
+     * 非例行唤醒开场白（警报 / 持仓事件共用）：先逐条报把它叫醒的事，排队期间攒下的几条按先后一起报、各带自己的时刻；
+     * 再是"上次唤醒/距例行"那行、观察包、日历。事实全代码注入，被叫醒本身两个方向都不是理由。
+     * 提醒未收盘但不说"止损在岗"——止损事件之后仓位可能已经没了。了结的净盈亏和当时的计划由观察包的
+     * 【自上次唤醒以来】对账块承载，不在这里再算一遍。
      *
+     * @param wakeTime     真正醒来的时刻(ms)，"距下一次例行"按它算
      * @param lastWakeTime 本局上一次交易唤醒的时刻(ms)，null=本局还没醒过
-     * @param observation 观察包，空串=不带；紧跟"上次唤醒"那行，排在日历之前
-     * @param calendar  财经日历块，null=整块缺席——被波动惊醒时"刚才是否有数据公布/讲话"正是归因的关键事实
+     * @param observation  观察包，空串=不带；紧跟"上次唤醒"那行，排在日历之前
+     * @param calendar     财经日历块，null=整块缺席——被叫醒时"刚才是否有数据公布/讲话"正是归因的关键事实
      */
-    String alertInstruction(AiTrader trader, AlertTrigger trig, Long lastWakeTime,
-                            String observation, String calendar, AgentLang lang) {
+    String triggerInstruction(AiTrader trader, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime,
+                              String observation, String calendar, AgentLang lang) {
+        StringBuilder sb = new StringBuilder();
+        boolean batch = triggers.size() > 1;
+        if (batch) {
+            sb.append(prompts.get(lang, "trader.wake.triggerBatch", Map.of("n", triggers.size()))).append('\n');
+        }
+        for (WakeTrigger t : triggers) {
+            sb.append(batch ? "- " : "").append(triggerLine(t, lang)).append('\n');
+        }
+        return sb.append(lastWakeLine(trader, wakeTime, lastWakeTime, lang)).append('\n')
+                .append(observation)
+                .append(calendar == null ? "" : calendar)
+                .append(prompts.get(lang, "trader.wake.triggerNotice", Map.of("interval", trader.getIntervalCode()))).append('\n')
+                .append(prompts.get(lang, "trader.wake.triggerQuestion", Map.of("mark", prompts.get(lang, "trader.mark.conclusion"))))
+                .toString();
+    }
+
+    /** 一条触发的一句话：警报报振幅/方向/现价，事件报币/方向/量/价，都带自己的时刻 */
+    private String triggerLine(WakeTrigger t, AgentLang lang) {
+        String time = TIME_FMT.format(Instant.ofEpochMilli(t.triggeredAt()));
+        return switch (t) {
+            case AlertTrigger a -> prompts.get(lang, "trader.wake.alertHeader", Map.of(
+                    "time", time,
+                    "symbol", a.symbol(),
+                    "amplitude", a.amplitudePct().stripTrailingZeros().toPlainString(),
+                    "direction", prompts.get(lang, "trader.wake.direction." + a.direction().toLowerCase(Locale.ROOT)),
+                    "price", a.price().stripTrailingZeros().toPlainString()));
+            case EventTrigger e -> prompts.get(lang, "trader.wake.eventHeader", Map.of(
+                    "time", time,
+                    "detail", eventDetail(e.event(), lang)));
+        };
+    }
+
+    /** 事件一句话：按类型选文案，币/方向/量/价填进去（全仓爆仓没有币和价，qty 是爆掉的仓位数） */
+    private String eventDetail(TradeEvent e, AgentLang lang) {
+        String key = switch (e.type()) {
+            case TradeEvent.STOP_LOSS -> "stopLoss";
+            case TradeEvent.TAKE_PROFIT -> "takeProfit";
+            case TradeEvent.LIQUIDATION -> "liquidation";
+            case TradeEvent.CROSS_LIQUIDATION -> "crossLiquidation";
+            case TradeEvent.LIMIT_FILLED -> "limitFilled";
+            default -> "other";
+        };
+        return prompts.get(lang, "trader.wake.event." + key, Map.of(
+                "type", e.type(),
+                "symbol", String.valueOf(e.symbol()),
+                "side", String.valueOf(e.side()),
+                "qty", num(e.quantity()),
+                "price", num(e.price())));
+    }
+
+    private static String num(BigDecimal v) {
+        return v == null ? "?" : v.stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * "你上次唤醒…，距下一次例行唤醒还有约 N 分钟"：非例行开场白都带这一行。
+     * 下次例行要看时段：下一边界落在时段外就是更晚的那个（时段末尾被叫醒，下次醒可能是第二天）。
+     */
+    private String lastWakeLine(AiTrader trader, long triggeredAt, Long lastWakeTime, AgentLang lang) {
         long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 3_600_000L);
-        // 下次例行唤醒要看时段：下一边界落在时段外就是更晚的那个（时段末尾的警报，下次醒可能是第二天）
-        long next = trig.triggeredAt() - Math.floorMod(trig.triggeredAt(), intervalMs) + intervalMs;
+        long next = triggeredAt - Math.floorMod(triggeredAt, intervalMs) + intervalMs;
         WakeWindow window = WakeWindow.of(trader);
         if (window != null) {
             long inWindow = window.nextBoundaryFrom(next, intervalMs);
@@ -520,25 +583,12 @@ public class TraderWakeupRunner {
                 next = inWindow;
             }
         }
-        long toNextMin = Math.max(1, (next - trig.triggeredAt()) / 60_000);
+        long toNextMin = Math.max(1, (next - triggeredAt) / 60_000);
         String lastWake = lastWakeTime == null ? prompts.get(lang, "trader.wake.alertNoWake")
                 : prompts.get(lang, "trader.wake.alertWakeAt", Map.of(
                         "time", TIME_FMT.format(Instant.ofEpochMilli(lastWakeTime)),
-                        "minutes", Math.max(1, (trig.triggeredAt() - lastWakeTime) / 60_000)));
-        return prompts.get(lang, "trader.wake.alertHeader", Map.of(
-                "symbol", trig.symbol(),
-                "amplitude", trig.amplitudePct().stripTrailingZeros().toPlainString(),
-                "direction", prompts.get(lang,
-                        "trader.wake.direction." + trig.direction().toLowerCase(Locale.ROOT)),
-                "price", trig.price().stripTrailingZeros().toPlainString())) + "\n"
-                + prompts.get(lang, "trader.wake.alertLastWake",
-                        Map.of("lastWake", lastWake, "minutes", toNextMin)) + "\n"
-                + observation
-                + (calendar == null ? "" : calendar)
-                + prompts.get(lang, "trader.wake.alertNotice",
-                        Map.of("interval", trader.getIntervalCode())) + "\n"
-                + prompts.get(lang, "trader.wake.alertQuestion",
-                        Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
+                        "minutes", Math.max(1, (triggeredAt - lastWakeTime) / 60_000)));
+        return prompts.get(lang, "trader.wake.alertLastWake", Map.of("lastWake", lastWake, "minutes", toNextMin));
     }
 
     /**

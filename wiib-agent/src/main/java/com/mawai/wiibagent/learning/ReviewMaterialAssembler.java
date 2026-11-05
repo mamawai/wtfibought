@@ -98,8 +98,7 @@ public class ReviewMaterialAssembler {
         Long opens = decisionMapper.selectCount(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
-                .in(AiTraderDecision::getKind, AiTraderDecision.KIND_TRADE,
-                        AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL)
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .gt(AiTraderDecision::getWakeTime, fromMs)
                 .le(AiTraderDecision::getWakeTime, toMs)
                 .like(AiTraderDecision::getActionsJson, "open_position"));

@@ -17,8 +17,10 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -27,12 +29,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * 事件是 per-symbol 的，同一边界多币多次触发靠 firedBoundary 去重。
  * 不做兜底补漏：WS/事件断流丢的K线就丢了——陈旧信号唤醒没有意义（迟到事件由唤醒预算兜底：
  * 距下一边界不足 30s 直接放弃，见 TraderWakeupRunner）。
- * 唤醒时段（ai_trader.wake_window，见 {@link WakeWindow}）只在这里过滤：例行/警报时段外静默跳过（不写 SKIPPED，
+ * 唤醒时段（ai_trader.wake_window，见 {@link WakeWindow}）只在这里过滤：例行/警报/持仓事件时段外静默跳过（不写 SKIPPED，
  * 5m 档一天会写 150 行"休眠中"），手动唤醒不拦，日线交接的复盘不看它。
  * 边界撞上 High 级数据公布时刻，例行触发先过 {@link EconCalendarGate}（最多等 30s 拿实际值）再发。
  * <p>
  * 日线边界走两阶段交接（见 {@link #startDailyHandover}）：先交易、再全体复盘。
- * 停工窗口在阶段0的唤醒发出后就开、交接结束才关，期间拒绝一切新唤醒（例行/警报/手动/点播复盘），
+ * 停工窗口在阶段0的唤醒发出后就开、交接结束才关，期间拒绝一切新唤醒（例行/警报/持仓事件/手动/点播复盘），
  * 复盘读的必须是"已定格的一天"，边写边读的脏读会进记忆污染后续每一轮。
  */
 @Slf4j
@@ -53,18 +55,13 @@ public class TraderScheduler {
     private final MessageCatalog messages;
     private final EconCalendarGate calendarGate;
 
-    /** 警报冷静期：距该 trader 上一次任何唤醒（例行/警报）不足 5 分钟不再警报 */
-    static final long ALERT_COOLDOWN_MS = 5 * 60_000L;
-    /** 警报准入：离下一根边界至少还有这么久，不然例行轮马上就来 */
-    static final long ALERT_MIN_LEAD_MS = 60_000L;
-
     /** 同一 trader 不并行的拒因；预检与真占位两处共用一份措辞 */
 
     private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
     /** 每 trader 最近已触发的边界时刻：多个 watch 币在同一刻收盘会各发一次事件，靠它去重 */
     private final Map<Long, Long> firedBoundary = new ConcurrentHashMap<>();
-    /** 每 trader 最近一次唤醒起始时刻（例行+警报都记）：警报冷静期的基准；重启清零无所谓 */
-    private final Map<Long, Long> lastWakeAt = new ConcurrentHashMap<>();
+    /** 每 trader 排队中的非例行触发（警报/持仓事件）：上一轮在跑时先攒着，它一结束就合成一轮叫醒，先来后到 */
+    private final Map<Long, Queue<WakeTrigger>> pendingTriggers = new ConcurrentHashMap<>();
     /** 日线交接的边界去重位：多 symbol 在日线边界各发一次事件，交接只许启动一次 */
     private final AtomicLong lastHandoverBoundary = new AtomicLong(-1);
     /** 停工窗口位：交接编排线程独写，事件/警报/手动入口只读
@@ -74,7 +71,7 @@ public class TraderScheduler {
     @Getter
     private volatile boolean handoverActive = false;
 
-    /** 墙钟注入点：警报准入的冷静期/预算预检要可测 */
+    /** 墙钟注入点：手动唤醒的预算预检、休眠时段判断要可测 */
     java.util.function.LongSupplier nowMs = System::currentTimeMillis;
 
     /** 主触发：任意 watch 币的 5m 收盘都是一次时钟滴答。 */
@@ -168,6 +165,7 @@ public class TraderScheduler {
                     log.warn("[TraderSched] {}异常逃逸 traderId={} msg={}", label, t.getId(), e.getMessage());
                 } finally {
                     inFlight.remove(t.getId());
+                    drainTriggers(t.getId());
                 }
             }));
         }
@@ -227,60 +225,79 @@ public class TraderScheduler {
             log.info("[TraderSched] 上轮未完跳过 traderId={} boundary={}", trader.getId(), boundary);
             return null;
         }
-        lastWakeAt.put(trader.getId(), nowMs.getAsLong());
         return Thread.startVirtualThread(() -> {
             try {
                 runner.wake(trader, boundary);
             } finally {
                 inFlight.remove(trader.getId());
+                drainTriggers(trader.getId());
             }
         });
     }
 
     /**
-     * 波动哨兵警报唤醒准入（唤醒治理全在调度器）：冷静期→预算预检→互斥，全过才真唤醒。
-     * 任一环节不过都静默放弃只留日志——警报是补充不是义务，SKIPPED 决策行只属于例行调度。
+     * 非例行唤醒（波动警报 / 持仓事件）：进队列，然后立刻尝试领走。只有两种情况不叫：日线交接停工（复盘要读定格的一天）
+     * 和主人配的休眠时段，都在领的时候判。上一轮还在跑就先排着，先来后到，它一结束立刻补醒；
+     * 排队期间攒下的几条合成一轮一起报。跑过例行边界时那根的例行轮跳过（SKIPPED 留痕）——突发行情里这一轮比按点醒更要紧。
+     * 没叫的持仓事件不会丢：下一次唤醒开头对账照样报。
      */
-    public void tryAlertWake(AiTrader trader, AlertTrigger trigger) {
-        if (handoverActive) {
-            // 停工窗口挡警报：复盘读的是定格数据，警报唤醒一开仓就是脏读
-            log.info("[TraderSched] 日线交接中，警报放弃 traderId={} {}", trader.getId(), trigger.symbol());
+    public void tryTriggerWake(AiTrader trader, WakeTrigger trigger) {
+        pendingTriggers.computeIfAbsent(trader.getId(), _ -> new ConcurrentLinkedQueue<>()).add(trigger);
+        drainTriggers(trader.getId());
+    }
+
+    /**
+     * 把该 trader 排队中的触发一次性领走叫醒；每一轮（例行/手动/非例行/点播复盘）结束时也来领一次。
+     * 抢不到互斥位就算了：在跑的那轮结束时会再来。领的时候重新查库：排队这几分钟里它可能已经爆仓、被暂停或进了休眠时段。
+     */
+    private void drainTriggers(long traderId) {
+        Queue<WakeTrigger> queue = pendingTriggers.get(traderId);
+        if (queue == null || queue.isEmpty()) {
             return;
         }
-        long now = nowMs.getAsLong();
-        WakeWindow window = WakeWindow.of(trader);
-        if (window != null && !window.contains(now)) {
-            // 休眠时段：警报也不叫——"其他时间段就不唤醒"的另一半
+        if (!inFlight.add(traderId)) {
             return;
         }
-        Long last = lastWakeAt.get(trader.getId());
-        if (last != null && now - last < ALERT_COOLDOWN_MS) {
-            return;
-        }
-        Long intervalMs = INTERVAL_MS.get(trader.getIntervalCode());
-        if (intervalMs == null) {
-            return;
-        }
-        // 离下一边界不足 1 分钟不抢戏：例行轮马上就来。放行的警报跑满自己的预算，
-        // 跨过边界就让那根的例行轮跳过（SKIPPED 留痕）——突发行情里这一轮比按点醒更要紧
-        long boundary = now - Math.floorMod(now, intervalMs);
-        if (boundary + intervalMs - now < ALERT_MIN_LEAD_MS) {
-            log.info("[TraderSched] 例行唤醒将至，警报放弃 traderId={} {}", trader.getId(), trigger.symbol());
-            return;
-        }
-        if (!inFlight.add(trader.getId())) {
-            return;
-        }
-        lastWakeAt.put(trader.getId(), now);
-        log.info("[TraderSched] 波动警报唤醒 traderId={} {} 振幅{}% {}",
-                trader.getId(), trigger.symbol(), trigger.amplitudePct(), trigger.direction());
-        Thread.startVirtualThread(() -> {
-            try {
-                runner.wakeAlert(trader, trigger);
-            } finally {
-                inFlight.remove(trader.getId());
+        // 没真正开跑的所有出口都要放掉互斥位，不然这个 trader 从此醒不过来
+        boolean started = false;
+        try {
+            List<WakeTrigger> batch = new ArrayList<>();
+            for (WakeTrigger t; (t = queue.poll()) != null; ) {
+                batch.add(t);
             }
-        });
+            if (batch.isEmpty()) {
+                return;
+            }
+            if (handoverActive) {
+                log.info("[TraderSched] 日线交接中，丢弃触发 traderId={} {}", traderId, batch);
+                return;
+            }
+            AiTrader trader = traderMapper.selectById(traderId);
+            if (trader == null || !AiTrader.STATUS_RUNNING.equals(trader.getStatus())) {
+                log.info("[TraderSched] trader 已不在运行，丢弃触发 traderId={} {}", traderId, batch);
+                return;
+            }
+            WakeWindow window = WakeWindow.of(trader);
+            if (window != null && !window.contains(nowMs.getAsLong())) {
+                // 休眠时段：警报和持仓事件都不叫——"其他时间段就不唤醒"的另一半
+                log.info("[TraderSched] 休眠时段，丢弃触发 traderId={} {}", traderId, batch);
+                return;
+            }
+            log.info("[TraderSched] 非例行唤醒 traderId={} 触发 {} 条 {}", traderId, batch.size(), batch);
+            Thread.startVirtualThread(() -> {
+                try {
+                    runner.wakeTriggered(trader, batch);
+                } finally {
+                    inFlight.remove(traderId);
+                    drainTriggers(traderId);
+                }
+            });
+            started = true;
+        } finally {
+            if (!started) {
+                inFlight.remove(traderId);
+            }
+        }
     }
 
     /**
@@ -329,12 +346,13 @@ public class TraderScheduler {
 
     public void release(long traderId) {
         inFlight.remove(traderId);
+        drainTriggers(traderId);
     }
 
     /** trader 已删：摘掉两份 traderId 记账。inFlight 不用摘——删除前已用 {@link #isBusy} 拦掉在途 */
     public void forget(long traderId) {
         firedBoundary.remove(traderId);
-        lastWakeAt.remove(traderId);
+        pendingTriggers.remove(traderId);
     }
 
     /**
@@ -381,14 +399,13 @@ public class TraderScheduler {
         if (!inFlight.add(trader.getId())) {
             return messages.get("trader.wake.busy");
         }
-        // 一并记进冷静期基准：刚手动醒过，紧接着的波动警报就没有增量价值了
-        lastWakeAt.put(trader.getId(), now);
         log.info("[TraderSched] 手动唤醒 traderId={} boundary={}", trader.getId(), boundary);
         Thread.startVirtualThread(() -> {
             try {
                 runner.wakeManual(trader, boundary);
             } finally {
                 inFlight.remove(trader.getId());
+                drainTriggers(trader.getId());
             }
         });
         return null;

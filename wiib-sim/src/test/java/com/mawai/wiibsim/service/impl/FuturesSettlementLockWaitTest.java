@@ -14,6 +14,7 @@ import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -92,7 +93,8 @@ class FuturesSettlementLockWaitTest {
                 new TradingConfig(), bracketRegistry, cacheService, positionIndexService,
                 riskService, crossMarginService,
                 crossLiquidationService, lockRegistry,
-                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                mock(TradeEventPublisher.class));
     }
 
     private static FuturesPosition isolatedLong(long id) {

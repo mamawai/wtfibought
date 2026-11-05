@@ -36,8 +36,6 @@ public class TradeRecordService {
 
     /** 竞技场一页最多展示的已了结笔数（sim 按 updatedAt 倒序返回，取前 N 即最近 N 笔） */
     static final int LIMIT = 50;
-    private static final List<String> TRADE_KINDS =
-            List.of(AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
     /** 平仓决策候选窗口向前放宽的量：手动唤醒的 wake_time 是当前边界，可能早于仓位创建至多一个档位（最大 4h） */
     private static final long CLOSE_LOOKBACK_MS = 14_400_000L;
 
@@ -102,7 +100,7 @@ public class TradeRecordService {
         return decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                         .eq(AiTraderDecision::getTraderId, t.getId())
                         .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
-                        .in(AiTraderDecision::getKind, TRADE_KINDS)
+                        .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                         .in(AiTraderDecision::getWakeTime, times)
                         .orderByAsc(AiTraderDecision::getId))
                 .stream().collect(Collectors.toMap(AiTraderDecision::getWakeTime, d -> d,
@@ -126,7 +124,7 @@ public class TradeRecordService {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
-                .in(AiTraderDecision::getKind, TRADE_KINDS)
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .between(AiTraderDecision::getWakeTime, from, to)
                 .like(AiTraderDecision::getActionsJson, "close_position")
                 .orderByAsc(AiTraderDecision::getWakeTime));

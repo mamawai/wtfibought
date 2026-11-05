@@ -1,6 +1,11 @@
 package com.mawai.wiibagent.trader.wakeup;
 
+import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -9,6 +14,12 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** 哨兵探测层的纯逻辑：滚动窗口振幅/方向/过期剔除 + 生效阈值（基准×系数，只能调高）。 */
 class VolatilitySentinelTest {
@@ -103,5 +114,49 @@ class VolatilitySentinelTest {
                 .isEqualByComparingTo("0.6");
         assertThat(VolatilitySentinel.effectiveThreshold("DOGEUSDT", null))
                 .isEqualByComparingTo("1.0");
+    }
+
+    /** 边沿触发：穿上基准线报一次，持续高位不再报，回落到基准线下再穿上来才再报；系数高的要等振幅够到自己的阈值 */
+    @Test
+    void firesOncePerIncidentAtEachTradersOwnThreshold() {
+        AiTraderMapper mapper = mock(AiTraderMapper.class);
+        SimTradeClient sim = mock(SimTradeClient.class);
+        TraderScheduler scheduler = mock(TraderScheduler.class);
+        VolatilitySentinel sentinel = new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim, scheduler);
+        AiTrader plain = alertTrader(7L, "1.0");   // 阈值 0.6%
+        AiTrader picky = alertTrader(8L, "1.5");   // 阈值 0.9%
+        when(mapper.selectList(any())).thenReturn(List.of(plain, picky));
+        FuturesPositionDTO btc = mock(FuturesPositionDTO.class);
+        when(btc.getSymbol()).thenReturn("BTCUSDT");
+        when(sim.getAllPositions(any())).thenReturn(List.of(btc)); // 两人都持有 BTC
+
+        long t0 = 1_786_200_000_000L;
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100000"), t0);
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100650"), t0 + 1_000); // 0.65%：穿上基准线，plain 报
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100800"), t0 + 2_000); // 0.8%：还在高位，没人新报
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100950"), t0 + 3_000); // 0.95%：够到 picky 的阈值
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("101000"), t0 + 4_000); // 1.0%：都报过了
+        verify(scheduler, times(1)).tryTriggerWake(eq(plain), any());
+        verify(scheduler, times(1)).tryTriggerWake(eq(picky), any());
+
+        // 窗口滚过 5 分钟，旧 tick 全部出窗，振幅归零：这段行情结束
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("101000"), t0 + VolatilitySentinel.WINDOW_MS + 5_000);
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("101700"), t0 + VolatilitySentinel.WINDOW_MS + 6_000); // 0.69%：新一段，plain 再报
+        verify(scheduler, times(2)).tryTriggerWake(eq(plain), any());
+        verify(scheduler, times(1)).tryTriggerWake(eq(picky), any());
+        // 名单只在穿越那一刻查库：两段行情两次
+        verify(mapper, times(2)).selectList(any());
+    }
+
+    private static AiTrader alertTrader(long id, String mult) {
+        AiTrader t = new AiTrader();
+        t.setId(id);
+        t.setSimUserId(100 + id);
+        t.setStatus(AiTrader.STATUS_RUNNING);
+        t.setIntervalCode("1h");
+        t.setSymbols("BTCUSDT,ETHUSDT");
+        t.setAlertEnabled(true);
+        t.setAlertThresholdMult(new BigDecimal(mult));
+        return t;
     }
 }

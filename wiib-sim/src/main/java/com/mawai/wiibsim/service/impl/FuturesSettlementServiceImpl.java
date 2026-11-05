@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.LedgerCtx;
@@ -22,6 +23,7 @@ import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesSettlementService;
+import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import jakarta.annotation.PostConstruct;
@@ -58,6 +60,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final CrossLiquidationService crossLiquidationService;
     private final FairLockRegistry lockRegistry;
     private final LedgerTx ledgerTx;
+    /** 限价开仓成交告诉 agent：trader 的单子成交了，当场叫醒它 */
+    private final TradeEventPublisher eventPublisher;
 
     record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
@@ -263,6 +267,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         positionIndexService.registerPositionIndex(position);
         if (isCross) crossMarginService.refreshUserIndex(order.getUserId());
+        eventPublisher.publishAfterCommit(new TradeEvent(TradeEvent.LIMIT_FILLED, order.getUserId(), position.getId(),
+                order.getId(), order.getSymbol(), position.getSide(), quantity, executePrice, null, System.currentTimeMillis()));
 
         log.info("futures限价开仓成交 orderId={} mode={} price={} feeType={} margin={}",
                 order.getId(), order.getMarginMode(), executePrice, isTaker ? "TAKER" : "MAKER", margin);
@@ -324,6 +330,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         // 回填 position_id：开仓手续费聚合进仓位已实现盈亏
         int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), executePrice, addValue, commission, addMargin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+        eventPublisher.publishAfterCommit(new TradeEvent(TradeEvent.LIMIT_FILLED, order.getUserId(), position.getId(),
+                order.getId(), order.getSymbol(), position.getSide(), addQty, executePrice, null, System.currentTimeMillis()));
 
         log.info("futures限价开仓并入 orderId={} posId={} price={} feeType={} addMargin={} 新均价={}",
                 order.getId(), position.getId(), executePrice, isTaker ? "TAKER" : "MAKER", addMargin, newEntryPrice);

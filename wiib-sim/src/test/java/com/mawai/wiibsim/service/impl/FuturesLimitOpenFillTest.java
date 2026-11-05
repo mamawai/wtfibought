@@ -14,7 +14,9 @@ import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.UserService;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,7 @@ class FuturesLimitOpenFillTest {
     private FuturesPositionIndexService positionIndexService;
     private FuturesLeverageBracketRegistry bracketRegistry;
     private CrossMarginService crossMarginService;
+    private TradeEventPublisher eventPublisher;
     private FuturesSettlementServiceImpl service;
 
     @BeforeEach
@@ -83,12 +86,13 @@ class FuturesLimitOpenFillTest {
         when(userMapper.atomicDeductFrozenBalance(anyLong(), any())).thenReturn(BigDecimal.ZERO);
 
         crossMarginService = mock(CrossMarginService.class);
+        eventPublisher = mock(TradeEventPublisher.class);
         service = new FuturesSettlementServiceImpl(
                 userService, userMapper, positionMapper, orderMapper,
                 new TradingConfig(), bracketRegistry, cacheService, positionIndexService,
                 mock(FuturesRiskService.class), crossMarginService,
                 mock(CrossLiquidationService.class), mock(FairLockRegistry.class),
-                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))), eventPublisher);
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,
@@ -160,6 +164,10 @@ class FuturesLimitOpenFillTest {
         verify(userMapper).atomicSettleBalance(eq(UID), argThat(c -> c.compareTo(new BigDecimal("-0.02")) == 0));
         verify(orderMapper).casUpdateToFilled(eq(100L), eq(1L), any(), any(), any(), any(), any());
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
+        // 成交即告诉 agent：事件带仓位 id、订单 id 和这次成交的量
+        verify(eventPublisher).publishAfterCommit(argThat(e -> TradeEvent.LIMIT_FILLED.equals(e.type())
+                && e.userId() == UID && e.positionId() == 1L && e.orderId() == 100L
+                && e.quantity().compareTo(BigDecimal.ONE) == 0));
     }
 
     @Test

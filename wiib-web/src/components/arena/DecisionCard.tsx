@@ -84,8 +84,9 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
         ) : (
           <>
             <span className={cn('chip', status.cls)}>{t(status.labelKey)}</span>
-            {/* 警报＝哨兵在极端波动时叫醒的，手动＝扳机在主人手里（对话轨 wake_trader），都不是例行K线节奏 */}
+            {/* 警报＝哨兵在极端波动时叫醒的，事件＝止损/止盈/强平/限价成交叫醒的，手动＝扳机在主人手里（对话轨 wake_trader），都不是例行K线节奏 */}
             {d.kind === 'ALERT' && <span className="chip wn">{t('decision.alert')}</span>}
+            {d.kind === 'EVENT' && <span className="chip wn">{t('decision.event')}</span>}
             {d.kind === 'MANUAL' && <span className="chip mute">{t('term.manualWake')}</span>}
           </>
         )}

@@ -1,5 +1,7 @@
 package com.mawai.wiibagent.trader.wakeup;
 
+import com.mawai.wiibcommon.entity.AiTraderDecision;
+
 import java.math.BigDecimal;
 
 /**
@@ -9,10 +11,15 @@ import java.math.BigDecimal;
  * {@code trader.wake.direction.*}。
  */
 public record AlertTrigger(String symbol, BigDecimal amplitudePct, BigDecimal price,
-                           String direction, long triggeredAt) {
+                           String direction, long triggeredAt) implements WakeTrigger {
 
     public static final String UP = "UP";
     public static final String DOWN = "DOWN";
     /** 首尾同价：说不出方向，只说"在波动" */
     public static final String FLAT = "FLAT";
+
+    @Override
+    public String kind() {
+        return AiTraderDecision.KIND_ALERT;
+    }
 }
