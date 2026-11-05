@@ -5,7 +5,7 @@ import i18n from '../../i18n';
  * 交易动作会动账本，行情数据只读。顺序即展示顺序——时间线的工具名与配置页的 skills 卡共用。
  */
 export const TRADE_TOOLS = [
-  'open_position', 'close_position', 'set_stop_loss', 'set_take_profit', 'write_plan', 'cancel_order', 'get_account',
+  'open_position', 'close_position', 'set_stop_loss', 'set_take_profit', 'write_plan', 'cancel_order', 'set_watch', 'get_account',
 ] as const;
 export const DATA_TOOLS = [
   'klines', 'kline_structure', 'indicators', 'market_snapshot', 'funding_history', 'orderbook_depth', 'option_iv',
@@ -16,7 +16,7 @@ export const DATA_TOOLS = [
 const TOOL_KEY: Record<string, string> = {
   open_position: 'tool.openPosition', close_position: 'tool.closePosition', set_stop_loss: 'tool.setStopLoss',
   set_take_profit: 'tool.setTakeProfit', cancel_order: 'tool.cancelOrder', write_plan: 'tool.writePlan',
-  get_account: 'tool.getAccount', klines: 'tool.klines', kline_structure: 'tool.klineStructure',
+  set_watch: 'tool.setWatch', get_account: 'tool.getAccount', klines: 'tool.klines', kline_structure: 'tool.klineStructure',
   indicators: 'tool.indicators', market_snapshot: 'tool.marketSnapshot', funding_history: 'tool.fundingHistory',
   orderbook_depth: 'tool.orderbookDepth', option_iv: 'tool.optionIv', news_search: 'tool.newsSearch',
   derivatives_history: 'tool.derivativesHistory', whale_positions: 'tool.whalePositions',
@@ -65,6 +65,10 @@ export function tradeArgsSummary(a: ActionRow): string {
         .filter(Boolean).join(' · ');
     case 'cancel_order':
       return tr('args.order', { id: g('orderId') });
+    case 'set_watch': {
+      const n = Array.isArray(a.args?.watches) ? (a.args.watches as unknown[]).length : 0;
+      return [g('symbol'), tr('args.watches', { n: String(n) })].filter(Boolean).join(' · ');
+    }
     default:
       return '';
   }

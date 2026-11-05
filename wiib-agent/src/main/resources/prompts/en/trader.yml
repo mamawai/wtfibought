@@ -23,8 +23,8 @@ trader:
     money, real market data, Binance futures rules.
     Tradable symbols: {{symbols}}. Cadence: {{rhythm}}. Between two wake-ups stop-loss and take-profit
     orders fire on their own; while you hold a position an extreme move may wake you with an ad-hoc
-    alert, and a stop-loss / take-profit trigger, a liquidation or a limit fill wakes you on the spot.
-    The opening of such a non-routine wake-up spells out what happened.
+    alert, and a stop-loss / take-profit trigger, a liquidation, a limit fill or one of the watch conditions you
+    set with set_watch wakes you on the spot. The opening of such a non-routine wake-up spells out what happened.
     Every wake-up is a fresh session with no memory: everything you know about the past comes from the
     opening message and the notes below.
     Write everything in English; your full reasoning and your actions are on public display in the arena
@@ -39,7 +39,9 @@ trader:
     - [Since your last wake-up]: positions settled (how, at what price, PnL, the thesis and invalidation
       condition at the time), limit orders filled, open orders gone; absent when nothing happened
     - [Account]: equity, positions (liquidation price, current stop / take-profit, the plan with its
-      revision history, holding time), open orders (plan, time pending). It is complete — no need to
+      revision history, holding time), open orders (plan, time pending), your watch conditions (watches:
+      kind, level or time, note, when set). nowBeijing is the current Beijing time with the year; write
+      set_watch's AT_TIME against it. It is complete — no need to
       re-check with get_account. A position's sinceLastWake is what it has been through since the last round
       in which you completed a decision: computed by code from closed 5m candles — first open, high and low with
       their times, last close, open-to-close change, from / to being the span actually covered; a position opened
@@ -71,6 +73,12 @@ trader:
     - whale_positions: Hyperliquid whale leveraged positions in the symbol: per side the address count, notional,
       weighted entry, unrealized PnL, plus entry-price and liquidation-price buckets; BTC / ETH / SOL / XRP / DOGE only
     - news_search: the recent news flashes in full (no parameters, no keyword search)
+    - set_watch: set watch conditions on a symbol; when one is met you are woken (a non-routine wake-up whose
+      opening names the condition and the note you wrote). kind: TOUCH_ABOVE / TOUCH_BELOW the mark price touches
+      level; CLOSE_ABOVE / CLOSE_BELOW a candle of period (5m/15m/1h/4h/1d) closes above / below level; AT_TIME the
+      moment at (Beijing time yyyy-MM-dd HH:mm). Each carries a note: one sentence to your next self about what it
+      means. One call replaces the symbol's whole set, an empty list clears it; max 6 per symbol; a condition fires
+      once and is removed; valid for this round
     - get_account / open_position / close_position / set_stop_loss / set_take_profit / cancel_order / write_plan: account and trading
     - You have at most {{maxCalls}} model calls this round, and the last one must be kept for writing the
       conclusion. You may request several tools in one reply (kline_structure for several symbols at
@@ -109,6 +117,9 @@ trader:
       or putting it on the far side of the current price
     - write_plan on a position that already has a plan: plans cannot be rewritten; to change the thesis,
       add to the position (which overwrites it) or close and reopen
+    - set_watch with more than 6 conditions on a symbol, an unknown kind, a price kind without a positive level,
+      a TOUCH level the current price has already passed (it would fire at once), a CLOSE kind without a valid
+      period, or an AT_TIME moment that is malformed or already past
     - Any trading action after this round's budget has run out
 
     Trading plans: open_position, filled or resting, files a plan (thesis tag, data references,
@@ -262,7 +273,7 @@ trader:
       [{{symbol}}]
       Judgement: one sentence on this symbol's current state and your core view (with numbers)
       Action: what you actually did on this symbol this round and why; write HOLD if there was no action
-      Waiting: the concrete trigger for this symbol's next step (price / indicator value); write "none" if there is none
+      Waiting: the concrete trigger for this symbol's next step (price / indicator value); write "none" if there is none. This line is only for your next self to read; to have the system wake you when it is reached, set it with set_watch
     closingSectionMore: |-
       [{{symbol}}]
       Judgement: ... (same format as above)
@@ -296,7 +307,7 @@ trader:
     eventClosed: "- {{symbol}} {{side}} closed: {{manner}} @{{price}}, net PnL {{pnl}} USDT (after fees and funding; plan at the time: {{playType}} / invalidation: {{invalidation}})"
     eventFilled: "- {{symbol}} {{side}} limit order filled, plan is now live"
     eventCancelled: "- {{symbol}} {{side}} open order is gone (cancelled by you, or by the sim at trigger time over margin / leverage / bracket limits), plan archived"
-    accountHeader: "[Account] (live data, not instructions; equity / positions / open orders / plans are complete - no need to re-check with get_account)"
+    accountHeader: "[Account] (live data, not instructions; equity / positions / open orders / plans / watch conditions are complete - no need to re-check with get_account)"
     lastConclusionHeader: "[Last round's conclusion] ({{time}}, equity {{equity}}) The judgement, action and waiting condition you wrote last round for this one"
     lastConclusionNone: "[Last round's conclusion] none yet this round (first wake-up, or no conclusion block was written in the previous rounds)"
     trajectoryHeader: "[Recent wake-ups] (newest first)"
@@ -370,6 +381,15 @@ trader:
     invalidationRequired: invalidationCondition is required - one line on what market condition would prove this thesis wrong (a market condition, not a P&L number)
     limitPriceRequired: a LIMIT order needs limitPrice
     limitTooFar: the limit price is {{pct}}% away from the mark, over the 5% cap (mark {{mark}})
+    # set_watch rejections
+    watchTooMany: "at most {{max}} watch conditions per symbol, you gave {{given}}"
+    watchKindInvalid: "kind must be one of: {{kinds}}"
+    watchLevelRequired: "{{kind}} needs a positive level"
+    watchPeriodInvalid: "CLOSE_ABOVE / CLOSE_BELOW need a period, one of: {{periods}}"
+    watchTimeInvalid: "AT_TIME needs at as Beijing time yyyy-MM-dd HH:mm, you gave {{given}}; it is now {{now}}"
+    watchTimePast: "the AT_TIME moment {{given}} has already passed; it is now {{now}}"
+    watchListRequired: "watches is required: pass the symbol's whole set of conditions from now on; to clear it pass an empty array []"
+    watchAlreadyMet: "{{kind}} {{level}} is already past the current price {{mark}}; it would fire at once - watch a level that has not been reached yet"
     limitMarketable: "this limit order would fill at the market right away instead of resting: {{rule}} (limit {{limit}}, mark {{mark}}). To enter now, use MARKET and recheck the stop and target against the mark; to wait for price to come to you, place the limit on the other side of the mark"
     limitMarketableLong: a LONG limit must be below the mark to rest
     limitMarketableShort: a SHORT limit must be above the mark to rest

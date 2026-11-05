@@ -19,6 +19,8 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TraderModelFactory;
@@ -59,9 +61,10 @@ class WakeInstructionI18nTest {
     private final BinanceRestClient binance = mock(BinanceRestClient.class);
 
     /** 观察包成文走真实词表；取数侧（决策行/战绩）给 mock，走空数据路径 */
+    private final TraderWatchStore watchStore = new TraderWatchStore(mock(AiTraderWatchMapper.class));
     private final WakeObservation wakeObservation = new WakeObservation(
             mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts,
-            mock(PositionPath.class));
+            mock(PositionPath.class), watchStore);
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             mock(TraderModelFactory.class), new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class)),
@@ -71,7 +74,7 @@ class WakeInstructionI18nTest {
             mock(DerivativesToolkit.class), mock(WhaleToolkit.class),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             traderMapper, mock(AiTraderDecisionMapper.class),
-            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
+            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts), watchStore,
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
@@ -101,6 +104,7 @@ class WakeInstructionI18nTest {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
+        t.setRoundNo(1);
         t.setSymbols("BTCUSDT");
         t.setIntervalCode("1h");
         return t;

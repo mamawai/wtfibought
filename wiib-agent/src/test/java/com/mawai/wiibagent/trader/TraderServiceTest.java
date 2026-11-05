@@ -19,6 +19,7 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -58,6 +59,7 @@ class TraderServiceTest {
 
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final TraderPlanStore planStore = mock(TraderPlanStore.class);
+    private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
     private final AiTraderDecisionMapper decisionMapper = mock(AiTraderDecisionMapper.class);
 
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
@@ -67,7 +69,7 @@ class TraderServiceTest {
 
     private final TraderService service = new TraderService(
             traderMapper, decisionMapper, modelFactory, endpointService,
-            simTradeClient, binanceProperties, planStore, scheduler, hub,
+            simTradeClient, binanceProperties, planStore, watchStore, scheduler, hub,
             new PromptCatalog(), langResolver, new MessageCatalog(), ledger);
 
     /** 端点库里的一条 */
@@ -261,6 +263,7 @@ class TraderServiceTest {
         assertThat(service.reset(1L, true)).isNull();
 
         verify(planStore).archiveRound(eq(7L), eq(3), org.mockito.ArgumentMatchers.anyLong());
+        verify(watchStore).archiveRound(7L, 3);
         // 窗口内（R4 ≤ 10 局）不触发过期清理
         verify(planStore, never()).purgeRounds(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyInt());
@@ -281,6 +284,7 @@ class TraderServiceTest {
 
         verify(decisionMapper).delete(any());
         verify(planStore).purgeRounds(7L, 1);
+        verify(watchStore).purgeRounds(7L, 1);
         verify(simTradeClient).deleteAccount("ai_trader_1_r1");
     }
 

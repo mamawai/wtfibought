@@ -20,7 +20,7 @@
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
-| **trader agent** | ReAct 循环（17 工具） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 手动 | `trader/`（现场流与轨迹见 5.7） |
+| **trader agent** | ReAct 循环（18 工具） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 手动 | `trader/`（现场流与轨迹见 5.7） |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | ✓ | 用户提问 | `chat/`（子运行在 `chat/run/`） |
 | **reviewer workflow** | 单次调用，无工具 | ✗ | 日线交接第二阶段 / 点播 | `learning/ReviewRunner` |
 | **behavior workflow** | 单次调用，无工具 | ✗ | 对话里的 `analyze_my_behavior` | `behavior/` |
@@ -433,7 +433,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ### 5.5 动手面
 
-`TradeTools` 7 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order`）**不用逐个读**，挑两三个看形状即可。数据工具 10 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `news_search`），加起来正好 17 个。
+`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`。数据工具 10 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `news_search`），加起来正好 18 个。
 
 三个设计点：
 

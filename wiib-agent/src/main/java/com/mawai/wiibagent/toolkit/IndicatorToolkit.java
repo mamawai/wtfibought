@@ -1,7 +1,6 @@
 package com.mawai.wiibagent.toolkit;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.market.indicator.CryptoIndicatorCalculator;
@@ -14,8 +13,6 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +58,6 @@ public class IndicatorToolkit {
     /** swing 半窗上限：window*2+1 得装得下，192 根理论到 95；卡 50 是不让模型把窗口开到没有 swing 可出 */
     private static final int MAX_SWING_WINDOW = 50;
     /** 截止时间参数的格式，按北京时间读 */
-    private static final DateTimeFormatter END_TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     /** 三个工具共用的截止时间参数说明 */
     private static final String END_TIME_DESC = """
             Optional window end, "yyyy-MM-dd HH:mm" in UTC+8 (Beijing time): the 192 bars then end at the
@@ -224,8 +220,7 @@ public class IndicatorToolkit {
 
     /** 模型传的截止时间 → 毫秒；没传就是截止现在。格式不对抛出，由 FailureAsResult 原样报给模型 */
     private static Long endTimeMs(String endTime) {
-        return endTime == null || endTime.isBlank() ? null
-                : LocalDateTime.parse(endTime.strip(), END_TIME_FMT).atZone(WakeWindow.ZONE).toInstant().toEpochMilli();
+        return endTime == null || endTime.isBlank() ? null : BeijingTime.parse(endTime);
     }
 
     /** 返回 null=合法；否则给模型看的错误说明。 */

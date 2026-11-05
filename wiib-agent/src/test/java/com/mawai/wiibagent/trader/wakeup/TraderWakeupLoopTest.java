@@ -7,6 +7,8 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -122,9 +124,11 @@ class TraderWakeupLoopTest {
     private final TraderLiveHub hub = new TraderLiveHub();
     private final ExperienceLedger ledger = mock(ExperienceLedger.class);
 
+    private final TraderWatchStore watchStore = new TraderWatchStore(mock(AiTraderWatchMapper.class));
+
     /** 与 runner 共用同一份 decisionMapper 和 playStats：selectList 打桩、insert 断言都还落在原处 */
     private final WakeObservation wakeObservation =
-            new WakeObservation(decisionMapper, decisionText, playStats, prompts, mock(PositionPath.class));
+            new WakeObservation(decisionMapper, decisionText, playStats, prompts, mock(PositionPath.class), watchStore);
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             modelFactory, new TraderPromptAssembler(traderMapper, prompts, ledger),
@@ -133,7 +137,7 @@ class TraderWakeupLoopTest {
             new MarketToolkit(mock(MarketDataService.class)),
             mock(DerivativesToolkit.class), mock(WhaleToolkit.class),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
-            traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), langResolver,
+            traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), watchStore, langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
             wakeObservation,
             mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger);

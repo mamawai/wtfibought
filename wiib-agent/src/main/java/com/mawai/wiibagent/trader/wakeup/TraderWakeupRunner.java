@@ -38,6 +38,7 @@ import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -124,6 +125,7 @@ public class TraderWakeupRunner {
     private final AiTraderMapper traderMapper;
     private final AiTraderDecisionMapper decisionMapper;
     private final TraderPlanStore planStore;
+    private final TraderWatchStore watchStore;
     private final UserLangResolver userLangResolver;
     private final PromptCatalog prompts;
     /** sim 拒因按错误码成文（见 SimTradeClient.describe），同样跟 trader 主人的语言 */
@@ -414,6 +416,7 @@ public class TraderWakeupRunner {
                 positions -> computeEquity(trader.getSimUserId(), positions),
                 sym -> MAPPER.readTree(binanceRestClient.getPremiumIndex(sym)).path("markPrice").asDecimal(null),
                 planStore,
+                watchStore,
                 new TradeTools.WakeCtx(trader.getId(), trader.getRoundNo(), boundaryTime, System.currentTimeMillis() + budgetSeconds * 1000, TraderRiskConfig.of(trader), lang),
                 prompts,
                 messages,

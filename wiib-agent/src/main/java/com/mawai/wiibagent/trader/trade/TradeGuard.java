@@ -1,11 +1,14 @@
 package com.mawai.wiibagent.trader.trade;
 
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -24,6 +27,11 @@ public final class TradeGuard {
 
     /** 限价偏离现价上限：防模型幻觉出离谱价格，与用户配置无关，不开放 */
     public static final BigDecimal MAX_LIMIT_DEVIATION = new BigDecimal("0.05");
+
+    /** 一个币最多布几条盯盘条件 */
+    public static final int MAX_WATCHES = 6;
+    /** CLOSE_* 可盯的周期 */
+    public static final Set<String> WATCH_PERIODS = Set.of("5m", "15m", "1h", "4h", "1d");
 
     /**
      * 账户占位快照：已成交持仓 + 未成交挂单统一成这个形状。
@@ -209,6 +217,61 @@ public final class TradeGuard {
                     prompts.get(lang, isLong ? "trader.guard.takeProfitRuleLong" : "trader.guard.takeProfitRuleShort")));
         }
         return null;
+    }
+
+    /**
+     * set_watch 的护栏：条数不超、kind 合法、价格类有正价位、TOUCH 的价位没被现价越过（布下去会立刻触发）、
+     * CLOSE 类有合法周期、AT_TIME 有能解析且还没到的时刻。整组一起校验，一条不对整组拒。通过返回 null。
+     * markPrice 只在有 TOUCH 条件时才需要，没有可传 null。
+     */
+    public static String validateWatch(List<WatchSpec> specs, BigDecimal markPrice, long now,
+                                       PromptCatalog prompts, AgentLang lang) {
+        if (specs.size() > MAX_WATCHES) {
+            return prompts.get(lang, "trader.guard.watchTooMany", Map.of("max", MAX_WATCHES, "given", specs.size()));
+        }
+        for (WatchSpec s : specs) {
+            if (s.kind() == null || !AiTraderWatch.KINDS.contains(s.kind())) {
+                return prompts.get(lang, "trader.guard.watchKindInvalid", Map.of("kinds", AiTraderWatch.KINDS));
+            }
+            if (AiTraderWatch.AT_TIME.equals(s.kind())) {
+                Long at = parseWatchTime(s.at());
+                if (at == null) {
+                    return prompts.get(lang, "trader.guard.watchTimeInvalid",
+                            Map.of("given", String.valueOf(s.at()), "now", BeijingTime.format(now)));
+                }
+                if (at <= now) {
+                    return prompts.get(lang, "trader.guard.watchTimePast",
+                            Map.of("given", s.at(), "now", BeijingTime.format(now)));
+                }
+                continue;
+            }
+            if (s.level() == null || s.level() <= 0) {
+                return prompts.get(lang, "trader.guard.watchLevelRequired", Map.of("kind", s.kind()));
+            }
+            if (s.kind().startsWith("CLOSE_") && (s.period() == null || !WATCH_PERIODS.contains(s.period()))) {
+                return prompts.get(lang, "trader.guard.watchPeriodInvalid", Map.of("periods", WATCH_PERIODS));
+            }
+            BigDecimal level = BigDecimal.valueOf(s.level());
+            boolean alreadyMet = AiTraderWatch.TOUCH_ABOVE.equals(s.kind()) && level.compareTo(markPrice) <= 0
+                    || AiTraderWatch.TOUCH_BELOW.equals(s.kind()) && level.compareTo(markPrice) >= 0;
+            if (alreadyMet) {
+                return prompts.get(lang, "trader.guard.watchAlreadyMet",
+                        Map.of("kind", s.kind(), "level", plain(level), "mark", plain(markPrice)));
+            }
+        }
+        return null;
+    }
+
+    /** AT_TIME 的 at（北京时间 yyyy-MM-dd HH:mm）→ epoch ms；没写或格式不对给 null */
+    public static Long parseWatchTime(String text) {
+        if (text == null) {
+            return null;
+        }
+        try {
+            return BeijingTime.parse(text);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     /** 拒因里给个可直接照抄的止损建议价（入场价的某个比例）。 */

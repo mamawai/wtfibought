@@ -148,6 +148,7 @@
     "setTakeProfit": "Move take profit",
     "cancelOrder": "Cancel order",
     "writePlan": "Write plan",
+    "setWatch": "Watch conditions",
     "getAccount": "Account",
     "klines": "Candles",
     "indicators": "Indicators",
@@ -168,7 +169,8 @@
     "tp": "TP {{p}}",
     "position": "Position #{{id}}",
     "order": "Order #{{id}}",
-    "invalidation": "Invalidation: {{c}}"
+    "invalidation": "Invalidation: {{c}}",
+    "watches": "{{n}} watch conditions"
   },
   "decision": {
     "ok": "Decision",

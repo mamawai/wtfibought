@@ -50,11 +50,11 @@ public class TradeTools {
     /** 本类自带富记录（结果/拒因）的工具名——轨迹合并时用富记录替换轨迹收集器的轻量占位 */
     public static final Set<String> RECORDED_TOOLS = Set.of(
             "get_account", "open_position", "close_position", "set_stop_loss",
-            "set_take_profit", "cancel_order", "write_plan");
+            "set_take_profit", "cancel_order", "write_plan", "set_watch");
 
     /** 改账户状态的工具名：同一批 tool_call 里有它们就整批串行，不和别的调用交错（ReactLoop.serialTools） */
     public static final Set<String> SERIAL_TOOLS = Set.of(
-            "open_position", "close_position", "set_stop_loss", "set_take_profit", "write_plan", "cancel_order");
+            "open_position", "close_position", "set_stop_loss", "set_take_profit", "write_plan", "cancel_order", "set_watch");
 
     private final SimTradeClient simTradeClient;
     private final long simUserId;
@@ -64,6 +64,8 @@ public class TradeTools {
     /** 现价查询（symbol → mark price）；由唤醒回路注入，取 Binance 实时标记价 */
     private final Function<String, BigDecimal> markPrice;
     private final TraderPlanStore planStore;
+    /** 模型给自己布的盯盘条件 */
+    private final TraderWatchStore watchStore;
     private final WakeCtx ctx;
     /** 拒因文案：回给模型、也进公开时间线，跟 {@code ctx.lang()} 走 */
     private final PromptCatalog prompts;
@@ -76,7 +78,7 @@ public class TradeTools {
 
     public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist,
                       Function<List<FuturesPositionDTO>, BigDecimal> equityOf, Function<String, BigDecimal> markPrice,
-                      TraderPlanStore planStore, WakeCtx ctx,
+                      TraderPlanStore planStore, TraderWatchStore watchStore, WakeCtx ctx,
                       PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext) {
         this.simTradeClient = simTradeClient;
         this.simUserId = simUserId;
@@ -84,6 +86,7 @@ public class TradeTools {
         this.equityOf = equityOf;
         this.markPrice = markPrice;
         this.planStore = planStore;
+        this.watchStore = watchStore;
         this.ctx = ctx;
         this.prompts = prompts;
         this.messages = messages;
@@ -611,6 +614,43 @@ public class TradeTools {
             return ok("cancel_order", args, MAPPER.writeValueAsString(resp));
         } catch (Exception e) {
             return fail("cancel_order", args, e);
+        }
+    }
+
+    @Tool(name = "set_watch", description = """
+            Replace ALL your watch conditions on one symbol. The platform watches them between wake-ups and wakes
+            you the moment one is met: a non-routine wake-up whose opening names the condition and your note.
+            kind: TOUCH_ABOVE / TOUCH_BELOW (mark price touches level), CLOSE_ABOVE / CLOSE_BELOW (a candle of
+            period 5m/15m/1h/4h/1d closes above / below level), AT_TIME (at `at`, Beijing time yyyy-MM-dd HH:mm).
+            The current Beijing time is nowBeijing in the [Account] block. note: one sentence to your next self about
+            what it means when this fires. Max 6 per symbol; the previous set on the symbol is replaced in full, an
+            empty array clears it. A condition fires once and is removed.""")
+    public String setWatch(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
+                           @ToolParam(description = "The whole new list for this symbol (max 6); an empty array clears it") List<WatchSpec> watches) {
+        ObjectNode args = MAPPER.createObjectNode().put("symbol", symbol);
+        args.set("watches", MAPPER.valueToTree(watches));
+        if (roundExpired()) {
+            return expired("set_watch", args);
+        }
+        if (symbol == null || !symbolWhitelist.contains(symbol)) {
+            return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.symbolNotWhitelisted",
+                    Map.of("whitelist", symbolWhitelist)));
+        }
+        if (watches == null) {
+            return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.watchListRequired"));
+        }
+        try {
+            // 现价只有 TOUCH 条件要用，清空或只布收盘/时刻条件不碰行情接口
+            BigDecimal mark = watches.stream().anyMatch(s -> s.kind() != null && s.kind().startsWith("TOUCH_"))
+                    ? markPrice.apply(symbol) : null;
+            String reason = TradeGuard.validateWatch(watches, mark, System.currentTimeMillis(), prompts, ctx.lang());
+            if (reason != null) {
+                return rejected("set_watch", args, reason);
+            }
+            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, ctx.boundaryTime());
+            return ok("set_watch", args, "{\"ok\":true,\"armed\":" + watches.size() + "}");
+        } catch (Exception e) {
+            return fail("set_watch", args, e);
         }
     }
 

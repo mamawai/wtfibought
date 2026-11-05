@@ -17,6 +17,8 @@ import com.mawai.wiibquant.whale.WhaleQueryService;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
@@ -66,6 +68,7 @@ class TraderToolI18nTest {
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             mock(AiTraderMapper.class), mock(AiTraderDecisionMapper.class),
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
+            new TraderWatchStore(mock(AiTraderWatchMapper.class)),
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
@@ -78,6 +81,7 @@ class TraderToolI18nTest {
             mock(SimTradeClient.class), 1L, Set.of("BTCUSDT"), positions -> BigDecimal.TEN,
             sym -> BigDecimal.ONE,
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
+            new TraderWatchStore(mock(AiTraderWatchMapper.class)),
             new TradeTools.WakeCtx(1L, 1, 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
             mock(EntryContext.class));
 
@@ -124,7 +128,7 @@ class TraderToolI18nTest {
     void 唤醒工具全部走词表描述() {
         Map<String, String> zh = descriptions(AgentLang.ZH);
         for (String name : List.of("get_account", "open_position", "close_position", "set_stop_loss",
-                "set_take_profit", "write_plan", "cancel_order", "klines", "indicators",
+                "set_take_profit", "write_plan", "cancel_order", "set_watch", "klines", "indicators",
                 "kline_structure", "market_snapshot", "option_iv", "funding_history", "orderbook_depth",
                 "derivatives_history", "whale_positions")) {
             assertThat(zh.get(name)).as("%s 应取词表中文描述", name)

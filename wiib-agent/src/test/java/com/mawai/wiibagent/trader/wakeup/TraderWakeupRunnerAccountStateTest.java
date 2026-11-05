@@ -3,6 +3,9 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
+import com.mawai.wiibagent.toolkit.BeijingTime;
+import java.time.ZonedDateTime;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
@@ -54,7 +57,7 @@ class TraderWakeupRunnerAccountStateTest {
         order.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(placed), ZoneId.systemDefault()));
 
         String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
-                List.of(), List.of(order), List.of(plan), BOUNDARY, Map.of());
+                List.of(), List.of(order), List.of(plan), List.of(), BOUNDARY, Map.of());
 
         JsonNode planJson = MAPPER.readTree(json).get("pendingOrders")
                 .get(0).get("plan");
@@ -78,7 +81,7 @@ class TraderWakeupRunnerAccountStateTest {
         p.setUnrealizedPnl(new BigDecimal("100"));
 
         String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
-                List.of(p), List.of(), List.of(), BOUNDARY, Map.of());
+                List.of(p), List.of(), List.of(), List.of(), BOUNDARY, Map.of());
 
         assertThat(json).contains("\"leverage\":10").contains("\"markPrice\":64000")
                 .contains("\"liquidationPrice\":58000").contains("\"equity\":15833.00");
@@ -99,7 +102,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setOpenedWakeTime(BOUNDARY - 5 * 3600_000L);
 
         String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
-                List.of(p), List.of(), List.of(plan), BOUNDARY, Map.of());
+                List.of(p), List.of(), List.of(plan), List.of(), BOUNDARY, Map.of());
 
         JsonNode planJson = MAPPER.readTree(json).get("positions").get(0).get("plan");
         assertThat(planJson.path("openedAt").asString(null)).isEqualTo(FMT.format(Instant.ofEpochMilli(opened)));
@@ -124,7 +127,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setRevisionsJson("[{\"time\":1785169800000,\"type\":\"移动止盈\",\"change\":\"66000→68000\",\"reason\":\"趋势加速\"}]");
 
         String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
-                List.of(p), List.of(), List.of(plan), BOUNDARY, Map.of());
+                List.of(p), List.of(), List.of(plan), List.of(), BOUNDARY, Map.of());
 
         assertThat(json).contains(FMT.format(Instant.ofEpochMilli(1785169800000L)))
                 .doesNotContain("1785169800000");
@@ -147,7 +150,7 @@ class TraderWakeupRunnerAccountStateTest {
                 BOUNDARY - m5, new BigDecimal("99880"));
 
         String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
-                List.of(p, other), List.of(), List.of(), BOUNDARY, Map.of(349L, w));
+                List.of(p, other), List.of(), List.of(), List.of(), BOUNDARY, Map.of(349L, w));
 
         assertThat(json).contains("\"sinceLastWake\":{\"from\":\"" + FMT.format(Instant.ofEpochMilli(BOUNDARY - 3 * m5))
                 + "\",\"to\":\"" + FMT.format(Instant.ofEpochMilli(BOUNDARY))
@@ -155,5 +158,38 @@ class TraderWakeupRunnerAccountStateTest {
                 + "\",\"low\":99610,\"lowAt\":\"" + FMT.format(Instant.ofEpochMilli(BOUNDARY - m5))
                 + "\",\"close\":99880,\"changePct\":-0.31}");
         assertThat(MAPPER.readTree(json).get("positions").get(1).has("sinceLastWake")).isFalse();
+    }
+
+    /** 盯盘条件进账户块：类型、价位或时刻、备注、何时布的；AT_TIME 的时刻按北京时间写回，价格类不带 at */
+    @Test
+    void watchesListedInAccountState() {
+        AiTraderWatch close = new AiTraderWatch();
+        close.setSymbol("BTCUSDT");
+        close.setKind("CLOSE_BELOW");
+        close.setLevel(new BigDecimal("62000"));
+        close.setPeriod("1h");
+        close.setNote("区间失守");
+        close.setCreatedWakeTime(BOUNDARY - 3_600_000L);
+        AiTraderWatch timed = new AiTraderWatch();
+        timed.setSymbol("BTCUSDT");
+        timed.setKind("AT_TIME");
+        timed.setAtTime(ZonedDateTime.of(2026, 7, 28, 20, 20, 0, 0, WakeWindow.ZONE).toInstant().toEpochMilli());
+        timed.setNote("CPI 前看一眼");
+        timed.setCreatedWakeTime(BOUNDARY);
+
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+                List.of(), List.of(), List.of(), List.of(close, timed), BOUNDARY, Map.of());
+
+        JsonNode watches = MAPPER.readTree(json).get("watches");
+        assertThat(MAPPER.readTree(json).get("nowBeijing").asString(null)).isEqualTo(BeijingTime.format(BOUNDARY));
+        assertThat(watches.size()).isEqualTo(2);
+        assertThat(watches.get(0).get("armedAt").asString(null)).isEqualTo(BeijingTime.format(BOUNDARY - 3_600_000L));
+        assertThat(watches.get(0).get("kind").asString(null)).isEqualTo("CLOSE_BELOW");
+        assertThat(watches.get(0).get("level").decimalValue()).isEqualByComparingTo("62000");
+        assertThat(watches.get(0).get("period").asString(null)).isEqualTo("1h");
+        assertThat(watches.get(0).get("note").asString(null)).isEqualTo("区间失守");
+        assertThat(watches.get(0).has("at")).isFalse();
+        assertThat(watches.get(1).get("at").asString(null)).isEqualTo("2026-07-28 20:20");
+        assertThat(watches.get(1).has("level")).isFalse();
     }
 }

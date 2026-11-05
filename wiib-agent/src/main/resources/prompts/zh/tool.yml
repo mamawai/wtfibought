@@ -263,6 +263,12 @@ tool:
 
   cancel_order: 按 orderId（见开场白【当前账户】的挂单，或 get_account 的 pendingOrders）撤掉一张未成交限价单。
 
+  set_watch: |-
+    给一个币整组替换盯盘条件：两次唤醒之间系统盯着它们，命中就把你叫醒（非例行唤醒，开场白写明命中了哪条和你当时的 note）。
+    kind：TOUCH_ABOVE / TOUCH_BELOW 标记价触及 level；CLOSE_ABOVE / CLOSE_BELOW 某周期（period 5m/15m/1h/4h/1d）收盘站上 / 跌破 level；
+    AT_TIME 到 at 时刻（北京时间 yyyy-MM-dd HH:mm，当前北京时间在【当前账户】的 nowBeijing）。note：给下一轮自己的一句话，这条命中意味着什么。
+    每币最多 6 条；传的是该币从现在起要盯的全部条件，旧的整组作废，传空数组 [] 清掉；一条命中一次就摘掉。
+
   # 行为分析：一次调用＝7 个内部端点 + 一次大 prompt 的深模型调用。同 run_deep_analysis，
   # 描述保持英文只换触发词——描述给模型读，触发词要匹配用户真会说的话。
   # 报告整份走 SSE 渲染成卡片，回模型的是裁剪版，所以描述里要交代"别复述数字，去谈它"

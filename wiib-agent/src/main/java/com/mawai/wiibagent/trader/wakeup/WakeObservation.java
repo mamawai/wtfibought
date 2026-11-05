@@ -14,6 +14,7 @@ import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -49,6 +50,8 @@ public class WakeObservation {
     private final PromptCatalog prompts;
     /** 持仓自上次完成决策以来的波动，进持仓行 */
     private final PositionPath positionPath;
+    /** 模型布的盯盘条件，进账户块 */
+    private final TraderWatchStore watchStore;
 
     /**
      * 回注给下一轮看的一轮唤醒：决策行里只留提示词用得到的几列。
@@ -98,7 +101,8 @@ public class WakeObservation {
             }
         }
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
-                .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(), boundaryTime, paths)).append('\n');
+                .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(),
+                        watchStore.armed(trader.getId(), trader.getRoundNo()), boundaryTime, paths)).append('\n');
         sb.append('\n').append(lastConclusion(recent, lang));
         String trajectory = trajectory(recent, lang);
         if (!trajectory.isEmpty()) {

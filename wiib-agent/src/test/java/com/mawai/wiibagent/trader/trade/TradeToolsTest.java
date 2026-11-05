@@ -17,6 +17,12 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.support.ToolCallbacks;
+import java.util.Arrays;
+import java.util.Collections;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -56,6 +62,7 @@ class TradeToolsTest {
     @BeforeAll
     static void initTableInfoCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderPlan.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderWatch.class);
     }
 
     /** 本轮截止时间：默认给足，只有专门验"超时后拒发"的用例才把它设到过去 */
@@ -63,9 +70,11 @@ class TradeToolsTest {
 
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
+    private final AiTraderWatchMapper watchMapper = mock(AiTraderWatchMapper.class);
+    private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper);
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
             positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
-            new TraderPlanStore(planMapper, PROMPTS),
+            new TraderPlanStore(planMapper, PROMPTS), watchStore,
             new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
                     new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
                             true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
@@ -98,6 +107,52 @@ class TradeToolsTest {
         plan.setTakeProfitPrice(new BigDecimal("110000"));
         plan.setOpenedWakeTime(1785168000000L);
         return plan;
+    }
+
+    /** 盯盘条件：护栏逐条拒（条数、kind、周期、已越过的价位、过去的时刻、白名单），通过的整组落库并进动作轨迹 */
+    @Test
+    void setWatchGuardAndReplace() {
+        List<WatchSpec> seven = Collections.nCopies(7, new WatchSpec("TOUCH_ABOVE", 101000.0, null, null, "多"));
+        assertThat(tools.setWatch("BTCUSDT", seven)).startsWith("REJECTED").contains("最多 6 条");
+        assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("ABOVE", 101000.0, null, null, "")))).contains("kind 必须是");
+        assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("CLOSE_ABOVE", 101000.0, "3h", null, "")))).contains("period");
+        // 现价 100000：TOUCH_ABOVE 99000 已被越过，布下去立刻触发
+        assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("TOUCH_ABOVE", 99000.0, null, null, "")))).contains("已被现价");
+        assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("AT_TIME", null, null, "2020-01-01 00:00", "")))).contains("已过去");
+        assertThat(tools.setWatch("ETHUSDT", List.of())).contains("白名单");
+        // 漏传 watches 不是清空，是拒
+        assertThat(tools.setWatch("BTCUSDT", null)).startsWith("REJECTED").contains("watches 必填");
+        verify(watchMapper, never()).insert(any(AiTraderWatch.class));
+        verify(watchMapper, never()).update(any(), any());
+
+        String ok = tools.setWatch("BTCUSDT", List.of(
+                new WatchSpec("TOUCH_ABOVE", 101000.0, null, null, "突破看追多"),
+                new WatchSpec("CLOSE_BELOW", 98000.0, "1h", null, "区间失守")));
+
+        assertThat(ok).contains("\"armed\":2");
+        verify(watchMapper, times(2)).insert(any(AiTraderWatch.class));
+        assertThat(tools.actions()).anySatisfy(a -> {
+            assertThat(a.path("tool").asString(null)).isEqualTo("set_watch");
+            assertThat(a.path("status").asString(null)).isEqualTo("ok");
+            assertThat(a.path("args").path("watches").size()).isEqualTo(2);
+        });
+    }
+
+    /** 模型传进来的是 JSON：框架要能把 watches 数组落成 WatchSpec 列表，schema 里也得有字段名 */
+    @Test
+    void setWatchBindsJsonArgumentsThroughToolCallback() {
+        ToolCallback cb = Arrays.stream(ToolCallbacks.from(tools))
+                .filter(c -> "set_watch".equals(c.getToolDefinition().name())).findFirst().orElseThrow();
+        assertThat(cb.getToolDefinition().inputSchema()).contains("watches").contains("kind").contains("level").contains("note");
+
+        String r = cb.call("{\"symbol\":\"BTCUSDT\",\"watches\":[{\"kind\":\"TOUCH_BELOW\",\"level\":95000,\"note\":\"回踩需求区\"}]}");
+
+        assertThat(r).contains("\"armed\":1");
+        // 字串和数字都绑进了记录（字段怎么落库归 TraderWatchStoreTest）
+        ArgumentCaptor<AiTraderWatch> row = ArgumentCaptor.forClass(AiTraderWatch.class);
+        verify(watchMapper).insert(row.capture());
+        assertThat(row.getValue().getKind()).isEqualTo("TOUCH_BELOW");
+        assertThat(row.getValue().getLevel()).isEqualByComparingTo("95000");
     }
 
     /** 放宽止损=放大风险=移动球门柱，工具层一票否决 */
@@ -346,7 +401,7 @@ class TradeToolsTest {
         });
         TradeTools withCtx = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
-                new TraderPlanStore(planMapper, PROMPTS),
+                new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
                                 true, true), AgentLang.ZH), PROMPTS, MESSAGES, entryContext);
@@ -450,7 +505,7 @@ class TradeToolsTest {
     void expiredRoundRejectsAllWriteTools() {
         TradeTools late = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
-                new TraderPlanStore(planMapper, PROMPTS),
+                new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, 1785171600000L, System.currentTimeMillis() - 1,
                         new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
                                 true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
@@ -473,7 +528,7 @@ class TradeToolsTest {
         TradeTools strict = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
                 positions -> new BigDecimal("10000"),
                 sym -> { throw new IllegalStateException("不该发起行情查询"); },
-                new TraderPlanStore(planMapper, PROMPTS),
+                new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
                                 true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
@@ -602,7 +657,7 @@ class TradeToolsTest {
     void marginBandUsesEquityAtOpenTime() {
         TradeTools poorer = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
                 positions -> new BigDecimal("5000"), sym -> new BigDecimal("100000"),
-                new TraderPlanStore(planMapper, PROMPTS),
+                new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
                                 true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));

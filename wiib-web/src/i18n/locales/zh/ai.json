@@ -144,6 +144,7 @@
     "setTakeProfit": "移动止盈",
     "cancelOrder": "撤单",
     "writePlan": "补立计划",
+    "setWatch": "盯盘条件",
     "getAccount": "查账户",
     "klines": "K线",
     "indicators": "指标",
@@ -164,7 +165,8 @@
     "tp": "止盈{{p}}",
     "position": "仓位#{{id}}",
     "order": "订单#{{id}}",
-    "invalidation": "失效条件：{{c}}"
+    "invalidation": "失效条件：{{c}}",
+    "watches": "{{n}} 条盯盘条件"
   },
   "decision": {
     "ok": "决策",

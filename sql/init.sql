@@ -808,6 +808,30 @@ COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进�
 COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒开头对账补绑;一行计划对应一个仓位生命期,同论点下一笔另起一行;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
 COMMENT ON COLUMN ai_trader_plan.entry_ctx_json IS '开仓那一刻的上下文快照JSON：orderType/leverage/hourBj/stopPct/regime/atr1h/stopAtr/eventMin/eventTitle/funding（EntryContext）；复盘按维度对照用，取不到的字段缺席';
 
+CREATE TABLE IF NOT EXISTS ai_trader_watch (
+    id              BIGSERIAL PRIMARY KEY,
+    trader_id       BIGINT NOT NULL,
+    round_no        INT NOT NULL,
+    symbol          VARCHAR(20) NOT NULL,
+    kind            VARCHAR(16) NOT NULL,
+    level           NUMERIC(20,8),
+    period          VARCHAR(8),
+    at_time         BIGINT,
+    note            TEXT,
+    status          VARCHAR(8) NOT NULL DEFAULT 'ARMED',
+    fired_at        BIGINT,
+    fired_price     NUMERIC(20,8),
+    created_wake_time BIGINT NOT NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+-- 哨兵按币扫还在盯的条件
+CREATE INDEX IF NOT EXISTS idx_atw_armed ON ai_trader_watch (symbol) WHERE status = 'ARMED';
+COMMENT ON TABLE ai_trader_watch IS 'AI Trader 盯盘条件：模型用 set_watch 给自己布的"到了叫我"，一币一组整组替换。哨兵盯 ARMED 的，命中标 FIRED 并唤醒；替换掉或重置作废的标 REPLACED，不删';
+COMMENT ON COLUMN ai_trader_watch.kind IS 'TOUCH_ABOVE/TOUCH_BELOW=标记价触及level；CLOSE_ABOVE/CLOSE_BELOW=period周期收盘站上/跌破level；AT_TIME=到at_time时刻';
+COMMENT ON COLUMN ai_trader_watch.note IS '模型给下一轮自己的备注：这条命中意味着什么，命中唤醒的开场白原样念给它';
+COMMENT ON COLUMN ai_trader_watch.status IS 'ARMED=在盯 FIRED=命中过（fired_at/fired_price记命中时刻与价） REPLACED=被整组替换或重置作废';
+
 -- ============================================
 -- 31.1 AI Trader 经验账本（复盘沉淀的经验，一条一行，代码记账）
 -- ============================================
