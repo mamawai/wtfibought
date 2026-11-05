@@ -7,10 +7,13 @@ import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
+import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibquant.whale.WhaleQueryService;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -58,6 +61,8 @@ class TraderToolI18nTest {
             mock(SimTradeClient.class), binance,
             new IndicatorToolkit(new KlineFetcher(binance, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
+            new DerivativesToolkit(mock(MarketDataService.class)),
+            new WhaleToolkit(mock(WhaleQueryService.class)),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             mock(AiTraderMapper.class), mock(AiTraderDecisionMapper.class),
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
@@ -86,6 +91,8 @@ class TraderToolI18nTest {
         return Arrays.stream(ToolCallbacks.from(tradeTools,
                         new IndicatorToolkit(new KlineFetcher(binance, 60_000)),
                         new MarketToolkit(mock(MarketDataService.class)),
+                        new DerivativesToolkit(mock(MarketDataService.class)),
+                        new WhaleToolkit(mock(WhaleQueryService.class)),
                         new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class))
                                 .boundTo(AgentLang.EN)))
                 .collect(Collectors.toMap(cb -> cb.getToolDefinition().name(),
@@ -118,7 +125,8 @@ class TraderToolI18nTest {
         Map<String, String> zh = descriptions(AgentLang.ZH);
         for (String name : List.of("get_account", "open_position", "close_position", "set_stop_loss",
                 "set_take_profit", "write_plan", "cancel_order", "klines", "indicators",
-                "kline_structure", "market_snapshot", "option_iv", "funding_history", "orderbook_depth")) {
+                "kline_structure", "market_snapshot", "option_iv", "funding_history", "orderbook_depth",
+                "derivatives_history", "whale_positions")) {
             assertThat(zh.get(name)).as("%s 应取词表中文描述", name)
                     .isEqualTo(prompts.get(AgentLang.ZH, "tool." + name));
         }

@@ -10,7 +10,7 @@
 
 | 装置 | 形态 | 工具 | 循环 | 触发 | 模型来源 | 产出 |
 |---|---|:---:|:---:|---|---|---|
-| **trader agent** | ReAct 循环 | 15 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
+| **trader agent** | ReAct 循环 | 17 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
 | **reviewer workflow** | 单次调用（有待复审条目时再加一次） | 0 | ✗ | 日线边界 | 同 trader | 案例复盘 + 经验账本 |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | 24 | ✓ 上限 8 次调用（每个子运行各算各的） | 用户提问 | 用户的 key | 流式回答 |
 | **replay coach** | 单次调用 | 0 | ✗ | 手动复盘里点「AI 提示 / AI 评估」 | 用户的 key | 盘面提示 / 整局操作评估 |
@@ -54,7 +54,7 @@ flowchart LR
     SCH --> PA["TraderPromptAssembler<br/>系统提示词 + 账户状态<br/>+ 经验账本"]
     PA --> RA(("ReactLoop<br/>ReAct 循环"))
     RA <--> T1["交易工具 ×7<br/>开平仓/止损止盈/计划"]
-    RA <--> T2["数据工具 ×8<br/>K线/结构/指标/快照/IV/资金费/盘口/快讯"]
+    RA <--> T2["数据工具 ×10<br/>K线/结构/指标/快照/IV/资金费/盘口/衍生品序列/大户持仓/快讯"]
     RA --> OUT["决策全文 + 动作轨迹<br/>→ ai_trader_decision"]
     RA -.->|"逐帧"| HUB["TraderLiveHub 唤醒现场<br/>SSE，只有主人连得进"]
     GUARD["TradeGuard<br/>开仓硬校验"] -.->|"越界一票否决<br/>拒因中文可修正后重试"| T1

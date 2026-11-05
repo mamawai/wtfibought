@@ -21,9 +21,11 @@ import com.mawai.wiibagent.llm.ToolCallTraceHook;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
+import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.DecisionText;
@@ -115,6 +117,8 @@ public class TraderWakeupRunner {
     private final BinanceRestClient binanceRestClient;
     private final IndicatorToolkit indicatorToolkit;
     private final MarketToolkit marketToolkit;
+    private final DerivativesToolkit derivativesToolkit;
+    private final WhaleToolkit whaleToolkit;
     private final NewsToolkit newsToolkit;
     private final AiTraderMapper traderMapper;
     private final AiTraderDecisionMapper decisionMapper;
@@ -423,7 +427,8 @@ public class TraderWakeupRunner {
      * 快讯工具的语言在这里烤进实例（英文取译文，缺译文回落中文原文）——取哪门语言的新闻不是模型的选择。
      */
     List<ToolCallback> wakeTools(AgentLang lang, TradeTools tradeTools) {
-        return localizedTools.of(lang, tradeTools, indicatorToolkit, marketToolkit, newsToolkit.boundTo(lang));
+        return localizedTools.of(lang, tradeTools, indicatorToolkit, marketToolkit, derivativesToolkit, whaleToolkit,
+                newsToolkit.boundTo(lang));
     }
 
     /**

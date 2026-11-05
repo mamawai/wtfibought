@@ -152,7 +152,9 @@
     "orderbookDepth": "盘口",
     "optionIv": "期权IV",
     "newsSearch": "快讯",
-    "klineStructure": "K线结构"
+    "klineStructure": "K线结构",
+    "derivativesHistory": "衍生品序列",
+    "whalePositions": "大户持仓"
   },
   "args": {
     "long": "做多",

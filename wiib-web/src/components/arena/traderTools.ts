@@ -8,7 +8,8 @@ export const TRADE_TOOLS = [
   'open_position', 'close_position', 'set_stop_loss', 'set_take_profit', 'write_plan', 'cancel_order', 'get_account',
 ] as const;
 export const DATA_TOOLS = [
-  'klines', 'kline_structure', 'indicators', 'market_snapshot', 'funding_history', 'orderbook_depth', 'option_iv', 'news_search',
+  'klines', 'kline_structure', 'indicators', 'market_snapshot', 'funding_history', 'orderbook_depth', 'option_iv',
+  'derivatives_history', 'whale_positions', 'news_search',
 ] as const;
 
 /** 工具 id → 词表 key（存 key 不存文案：模块级常量只算一次，切语言不会失效） */
@@ -18,6 +19,7 @@ const TOOL_KEY: Record<string, string> = {
   get_account: 'tool.getAccount', klines: 'tool.klines', kline_structure: 'tool.klineStructure',
   indicators: 'tool.indicators', market_snapshot: 'tool.marketSnapshot', funding_history: 'tool.fundingHistory',
   orderbook_depth: 'tool.orderbookDepth', option_iv: 'tool.optionIv', news_search: 'tool.newsSearch',
+  derivatives_history: 'tool.derivativesHistory', whale_positions: 'tool.whalePositions',
 };
 
 /** 工具的展示名；表里没有的（后端加了新工具）原样显示 id */
@@ -83,10 +85,13 @@ export function dataArgsSummary(tool: string, args: Record<string, unknown>): st
       return [[g('symbol'), g('interval')].filter(Boolean).join(' '),
         n && i18n.t('ai:live.bars', { count: Number(n) })].filter(Boolean).join(' · ');
     }
+    case 'derivatives_history':
+      return [g('symbol'), g('period')].filter(Boolean).join(' ');
     case 'market_snapshot':
     case 'option_iv':
     case 'funding_history':
     case 'orderbook_depth':
+    case 'whale_positions':
       return g('symbol');
     case 'news_search':
       return '';

@@ -156,7 +156,9 @@
     "orderbookDepth": "Order book",
     "optionIv": "Option IV",
     "newsSearch": "News",
-    "klineStructure": "Structure"
+    "klineStructure": "Structure",
+    "derivativesHistory": "Derivatives history",
+    "whalePositions": "Whale positions"
   },
   "args": {
     "long": "Long",

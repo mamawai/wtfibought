@@ -152,7 +152,7 @@ tool:
     What you get is the computed path plus focus_bars — the last N candles and the ones
     around each key point; `klines` is the tool that hands you every raw bar instead.
 
-  # ---- Derivatives statistics series (on the chat main agent): how the market_snapshot quantities moved, Binance only ----
+  # ---- Derivatives statistics series (shared by the chat main agent and trader wake-ups): how the market_snapshot quantities moved, Binance only ----
   derivatives_history: |-
     Time series of Binance USDT-M perpetual derivatives statistics for a crypto symbol: the last 30
     points at the given period (1h = the last 30 hours, 4h = 5 days, 1d = 30 days; Binance keeps
@@ -183,7 +183,7 @@ tool:
     numeric: past time and no actual means not published yet; neither forecast nor previous means
     a speech or meeting.
 
-  # ---- Hyperliquid whale positions (on the chat main agent): the Coin page's latest snapshot, buckets trimmed to the largest few ----
+  # ---- Hyperliquid whale positions (shared by the chat main agent and trader wake-ups): the Coin page's latest snapshot, buckets trimmed to the largest few ----
   whale_positions: |-
     Hyperliquid whale positions for a crypto symbol (BTC / ETH / SOL / XRP / DOGE only): the large
     leveraged perp positions of a daily-qualified address pool (accounts worth >= $1M or holding a

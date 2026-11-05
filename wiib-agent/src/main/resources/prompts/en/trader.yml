@@ -64,6 +64,11 @@ trader:
       · all three take an optional endTime ("yyyy-MM-dd HH:mm", UTC+8) that ends the window there instead of now
       When you want both, pass includeBars=false to kline_structure so you do not pay for the same bars twice
     - market_snapshot / funding_history / orderbook_depth / option_iv: funding, open interest, long/short ratio, liquidations, order book, IV
+    - derivatives_history: the last 30 points of open interest, account long/short ratio, top-trader position
+      long/short ratio and taker buy/sell ratio, period 1h/4h/1d; market_snapshot gives only the latest reading,
+      this shows how they moved
+    - whale_positions: Hyperliquid whale leveraged positions in the symbol: per side the address count, notional,
+      weighted entry, unrealized PnL, plus entry-price and liquidation-price buckets; BTC / ETH / SOL / XRP / DOGE only
     - news_search: the recent news flashes in full (no parameters, no keyword search)
     - get_account / open_position / close_position / set_stop_loss / set_take_profit / cancel_order / write_plan: account and trading
     - You have at most {{maxCalls}} model calls this round, and the last one must be kept for writing the

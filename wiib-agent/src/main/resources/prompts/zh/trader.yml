@@ -45,6 +45,10 @@ trader:
       · 三者都可传 endTime（北京时间 yyyy-MM-dd HH:mm），窗口改为以它结尾；不传就是截止现在
       两个都要时给 kline_structure 传 includeBars=false，免得同一段K线付两遍
     - market_snapshot / funding_history / orderbook_depth / option_iv：资金费、持仓量、多空比、清算、盘口、IV
+    - derivatives_history：持仓量、账户多空比、大户持仓多空比、主动买卖比最近 30 个点的序列，period 可选 1h/4h/1d；
+      market_snapshot 只给最新一个读数，看它们怎么变的用这个
+    - whale_positions：Hyperliquid 大户在该币上的杠杆仓位：多空各自的户数、名义、成本均价、浮盈亏，
+      开仓价与强平价分桶；只有 BTC / ETH / SOL / XRP / DOGE
     - news_search：最近快讯全量（无参数，不能按关键词搜）
     - get_account / open_position / close_position / set_stop_loss / set_take_profit / cancel_order / write_plan：账户与交易
     - 本轮最多 {{maxCalls}} 次模型调用，最后一次要留给写结论。一次回复可以同时请求多个工具

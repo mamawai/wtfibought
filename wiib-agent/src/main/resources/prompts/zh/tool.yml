@@ -121,7 +121,7 @@ tool:
     给到你的是算好的路径加 focus_bars——最近 N 根与各关键点附近的原始 K 线；
     要每一根原始 K 线请用 `klines`。
 
-  # ---- 衍生品统计序列（chat 主 agent 挂）：market_snapshot 那几个量的走势，只有 Binance 一家 ----
+  # ---- 衍生品统计序列（chat 主 agent 与 trader 唤醒共用）：market_snapshot 那几个量的走势，只有 Binance 一家 ----
   derivatives_history: |-
     Binance U 本位永续的衍生品统计序列：按给定周期取最近 30 个点（1h 是最近 30 小时，4h 是 5 天，1d 是 30 天；
     Binance 只保留 30 天）。只有 Binance 一家，不是跨所合计。一行一个点，旧在前，time 是北京时间：
@@ -143,7 +143,7 @@ tool:
     字段：time（北京时间 UTC+8）、title、actual、forecast、previous。
     有 forecast/previous 的是数值型事件：时间已过而没有 actual 就是还没公布；两个都没有的是讲话、会议类。
 
-  # ---- Hyperliquid 大户持仓（chat 主 agent 挂）：Coin 页那份最新快照，分桶只给名义最大的几桶 ----
+  # ---- Hyperliquid 大户持仓（chat 主 agent 与 trader 唤醒共用）：Coin 页那份最新快照，分桶只给名义最大的几桶 ----
   whale_positions: |-
     Hyperliquid 大户持仓（只有 BTC / ETH / SOL / XRP / DOGE）：每天认证一次的地址池（账户净值 ≥100 万美元，
     或持有 ≥100 万美元仓位；poolSize 是池内地址数）在这个币上的大额杠杆永续仓位，每 10 分钟一轮快照

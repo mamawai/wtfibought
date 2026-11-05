@@ -12,7 +12,9 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
+import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
@@ -128,6 +130,7 @@ class TraderWakeupLoopTest {
             simTradeClient, binanceRestClient,
             new IndicatorToolkit(new KlineFetcher(binanceRestClient, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
+            mock(DerivativesToolkit.class), mock(WhaleToolkit.class),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
