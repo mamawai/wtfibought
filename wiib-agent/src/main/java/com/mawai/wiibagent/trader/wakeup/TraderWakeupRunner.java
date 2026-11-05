@@ -170,7 +170,7 @@ public class TraderWakeupRunner {
     }
 
     private void wake(AiTrader trader, long boundaryTime, long wakeTime, String kind) {
-        long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 300_000L);
+        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         long budgetSeconds = wakeBudgetSeconds(boundaryTime, intervalMs, nowMs.getAsLong());
         // 语言查一次用到底：系统提示、开场白、落库的 error 文案必须是同一门，混着来模型立刻跟着混
         AgentLang lang = userLangResolver.of(trader.getUserId());
@@ -328,7 +328,8 @@ public class TraderWakeupRunner {
         List<AiTraderWatch> quiet = unreported.stream()
                 .filter(w -> !triggerWatchIds.contains(w.getId()) && !hitsNow.contains(w)).toList();
         // 观察包：自己的状态事实，进开场白。上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 最近轨迹 + 论点战绩
-        String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang, hitsNow, quiet);
+        String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang,
+                hitsNow, quiet, !triggerWatchIds.isEmpty());
         // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报/事件轮在 K 线中间，主人留的话多半是按收盘说的
         String ownerNote = triggers != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
 
@@ -346,7 +347,7 @@ public class TraderWakeupRunner {
                 .serialTools(TradeTools.SERIAL_TOOLS).build();
 
         // 上一边界之后公布的算"刚公布"：例行轮就是上次唤醒以来；警报/手动的 boundaryTime 是触发时刻，对齐后同一个意思
-        long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 300_000L);
+        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         long since = boundaryTime - Math.floorMod(boundaryTime, intervalMs) - intervalMs;
         String calendar = econCalendar.assemble(nowMs.getAsLong(), since, lang);
         String instruction = triggers == null
@@ -402,16 +403,18 @@ public class TraderWakeupRunner {
             decision.setPromptTokens(usage.promptTokens());
             decision.setCompletionTokens(usage.completionTokens());
             decision.setTotalTokens(usage.totalTokens());
+            // 开场白里念给它的盯盘命中（触发源里的、这根收盘的、补报的）：模型读到过一次就算告诉过了，超时作废的轮也算
+            if (usage.modelCalls() > 0) {
+                List<Long> told = new ArrayList<>(triggerWatchIds);
+                hitsNow.forEach(w -> told.add(w.getId()));
+                quiet.forEach(w -> told.add(w.getId()));
+                watchStore.markWoken(told, decision.getWakeTime());
+            }
         }
         if (outcome.modelCalls() >= MAX_MODEL_CALLS) {
             // 保险丝收束不算失败（已有动作真实生效），但必须留痕——否则时间线上像正常决策
             decision.setError(prompts.get(lang, "trader.error.callLimit", Map.of("limit", MAX_MODEL_CALLS)));
         }
-        // 本轮念给它的盯盘命中（触发源里的、这根收盘的、补报的）都算告诉过了，别的轮不再重复
-        List<Long> told = new ArrayList<>(triggerWatchIds);
-        hitsNow.forEach(w -> told.add(w.getId()));
-        quiet.forEach(w -> told.add(w.getId()));
-        watchStore.markWoken(told, decision.getWakeTime());
         return outcome.reasoning();
     }
 
@@ -484,7 +487,7 @@ public class TraderWakeupRunner {
      */
     String routineInstruction(AiTrader trader, long wakeTime, String observation, String snapshot,
                               String calendar, AgentLang lang, String ownerNote) {
-        long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 300_000L);
+        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         // 手动唤醒的 wakeTime 是按下按钮那一刻，"已收盘的那根"和休眠提示要按对齐边界说；例行轮本来就对齐
         long boundaryTime = wakeTime - Math.floorMod(wakeTime, intervalMs);
         return prompts.get(lang, "trader.wake.routineHeader", Map.of(
@@ -600,7 +603,7 @@ public class TraderWakeupRunner {
      * 下次例行要看时段：下一边界落在时段外就是更晚的那个（时段末尾被叫醒，下次醒可能是第二天）。
      */
     private String lastWakeLine(AiTrader trader, long triggeredAt, Long lastWakeTime, AgentLang lang) {
-        long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 3_600_000L);
+        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         long next = triggeredAt - Math.floorMod(triggeredAt, intervalMs) + intervalMs;
         WakeWindow window = WakeWindow.of(trader);
         if (window != null) {

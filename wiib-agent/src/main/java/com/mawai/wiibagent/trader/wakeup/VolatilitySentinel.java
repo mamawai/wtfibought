@@ -132,8 +132,15 @@ public class VolatilitySentinel implements MessageListener {
         if (amp.compareTo(base) < 0) {
             return;
         }
-        // 穿越的那一刻查一次库定下名单，之后振幅碰到谁的阈值就报谁
-        Incident incident = incidents.computeIfAbsent(symbol, this::candidates);
+        // 穿越的那一刻查一次库定下名单，之后振幅碰到谁的阈值就报谁。查库放在 map 外面做，不占着 CHM 的桶锁
+        Incident incident = incidents.get(symbol);
+        if (incident == null) {
+            Incident fresh = candidates(symbol);
+            incident = incidents.putIfAbsent(symbol, fresh);
+            if (incident == null) {
+                incident = fresh;
+            }
+        }
         for (AiTrader t : incident.due(amp)) {
             if (engaged(t, symbol)) {
                 scheduler.tryTriggerWake(t.getId(), new AlertTrigger(symbol, amp, price, window.direction(), now));

@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 不做兜底补漏：WS/事件断流丢的K线就丢了——陈旧信号唤醒没有意义（迟到事件由唤醒预算兜底：
  * 距下一边界不足 30s 直接放弃，见 TraderWakeupRunner）。
  * 唤醒时段（ai_trader.wake_window，见 {@link WakeWindow}）只在这里过滤：例行/警报/持仓事件时段外静默跳过（不写 SKIPPED，
- * 5m 档一天会写 150 行"休眠中"），手动唤醒不拦，日线交接的复盘不看它。
+ * 15m 档一天会写 96 行"休眠中"），手动唤醒不拦，日线交接的复盘不看它。
  * 边界撞上 High 级数据公布时刻，例行触发先过 {@link EconCalendarGate}（最多等 30s 拿实际值）再发。
  * <p>
  * 日线边界走两阶段交接（见 {@link #startDailyHandover}）：先交易、再全体复盘。
@@ -46,8 +46,10 @@ public class TraderScheduler {
     /** interval → 毫秒；唤醒预算、建 trader 校验、提示词都共用同一份。1d 只留数学（日线交接边界用），不再是唤醒档位 */
     public static final Map<String, Long> INTERVAL_MS = Map.of(
             "5m", 300_000L, "15m", 900_000L, "1h", 3_600_000L, "4h", 14_400_000L, "1d", 86_400_000L);
-    /** 例行唤醒只遍历四档（1d 档位已下线，存量 1d trader 自然停摆） */
-    static final Set<String> WAKE_INTERVALS = Set.of("5m", "15m", "1h", "4h");
+    /** 心跳档位只有三档：5m、1d 已下线，不在这里的档位例行 / 手动 / 非例行都不叫（存量 5m 由 init.sql 迁 15m） */
+    public static final Set<String> WAKE_INTERVALS = Set.of("15m", "1h", "4h");
+    /** 新建 trader 和没 trader 时的预览都按这个档位 */
+    public static final String DEFAULT_INTERVAL = "1h";
 
     private final AiTraderMapper traderMapper;
     private final TraderWakeupRunner runner;
@@ -87,19 +89,22 @@ public class TraderScheduler {
         }
         if (handoverActive) {
             // 窗口内的K线事件直接丢弃不补跑：与"不做兜底补漏"同一条哲学——陈旧信号没有意义。
-            // 代价是 5m 档最多跳过 4 根K线（窗口上界＝唤醒600s＋复盘600s），每天只有一次，可接受
+            // 代价是 15m 档最多跳过 1 根K线（窗口上界＝唤醒600s＋复盘600s），每天只有一次，可接受
             log.info("[TraderSched] 日线交接中，丢弃K线事件 {} closeTime={}", event.symbol(), event.closeTime());
             return;
         }
+        // 收盘类盯盘命中先落库，再发例行：同一刻醒的例行轮开场白里就带着它们；排进队列的那份等例行轮念过后被过滤掉。
+        // 每个币的收盘事件都要评估，不只日线交接抢到启动权的那个
+        List<WatchTrigger> hits = closeHits(event);
         long dayBoundary = boundaryOf(event.closeTime(), "1d");
         if (dayBoundary > 0) {
-            startDailyHandover(dayBoundary, event);
+            // 只进队列不领：阶段0的例行轮马上要来，命中排在它后面；交接期间领不到的由下一轮开场白补报
+            hits.forEach(t -> pendingTriggers.computeIfAbsent(t.watch().getTraderId(), _ -> new ConcurrentLinkedQueue<>()).add(t));
+            startDailyHandover(dayBoundary);
             return;
         }
         // 撞上数据公布时刻先等实际值再发本轮；没有待公布的 future 已完成，thenRun 就地同步执行，与不等一样。
         calendarGate.released(event.closeTime() + 1).thenRun(() -> {
-            // 收盘类盯盘命中先落库，再发例行：同一刻醒的例行轮开场白里就带着它们；排进队列的那份等例行轮结束后被过滤掉
-            List<WatchTrigger> hits = closeHits(event);
             for (String ic : WAKE_INTERVALS) {
                 long boundary = boundaryOf(event.closeTime(), ic);
                 if (boundary > 0) {
@@ -118,7 +123,7 @@ public class TraderScheduler {
      * 阶段0 全体例行唤醒发出 → 【停工窗口开】→ 等交易跑完 → 阶段1 全体复盘并行 → 等全部复盘落库 → 【停工窗口关】。
      * 窗口保证复盘读的是定格数据。各阶段单人超时都有硬顶（唤醒600s/复盘600s），join 不会永久卡住。
      */
-    private void startDailyHandover(long boundary, KlineClosedEvent event) {
+    private void startDailyHandover(long boundary) {
         // 原子抢占：日线边界的多 symbol 事件里只有一个赢家启动交接
         long prev = lastHandoverBoundary.get();
         if (prev >= boundary || !lastHandoverBoundary.compareAndSet(prev, boundary)) {
@@ -127,15 +132,12 @@ public class TraderScheduler {
         Thread.startVirtualThread(() -> {
             // 阶段0 同样过闸：日线边界撞上数据公布也先等实际值
             calendarGate.released(boundary).join();
-            List<WatchTrigger> hits = closeHits(event);
-            // 阶段0：日线边界同时是四档的边界，全体例行唤醒照常发出
+            // 阶段0：日线边界同时是三档的边界，全体例行唤醒照常发出
             List<Thread> wakes = new ArrayList<>();
             for (String ic : WAKE_INTERVALS) {
                 wakes.addAll(fireInterval(ic, boundary));
             }
-            // 没并进阶段0的命中进队列：交接期间领不到，结束后由下一轮开场白补报
-            hits.forEach(t -> tryTriggerWake(t.watch().getTraderId(), t));
-            // 发完就关门：在途的照跑，新来的K线/警报/手动全拒——不然 5m 档在阶段0期间又醒一次占住 inFlight，复盘就被跳过
+            // 发完就关门：在途的照跑，新来的K线/警报/手动全拒——不然 15m 档在阶段0期间又醒一次占住 inFlight，复盘就被跳过
             handoverActive = true;
             log.info("[TraderSched] 日线交接开始 boundary={}，停工窗口开", boundary);
             try {
@@ -304,8 +306,9 @@ public class TraderScheduler {
                 return;
             }
             AiTrader trader = traderMapper.selectById(traderId);
-            if (trader == null || !AiTrader.STATUS_RUNNING.equals(trader.getStatus())) {
-                log.info("[TraderSched] trader 已不在运行，丢弃触发 traderId={} {}", traderId, batch);
+            if (trader == null || !AiTrader.STATUS_RUNNING.equals(trader.getStatus())
+                    || !WAKE_INTERVALS.contains(trader.getIntervalCode())) {
+                log.info("[TraderSched] trader 已不在运行或档位已下线，丢弃触发 traderId={} {}", traderId, batch);
                 return;
             }
             WakeWindow window = WakeWindow.of(trader);
@@ -343,10 +346,10 @@ public class TraderScheduler {
         if (handoverActive) {
             return messages.get(lang, "trader.wake.handover");
         }
-        Long intervalMs = INTERVAL_MS.get(trader.getIntervalCode());
-        if (intervalMs == null) {
+        if (!WAKE_INTERVALS.contains(trader.getIntervalCode())) {
             return messages.get(lang, "trader.wake.intervalRetired");
         }
+        long intervalMs = INTERVAL_MS.get(trader.getIntervalCode());
         long now = nowMs.getAsLong();
         long boundary = now - Math.floorMod(now, intervalMs);
         // 距下一根K线太近就别烧这一次：例行唤醒马上到，内容几乎一样
@@ -391,10 +394,10 @@ public class TraderScheduler {
      * 有唤醒时段的跳到时段内的下一根——面板"下次例行"显示的必须是真会醒的那一刻
      */
     public Long nextRoutineWakeAt(AiTrader trader) {
-        Long intervalMs = INTERVAL_MS.get(trader.getIntervalCode());
-        if (intervalMs == null) {
+        if (!WAKE_INTERVALS.contains(trader.getIntervalCode())) {
             return null;
         }
+        long intervalMs = INTERVAL_MS.get(trader.getIntervalCode());
         long now = nowMs.getAsLong();
         long next = now - Math.floorMod(now, intervalMs) + intervalMs;
         WakeWindow window = WakeWindow.of(trader);

@@ -16,7 +16,8 @@ const TOUR_SEEN_KEY = 'wiib-trader-tour-seen';
 const SYMBOL_OPTIONS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'XRPUSDT'];
 /** 币种上限：一次唤醒的工具预算与注意力按币摊——与后端 TraderService.MAX_SYMBOLS 同一个数 */
 const MAX_SYMBOLS = 3;
-const INTERVAL_OPTIONS = ['5m', '15m', '1h', '4h'];
+/** 心跳档位，与后端 TraderScheduler.WAKE_INTERVALS 同一份 */
+const INTERVAL_OPTIONS = ['15m', '1h', '4h'];
 /** 波动哨兵每币基准阈值%（平台下限，只能经系数调高）——与后端 VolatilitySentinel 同一份数字 */
 const ALERT_BASE: Record<string, number> = { BTCUSDT: 0.6, ETHUSDT: 0.8, XRPUSDT: 0.8, SOLUSDT: 0.9, DOGEUSDT: 1.0 };
 
@@ -31,9 +32,9 @@ const DEFAULT_SPEC: TraderSpec = {
   allowMultiPosition: true, allowHedge: false,
 };
 
-// 默认 15m 起步：5m 高频唤醒对"LLM+双边taker手续费"是绞肉机，保留仅为短期测试观察
+// 默认心跳 1h
 const EMPTY_FORM: TraderUpsertRequest = {
-  name: '', symbols: 'BTCUSDT', intervalCode: '15m', customPrompt: '',
+  name: '', symbols: 'BTCUSDT', intervalCode: '1h', customPrompt: '',
   llmEndpointId: null,
   spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, reviewEnabled: true,
   learnedRestrictionHold: false,
@@ -356,11 +357,9 @@ export function MyTrader() {
                 </button>
               ))}
             </div>
-            {form.intervalCode === '5m' && (
-              <p className="text-[10px] text-amber-600 leading-relaxed">
-                {t('cfg.interval5mWarn')}
-              </p>
-            )}
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              {t(form.intervalCode === '15m' ? 'cfg.interval15mHint' : 'cfg.intervalHint')}
+            </p>
           </label>
         </div>
 

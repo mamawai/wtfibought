@@ -714,7 +714,9 @@ CREATE TABLE IF NOT EXISTS ai_trader (
 COMMENT ON TABLE ai_trader IS 'AI Trader：用户BYOK自主交易代理（每用户1个，独立sim子账户，公开竞技场）';
 COMMENT ON COLUMN ai_trader.status IS 'PAUSED/RUNNING/LIQUIDATED';
 COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分隔（须在binance.symbols范围内）';
-COMMENT ON COLUMN ai_trader.interval_code IS '唤醒K线级别 5m/15m/1h/4h（5m烧token快，适合短期测试）';
+COMMENT ON COLUMN ai_trader.interval_code IS '心跳周期 15m/1h/4h：每根该级别K线收盘例行唤醒一次定期复查；两次心跳之间由止损止盈、盯盘条件命中、持仓事件、波动警报叫醒。5m已下线（存量迁15m）';
+-- 5m 档下线：存量迁到 15m（幂等）
+UPDATE ai_trader SET interval_code = '15m' WHERE interval_code = '5m';
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：方法/风格/纪律的唯一来源（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';

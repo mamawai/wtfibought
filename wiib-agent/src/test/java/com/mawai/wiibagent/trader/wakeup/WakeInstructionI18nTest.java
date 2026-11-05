@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -43,6 +44,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 唤醒开场白的双语契约：开场白的收尾标记与系统提示词必须同源，否则模型同时收到两条冲突的
@@ -206,7 +208,7 @@ class WakeInstructionI18nTest {
     @Test
     void 观察包中英文案无中文() {
         String en = wakeObservation.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
-                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of());
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), false);
         PromptI18nAssertions.assertNoCjk("英文观察包", en);
         PromptI18nAssertions.assertNoCjk("英文例行开场白（带观察包）",
                 runner.routineInstruction(trader(), BOUNDARY, en, "", null, AgentLang.EN, ""));
@@ -215,9 +217,34 @@ class WakeInstructionI18nTest {
         assertThat(en).contains("[Account]").contains("[Last round's conclusion]");
 
         String zh = wakeObservation.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
-                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of());
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), false);
         assertThat(zh).contains("【当前账户】").contains("\"equity\":10000.00")
                 .contains("【上一轮结论】本局还没有上一轮结论");
+    }
+
+    /** 布着盯盘条件、本轮没有任何命中要报：开场白说一句"无一命中"；本轮是盯盘命中叫醒的就不说 */
+    @Test
+    void 布着盯盘条件没命中时开场白说一句() {
+        TraderWatchStore store = mock(TraderWatchStore.class);
+        AiTraderWatch w = new AiTraderWatch();
+        w.setSymbol("BTCUSDT");
+        w.setKind("TOUCH_ABOVE");
+        w.setLevel(new BigDecimal("65000"));
+        w.setNote("breakout, chase long"); // 备注是模型自己写的，英文 trader 写英文，不算平台文案
+        w.setCreatedWakeTime(BOUNDARY - 3_600_000L);
+        when(store.armed(7L, 1)).thenReturn(List.of(w));
+        WakeObservation obs = new WakeObservation(mock(AiTraderDecisionMapper.class), mock(DecisionText.class),
+                mock(PlayStatsAssembler.class), prompts, mock(PositionPath.class), store);
+
+        String quiet = obs.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), false);
+        String woken = obs.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), true);
+
+        assertThat(quiet).contains("【盯盘条件】你布的 1 条自上次唤醒以来无一命中");
+        assertThat(woken).doesNotContain("无一命中");
+        PromptI18nAssertions.assertNoCjk("英文观察包（无一命中那句）", obs.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), false));
     }
 
     /** 观察包紧跟头部事实：例行在快照之前，警报在"上次唤醒"之后、"尚未收盘"提醒之前 */

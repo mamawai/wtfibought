@@ -91,11 +91,12 @@ public class WakeObservation {
      *
      * @param hitsNow      这根收盘刚命中的收盘类盯盘条件（只有例行轮有），单起一块念
      * @param firedQuietly 命中了还没哪轮告诉过它的盯盘条件，进"自上次唤醒以来"补报
+     * @param wokenByWatch 本轮是盯盘命中叫醒的（命中写在开场白首行）
      */
     String assemble(AiTrader trader, BigDecimal equity, List<FuturesPositionDTO> positions,
                     List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Reconcile reconcile,
                     List<RecentWake> recent, long boundaryTime, AgentLang lang,
-                    List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly) {
+                    List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly, boolean wokenByWatch) {
         StringBuilder sb = new StringBuilder();
         if (!hitsNow.isEmpty()) {
             sb.append('\n').append(prompts.get(lang, "trader.wake.watchHitsHeader")).append('\n');
@@ -106,6 +107,10 @@ public class WakeObservation {
             }
         }
         sb.append(events(reconcile.events(), firedQuietly, lang));
+        List<AiTraderWatch> armed = watchStore.armed(trader.getId(), trader.getRoundNo());
+        if (!armed.isEmpty() && hitsNow.isEmpty() && firedQuietly.isEmpty() && !wokenByWatch) {
+            sb.append('\n').append(prompts.get(lang, "trader.wake.watchNoneHit", Map.of("n", armed.size()))).append('\n');
+        }
         Map<Long, CaseFileBuilder.MarketWindow> paths = new HashMap<>();
         if (!positions.isEmpty()) {
             Long lastOk = lastOkWakeTime(trader, boundaryTime);
@@ -118,7 +123,7 @@ public class WakeObservation {
         }
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
                 .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(),
-                        watchStore.armed(trader.getId(), trader.getRoundNo()), boundaryTime, paths)).append('\n');
+                        armed, boundaryTime, paths)).append('\n');
         sb.append('\n').append(lastConclusion(recent, lang));
         String trajectory = trajectory(recent, lang);
         if (!trajectory.isEmpty()) {

@@ -89,7 +89,7 @@ class TraderServiceTest {
                                                Integer levMin, Integer levMax,
                                                Boolean multi, Boolean hedge,
                                                Boolean alertEnabled, java.math.BigDecimal alertMult) {
-        return new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", customPrompt, null,
+        return new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", customPrompt, null,
                 levMin, levMax, null, null, multi, hedge, alertEnabled, alertMult, null, null, null);
     }
 
@@ -100,9 +100,9 @@ class TraderServiceTest {
         when(traderMapper.selectOne(any())).thenReturn(null);
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
-        String four = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT", "5m",
+        String four = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT", "15m",
                 null, null, null, null, null, null, null, null, null, null, null, null, null));
-        String three = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT", "5m",
+        String three = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT", "15m",
                 null, null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(four).isEqualTo(new MessageCatalog().get("trader.config.tooManySymbols", Map.of("max", 3)));
@@ -177,7 +177,7 @@ class TraderServiceTest {
         when(modelFactory.testConnection(chosen)).thenReturn(null);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 5L,
+        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
                 null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();
@@ -192,7 +192,7 @@ class TraderServiceTest {
         when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
 
-        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, null,
+        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, null,
                 null, null, null, null, null, null, null, null, null, null, "21:03-08:30"));
 
         assertThat(err).contains("0/5");
@@ -222,7 +222,7 @@ class TraderServiceTest {
         when(modelFactory.testConnection(chosen)).thenReturn(null);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 5L,
+        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
                 null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 "));
 
         assertThat(err).isNull();
@@ -430,7 +430,7 @@ class TraderServiceTest {
         when(endpointService.get(1L, 6L)).thenReturn(next);
         when(modelFactory.testConnection(next)).thenReturn(null);
 
-        String err = service.updateConfig(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 6L,
+        String err = service.updateConfig(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 6L,
                 null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();

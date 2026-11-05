@@ -32,7 +32,7 @@ trader:
   # 创建 / 改配置的入口校验
   config:
     nameRequired: 名字必填且不超过32字符
-    badInterval: K线级别仅支持 5m/15m/1h/4h
+    badInterval: 心跳周期仅支持 15m/1h/4h
     windowNeverWakes: 唤醒时段内没有任何一根 {{interval}} K线收盘，等于永远不会醒；请放宽时段或换档位
     symbolRequired: 至少选择一个交易币种
     tooManySymbols: 交易币种最多 {{max}} 个（一次唤醒的工具预算与注意力都按币摊）

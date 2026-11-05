@@ -26,6 +26,7 @@ import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
+import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -138,7 +139,7 @@ public class TraderController {
     @PostMapping("/prompt-template")
     @Operation(summary = "平台系统提示词预览（与唤醒组装同一份文本）")
     public Result<String> promptTemplate(@CurrentUserId long userId, @RequestBody PromptPreviewRequest req) {
-        String interval = req.intervalCode() == null || req.intervalCode().isBlank() ? "15m" : req.intervalCode();
+        String interval = req.intervalCode() == null || req.intervalCode().isBlank() ? TraderScheduler.DEFAULT_INTERVAL : req.intervalCode();
         String symbols = req.symbols() == null || req.symbols().isBlank() ? "BTCUSDT" : req.symbols();
         TraderRiskConfig cfg = req.spec() == null
                 ? TraderRiskConfig.of(new AiTrader()) : req.spec().toConfig();

@@ -360,6 +360,34 @@ class TraderSchedulerTest {
         verify(runner, never()).wake(any(), anyLong());
     }
 
+    /** 日线边界：每个币的收盘事件都要评估收盘类命中，不只抢到交接启动权的那个 */
+    @Test
+    void dailyBoundaryEvaluatesCloseHitsForEverySymbol() throws Exception {
+        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
+        TraderScheduler s = sched();
+
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(new KlineClosedEvent(this, "ETHUSDT", "5m", DAY_BOUNDARY - 1));
+
+        verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(DAY_BOUNDARY - 1), any());
+        verify(watchSentinel).closeHits(eq("ETHUSDT"), eq(DAY_BOUNDARY - 1), any());
+        awaitWindowClosed(s);
+    }
+
+    /** 档位已下线的 trader（没迁的存量 5m）非例行也不叫 */
+    @Test
+    void retiredIntervalTraderIsNotWokenByTriggers() {
+        AiTrader retired = runningTrader();
+        retired.setIntervalCode("5m");
+        when(traderMapper.selectById(7L)).thenReturn(retired);
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 600_000L;
+
+        s.tryTriggerWake(7L, trig());
+
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
+    }
+
     /** 领触发时重新查库：已不是 RUNNING（爆仓/暂停）就不叫了 */
     @Test
     void triggerDroppedWhenTraderNotRunningAnymore() {
@@ -484,13 +512,13 @@ class TraderSchedulerTest {
     }
 
     /**
-     * 停工窗口在阶段0发出后就开：交易还在跑时，同币的下一根 5m 边界事件被整个丢弃——
+     * 停工窗口在阶段0发出后就开：交易还在跑时，同币的下一根 15m 边界事件被整个丢弃——
      * 既不再唤醒一次（占住 inFlight 让复盘被跳过），也不记 SKIPPED（那是互斥跳过的痕迹，说明窗口没开）
      */
     @Test
     void windowOpensWhileTradingStillRunning() throws Exception {
         AiTrader t = trader1h();
-        t.setIntervalCode("5m");
+        t.setIntervalCode("15m");
         when(traderMapper.selectList(any())).thenReturn(List.of(t));
         TraderScheduler s = sched();
         CountDownLatch tradeHold = new CountDownLatch(1);
@@ -504,7 +532,7 @@ class TraderSchedulerTest {
         verify(runner, timeout(2_000)).wake(any(), anyLong());
         awaitWindowOpen(s);
         assertThat(tradeHold.getCount()).isEqualTo(1);   // 交易还卡着，窗口已经开了
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY + 300_000L - 1));
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY + 900_000L - 1));
         verify(runner, after(300).times(1)).wake(any(), anyLong());
         verify(runner, never()).recordSkipped(any(), anyLong());
         tradeHold.countDown();

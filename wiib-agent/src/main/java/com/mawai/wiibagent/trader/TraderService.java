@@ -56,8 +56,6 @@ public class TraderService {
     public static final int MAX_SYMBOLS = 3;
     /** 主人交易指令字数上限，按 String.length() 算（前端指令框同一个数） */
     public static final int MAX_CUSTOM_PROMPT = 4000;
-    /** 唤醒档位四档（1d 已下线：一天一醒的观赏性与反馈密度都撑不起一个档位） */
-    private static final Set<String> INTERVALS = Set.of("5m", "15m", "1h", "4h");
 
     private final AiTraderMapper traderMapper;
     private final AiTraderDecisionMapper decisionMapper;
@@ -469,7 +467,7 @@ public class TraderService {
         if (req.name() == null || req.name().isBlank() || req.name().length() > 32) {
             return messages.get("trader.config.nameRequired");
         }
-        if (req.intervalCode() == null || !INTERVALS.contains(req.intervalCode())) {
+        if (req.intervalCode() == null || !TraderScheduler.WAKE_INTERVALS.contains(req.intervalCode())) {
             return messages.get("trader.config.badInterval");
         }
         WakeWindow window;

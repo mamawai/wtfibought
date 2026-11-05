@@ -80,11 +80,12 @@ class PromptGenFactsTest {
         }
     }
 
+    /** 没 trader 时按默认心跳 1h 算：噪音止损距离 = 15m 的 0.3% × √4 = 0.6% */
     @Test
     void writerPromptCarriesComputedNumbers() {
         String writer = facts.prompts(null, false, AgentLang.ZH, AgentLang.EN).writer();
 
         assertThat(writer).contains(PromptGenFacts.NOTES_MARK).contains("英文").contains("4000")
-                .contains("0.25% ~ 6.67%").contains("0.3%");
+                .contains("0.25% ~ 6.67%").contains("0.6%");
     }
 }

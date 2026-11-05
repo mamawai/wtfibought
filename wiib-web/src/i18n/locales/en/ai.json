@@ -77,7 +77,7 @@
     "step1Title": "1. Add a model endpoint",
     "step1": "Put your API key in Settings. Claude, GPT, Gemini all work. Only the last four digits are stored for display; every wake-up calls your endpoint directly and no copy is kept here.",
     "step2Title": "2. Pick symbols and cadence",
-    "step2": "One to three of BTC, ETH, SOL, waking anywhere from 5m to 4h. You can limit the wake window too, say only between 08:00 and 23:00.",
+    "step2": "One to three of BTC, ETH, SOL, with a heartbeat anywhere from 15m to 4h. You can limit the wake window too, say only between 08:00 and 23:00.",
     "step3Title": "3. Start it and enter the arena",
     "step3": "Each gets a 10,000U virtual futures account. Wakes on every candle, reviews once a day. Blow up and the next round funds it again."
   },
@@ -249,12 +249,12 @@
       "body": "This name is shown publicly on the arena leaderboard — it is what everyone else sees. Up to 32 characters."
     },
     "interval": {
-      "title": "How often it wakes up",
-      "body": "On every close of a candle at this interval the AI wakes up once, reads the market and decides.\nBetween wake-ups it is essentially asleep (stop-loss and take-profit orders still fire automatically); only extreme moves get it up early via the sentinel.\n\nStart at 15m. 5m means waking it 288 times a day — that burns your API key, and two-sided fees grind down your capital."
+      "title": "How often it checks in",
+      "body": "On every close of a candle at this interval the AI wakes up for a routine check-in: read the market, reset its levels, verify its plans.\nBetween heartbeats it is not staring at the screen: stop-loss and take-profit orders fire on their own; the watch conditions it set itself with set_watch (a price touched, a candle close, a moment in time) wake it when hit; so do a stop being taken out or a limit order filling.\n\n1h is the default. 15m means about 96 heartbeats a day, each burning your key."
     },
     "wakeWindow": {
       "title": "When it wakes up",
-      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window both scheduled wake-ups and volatility alerts stop; positions rely on stop-loss and take-profit orders. Manual wake-ups are never blocked.\nDaily review ignores the window and still runs at 08:00."
+      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window scheduled wake-ups, volatility alerts, watch hits and position events all stop; positions rely on stop-loss and take-profit orders. Manual wake-ups are never blocked.\nDaily review ignores the window and still runs at 08:00."
     },
     "symbols": {
       "title": "Which coins it may trade",
@@ -290,10 +290,11 @@
     "createTitle": "Create (account funded with 10000U once the connectivity check passes)",
     "name": "Name",
     "namePh": "Name your AI",
-    "interval": "Wake-up interval",
-    "interval5mWarn": "5m is for test runs; 15m or higher for real ones — frequent wake-ups grind on two-sided fees",
+    "interval": "Heartbeat interval",
+    "intervalHint": "A routine check-in at every close of this interval; in between, stop-loss / take-profit, its own watch conditions and position events wake it",
+    "interval15mHint": "15m means about 96 heartbeats a day, each burning your key; with watch conditions a 1h heartbeat is enough, whatever matters wakes it",
     "wakeWindow": "Wake-up window (Beijing time)",
-    "wakeWindowHint": "Outside the window: no scheduled wake-ups, no alerts. Manual is never blocked; review still runs at 08:00.",
+    "wakeWindowHint": "Outside the window: no scheduled wake-ups, alerts, watch hits or position events. Manual is never blocked; review still runs at 08:00.",
     "windowOn": "Wake up inside the window only",
     "windowOff": "Wake up around the clock",
     "windowHint": "Both ends inclusive, may cross midnight (start later than end rolls to the next day); minutes must be multiples of 0/5",

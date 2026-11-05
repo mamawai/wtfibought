@@ -89,10 +89,10 @@ class TraderPromptAssemblerTest {
         t.setId(1L);
         t.setWakeWindow("21:00-08:30");
         assertThat(assembler.assemble(t, AgentLang.ZH))
-                .contains("节奏：每天 21:00-08:30（北京时间，两端含）内每根 1h K线收盘唤醒你一次");
+                .contains("心跳：每天 21:00-08:30（北京时间，两端含）内每根 1h K线收盘例行唤醒你一次");
 
         t.setWakeWindow(null);
-        assertThat(assembler.assemble(t, AgentLang.ZH)).contains("节奏：每根 1h K线收盘唤醒你一次");
+        assertThat(assembler.assemble(t, AgentLang.ZH)).contains("心跳：每根 1h K线收盘例行唤醒你一次");
     }
 
     /** 单轮留言消费完再取一次：不该复活，也不该再写一次库 */
