@@ -6,7 +6,6 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -58,7 +57,7 @@ class TradeRecordServiceTest {
         return LocalDateTime.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault());
     }
 
-    /** 一笔 LONG 已平：入场 100 → 出场 closed，创建/更新时刻分别是开/平 */
+    /** 一笔 LONG 已平：入场 100 → 出场 closed，默认主动平仓，创建/更新时刻分别是开/平 */
     private static FuturesPositionDTO closedLong(long id, String closed) {
         FuturesPositionDTO p = new FuturesPositionDTO();
         p.setId(id);
@@ -69,6 +68,7 @@ class TradeRecordServiceTest {
         p.setClosedPrice(new BigDecimal(closed));
         p.setClosedPnl(new BigDecimal(closed).subtract(new BigDecimal("100")));
         p.setStatus("CLOSED");
+        p.setClosedBy("FILLED");
         p.setCreatedAt(at(OPEN_MS));
         p.setUpdatedAt(at(CLOSE_MS));
         return p;
@@ -100,9 +100,7 @@ class TradeRecordServiceTest {
     @Test
     void pairsPlanAndOpenDecisionAndSkipsCloseDecisionWhenStoppedOut() {
         FuturesPositionDTO pos = closedLong(1L, "94");
-        FuturesStopLoss sl = new FuturesStopLoss();
-        sl.setPrice(new BigDecimal("95"));
-        pos.setStopLosses(List.of(sl));
+        pos.setClosedBy("STOP_LOSS");
         when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(pos));
         when(planMapper.selectList(any())).thenReturn(List.of(plan(OPEN_MS)));
         // 第一次 selectList 是开仓决策查询，第二次是平仓决策查询

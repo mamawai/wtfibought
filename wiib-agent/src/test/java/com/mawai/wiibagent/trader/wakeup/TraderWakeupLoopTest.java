@@ -779,9 +779,7 @@ class TraderWakeupLoopTest {
         closed.setSide("LONG");
         closed.setClosedPrice(new BigDecimal("63800"));
         closed.setClosedPnl(new BigDecimal("-120.5"));
-        com.mawai.wiibcommon.entity.FuturesStopLoss sl = new com.mawai.wiibcommon.entity.FuturesStopLoss();
-        sl.setPrice(new BigDecimal("63800"));
-        closed.setStopLosses(List.of(sl));
+        closed.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(closed));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
@@ -839,9 +837,7 @@ class TraderWakeupLoopTest {
                 java.time.Instant.ofEpochMilli(placed + 600_000L), java.time.ZoneId.systemDefault()));
         closed.setClosedPrice(new BigDecimal("77163.8"));
         closed.setClosedPnl(new BigDecimal("66.43"));
-        com.mawai.wiibcommon.entity.FuturesStopLoss sl = new com.mawai.wiibcommon.entity.FuturesStopLoss();
-        sl.setPrice(new BigDecimal("76750"));
-        closed.setStopLosses(List.of(sl));
+        closed.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(older, closed));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
@@ -878,9 +874,7 @@ class TraderWakeupLoopTest {
         closed.setSide("LONG");
         closed.setClosedPrice(new BigDecimal("63800"));
         closed.setClosedPnl(new BigDecimal("-120.5"));
-        com.mawai.wiibcommon.entity.FuturesStopLoss sl = new com.mawai.wiibcommon.entity.FuturesStopLoss();
-        sl.setPrice(new BigDecimal("63800"));
-        closed.setStopLosses(List.of(sl));
+        closed.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(closed));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);

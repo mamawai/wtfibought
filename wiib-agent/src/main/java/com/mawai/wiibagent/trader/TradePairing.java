@@ -5,7 +5,6 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 
-import java.math.BigDecimal;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -89,30 +88,24 @@ public final class TradePairing {
     public static final String MANNER_UNKNOWN = "UNKNOWN";
 
     /**
-     * 了结方式推断（返回<b>语言无关的码</b>）：强平看状态；止损/止盈用方向性对照——触发价是探测时的
-     * markPrice 会越过挂单价，不能按相等判。保护单实时监控在先，带内成交只能是主动平仓
-     * （模型自己调 close_position，没有别的入口）。全平不清保护单列表（sim 只在部分平仓时改写），closed 行上的列表
-     * 就是了结时在岗的那组。
+     * 了结方式（返回<b>语言无关的码</b>）：强平看仓位状态，其余看 sim 带回来的 closedBy——了结它的那张平仓单的状态。
+     * 止损/止盈触发后按盘口成交，成交价不一定越过触发价，不能拿平仓价去猜。
+     * 主动平仓的单子状态是 FILLED（模型自己调 close_position，没有别的入口）；没有平仓单判不出来。
      * <p>码与文案分家：竞技场按码做判断（"主动平仓才挂平仓决策"），码不随语言变。
      */
     public static String closeMannerKey(FuturesPositionDTO p) {
         if ("LIQUIDATED".equals(p.getStatus())) {
             return "liquidated";
         }
-        BigDecimal cp = p.getClosedPrice();
-        if (cp == null) {
+        String closedBy = p.getClosedBy();
+        if (closedBy == null) {
             return MANNER_UNKNOWN;
         }
-        boolean isLong = "LONG".equals(p.getSide());
-        if (p.getStopLosses() != null && p.getStopLosses().stream().anyMatch(sl ->
-                isLong ? cp.compareTo(sl.getPrice()) <= 0 : cp.compareTo(sl.getPrice()) >= 0)) {
-            return "stopLoss";
-        }
-        if (p.getTakeProfits() != null && p.getTakeProfits().stream().anyMatch(tp ->
-                isLong ? cp.compareTo(tp.getPrice()) >= 0 : cp.compareTo(tp.getPrice()) <= 0)) {
-            return "takeProfit";
-        }
-        return MANNER_MANUAL;
+        return switch (closedBy) {
+            case "STOP_LOSS" -> "stopLoss";
+            case "TAKE_PROFIT" -> "takeProfit";
+            default -> MANNER_MANUAL;
+        };
     }
 
     /** 了结方式文案：码 → 词表；UNKNOWN 没有文案，原样给出去 */

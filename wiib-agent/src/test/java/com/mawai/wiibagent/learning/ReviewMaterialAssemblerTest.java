@@ -105,6 +105,8 @@ class ReviewMaterialAssemblerTest {
         p.setSymbol("BTCUSDT");
         p.setSide(side);
         p.setStatus("CLOSED");
+        // 默认主动平仓
+        p.setClosedBy("FILLED");
         p.setEntryPrice(new BigDecimal(entry));
         p.setClosedPrice(new BigDecimal(closed));
         p.setClosedPnl(new BigDecimal(pnl));
@@ -208,6 +210,7 @@ class ReviewMaterialAssemblerTest {
         FuturesPositionDTO pos = closedPos("LONG", "100000", "95000", "-50", openMs, closeMs);
         pos.setId(42L);
         pos.setStopLosses(List.of(new FuturesStopLoss("s1", new BigDecimal("95500"), new BigDecimal("0.01"))));
+        pos.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
 
         AiTraderPlan plan = planOf("BTCUSDT", "BREAKOUT", openMs, false);
@@ -358,26 +361,30 @@ class ReviewMaterialAssemblerTest {
     // ==================== 配对与了结方式 ====================
 
     @Test
-    void closeMannerInferredDirectionally() {
+    void closeMannerFollowsClosingOrder() {
         // 强平状态直判
         FuturesPositionDTO liq = closedPos("LONG", "100000", "90000", "-500", FROM, FROM + 1);
         liq.setStatus("LIQUIDATED");
         assertThat(TradePairing.closeManner(prompts, liq, AgentLang.ZH)).isEqualTo("强平");
 
-        // 触发价是探测时的markPrice会越过挂单价：方向性对照而非相等
-        FuturesPositionDTO sl = closedPos("LONG", "100000", "95400", "-46", FROM, FROM + 1);
-        sl.setStopLosses(List.of(new FuturesStopLoss("s1", new BigDecimal("95500"), new BigDecimal("0.01"))));
-        assertThat(TradePairing.closeManner(prompts, sl, AgentLang.ZH)).isEqualTo("止损带走");
-
-        FuturesPositionDTO tp = closedPos("SHORT", "100000", "94900", "51", FROM, FROM + 1);
+        // 空头止盈 95000 触发后按盘口买回，成交在 95010、没越过止盈价：照样是止盈带走，不拿价去猜
+        FuturesPositionDTO tp = closedPos("SHORT", "100000", "95010", "49", FROM, FROM + 1);
         tp.setTakeProfits(List.of(new FuturesTakeProfit("t1", new BigDecimal("95000"), new BigDecimal("0.01"))));
+        tp.setClosedBy("TAKE_PROFIT");
         assertThat(TradePairing.closeManner(prompts, tp, AgentLang.ZH)).isEqualTo("止盈带走");
 
-        // 保护单实时监控在先，带内成交只能是主动平仓（模型自己调 close_position）
+        FuturesPositionDTO sl = closedPos("LONG", "100000", "95400", "-46", FROM, FROM + 1);
+        sl.setClosedBy("STOP_LOSS");
+        assertThat(TradePairing.closeManner(prompts, sl, AgentLang.ZH)).isEqualTo("止损带走");
+
+        // 主动平仓（模型自己调 close_position）是 FILLED
         FuturesPositionDTO manual = closedPos("LONG", "100000", "101000", "10", FROM, FROM + 1);
-        manual.setStopLosses(List.of(new FuturesStopLoss("s1", new BigDecimal("95500"), new BigDecimal("0.01"))));
-        manual.setTakeProfits(List.of(new FuturesTakeProfit("t1", new BigDecimal("110000"), new BigDecimal("0.01"))));
         assertThat(TradePairing.closeManner(prompts, manual, AgentLang.ZH)).isEqualTo("主动平仓");
+
+        // 没有平仓单：判不出来
+        FuturesPositionDTO unknown = closedPos("LONG", "100000", "101000", "10", FROM, FROM + 1);
+        unknown.setClosedBy(null);
+        assertThat(TradePairing.closeManner(prompts, unknown, AgentLang.ZH)).isEqualTo(TradePairing.MANNER_UNKNOWN);
     }
 
     /** 精确趟：position_id 说了算，时间就近想反着配也翻不了案——配对漂移的根治 */
