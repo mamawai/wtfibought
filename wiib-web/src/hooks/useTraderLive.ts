@@ -51,6 +51,8 @@ function applyFrame(trace: WakeTrace, e: Exclude<TraderLiveEvent, { type: 'run_s
   switch (e.type) {
     case 'prompt':
       return { ...trace, prompt: { system: e.system, instruction: e.instruction } };
+    case 'stage':
+      return { ...trace, stages: [...(trace.stages ?? []), { n: e.n, call: e.call, instruction: e.instruction }] };
     case 'model_start':
       return withCall(trace, e.call, c => c);
     case 'token':

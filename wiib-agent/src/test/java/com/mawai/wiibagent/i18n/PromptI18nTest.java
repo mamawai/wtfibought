@@ -266,7 +266,7 @@ class PromptI18nTest {
         assertThat(p)
                 .contains("fresh session with no memory")
                 .contains("follow \"Your owner's trading instructions\"")
-                .contains("What the opening message carries")
+                .contains("The wake-up opening comes in two parts")
                 .contains("Actions the guard rejects").contains("plans cannot be rewritten")
                 .doesNotContain("only one question").doesNotContain("four ways out")
                 .doesNotContain("tearing up").doesNotContain("HOLD")

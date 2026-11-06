@@ -101,6 +101,11 @@ public class TraderLiveHub {
             emit(trace::callStart);
         }
 
+        /** 下一段开场白追加进了历史 */
+        public synchronized void stage(String instruction) {
+            emit(() -> trace.stage(instruction));
+        }
+
         public synchronized void token(String text) {
             emit(() -> trace.token(text));
         }

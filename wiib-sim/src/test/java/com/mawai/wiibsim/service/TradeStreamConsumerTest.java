@@ -142,8 +142,9 @@ class TradeStreamConsumerTest {
         inOrder.verify(ops).acknowledge(KEY, "sim", RecordId.of("1-0"));
         inOrder.verify(settlement).limitHits(eq("BTCUSDT"), argThat(t -> prices(t, "101", "99")));
         inOrder.verify(ops).acknowledge(KEY, "sim", RecordId.of("2-0"), RecordId.of("3-0"));
-        // 没 ACK 的从头往后过一遍（0、再从刚处理完的 1-0 往后），之后读新的（>）
-        assertThat(offsets.subList(0, 3)).containsExactly(ReadOffset.from("0"), ReadOffset.from("1-0"),
+        // 没 ACK 的从头往后过一遍（0、再从刚处理完的 1-0 往后），之后读新的（>）。
+        // 消费线程还在循环读、往 offsets 里加：取快照再断言，COW 的 subList 边加边遍历会 ConcurrentModification
+        assertThat(offsets.stream().limit(3).toList()).containsExactly(ReadOffset.from("0"), ReadOffset.from("1-0"),
                 ReadOffset.lastConsumed());
     }
 

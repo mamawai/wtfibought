@@ -7,6 +7,7 @@ import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
@@ -27,6 +28,7 @@ import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibquant.market.service.CrossAssetService;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibquant.market.service.NewsCache;
@@ -67,6 +69,7 @@ class TraderToolI18nTest {
             new DerivativesToolkit(mock(MarketDataService.class)),
             new WhaleToolkit(mock(WhaleQueryService.class)),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
+            new CrossAssetToolkit(mock(CrossAssetService.class)),
             mock(AiTraderMapper.class), mock(AiTraderDecisionMapper.class),
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
@@ -98,6 +101,7 @@ class TraderToolI18nTest {
                         new MarketToolkit(mock(MarketDataService.class)),
                         new DerivativesToolkit(mock(MarketDataService.class)),
                         new WhaleToolkit(mock(WhaleQueryService.class)),
+                        new CrossAssetToolkit(mock(CrossAssetService.class)),
                         new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class))
                                 .boundTo(AgentLang.EN)))
                 .collect(Collectors.toMap(cb -> cb.getToolDefinition().name(),
@@ -131,7 +135,7 @@ class TraderToolI18nTest {
         for (String name : List.of("get_account", "open_position", "close_position", "set_stop_loss",
                 "set_take_profit", "write_plan", "cancel_order", "set_watch", "klines", "indicators",
                 "kline_structure", "market_snapshot", "option_iv", "funding_history", "orderbook_depth",
-                "derivatives_history", "whale_positions")) {
+                "derivatives_history", "whale_positions", "cross_asset_snapshot")) {
             assertThat(zh.get(name)).as("%s 应取词表中文描述", name)
                     .isEqualTo(prompts.get(AgentLang.ZH, "tool." + name));
         }

@@ -157,4 +157,78 @@ class WakeTraceTest {
         assertThat(trace().replay()).extracting(WakeTrace.Frame::event).containsExactly("run_start");
     }
 
+    /** 分段：纯文本答完追加第二段，分界记在下一次调用上；回放时分界帧排在那次调用之前；落库多一个 stages */
+    @Test
+    void 分段记在下一次调用上() {
+        WakeTrace t = trace();
+        t.prompt("SYS", "INS");
+        t.callStart();
+        t.callEnd("第一段答完", List.of());
+        WakeTrace.Frame stage = t.stage("第二段开场白");
+        t.callStart();
+        t.token("结论");
+
+        assertThat(stage.event()).isEqualTo("stage");
+        assertThat(stage.data().path("n").asInt()).isEqualTo(2);
+        assertThat(stage.data().path("call").asInt()).isEqualTo(2);
+        assertThat(stage.data().path("instruction").asString(null)).isEqualTo("第二段开场白");
+        assertThat(t.replay()).extracting(WakeTrace.Frame::event)
+                .containsExactly("run_start", "prompt", "model_end", "stage", "model_start", "token");
+
+        t.callEnd("结论", List.of());
+        JsonNode o = MAPPER.readTree(t.toJson());
+        assertThat(o.get("stages")).hasSize(1);
+        assertThat(o.get("stages").get(0).path("n").asInt()).isEqualTo(2);
+        assertThat(o.get("stages").get(0).path("call").asInt()).isEqualTo(2);
+        assertThat(o.get("stages").get(0).path("instruction").asString(null)).isEqualTo("第二段开场白");
+        assertThat(o.get("calls")).hasSize(2);
+        // 没分过段的轨迹不带 stages
+        assertThat(MAPPER.readTree(trace().toJson()).has("stages")).isFalse();
+    }
+
+    /** 预算在工具边用尽：占位回执之后先起了一个空 call，紧跟的分段和再一次 callStart 都落在它上面，不另起 */
+    @Test
+    void 占位回执后的分段复用已起的空call() {
+        WakeTrace t = trace();
+        t.callStart();
+        t.callEnd("", List.of(call("c1", "get_account", "{}")));
+        t.toolResult("c1", "get_account", "未执行");
+        t.callStart();
+        WakeTrace.Frame stage = t.stage("第二段：不查了，写结论");
+        WakeTrace.Frame start = t.callStart();
+        t.token("结论");
+
+        assertThat(stage.data().path("call").asInt()).isEqualTo(2);
+        assertThat(start.data().path("call").asInt()).isEqualTo(2);
+        assertThat(MAPPER.readTree(t.toJson()).get("calls")).hasSize(2);
+    }
+
+    /** 分段起始的那次调用一个字没出就收尾（模型调用炸了）：空 call 留着，分界有地方挂 */
+    @Test
+    void 分段起始的空call收尾时留着() {
+        WakeTrace t = trace();
+        t.callStart();
+        t.callEnd("第一段答完", List.of());
+        t.stage("第二段");
+        t.callStart();
+
+        t.end("ERROR", "上游 500", new BigDecimal("10000"), 1000, 2, null);
+
+        JsonNode o = MAPPER.readTree(t.toJson());
+        assertThat(o.get("calls")).hasSize(2);
+        assertThat(o.get("stages").get(0).path("call").asInt()).isEqualTo(2);
+    }
+
+    /** 分段记了、那次调用还没开始时有人接入：回放末尾也发分界帧 */
+    @Test
+    void 回放时还没开始的分段也发() {
+        WakeTrace t = trace();
+        t.callStart();
+        t.callEnd("第一段答完", List.of());
+        t.stage("第二段");
+
+        assertThat(t.replay()).extracting(WakeTrace.Frame::event)
+                .containsExactly("run_start", "model_end", "stage");
+    }
+
 }

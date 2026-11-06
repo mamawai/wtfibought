@@ -61,6 +61,26 @@ class PositionPathTest {
         verify(caseFiles).market("BTCUSDT", T0 + 3 * M5, T0 + 3 * M5);
     }
 
+    /** 各币摘要的窗口：有 OK 轮从它所在那根起；没有就是边界前一个心跳周期 */
+    @Test
+    void symbolWindowSinceLastOkOrOneInterval() {
+        long hour = 3_600_000L;
+        positionPath.symbol("BTCUSDT", T0 + 2 * M5 + 30_000L, T0 + 3 * M5, hour);
+        verify(caseFiles).market("BTCUSDT", T0 + 2 * M5, T0 + 3 * M5);
+
+        positionPath.symbol("ETHUSDT", null, T0 + 3 * M5 + 120_000L, hour);
+        verify(caseFiles).market("ETHUSDT", T0 + 3 * M5 - hour, T0 + 3 * M5);
+    }
+
+    /** 刚收盘那根心跳周期：边界对齐到周期，取它前面一整个周期 */
+    @Test
+    void lastClosedBarIsThePreviousInterval() {
+        long hour = 3_600_000L;
+        positionPath.lastClosedBar("BTCUSDT", T0 + hour + 7 * 60_000L, hour);
+
+        verify(caseFiles).market("BTCUSDT", T0, T0 + hour);
+    }
+
     private static FuturesPositionDTO position(long openedMs) {
         FuturesPositionDTO p = new FuturesPositionDTO();
         p.setId(349L);

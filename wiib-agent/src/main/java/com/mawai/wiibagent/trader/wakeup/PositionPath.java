@@ -8,8 +8,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * 持仓自上次完成决策那轮以来走过的路：这里只算窗口，取数和极值交给 {@link CaseFileBuilder#market}。
- * 本局还没有 OK 轮次、或仓位是那之后才开的，从开仓所在那根 5m 算起。窗口里没收盘的 5m 返回 null，持仓行不带这块。
+ * 自上次完成决策那轮以来走过的路：这里只算窗口，取数和极值交给 {@link CaseFileBuilder#market}。
+ * 持仓的（{@link #build}）本局还没有 OK 轮次、或仓位是那之后才开的，从开仓所在那根 5m 算起；
+ * 一个币的（{@link #symbol}）没有 OK 轮次就取刚过去的一个心跳周期。窗口里没收盘的 5m 返回 null，那一行就不带。
  */
 @Component
 @RequiredArgsConstructor
@@ -30,5 +31,19 @@ public class PositionPath {
         long fromBar = from - Math.floorMod(from, BAR_MS);
         long toBar = boundaryTime - Math.floorMod(boundaryTime, BAR_MS);
         return caseFiles.market(pos.getSymbol(), fromBar, toBar);
+    }
+
+    /** 一个币自上次 OK 轮以来的窗口；本局还没有 OK 轮次就是边界前的一个心跳周期 */
+    public CaseFileBuilder.MarketWindow symbol(String symbol, Long lastOkWakeMs, long boundaryTime, long intervalMs) {
+        long toBar = boundaryTime - Math.floorMod(boundaryTime, BAR_MS);
+        long from = lastOkWakeMs == null ? toBar - intervalMs : lastOkWakeMs;
+        long fromBar = from - Math.floorMod(from, BAR_MS);
+        return caseFiles.market(symbol, fromBar, toBar);
+    }
+
+    /** 刚收盘的那根心跳周期 K 线（5m 合成）：边界对齐到周期，边界所在那根还没收盘不算 */
+    public CaseFileBuilder.MarketWindow lastClosedBar(String symbol, long boundaryTime, long intervalMs) {
+        long aligned = boundaryTime - Math.floorMod(boundaryTime, intervalMs);
+        return caseFiles.market(symbol, aligned - intervalMs, aligned);
     }
 }

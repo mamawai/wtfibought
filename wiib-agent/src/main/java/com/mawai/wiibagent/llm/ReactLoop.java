@@ -3,6 +3,7 @@ package com.mawai.wiibagent.llm;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
@@ -32,10 +33,17 @@ import java.util.stream.Stream;
  * {@code streaming} 走流式还是阻塞（缺省阻塞）、{@code gate} 工具执行前的闸门（可空，如审批卡）、
  * {@code trace} 工具调用轨迹（可空）、
  * {@code serialTools} 不许与同批别的调用并发的工具名（缺省空）、
- * {@code stopWhen} 每批回执入历史后问一次、true 就结束本次运行（缺省从不，如已经向用户提了问）。
+ * {@code stopWhen} 每批回执入历史后问一次、true 就结束本次运行（缺省从不，如已经向用户提了问）、
+ * {@code stages} 分段（可空）：模型纯文本答完一段就问一次，有下一段就追加 user 消息接着跑。
  * <p>
  * 同一条回复里的多个 tool_call 并发执行（虚拟线程），回执仍按 tool_call 顺序配对合成一条；
  * 批内出现 serialTools 里的任一工具，整批退回按原顺序串行。
+ * <p>
+ * 分段：一次运行拆成几段问，前一段的开场白、工具往返、答复全留在历史里，后一段的模型看得见。
+ * 模型给出纯文本（不再要工具）就是这一段答完，问 {@link Stages#next} 有没有下一段：有就追加进历史接着调模型，
+ * 没有才结束。预算在工具边用尽（占位回执收束）时同样问：下一段照样追加、只带"已用尽"标记，
+ * 让它收尾而不是整轮没结论；所以模型调用数最多比上限多出段数减一。只剩最后一次调用时问到的也标已用尽：
+ * 下一段再要工具就只有占位回执，得让它直接收尾。
  * <p>
  * 三条顺序约束，写反了代码照跑什么都不报错：
  * <ul>
@@ -68,6 +76,14 @@ public final class ReactLoop {
      */
     public interface ToolGate {
         Optional<ToolResponseMessage> intercept(String sessionId, AssistantMessage reply);
+    }
+
+    /**
+     * 分段供给：模型纯文本答完一段时问一次，返回下一段的 user 消息；空就结束本次运行。
+     * budgetExhausted=true 是模型调用只剩最后一次或已到上限：追加的这段只能收尾，再要工具只会拿到未执行占位。
+     */
+    public interface Stages {
+        Optional<UserMessage> next(boolean budgetExhausted);
     }
 
     /** 过程回调 */
@@ -105,6 +121,7 @@ public final class ReactLoop {
     private final ToolCallTraceHook trace;
     private final Set<String> serialTools;
     private final BooleanSupplier stopWhen;
+    private final Stages stages;
 
     private ReactLoop(Builder builder) {
         this.client = builder.client;
@@ -115,6 +132,7 @@ public final class ReactLoop {
         this.trace = builder.trace;
         this.serialTools = builder.serialTools;
         this.stopWhen = builder.stopWhen;
+        this.stages = builder.stages;
     }
 
     public static Builder builder() {
@@ -130,6 +148,7 @@ public final class ReactLoop {
         private ToolCallTraceHook trace;
         private Set<String> serialTools = Set.of();
         private BooleanSupplier stopWhen = () -> false;
+        private Stages stages;
 
         /** 调模型的客户端，必填 */
         public Builder client(LlmClient client) {
@@ -173,6 +192,12 @@ public final class ReactLoop {
             return this;
         }
 
+        /** 分段供给，可空：模型纯文本答完一段就问一次，有下一段就追加 user 消息接着跑 */
+        public Builder stages(Stages stages) {
+            this.stages = stages;
+            return this;
+        }
+
         public ReactLoop build() {
             Objects.requireNonNull(client, "client 不能为空：ReactLoop 得有调模型的客户端才转得起来");
             Objects.requireNonNull(limiter, "limiter 不能为空：没有保险丝的 ReAct 循环会一路烧 token");
@@ -203,7 +228,11 @@ public final class ReactLoop {
             messages.add(reply);
             sink.message(reply);
             if (!reply.hasToolCalls()) {
-                break;
+                // 纯文本：这一段答完。有下一段就追加接着跑，没有就收工
+                if (!nextStage(messages, sink, cancel, calls)) {
+                    break;
+                }
+                continue;
             }
             if (cancelled(cancel)) {
                 break;      // 检查点①：模型答完就被叫停，工具不执行了
@@ -215,7 +244,11 @@ public final class ReactLoop {
                 ToolResponseMessage placeholder = limiter.placeholders(reply);
                 messages.add(placeholder);
                 sink.message(placeholder);
-                break;
+                // 预算在工具边用尽：下一段照样进，让它收尾；再要工具还是只有占位
+                if (!nextStage(messages, sink, cancel, calls)) {
+                    break;
+                }
+                continue;
             }
             ToolResponseMessage responses = gate == null ? null : gate.intercept(sessionId, reply).orElse(null);
             if (responses == null) {
@@ -238,6 +271,21 @@ public final class ReactLoop {
 
     private static boolean cancelled(CompletableFuture<Void> cancel) {
         return cancel != null && cancel.isDone();
+    }
+
+    /** 问分段要下一段：有就追加进历史、返回 true 让循环接着调模型；没分段、没下一段或已被叫停返回 false */
+    private boolean nextStage(List<Message> messages, Listener sink, CompletableFuture<Void> cancel, int calls) {
+        if (stages == null || cancelled(cancel)) {
+            return false;
+        }
+        // 只剩最后一次调用也算用尽：下一段再要工具就只有占位回执
+        UserMessage next = stages.next(calls >= limiter.limit() - 1).orElse(null);
+        if (next == null) {
+            return false;
+        }
+        messages.add(next);
+        sink.message(next);
+        return true;
     }
 
     /**

@@ -218,7 +218,7 @@ public class TradeStreamConsumer {
         try {
             // 没 ACK 的条目已经被裁掉的，重放读回来是空的，跳过
             List<PriceTick> ticks = batch.stream()
-                    .filter(r -> r.getValue() != null && !r.getValue().isEmpty())
+                    .filter(r -> !r.getValue().isEmpty())
                     .map(r -> PriceTick.of(TradeRecord.of(r.getValue()))).toList();
             if (!ticks.isEmpty()) TradeHit.runByUser(hits(key.startsWith(FUTURES_TRADES_PREFIX), symbolOf(key), ticks));
         } catch (Exception e) {

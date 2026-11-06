@@ -1257,6 +1257,13 @@ export interface WakeCall {
   endedAt?: number;
 }
 
+/** 第 n 段开场白（第 2 段起，第 1 段在 prompt 里）：从第 call 次模型调用开始 */
+export interface WakeStage {
+  n: number;
+  call: number;
+  instruction: string;
+}
+
 /** 收尾：totalTokens null=上游没回 usage */
 export interface WakeEnd {
   status: 'OK' | 'ERROR';
@@ -1281,6 +1288,8 @@ export interface WakeTrace {
   positions: number;
   pendingOrders: number;
   prompt?: { system: string; instruction: string };
+  /** 分过段的轮才有 */
+  stages?: WakeStage[];
   calls: WakeCall[];
   end?: WakeEnd;
 }
@@ -1289,6 +1298,8 @@ export interface WakeTrace {
 export type TraderLiveEvent =
   | { type: 'run_start'; kind: WakeKind; wakeTime: number; budgetSeconds: number; equity: number; positions: number; pendingOrders: number; startedAt: number }
   | { type: 'prompt'; system: string; instruction: string }
+  // 下一段开场白进了历史，排在第 call 次调用之前
+  | { type: 'stage'; n: number; call: number; instruction: string }
   | { type: 'model_start'; call: number }
   | { type: 'token'; call: number; text: string }
   // text 是这次调用的整段文本

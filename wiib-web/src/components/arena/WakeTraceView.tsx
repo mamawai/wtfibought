@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Timer } from 'lucide-react';
 import { cn, fmtDateTime, fmtNum, fmtTokens } from '../../lib/utils';
-import type { WakeCall, WakeToolCall, WakeToolResult, WakeTrace } from '../../types';
+import type { WakeCall, WakeStage, WakeToolCall, WakeToolResult, WakeTrace } from '../../types';
 import { Markdown } from '../Markdown';
 import { TRADE_TOOL_SET, dataArgsSummary, toolName, tradeArgsSummary } from './traderTools';
 
@@ -62,14 +62,30 @@ function CallTools({ call, running }: { call: WakeCall; running: boolean }) {
   );
 }
 
+/** 一段的分界：第 n 段 + 它的开场白折叠（提示词一样只有主人拿得到） */
+function StageDivider({ stage }: { stage: WakeStage }) {
+  const { t } = useTranslation('ai');
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-4 pt-3 border-t border-dashed border-border">
+      <div className="flex items-center gap-2.5 text-[13px] font-semibold">
+        <span>{t('live.stageN', { n: stage.n })}</span>
+        <button type="button" className="btn xs" onClick={() => setOpen(o => !o)}>{t('live.instruction')}</button>
+      </div>
+      {open && <pre className={cn(PRE, PRE_BOX, 'mt-2')}>{stage.instruction}</pre>}
+    </div>
+  );
+}
+
 /**
- * 一次唤醒的过程视图：信息行 → 提示词折叠（有才显示，只有主人拿得到）→ 按 call 分节的过程轨 → 收尾行。
+ * 一次唤醒的过程视图：信息行 → 提示词折叠（有才显示，只有主人拿得到）→ 按 call 分节的过程轨（分过段的在那次调用前插一道分界）→ 收尾行。
  * 只吃 WakeTrace，不管数据来自实时流还是 trace 接口；running=true 时末节文末点着光标、没回执的工具标处理中
  */
 export function WakeTraceView({ trace, running = false }: { trace: WakeTrace; running?: boolean }) {
   const { t } = useTranslation('ai');
   const [promptOpen, setPromptOpen] = useState(false);
   const last = trace.calls.length;
+  const stages = trace.stages ?? [];
   return (
     <div>
       <div className="flex items-center gap-3 flex-wrap text-[13px] mute">
@@ -101,6 +117,7 @@ export function WakeTraceView({ trace, running = false }: { trace: WakeTrace; ru
         const hot = running && c.n === last;
         return (
           <div key={c.n} className="mt-3.5">
+            {stages.filter(s => s.call === c.n).map(s => <StageDivider key={s.n} stage={s} />)}
             <div className="text-[13px] font-semibold mute">{t('live.callN', { n: c.n })}</div>
             {c.text && (
               <div className={cn('text-[15px] leading-[1.7] max-w-[80ch]', hot && CURSOR)}>

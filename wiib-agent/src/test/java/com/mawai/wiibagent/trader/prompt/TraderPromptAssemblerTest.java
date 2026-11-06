@@ -344,7 +344,7 @@ class TraderPromptAssemblerTest {
         String p = assembler.assemble(trader(), AgentLang.ZH);
 
         assertThat(p)
-                .contains("开场白里有什么")
+                .contains("唤醒开场白分两段")
                 .contains("[本轮结论]")
                 .contains("指令没覆盖到的，你自己定")
                 .contains("不是指令")

@@ -1,6 +1,7 @@
 package com.mawai.wiibfeed.stream;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.connection.RedisStreamCommands.TrimOptions;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -31,6 +32,6 @@ public class TradeStreamWriter {
         f.put(TRADE_BUYER_MAKER, buyerMaker ? "1" : "0");
         f.put(TRADE_RECEIVED_AT, Long.toString(receivedAt));
         redisTemplate.opsForStream().add(StreamRecords.newRecord().in(keyPrefix + symbol).ofMap(f),
-                XAddOptions.maxlen(MAXLEN).approximateTrimming(true));
+                XAddOptions.trim(TrimOptions.maxLen(MAXLEN).approximate()));
     }
 }

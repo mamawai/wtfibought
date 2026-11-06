@@ -3,7 +3,6 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -28,7 +27,7 @@ import java.util.Map;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 开场白里的账户状态块：持仓（带计划与修订史）+ 挂单（带挂出时刻与已挂时长）+ 模型自己布的盯盘条件。
+ * 开场白里的账户状态块：持仓（带计划与修订史）+ 挂单（带挂出时刻与已挂时长）。盯盘条件不在这儿，在承诺块里。
  * 全静态无状态，prompts/lang 随参数进来。
  */
 final class WakeAccountState {
@@ -46,7 +45,7 @@ final class WakeAccountState {
     static String accountStateJson(PromptCatalog prompts, AgentLang lang,
                                    BigDecimal equity, List<FuturesPositionDTO> positions,
                                    List<FuturesOrderResponse> pendingOrders,
-                                   List<AiTraderPlan> plans, List<AiTraderWatch> watches, long boundaryTime,
+                                   List<AiTraderPlan> plans, long boundaryTime,
                                    Map<Long, CaseFileBuilder.MarketWindow> paths) {
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         plans.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
@@ -60,34 +59,7 @@ final class WakeAccountState {
         if (pendingOrders != null && !pendingOrders.isEmpty()) {
             out.set("pendingOrders", pendingOrdersJson(prompts, lang, pendingOrders, planByKey, boundaryTime));
         }
-        // 自己布的盯盘条件，原样回注
-        if (!watches.isEmpty()) {
-            out.set("watches", watchesJson(watches));
-        }
         return MAPPER.writeValueAsString(out);
-    }
-
-    /** 盯盘条件行：类型、价位或时刻、备注、何时布的；时刻都是北京时间，和 nowBeijing 同一口径 */
-    private static ArrayNode watchesJson(List<AiTraderWatch> watches) {
-        ArrayNode arr = MAPPER.createArrayNode();
-        for (AiTraderWatch w : watches) {
-            ObjectNode row = MAPPER.createObjectNode()
-                    .put("symbol", w.getSymbol())
-                    .put("kind", w.getKind());
-            if (w.getLevel() != null) {
-                row.put("level", w.getLevel());
-            }
-            if (w.getPeriod() != null) {
-                row.put("period", w.getPeriod());
-            }
-            if (w.getAtTime() != null) {
-                row.put("at", BeijingTime.format(w.getAtTime()));
-            }
-            row.put("note", w.getNote());
-            row.put("armedAt", BeijingTime.format(w.getCreatedWakeTime()));
-            arr.add(row);
-        }
-        return arr;
     }
 
     /** 持仓行：仓位事实 + 当前止损止盈 + 自上次完成决策以来的波动（paths 按 positionId，没有就不带）+ 所属计划（含修订历史）。 */
@@ -186,7 +158,8 @@ final class WakeAccountState {
         return po;
     }
 
-    private static String humanizeHeld(PromptCatalog prompts, AgentLang lang, long ms) {
+    /** 持有 / 已挂时长：两小时内按分钟，两天内按小时，再长按天 */
+    static String humanizeHeld(PromptCatalog prompts, AgentLang lang, long ms) {
         long min = Math.max(0, ms / 60_000);
         if (min < 120) {
             return prompts.get(lang, "trader.wake.held.minutes", Map.of("n", min));

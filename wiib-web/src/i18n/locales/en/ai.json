@@ -192,6 +192,7 @@
     "endedOk": "Run finished",
     "endedError": "Run failed",
     "callN": "Thought #{{n}}",
+    "stageN": "Part {{n}}",
     "routine": "{{iv}} routine",
     "bars_one": "{{count}} bar",
     "bars_other": "{{count}} bars"

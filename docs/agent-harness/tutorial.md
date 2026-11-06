@@ -20,7 +20,7 @@
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
-| **trader agent** | ReAct 循环（18 工具） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 盯盘条件命中 / 手动 | `trader/`（现场流与轨迹见 5.7） |
+| **trader agent** | ReAct 循环（19 工具，开场白分两段） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 盯盘条件命中 / 手动 | `trader/`（现场流与轨迹见 5.7） |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | ✓ | 用户提问 | `chat/`（子运行在 `chat/run/`） |
 | **reviewer workflow** | 单次调用，无工具 | ✗ | 日线交接第二阶段 / 点播 | `learning/ReviewRunner` |
 | **behavior workflow** | 单次调用，无工具 | ✗ | 对话里的 `analyze_my_behavior` | `behavior/` |
@@ -295,6 +295,10 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 同一条回复里的多个 tool_call 并发执行（虚拟线程），回执仍按 tool_call 顺序配对合成一条——顺序稳定，产出才可复现。批内出现 `serialTools` 里的任一工具（trader 的开平仓那几个），整批退回按原顺序串行，不拆成"并行的先跑、串行的排后面"：账户状态类工具不该和同批任何别的调用交错。每次调模型前从 `Listener.inbox()` 取一次外部到达的消息（子运行报告）追加到尾部，只追加不插入。测试：`ReactLoopTest`。
 
+### ⑥ 分段
+
+`stages`（可空）：模型给出纯文本就是这一段答完，循环问它要下一段，有就把那条 user 消息追加进历史接着调模型，前几段的往返全留在上下文里；没有才结束。只剩最后一次调用、或预算在工具边用尽（占位回执收束）时也问，下一段照样追加、带"已用尽"标记让它只收尾，所以模型调用数最多比上限多出段数减一。叫停了就不进下一段。trader 唤醒用它分"处置 / 布防与收尾"两段（第 5 章）。测试：`ReactLoopTest` 的三条分段用例。
+
 ### 附：其他值得知道的事实
 
 | 事实 | 为什么要知道 |
@@ -394,8 +398,9 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存的，装饰器不新建会跨轮累加）
   → TradeTools 每轮 new（绑 sim 子账户 / 白名单 / 风险规格 / 本轮截止时刻）
   → 计划对账（TraderPlanStore.reconcile：逐份 LIVE 计划对 sim 持仓/挂单，出 Reconcile(live, events)；已平仓位懒取）
-  → 组装系统提示词（promptAssembler.assemble）、观察包（observation）与开场白（routine / alert instruction）
-  → LlmClient（系统提示 + 15 工具；不强制 tool_choice，"先读事实、用工具求证"在开场白里）
+  → 组装系统提示词（promptAssembler.assemble）、第一段观察包（WakeObservation.assemble：事件 / 账户 / 上一轮结论 / 承诺）
+  → 两段还是一段：非例行唤醒、有留言、有承诺要处置就分两段（stageOneInstruction，ReactLoop.stages 追加 stageTwoInstruction），否则 routineInstruction 一段
+  → LlmClient（系统提示 + 19 工具；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
      + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
   → FutureTask 限时执行
   → finally：动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
@@ -407,7 +412,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ### 5.4 注入面（最该细读的一段）
 
-一次唤醒喂给模型的东西分两块：**系统提示词**（`TraderPromptAssembler.assemble`）和**开场白**（`routineInstruction` / `alertInstruction`）。分工是：system 只放"你是谁、怎么答"——模板 / 经验账本 / 主人风格指令 / 固定收尾格式 / 输出语言；开场白只放"这轮发生了什么，回答问题"——头部事实 + 观察包（`TraderWakeupRunner.observation`：事件 / 账户 / 上一轮结论 / 轨迹 / 战绩）+ 快照 / 日历 / 休眠提示 + 单问题 + 留言。模型要"重建"的东西（上一轮等的是什么、仓位为什么不见了、现有杠杆几倍）全部由代码算好直接给。
+一次唤醒喂给模型的东西分两块：**系统提示词**（`TraderPromptAssembler.assemble`）和**开场白**。分工是：system 只放"你是谁、怎么答"——模板 / 经验账本 / 主人风格指令 / 固定收尾格式 / 输出语言；开场白只放"这轮发生了什么，回答问题"，而且分两段先窄后宽：第一段「处置」（`stageOneInstruction`）= 为什么醒 + 观察包（`WakeObservation.assemble`：事件 / 账户 / 上一轮结论 / 承诺块）+ 留言 + 只处置承诺的问题；模型答完纯文本，`ReactLoop.stages` 追加第二段「布防与收尾」（`stageTwoInstruction`）= 各币摘要 + 轨迹 / 战绩 + 快照 / 日历 / 休眠提示 + 看整盘、布防、收尾的问题；这些整盘事实到追加那一刻才算，快照重拉一次。决策正文（`finalReasoning`）每段取最近一条有正文的助手消息、空行接起来，第一段为什么平仓和第二段的结论都进决策行。非例行唤醒的头是触发行，日历跟在第一段；没承诺、没留言、不是非例行的轮次并成一段（`routineInstruction`）。模型要"重建"的东西（上一轮等的是什么、仓位为什么不见了、现有杠杆几倍、布的条件离现价多远）全部由代码算好直接给。
 
 `TraderPromptAssembler` 的类注释里那**七条认知设计**是这套东西的设计文档，逐条对着代码读。特别注意第 ⑦ 条（最近改的）：
 
@@ -424,8 +429,9 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | 块 | 来源 | 要点 |
 |---|---|---|
 | 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席 |
-| 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。持仓另带 `sinceLastWake`（`PositionPath` 算窗口，极值复用 `CaseFileBuilder.market`）：自本局最近一条 OK 决策行以来本地 5m 的首根开盘、最高最低各在何时、末根收盘、涨跌，from / to 是实际覆盖的起止；还没有 OK 行或仓位是那之后才开的，从开仓所在那根算；窗口里没收盘根就不带。一次给足，工具预算才能留给行情求证 |
+| 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。持仓另带 `sinceLastWake`（`PositionPath` 算窗口，极值复用 `CaseFileBuilder.market`）：自本局最近一条 OK 决策行以来本地 5m 的首根开盘、最高最低各在何时、末根收盘、涨跌，from / to 是实际覆盖的起止；还没有 OK 行或仓位是那之后才开的，从开仓所在那根算；窗口里没收盘根就不带。一次给足，工具预算才能留给行情求证；盯盘条件不在这块，在承诺块里 |
 | 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL/EVENT，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
+| 承诺块 + 各币摘要 | `WakeObservation.commitments` / `symbolsSummary` | 承诺块进第一段：持仓与挂单各一行（失效条件原文 + `PositionPath.lastClosedBar` 合成的刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（价格类按标记价算"在价位上方 / 下方 X%"，AT_TIME 算还有几分钟）、上一轮每个币的等待行（按结论块自己那门语言的 `mark.wait` / `waitLong` 认，写"无"的不算；那个币一条条件都没布就注明）。只列事实不下判断——失效条件是自由文本，代码判不了触发没触发。各币摘要进第二段：每个可交易币自上次 OK 轮以来的开高低收（`PositionPath.symbol`）。承诺块非空、有事件或收盘命中就是"忙"（`Pack.busy`），运行器据此分两段 |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
 | 财经日历 | `EconCalendarAssembler` | 三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
 | 经验账本 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本） | 只注入规律与执行缺口，假设升成规律才注入；账本首行带用法说明，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
@@ -433,7 +439,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ### 5.5 动手面
 
-`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`。数据工具 10 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `news_search`），加起来正好 18 个。
+`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 19 个。
 
 三个设计点：
 
@@ -457,7 +463,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | `trader/TraderLiveHub` | 订阅者管理、扇出、心跳。按 traderId 订阅，一次唤醒一个 `Run` 句柄，runner 只碰它 | 不认识 ReactLoop |
 | `controller/TraderController` | 准入：谁能连 | — |
 
-帧序列：`run_start` → `prompt` → 每次模型调用的 `model_start` / `token…` / `model_end` → `tool_result…` → `run_end`。中途连上按当前状态回放，空闲只有心跳。
+帧序列：`run_start` → `prompt` → 每次模型调用的 `model_start` / `token…` / `model_end` → `tool_result…` → `run_end`；分过段的轮在第二段起始那次调用之前多一帧 `stage`（段号 / 起始调用号 / 该段开场白），落库多一个 `stages` 数组。中途连上按当前状态回放，空闲只有心跳。
 
 读的时候盯这几处：
 

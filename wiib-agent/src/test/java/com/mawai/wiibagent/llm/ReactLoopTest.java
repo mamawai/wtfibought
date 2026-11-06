@@ -15,10 +15,14 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.annotation.Tool;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,7 +34,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * 执行工具：拼错工具名回执报错；同批多个 tool_call 并发跑、回执按 tool_call 顺序；
- * 批里有串行工具就整批串行；收件箱里的消息在下一次调模型前追加进历史；调用方说收工就在回执入历史后结束。
+ * 批里有串行工具就整批串行；收件箱里的消息在下一次调模型前追加进历史；调用方说收工就在回执入历史后结束；
+ * 分段：纯文本答完一段就追加下一段接着跑，预算用尽也进下一段收尾，叫停了就不进。
  */
 class ReactLoopTest {
 
@@ -189,6 +194,139 @@ class ReactLoopTest {
 
         assertThat(result.modelCalls()).isEqualTo(1);
         assertThat(result.messages().getLast()).isInstanceOf(ToolResponseMessage.class);
+    }
+
+    /** 分段：这一段答完（纯文本）就追加下一段的 user 消息接着调模型，前几段全在历史里；没有下一段才结束 */
+    @Test
+    void stagesAppendNextUserMessageAfterTextReplyUntilNoneLeft() {
+        List<Prompt> prompts = new ArrayList<>();
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger round = new AtomicInteger();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            return switch (round.incrementAndGet()) {
+                case 1 -> response(AssistantMessage.builder().content("")
+                        .toolCalls(List.of(call("c1", "echo", "{\"text\":\"查\"}"))).build());
+                case 2 -> response(AssistantMessage.builder().content("第一段答完").build());
+                default -> response(AssistantMessage.builder().content("第二段结论").build());
+            };
+        });
+        Deque<UserMessage> pending = new ArrayDeque<>(List.of(new UserMessage("第二段：收尾")));
+        List<Boolean> exhausted = new ArrayList<>();
+
+        ReactLoop.Result result = ReactLoop.builder()
+                .client(client(model, new EchoTools()))
+                .limiter(new ModelCallLimiter(5, "未执行", "预算已用完"))
+                .stages(budgetExhausted -> {
+                    exhausted.add(budgetExhausted);
+                    return Optional.ofNullable(pending.poll());
+                })
+                .build()
+                .run(List.of(new UserMessage("第一段：处置")), null, null, null);
+
+        assertThat(result.modelCalls()).isEqualTo(3);
+        assertThat(exhausted).containsExactly(false, false);
+        // 第三次调用的输入：第一段开场白、工具往返、第一段答复都在，第二段开场白压在最末
+        List<Message> third = prompts.get(2).getInstructions();
+        assertThat(third).anyMatch(m -> "第一段：处置".equals(m.getText()));
+        assertThat(third.get(third.size() - 2).getText()).isEqualTo("第一段答完");
+        assertThat(third.getLast().getText()).isEqualTo("第二段：收尾");
+        assertThat(result.messages().getLast().getText()).isEqualTo("第二段结论");
+    }
+
+    /** 预算在工具边用尽（占位回执收束）也要进下一段让它收尾，问的时候标 budgetExhausted=true */
+    @Test
+    void stageStillEnteredWhenBudgetExhaustedAtToolEdge() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger round = new AtomicInteger();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> round.incrementAndGet() <= 2
+                ? response(AssistantMessage.builder().content("")
+                        .toolCalls(List.of(call("c" + round.get(), "echo", "{\"text\":\"再查\"}"))).build())
+                : response(AssistantMessage.builder().content("预算尽了，直接收尾").build()));
+        Deque<UserMessage> pending = new ArrayDeque<>(List.of(new UserMessage("第二段：不查了，写结论")));
+        List<Boolean> exhausted = new ArrayList<>();
+
+        ReactLoop.Result result = ReactLoop.builder()
+                .client(client(model, new EchoTools()))
+                .limiter(new ModelCallLimiter(2, "未执行", "预算已用完"))
+                .stages(budgetExhausted -> {
+                    exhausted.add(budgetExhausted);
+                    return Optional.ofNullable(pending.poll());
+                })
+                .build()
+                .run(List.of(new UserMessage("第一段")), null, null, null);
+
+        assertThat(result.modelCalls()).isEqualTo(3);
+        assertThat(exhausted).containsExactly(true, true);
+        // 第二次的 tool_call 没执行：占位回执之后紧跟第二段，再是收尾正文
+        List<Message> tail = result.messages().subList(result.messages().size() - 3, result.messages().size());
+        assertThat(tail.get(0)).isInstanceOf(ToolResponseMessage.class);
+        assertThat(((ToolResponseMessage) tail.get(0)).getResponses().getFirst().responseData()).isEqualTo("未执行");
+        assertThat(tail.get(1).getText()).isEqualTo("第二段：不查了，写结论");
+        assertThat(tail.get(2).getText()).isEqualTo("预算尽了，直接收尾");
+    }
+
+    /** 只剩最后一次调用时答完一段：下一段标 budgetExhausted=true，那一次只够收尾 */
+    @Test
+    void oneCallLeftCountsAsExhaustedForNextStage() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger round = new AtomicInteger();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> switch (round.incrementAndGet()) {
+            case 1 -> response(AssistantMessage.builder().content("")
+                    .toolCalls(List.of(call("c1", "echo", "{\"text\":\"查\"}"))).build());
+            case 2 -> response(AssistantMessage.builder().content("第一段答完").build());
+            default -> response(AssistantMessage.builder().content("收尾").build());
+        });
+        Deque<UserMessage> pending = new ArrayDeque<>(List.of(new UserMessage("第二段")));
+        List<Boolean> exhausted = new ArrayList<>();
+
+        ReactLoop.Result result = ReactLoop.builder()
+                .client(client(model, new EchoTools()))
+                .limiter(new ModelCallLimiter(3, "未执行", "预算已用完"))
+                .stages(budgetExhausted -> {
+                    exhausted.add(budgetExhausted);
+                    return Optional.ofNullable(pending.poll());
+                })
+                .build()
+                .run(List.of(new UserMessage("第一段")), null, null, null);
+
+        // 第 2 次答完时还剩 1 次：标已用尽；第 3 次是最后一次，答完就收工
+        assertThat(exhausted).containsExactly(true, true);
+        assertThat(result.modelCalls()).isEqualTo(3);
+    }
+
+    /** 已被叫停就不开下一段：文本答完发现 cancel 已完成，连问都不问，直接收工 */
+    @Test
+    void cancelledRunDoesNotEnterNextStage() {
+        CompletableFuture<Void> cancel = new CompletableFuture<>();
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            cancel.complete(null);
+            return response(AssistantMessage.builder().content("第一段答完").build());
+        });
+        AtomicInteger asked = new AtomicInteger();
+
+        ReactLoop.Result result = ReactLoop.builder()
+                .client(client(model, new EchoTools()))
+                .limiter(new ModelCallLimiter(5, "未执行", "预算已用完"))
+                .stages(budgetExhausted -> {
+                    asked.incrementAndGet();
+                    return Optional.of(new UserMessage("第二段"));
+                })
+                .build()
+                .run(List.of(new UserMessage("第一段")), null, cancel, null);
+
+        assertThat(result.modelCalls()).isEqualTo(1);
+        assertThat(asked.get()).isZero();
+        assertThat(result.messages().getLast().getText()).isEqualTo("第一段答完");
+    }
+
+    private static ChatResponse response(AssistantMessage message) {
+        return new ChatResponse(List.of(new Generation(message)));
     }
 
     private static AssistantMessage.ToolCall call(String id, String name, String arguments) {

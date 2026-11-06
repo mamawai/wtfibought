@@ -23,6 +23,7 @@ import com.mawai.wiibagent.llm.ToolCallTraceHook;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.toolkit.BeijingTime;
+import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
@@ -63,15 +64,19 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -82,6 +87,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 唤醒回路核心：一次唤醒 = 一个无状态 ReactLoop 会话（BYOK 模型 + 数据工具 + 绑定子账户的交易工具），
  * 决策全文 + 动作轨迹 + 权益落 ai_trader_decision。
+ * 开场白分两段：第一段只处置自己留下的承诺（持仓、挂单、盯盘条件、上一轮的等待），答完再追加第二段看整盘、布防、收尾；
+ * 没承诺要处置、没留言、也不是非例行唤醒的轮次并成一段。
  * 失败语义：连续 5 次失败自动 PAUSED（key 无效是永久错误，不等连败当场停）；权益跌破初始 1% 判 LIQUIDATED 终局。
  */
 @Slf4j
@@ -127,6 +134,7 @@ public class TraderWakeupRunner {
     private final DerivativesToolkit derivativesToolkit;
     private final WhaleToolkit whaleToolkit;
     private final NewsToolkit newsToolkit;
+    private final CrossAssetToolkit crossAssetToolkit;
     private final AiTraderMapper traderMapper;
     private final AiTraderDecisionMapper decisionMapper;
     private final TraderPlanStore planStore;
@@ -327,15 +335,33 @@ public class TraderWakeupRunner {
                 .filter(w -> w.getFiredAt() == boundaryTime).toList();
         List<AiTraderWatch> quiet = unreported.stream()
                 .filter(w -> !triggerWatchIds.contains(w.getId()) && !hitsNow.contains(w)).toList();
-        // 观察包：自己的状态事实，进开场白。上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 最近轨迹 + 论点战绩
-        String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang,
-                hitsNow, quiet, !triggerWatchIds.isEmpty());
+        // 各币标记价与资金费率只拉一次：快照行和承诺块的"离价位多远"共用
+        Map<String, JsonNode> quotes = quotes(whitelist);
+        Map<String, BigDecimal> marks = new HashMap<>();
+        quotes.forEach((symbol, q) -> marks.put(symbol, q.path("markPrice").asDecimal(null)));
+        // 第一段的观察包：上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 承诺
+        WakeObservation.Pack pack = wakeObservation.assemble(trader, whitelist, equity, positions, pendingOrders, reconcile, recent,
+                boundaryTime, lang, hitsNow, quiet, marks);
         // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报/事件轮在 K 线中间，主人留的话多半是按收盘说的
         String ownerNote = triggers != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
+        // 两段还是一段：非例行唤醒、有留言、有承诺要处置就分两段，否则并成一段
+        boolean twoStage = triggers != null || !ownerNote.isEmpty() || pack.busy();
+
+        // 上一边界之后公布的算"刚公布"：例行轮就是上次唤醒以来；警报/手动的 boundaryTime 是触发时刻，对齐后同一个意思
+        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
+        long since = boundaryTime - Math.floorMod(boundaryTime, intervalMs) - intervalMs;
+        String calendar = econCalendar.assemble(nowMs.getAsLong(), since, lang);
+        // 日历只出现一次：非例行唤醒放第一段（归因要用），例行轮放第二段。单段的整盘事实现在就算，两段的到追加第二段时再算
+        String instruction = twoStage
+                ? stageOneInstruction(trader, triggers, boundaryTime, lastRealWake(recent), pack.text(),
+                        triggers == null ? null : calendar, ownerNote, lang)
+                : routineInstruction(trader, boundaryTime, pack.text(),
+                        wakeObservation.symbolsSummary(trader, whitelist, pack.lastOkWakeMs(), boundaryTime, lang),
+                        wakeObservation.history(trader, recent, lang), snapshotRows(quotes, lang), calendar, lang);
 
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
-        // 不强制 tool_choice："先读事实、用工具求证"写在开场白里（routineQuestion / alertQuestion）
+        // 不强制 tool_choice："先读事实、用工具求证"写在开场白的问题里
         LlmClient client = LlmClient.builder().model(model).systemPrompt(prompt)
                 .tools(wakeTools(lang, tradeTools)).build();
         ReactLoop loop = ReactLoop.builder().client(client)
@@ -344,15 +370,11 @@ public class TraderWakeupRunner {
                         prompts.get(lang, "llm.callLimit.lastCall")))
                 .trace(trace)
                 // 数据工具同批并行，批里有动作工具就整批串行
-                .serialTools(TradeTools.SERIAL_TOOLS).build();
-
-        // 上一边界之后公布的算"刚公布"：例行轮就是上次唤醒以来；警报/手动的 boundaryTime 是触发时刻，对齐后同一个意思
-        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
-        long since = boundaryTime - Math.floorMod(boundaryTime, intervalMs) - intervalMs;
-        String calendar = econCalendar.assemble(nowMs.getAsLong(), since, lang);
-        String instruction = triggers == null
-                ? routineInstruction(trader, boundaryTime, observation, marketSnapshot(whitelist, lang), calendar, lang, ownerNote)
-                : triggerInstruction(trader, triggers, boundaryTime, lastRealWake(recent), observation, calendar, lang);
+                .serialTools(TradeTools.SERIAL_TOOLS)
+                // 第一段答完追加第二段：整盘事实 + 布防 + 收尾
+                .stages(twoStage ? stageTwo(trader, boundaryTime, whitelist, pack.lastOkWakeMs(), recent,
+                        triggers == null ? calendar : null, lang) : null)
+                .build();
         run.prompt(prompt, instruction);
         // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
         CompletableFuture<Void> cancel = new CompletableFuture<>();
@@ -380,6 +402,10 @@ public class TraderWakeupRunner {
                         for (ToolResponseMessage.ToolResponse r : responses.getResponses()) {
                             run.toolResult(r.id(), r.name(), r.responseData());
                         }
+                        run.callStart();
+                    } else if (m instanceof UserMessage stage) {
+                        // 第二段开场白进了历史：现场记一道分界，下一次调用从这儿起
+                        run.stage(stage.getText());
                         run.callStart();
                     }
                 }
@@ -460,54 +486,136 @@ public class TraderWakeupRunner {
      */
     List<ToolCallback> wakeTools(AgentLang lang, TradeTools tradeTools) {
         return localizedTools.of(lang, tradeTools, indicatorToolkit, marketToolkit, derivativesToolkit, whaleToolkit,
-                newsToolkit.boundTo(lang));
+                crossAssetToolkit, newsToolkit.boundTo(lang));
     }
 
     /**
-     * 决策正文：往前找最近一条有正文的助手消息，而不是死盯最后一条。
-     * 保险丝在工具边收束时，末尾是纯 tool_call 的助手消息 + 未执行占位回执，正文都是空的——
-     * 死盯最后一条就会写出 status=OK 却一个字没有的决策行，时间线上与正常决策无从区分。
+     * 决策正文：每段取最近一条有正文的助手消息，段与段用空行接起来——第一段里为什么平仓、为什么移止损，
+     * 和第二段的结论一样要进公开的决策行。
+     * 取"最近一条有正文的"而不是死盯段末那条：保险丝在工具边收束时，末尾是纯 tool_call 的助手消息 + 未执行占位回执，
+     * 正文都是空的，死盯就会写出 status=OK 却一个字没有的决策行，时间线上与正常决策无从区分。
      */
     private static String finalReasoning(PromptCatalog prompts, AgentLang lang, List<Message> messages) {
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            if (messages.get(i) instanceof AssistantMessage assistant
+        List<String> parts = new ArrayList<>();
+        String last = null;
+        for (Message m : messages) {
+            if (m instanceof UserMessage) {
+                // 开场白和每段的开场白都是 user 消息：段落边界
+                if (last != null) {
+                    parts.add(last);
+                }
+                last = null;
+            } else if (m instanceof AssistantMessage assistant
                     && assistant.getText() != null && !assistant.getText().isBlank()) {
-                return assistant.getText();
+                last = assistant.getText();
             }
         }
-        return prompts.get(lang, "trader.wake.noReasoning");
+        if (last != null) {
+            parts.add(last);
+        }
+        return parts.isEmpty() ? prompts.get(lang, "trader.wake.noReasoning") : String.join("\n\n", parts);
     }
 
     /**
-     * 例行唤醒开场白：事实区 + 本轮任务 + 行情快照锚定价格水平。
+     * 单段开场白（没有承诺要处置、没留言、也不是非例行唤醒）：头 + 观察包 + 整盘事实 + 本轮任务。
      * <p>
      * 收尾标记取 {@code trader.mark.conclusion}，与系统提示词同一条 key——两处必须同源。
      * <p>
      * 包私有非 private：标记同源那条钉子（{@code WakeInstructionI18nTest}）要拿它的成文比对。
      *
-     * @param observation 观察包（{@link WakeObservation#assemble}），空串=不带。紧跟头部事实，排在快照之前
-     * @param calendar  财经日历块（{@link EconCalendarAssembler}），null=整块缺席。
-     *                  与快照同属事实区，排在快照之后、休眠提示与本轮任务之前
-     * @param ownerNote 主人留言段（{@link TraderPromptAssembler#ownerNoteBlock}），空串=无待读留言。
-     *                  压在整段开场白最末：user 消息末尾是最近因位置，留言在这儿才是"本轮要回答的问题之一"
+     * @param observation 第一段观察包（{@link WakeObservation#assemble}），空串=不带。紧跟头部事实
+     * @param symbols     各币摘要块（{@link WakeObservation#symbolsSummary}），空串=不带
+     * @param history     最近轨迹 + 论点战绩（{@link WakeObservation#history}），空串=不带
+     * @param calendar    财经日历块（{@link EconCalendarAssembler}），null=整块缺席。
+     *                    与快照同属事实区，排在快照之后、休眠提示与本轮任务之前
      */
-    String routineInstruction(AiTrader trader, long wakeTime, String observation, String snapshot,
-                              String calendar, AgentLang lang, String ownerNote) {
+    String routineInstruction(AiTrader trader, long wakeTime, String observation, String symbols, String history,
+                              String snapshot, String calendar, AgentLang lang) {
         long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
-        // 手动唤醒的 wakeTime 是按下按钮那一刻，"已收盘的那根"和休眠提示要按对齐边界说；例行轮本来就对齐
-        long boundaryTime = wakeTime - Math.floorMod(wakeTime, intervalMs);
+        long boundaryTime = alignedBoundary(wakeTime, intervalMs);
+        return routineHeader(trader, boundaryTime, lang)
+                + observation
+                + facts(trader, boundaryTime, intervalMs, symbols, history, snapshot, calendar, lang)
+                + prompts.get(lang, "trader.wake.routineQuestion",
+                        Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
+    }
+
+    /**
+     * 第一段「处置」开场白：为什么醒 + 观察包（事件 / 账户 / 上一轮结论 / 承诺）+ 第一段的问题，留言压在最末
+     * （user 消息末尾是最近因位置，留言在这儿才是"本轮要回答的问题之一"）。
+     * 非例行唤醒（triggers 非空）的头是触发行加"上次唤醒"那行，日历跟在观察包后面——被叫醒时"刚才是否有数据公布"
+     * 正是归因的关键事实；问题前多一句"当前 K 线未收盘"。留言只给例行轮。
+     *
+     * @param calendar 财经日历块，只有非例行唤醒放这儿，例行轮它在第二段；null=整块缺席
+     */
+    String stageOneInstruction(AiTrader trader, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime,
+                               String observation, String calendar, String ownerNote, AgentLang lang) {
+        String mark = prompts.get(lang, "trader.mark.conclusion");
+        if (triggers == null) {
+            long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
+            return routineHeader(trader, alignedBoundary(wakeTime, intervalMs), lang)
+                    + observation
+                    + prompts.get(lang, "trader.wake.stageQuestion", Map.of("mark", mark))
+                    + ownerNote;
+        }
+        return triggerHead(trader, triggers, wakeTime, lastWakeTime, lang)
+                + observation
+                + (calendar == null ? "" : calendar)
+                + prompts.get(lang, "trader.wake.triggerNotice", Map.of("interval", trader.getIntervalCode())) + '\n'
+                + prompts.get(lang, "trader.wake.triggerQuestion", Map.of("mark", mark));
+    }
+
+    /**
+     * 第二段「布防与收尾」开场白：头一句 + 整盘事实 + 第二段的问题。
+     * 预算在第一段用尽的（exhausted）换成只许收尾的问题：工具一个都调不了，set_watch 也不行
+     */
+    String stageTwoInstruction(AiTrader trader, long wakeTime, String symbols, String history, String snapshot,
+                               String calendar, AgentLang lang, boolean exhausted) {
+        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
+        return prompts.get(lang, "trader.wake.stageTwoHeader") + '\n'
+                + facts(trader, alignedBoundary(wakeTime, intervalMs), intervalMs, symbols, history, snapshot, calendar, lang)
+                + prompts.get(lang, exhausted ? "trader.wake.stageTwoExhausted" : "trader.wake.stageTwoQuestion",
+                        Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
+    }
+
+    /**
+     * 第二段只发一次：第一段答完给它，再问就没有了。整盘事实到追加那一刻才算：
+     * 第一段可能跑了几分钟，标记价重拉一次，不拿开场时那份
+     */
+    private ReactLoop.Stages stageTwo(AiTrader trader, long wakeTime, Set<String> whitelist, Long lastOkWakeMs,
+                                      List<WakeObservation.RecentWake> recent, String calendar, AgentLang lang) {
+        AtomicBoolean sent = new AtomicBoolean();
+        return exhausted -> {
+            if (sent.getAndSet(true)) {
+                return Optional.empty();
+            }
+            String symbols = wakeObservation.symbolsSummary(trader, whitelist, lastOkWakeMs, wakeTime, lang);
+            String history = wakeObservation.history(trader, recent, lang);
+            String snapshot = snapshotRows(quotes(whitelist), lang);
+            return Optional.of(new UserMessage(stageTwoInstruction(trader, wakeTime, symbols, history, snapshot, calendar, lang, exhausted)));
+        };
+    }
+
+    /** 整盘事实区：各币摘要 → 历史（轨迹 / 战绩）→ 快照 → 日历 → 休眠提示；单段与第二段共用 */
+    private String facts(AiTrader trader, long boundaryTime, long intervalMs, String symbols, String history,
+                         String snapshot, String calendar, AgentLang lang) {
+        return symbols
+                + history
+                + (snapshot.isEmpty() ? "" : "\n" + prompts.get(lang, "trader.wake.snapshotHeader") + "\n" + snapshot)
+                + (calendar == null ? "" : "\n" + calendar)
+                // 休眠提示放快照之后（事实区）、问题之前：不让"要睡了"成为模型读到的第一件事
+                + sleepNotice(prompts, lang, WakeWindow.of(trader), boundaryTime, intervalMs, nowMs.getAsLong());
+    }
+
+    /** 手动唤醒的 wakeTime 是按下按钮那一刻，"已收盘的那根"和休眠提示要按对齐边界说；例行轮本来就对齐 */
+    private static long alignedBoundary(long wakeTime, long intervalMs) {
+        return wakeTime - Math.floorMod(wakeTime, intervalMs);
+    }
+
+    private String routineHeader(AiTrader trader, long boundaryTime, AgentLang lang) {
         return prompts.get(lang, "trader.wake.routineHeader", Map.of(
                 "interval", trader.getIntervalCode(),
-                "time", TIME_FMT.format(Instant.ofEpochMilli(boundaryTime))))
-                + observation
-                + (snapshot.isEmpty() ? ""
-                        : "\n" + prompts.get(lang, "trader.wake.snapshotHeader") + "\n" + snapshot)
-                + (calendar == null ? "" : "\n" + calendar)
-                // 休眠提示放快照之后（事实区）、本轮任务之前：不让"要睡了"成为模型读到的第一件事
-                + sleepNotice(prompts, lang, WakeWindow.of(trader), boundaryTime, intervalMs, nowMs.getAsLong())
-                + prompts.get(lang, "trader.wake.routineQuestion",
-                        Map.of("mark", prompts.get(lang, "trader.mark.conclusion")))
-                + ownerNote;
+                "time", TIME_FMT.format(Instant.ofEpochMilli(boundaryTime))));
     }
 
     /**
@@ -533,18 +641,13 @@ public class TraderWakeupRunner {
     }
 
     /**
-     * 非例行唤醒开场白（警报 / 持仓事件共用）：先逐条报把它叫醒的事，排队期间攒下的几条按先后一起报、各带自己的时刻；
-     * 再是"上次唤醒/距例行"那行、观察包、日历。事实全代码注入，被叫醒本身两个方向都不是理由。
-     * 提醒未收盘但不说"止损在岗"——止损事件之后仓位可能已经没了。了结的净盈亏和当时的计划由观察包的
-     * 【自上次唤醒以来】对账块承载，不在这里再算一遍。
+     * 非例行唤醒的头（警报 / 持仓事件 / 盯盘命中共用）：先逐条报把它叫醒的事，排队期间攒下的几条按先后一起报、各带自己的时刻；
+     * 再是"上次唤醒/距例行"那行。事实全代码注入。了结的净盈亏和当时的计划由观察包的【自上次唤醒以来】对账块承载，不在这里再算一遍。
      *
      * @param wakeTime     真正醒来的时刻(ms)，"距下一次例行"按它算
      * @param lastWakeTime 本局上一次交易唤醒的时刻(ms)，null=本局还没醒过
-     * @param observation  观察包，空串=不带；紧跟"上次唤醒"那行，排在日历之前
-     * @param calendar     财经日历块，null=整块缺席——被叫醒时"刚才是否有数据公布/讲话"正是归因的关键事实
      */
-    String triggerInstruction(AiTrader trader, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime,
-                              String observation, String calendar, AgentLang lang) {
+    private String triggerHead(AiTrader trader, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime, AgentLang lang) {
         StringBuilder sb = new StringBuilder();
         boolean batch = triggers.size() > 1;
         if (batch) {
@@ -553,12 +656,7 @@ public class TraderWakeupRunner {
         for (WakeTrigger t : triggers) {
             sb.append(batch ? "- " : "").append(triggerLine(t, lang)).append('\n');
         }
-        return sb.append(lastWakeLine(trader, wakeTime, lastWakeTime, lang)).append('\n')
-                .append(observation)
-                .append(calendar == null ? "" : calendar)
-                .append(prompts.get(lang, "trader.wake.triggerNotice", Map.of("interval", trader.getIntervalCode()))).append('\n')
-                .append(prompts.get(lang, "trader.wake.triggerQuestion", Map.of("mark", prompts.get(lang, "trader.mark.conclusion"))))
-                .toString();
+        return sb.append(lastWakeLine(trader, wakeTime, lastWakeTime, lang)).append('\n').toString();
     }
 
     /** 一条触发的一句话：警报报振幅/方向/现价，事件报币/方向/量/价，盯盘命中报条件与命中价和备注，都带自己的时刻 */
@@ -622,24 +720,32 @@ public class TraderWakeupRunner {
         return prompts.get(lang, "trader.wake.alertLastWake", Map.of("lastWake", lastWake, "minutes", toNextMin));
     }
 
-    /**
-     * 开场行情快照：各币标记价+资金费率，一行一个——把价格水平先钉进模型的世界，
-     * 省下"查户口"的工具轮次；细节与多周期确认仍由模型自己用工具求证。
-     * 单币快照拉取失败就跳过，不挡唤醒。
-     */
-    private String marketSnapshot(Set<String> whitelist, AgentLang lang) {
-        StringBuilder snap = new StringBuilder();
+    /** 各币的 premiumIndex 回包（标记价 + 资金费率），一币拉一次、按币码排好；单币拉取失败就没有它，不挡唤醒 */
+    private Map<String, JsonNode> quotes(Set<String> whitelist) {
+        Map<String, JsonNode> out = new LinkedHashMap<>();
         for (String sym : whitelist.stream().sorted().toList()) {
             try {
                 JsonNode p = MAPPER.readTree(binanceRestClient.getPremiumIndex(sym));
-                snap.append(prompts.get(lang, "trader.wake.snapshotRow", Map.of(
-                        "symbol", sym,
-                        "price", p.path("markPrice").asDecimal(null).stripTrailingZeros().toPlainString(),
-                        "funding", p.path("lastFundingRate").asString(null)))).append('\n');
+                if (p.path("markPrice").asDecimal(null) != null) {
+                    out.put(sym, p);
+                }
             } catch (Exception e) {
                 log.debug("[Trader] 行情快照拉取失败 {} msg={}", sym, e.getMessage());
             }
         }
+        return out;
+    }
+
+    /**
+     * 开场行情快照：各币标记价+资金费率，一行一个——把价格水平先钉进模型的世界，
+     * 省下"查户口"的工具轮次；细节与多周期确认仍由模型自己用工具求证。
+     */
+    private String snapshotRows(Map<String, JsonNode> quotes, AgentLang lang) {
+        StringBuilder snap = new StringBuilder();
+        quotes.forEach((sym, p) -> snap.append(prompts.get(lang, "trader.wake.snapshotRow", Map.of(
+                "symbol", sym,
+                "price", p.path("markPrice").asDecimal(null).stripTrailingZeros().toPlainString(),
+                "funding", p.path("lastFundingRate").asString(null)))).append('\n'));
         return snap.toString();
     }
 

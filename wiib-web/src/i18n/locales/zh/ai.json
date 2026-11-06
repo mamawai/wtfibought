@@ -188,6 +188,7 @@
     "endedOk": "本轮结束",
     "endedError": "本轮失败",
     "callN": "第 {{n}} 次思考",
+    "stageN": "第 {{n}} 段",
     "routine": "{{iv}} 例行",
     "bars_other": "{{count}} 根"
   },

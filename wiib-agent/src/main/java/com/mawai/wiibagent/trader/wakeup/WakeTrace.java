@@ -44,6 +44,13 @@ public final class WakeTrace {
         }
     }
 
+    /** 第 n 段开场白（第 2 段起；第 1 段在 prompt 里）：从第 call 次模型调用开始 */
+    record Stage(int n, String instruction, int call) {
+        ObjectNode json() {
+            return MAPPER.createObjectNode().put("n", n).put("call", call).put("instruction", instruction);
+        }
+    }
+
     /** 第 n 次模型调用：正文 + 想调的工具 + 回执；endedAt 空=进行中 */
     static final class Call {
         final int n;
@@ -92,6 +99,7 @@ public final class WakeTrace {
     private String promptSystem;
     private String promptInstruction;
     private final List<Call> calls = new ArrayList<>();
+    private final List<Stage> stages = new ArrayList<>();
     /** 收尾块，非空=本轮已结束 */
     private ObjectNode end;
 
@@ -126,11 +134,30 @@ public final class WakeTrace {
         return promptFrame();
     }
 
-    /** 第 n 次模型调用开始（1 起） */
+    /**
+     * 第 n 次模型调用开始（1 起）。上一个 call 还没出过字也没结束就复用它，不另起：
+     * 占位回执之后紧跟分段，回执和分段各报一次开始，其实是同一次调用
+     */
     public synchronized Frame callStart() {
-        Call call = new Call(calls.size() + 1);
-        calls.add(call);
+        Call call = pendingCall();
+        if (call == null) {
+            call = new Call(calls.size() + 1);
+            calls.add(call);
+        }
         return modelStart(call);
+    }
+
+    /** 下一段开场白追加进了历史：记下它从第几次调用开始 */
+    public synchronized Frame stage(String instruction) {
+        Call pending = pendingCall();
+        Stage stage = new Stage(stages.size() + 2, instruction, pending == null ? calls.size() + 1 : pending.n);
+        stages.add(stage);
+        return stageFrame(stage);
+    }
+
+    /** 已开始但还没出字、没结束的末尾 call；没有给 null */
+    private Call pendingCall() {
+        return !calls.isEmpty() && calls.getLast().empty() && calls.getLast().endedAt == null ? calls.getLast() : null;
     }
 
     /** 模型文本增量，攒进当前 call */
@@ -165,10 +192,14 @@ public final class WakeTrace {
         return toolResultFrame(call, result);
     }
 
-    /** 收尾。末尾没正文也没 toolCalls 的空 call 丢掉（保险丝跳 END 后多起的那一个） */
+    /**
+     * 收尾。末尾没正文也没 toolCalls 的空 call 丢掉（保险丝跳 END 后多起的那一个）；
+     * 分段起始的那个留着，分界和它的开场白才有地方挂
+     */
     public synchronized Frame end(String status, String error, BigDecimal equity, Integer latencyMs,
                                   Integer modelCalls, Long totalTokens) {
-        if (!calls.isEmpty() && calls.getLast().empty()) {
+        if (!calls.isEmpty() && calls.getLast().empty()
+                && stages.stream().noneMatch(s -> s.call() == calls.getLast().n)) {
             calls.removeLast();
         }
         end = MAPPER.createObjectNode()
@@ -185,7 +216,7 @@ public final class WakeTrace {
 
     /**
      * 中途连上的回放：run_start → prompt → 已结束的 call 发 model_end + 它的 tool_result
-     * → 进行中的 call 发 model_start + 一帧累计 token。
+     * → 进行中的 call 发 model_start + 一帧累计 token。从某次调用开始的分段，帧排在那次调用之前。
      */
     public synchronized List<Frame> replay() {
         List<Frame> frames = new ArrayList<>();
@@ -194,6 +225,11 @@ public final class WakeTrace {
             frames.add(promptFrame());
         }
         for (Call call : calls) {
+            for (Stage stage : stages) {
+                if (stage.call() == call.n) {
+                    frames.add(stageFrame(stage));
+                }
+            }
             if (call.endedAt != null) {
                 frames.add(modelEnd(call));
                 for (ToolResult r : call.results) {
@@ -205,6 +241,12 @@ public final class WakeTrace {
                     frames.add(new Frame("token", MAPPER.createObjectNode()
                             .put("call", call.n).put("text", call.text.toString())));
                 }
+            }
+        }
+        // 分段已记、它那次调用还没开始：帧也发，接下来的 model_start 才认得出是新一段
+        for (Stage stage : stages) {
+            if (stage.call() > calls.size()) {
+                frames.add(stageFrame(stage));
             }
         }
         return frames;
@@ -226,6 +268,11 @@ public final class WakeTrace {
         if (promptSystem != null) {
             out.set("prompt", promptJson());
         }
+        if (!stages.isEmpty()) {
+            ArrayNode stagesJson = MAPPER.createArrayNode();
+            stages.forEach(s -> stagesJson.add(s.json()));
+            out.set("stages", stagesJson);
+        }
         out.set("calls", callsJson);
         out.set("end", end);
         return MAPPER.writeValueAsString(out);
@@ -239,6 +286,10 @@ public final class WakeTrace {
 
     private ObjectNode promptJson() {
         return MAPPER.createObjectNode().put("system", promptSystem).put("instruction", promptInstruction);
+    }
+
+    private static Frame stageFrame(Stage stage) {
+        return new Frame("stage", stage.json());
     }
 
     private static Frame modelStart(Call call) {
