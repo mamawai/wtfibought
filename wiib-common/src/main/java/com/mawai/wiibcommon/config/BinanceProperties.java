@@ -16,7 +16,7 @@ public class BinanceProperties {
     private String restBaseUrl;
     private String futuresRestBaseUrl;
     private List<String> symbols;
-    /** bStock（代币化美股）符号：纯现货、无合约。单列一组，只并入现货价/现货K线订阅，绝不进合约/深度/强平流。 */
+    /** bStock（代币化美股）符号：纯现货、无合约。单列一组，只并入现货的价、逐笔成交、盘口订阅，不进合约流和强平流。 */
     private List<String> stockSymbols;
     /** 大宗商品（TradFi 永续：黄金/原油）符号：纯合约、无现货。只并入合约流，绝不进现货流。 */
     private List<String> commoditySymbols;
@@ -25,7 +25,7 @@ public class BinanceProperties {
     /** 纯合约加密币（Binance 主站只有永续没现货，如 HYPE）：流处理同大宗商品，盈亏仍归 crypto 桶。 */
     private List<String> cryptoFuturesSymbols;
 
-    /** 现货订阅全集 = crypto symbols ∪ bStock stockSymbols。Spot 价流与现货 K线用；两组互斥，直接拼接不去重。 */
+    /** 现货订阅全集 = crypto symbols ∪ bStock stockSymbols。现货的价、逐笔成交、盘口流用；两组互斥，直接拼接不去重。 */
     public List<String> getAllSpotSymbols() {
         if (stockSymbols == null || stockSymbols.isEmpty()) {
             return symbols == null ? List.of() : symbols;

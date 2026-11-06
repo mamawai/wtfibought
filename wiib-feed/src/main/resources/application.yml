@@ -54,7 +54,7 @@ binance:
     - XRPUSDT
     - BNBUSDT
     - ZECUSDT
-  # bStock(代币化美股，纯现货无合约)：价并入 Spot 流，5m K线走现货端点单独一条连接
+  # bStock(代币化美股，纯现货无合约)：并入现货的价、逐笔成交、盘口流
   stock-symbols:
     - MUBUSDT
     - SPCXBUSDT

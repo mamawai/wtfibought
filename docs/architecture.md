@@ -119,8 +119,9 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │                                     # / KlineHistoryStore / ForceOrder mapper / InternalApiFilter
 │
 ├── wiib-feed/                        # ① 数据流上游进程（:8081）
-│   ├── stream/                       # 11 个 StreamHandler（现货 / 合约 markPrice / 合约 miniTicker
-│   │                                 #   / 深度 / 成交 / 强平 / crypto·bStock·商品各周期 K 线）
+│   ├── stream/                       # 14 个 StreamHandler（现货价 / 现货成交 / 现货深度 / 合约 markPrice
+│   │                                 #   / 合约 miniTicker / 合约深度 / 合约成交 / 强平 / 交易员的币两条
+│   │                                 #   / crypto·商品各周期 K 线）
 │   │                                 # + GapTracker 断连空窗记录 + MatchPricePublisher
 │   └── BinanceWsClient / PolymarketWsClient / KlineStreamCache / monitor
 │                                     # / health(内部流健康+重试)
