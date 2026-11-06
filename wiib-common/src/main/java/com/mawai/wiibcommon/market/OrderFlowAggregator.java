@@ -5,50 +5,32 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.Limit;
 import org.springframework.data.redis.connection.stream.MapRecord;
-import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.market.MarketStreamChannels.*;
+
 /**
- * aggTrade 流式聚合：按需输出 order flow 指标。BinanceWsClient 写入，BuildFeaturesNode 读取。
+ * 合约逐笔成交的订单流指标：按需从成交 Stream 现算。
  *
- * <p>存储后端为 Redis Stream（每 symbol 一条），feed 进程 {@link #onAggTrade} 写、agent 进程
- * {@link #getMetrics} 读算，天然跨进程。窗口聚合放读侧按交易所 ts 现算——feed 只转发，orderflow 由读侧自己重算。</p>
+ * <p>Stream（每 symbol 一条，key 和字段见 {@link MarketStreamChannels#FUTURES_TRADES_PREFIX}）由 feed 写，
+ * agent 进程 {@link #getMetrics} 读算，天然跨进程。窗口聚合放读侧按交易所 ts 现算——feed 只转发，orderflow 由读侧自己重算。</p>
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class OrderFlowAggregator {
 
-    private static final String KEY_PREFIX = "market:orderflow:";
+    private static final String KEY_PREFIX = MarketStreamChannels.FUTURES_TRADES_PREFIX;
     private static final double LARGE_TRADE_USDT = 50_000; // BTC 大单阈值
-    private static final long TRIM_MAXLEN = 30_000L;       // 兜底防无限增长，覆盖远超窗口(180s)的量
     /** 服务端粗筛的时钟余量，见 {@link #getMetrics} 注释 */
     private static final long CLOCK_SKEW_MS = 5_000L;
 
     private final StringRedisTemplate redisTemplate;
-
-    /**
-     * WS aggTrade 回调，高频，每笔 XADD 到 symbol 专属 Stream。
-     * isBuyerMaker=true → taker 是卖方（主动卖）。写失败丢一笔，对窗口统计影响可忽略。
-     */
-    public void onAggTrade(String symbol, double price, double qty, boolean isBuyerMaker, long timestamp) {
-        try {
-            Map<String, String> f = new LinkedHashMap<>();
-            f.put("ts", Long.toString(timestamp));
-            f.put("p", Double.toString(price));
-            f.put("q", Double.toString(qty));
-            f.put("bm", isBuyerMaker ? "1" : "0");
-            redisTemplate.opsForStream().add(StreamRecords.newRecord().in(KEY_PREFIX + symbol).ofMap(f));
-        } catch (Exception e) {
-            // 降级：丢一笔无妨
-        }
-    }
 
     /** 最近一次成交时间戳；无数据返回 0。 */
     public long getLastUpdateMs(String symbol) {
@@ -56,7 +38,7 @@ public class OrderFlowAggregator {
             List<MapRecord<String, Object, Object>> last = redisTemplate.opsForStream()
                     .reverseRange(KEY_PREFIX + symbol, Range.unbounded(), Limit.limit().count(1));
             if (last == null || last.isEmpty()) return 0L;
-            Object ts = last.getFirst().getValue().get("ts");
+            Object ts = last.getFirst().getValue().get(TRADE_TS);
             return ts == null ? 0L : Long.parseLong(ts.toString());
         } catch (Exception e) {
             return 0L;
@@ -68,7 +50,7 @@ public class OrderFlowAggregator {
      *
      * <p>两层过滤：先按 Stream ID 让 Redis 在服务端切好只传窗口那段，再按交易所 ts 精确定窗口。
      * Stream 自动 ID 的高位就是写入时的毫秒时间戳，所以能直接当时间游标用。不这么切的话，
-     * 整条 Stream 存着 {@link #TRIM_MAXLEN} 条（约 50 分钟），要 180 秒的量得全拉回来丢掉九成，
+     * 整条 Stream 存着约 3 万条（约 50 分钟，feed 写入时裁），要 180 秒的量得全拉回来丢掉九成，
      * 白白占满 Redis 单线程 20ms。</p>
      *
      * <p>起点再往前退 {@link #CLOCK_SKEW_MS}：cutoff 是本进程时钟，ID 是 Redis 服务器时钟，
@@ -85,12 +67,12 @@ public class OrderFlowAggregator {
             int count = 0;
             for (MapRecord<String, Object, Object> r : records) {
                 Map<Object, Object> v = r.getValue();
-                long ts = Long.parseLong(String.valueOf(v.get("ts")));
+                long ts = Long.parseLong(String.valueOf(v.get(TRADE_TS)));
                 if (ts < cutoff) continue;
-                double p = Double.parseDouble(String.valueOf(v.get("p")));
-                double q = Double.parseDouble(String.valueOf(v.get("q")));
+                double p = Double.parseDouble(String.valueOf(v.get(TRADE_PRICE)));
+                double q = Double.parseDouble(String.valueOf(v.get(TRADE_QTY)));
                 double usdt = p * q;
-                boolean isSell = "1".equals(String.valueOf(v.get("bm")));
+                boolean isSell = "1".equals(String.valueOf(v.get(TRADE_BUYER_MAKER)));
                 if (isSell) {
                     sellVol += usdt;
                     if (usdt > LARGE_TRADE_USDT) largeSellVol += usdt;
@@ -130,13 +112,13 @@ public class OrderFlowAggregator {
             int[] count = new int[n];
             for (MapRecord<String, Object, Object> r : records) {
                 Map<Object, Object> v = r.getValue();
-                long ts = Long.parseLong(String.valueOf(v.get("ts")));
+                long ts = Long.parseLong(String.valueOf(v.get(TRADE_TS)));
                 if (ts < boundsMs[0]) continue;
                 // 落在哪一段：过了下一个边界就往后挪，末段兜住后面所有的
                 int i = 0;
                 while (i < n - 1 && ts >= boundsMs[i + 1]) i++;
-                double usdt = Double.parseDouble(String.valueOf(v.get("p"))) * Double.parseDouble(String.valueOf(v.get("q")));
-                if ("1".equals(String.valueOf(v.get("bm")))) {
+                double usdt = Double.parseDouble(String.valueOf(v.get(TRADE_PRICE))) * Double.parseDouble(String.valueOf(v.get(TRADE_QTY)));
+                if ("1".equals(String.valueOf(v.get(TRADE_BUYER_MAKER)))) {
                     sellVol[i] += usdt;
                     if (usdt > LARGE_TRADE_USDT) largeSellVol[i] += usdt;
                 } else {
@@ -175,8 +157,8 @@ public class OrderFlowAggregator {
             int count = 0;
             for (MapRecord<String, Object, Object> r : records) {
                 Map<Object, Object> v = r.getValue();
-                if (Long.parseLong(String.valueOf(v.get("ts"))) < cutoff) continue;
-                last = Double.parseDouble(String.valueOf(v.get("p")));
+                if (Long.parseLong(String.valueOf(v.get(TRADE_TS))) < cutoff) continue;
+                last = Double.parseDouble(String.valueOf(v.get(TRADE_PRICE)));
                 if (first == null) first = last;
                 count++;
             }
@@ -199,15 +181,6 @@ public class OrderFlowAggregator {
             return size != null && size >= 10;
         } catch (Exception e) {
             return false;
-        }
-    }
-
-    /** 兜底裁剪，防 Stream 无限增长（近似 MAXLEN）。由 WS 线程概率触发。 */
-    public void trim(String symbol) {
-        try {
-            redisTemplate.opsForStream().trim(KEY_PREFIX + symbol, TRIM_MAXLEN, true);
-        } catch (Exception e) {
-            // 裁剪失败无妨，getMetrics 按 ts 过滤不受影响
         }
     }
 

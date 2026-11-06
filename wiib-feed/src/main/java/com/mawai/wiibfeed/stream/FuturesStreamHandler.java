@@ -13,7 +13,8 @@ import java.net.http.WebSocket;
 
 /**
  * 合约流（重 handler）：markPrice@1s 走本 handler 主连接，miniTicker 走 FuturesMiniTick 副连接，
- * 两者共用 {@link #handle} 解析（靠 stream 名区分 markPrice vs miniTicker），各自记自己的空窗。
+ * 两者共用 {@link #handle} 解析（靠 stream 名区分 markPrice vs miniTicker）。
+ * 标记价连接记空窗，连上时发 gap（kind=mark），sim 拉 mark 1m K 线补强平。
  * <p>Binance 2026-04-23 起期货 WS 端点拆分，markPrice 与 miniTicker 必须分两条物理连接，故有副连接。
  */
 @Component
@@ -39,7 +40,7 @@ public class FuturesStreamHandler implements StreamHandler {
     @Override
     public void bind(WsConnection conn) {
         this.conn = conn;
-        this.tracker = new GapTracker(name(), "futures", redisTemplate, matchPricePublisher);
+        this.tracker = new GapTracker(name(), "mark", redisTemplate, matchPricePublisher);
     }
 
     /** 两条合约连接都连上才算合约行情正常，缺一条前端就该看到断线 */
@@ -72,7 +73,7 @@ public class FuturesStreamHandler implements StreamHandler {
 
     @Override
     public void onMessage(String raw) {
-        tracker.touch();
+        tracker.touch(conn.frameReceivedAt());
         handle(raw);
     }
 
@@ -116,7 +117,7 @@ public class FuturesStreamHandler implements StreamHandler {
 
             broadcastService.broadcastFuturesQuote(symbol, "{\"mp\":\"" + price + "\",\"fws\":" + isFuturesConnected() + "}");
 
-            // markPrice 事件发 Redis：sim 侧消费做强平、quant 侧消费喂哨兵（解耦：currentPrice 由 sim 自己读 KV）
+            // markPrice 事件发 Redis：sim 做强平，agent 喂哨兵
             matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"markprice\",\"price\":\"" + price + "\"}");
             fundingRateWriter.write(symbol, tick.rate(), tick.nextTime());
         } else {
@@ -124,7 +125,7 @@ public class FuturesStreamHandler implements StreamHandler {
 
             broadcastService.broadcastFuturesQuote(symbol, "{\"fp\":\"" + price + "\",\"fws\":" + isFuturesConnected() + "}");
 
-            // futures 价格事件发 Redis：sim 侧消费做合约限价单结算（解耦：不再进程内直调）
+            // 最新价 tick 发 Redis：quant 执行层的触价单用（sim 的限价单看成交 Stream）
             matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"futures\",\"price\":\"" + price + "\"}");
         }
     }

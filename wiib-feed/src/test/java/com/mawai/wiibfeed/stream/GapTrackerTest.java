@@ -15,7 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 空窗记录。要害是 from 取"最后一帧时间"而不是"发现断开那一刻"——
+ * 空窗记录。要害是 from 取"最后一帧收到的时刻"而不是"发现断开那一刻"——
  * WsConnection 连上时会把自己的 lastMessageAt 重置成 now，所以这个时间必须 handler 自己记。
  */
 class GapTrackerTest {
@@ -36,17 +36,15 @@ class GapTrackerTest {
         return captor.getValue();
     }
 
+    /** from 是最后一帧收到的时刻：积压时它比处理时刻早，按处理时刻算会把积压那段漏在空窗外 */
     @Test
-    void touch过用内存值当from() {
+    void touch过用最后一帧收到的时刻当from() {
         GapTracker t = tracker();
-        long before = System.currentTimeMillis();
-        t.touch();
+        t.touch(1700000000000L);
         t.publishGap();
 
         String json = publishedJson();
-        assertThat(json).contains("\"type\":\"gap\"").contains("\"kind\":\"spot\"");
-        long from = Long.parseLong(json.replaceAll(".*\"from\":(\\d+).*", "$1"));
-        assertThat(from).isGreaterThanOrEqualTo(before);
+        assertThat(json).contains("\"type\":\"gap\"").contains("\"kind\":\"spot\"").contains("\"from\":1700000000000");
     }
 
     @Test
@@ -71,9 +69,9 @@ class GapTrackerTest {
     @Test
     void 五秒内多次touch只写一次Redis() {
         GapTracker t = tracker();
-        t.touch();
-        t.touch();
-        t.touch();
+        t.touch(1700000000000L);
+        t.touch(1700000001000L);
+        t.touch(1700000002000L);
 
         verify(valueOps, times(1)).set(eq("feed:last-msg:Spot"), anyString());
     }

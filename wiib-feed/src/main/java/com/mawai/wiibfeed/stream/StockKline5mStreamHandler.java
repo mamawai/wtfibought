@@ -8,8 +8,8 @@ import java.util.List;
 
 /**
  * bStock 现货 5m K线连接（轻壳）：@kline_5m，走现货端点（stream.binance.com）。
- * bStock 无合约，不能并入走合约端点的 {@link KlineStreamHandler}；解析复用其 handle 并传 feedStrategy=false
- * ——只广播给前端蜡烛图，绝不进策略 Stream（策略只吃 crypto 合约 5m，混入股票会污染预测/触发）。
+ * bStock 无合约，不能并入走合约端点的 {@link KlineStreamHandler}；解析复用其 handle 并传 publishClosed=false
+ * ——只广播给前端蜡烛图，绝不进收盘 Stream（策略只吃 crypto 合约 5m，混入股票会污染预测/触发）。
  * 未配 stockSymbols 时 buildUrl 返回空串，BinanceWsClient 据此跳过不建连。
  */
 @Component
@@ -26,16 +26,11 @@ public class StockKline5mStreamHandler implements StreamHandler {
     public String buildUrl() {
         List<String> syms = props.getStockSymbols();
         if (syms == null || syms.isEmpty()) return "";   // 无 bStock 则不建连
-        // 现货端点结构：单流 base/{stream}，多流 /stream?streams=（与 SpotStreamHandler 一致，非合约的 /market 段）
-        String streams = StreamUrls.joinStreams(syms, "kline_5m");
-        if (syms.size() == 1) {
-            return props.getWsUrl() + "/" + streams;
-        }
-        return props.getWsUrl().replace("/ws", "/stream?streams=" + streams);
+        return StreamUrls.spotUrl(props.getWsUrl(), syms, "kline_5m");
     }
 
     @Override
     public void onMessage(String raw) {
-        klineHandler.handle(raw, false);   // 只广播，不喂策略
+        klineHandler.handle(raw, false);   // 只广播，收盘 bar 不往下发
     }
 }

@@ -30,6 +30,12 @@ public interface StreamHandler {
     default void onDisconnected() {}
 
     /**
+     * 处理不过来挤掉过帧、又追上了：[fromMs, toMs] 是被挤掉的帧的收到时刻。
+     * 默认空——全量行情下一帧就补上；逐笔成交这种丢一帧就少一笔的流在这里发空窗补漏
+     */
+    default void onDropped(long fromMs, long toMs) {}
+
+    /**
      * 装配期回填：把所属连接交给需要的 handler。
      * 默认空——只有要读自身连接状态（填广播 ws 字段）、或要记空窗的价格流才重写。
      */

@@ -34,6 +34,19 @@ final class StreamUrls {
         return baseWsUrl.replace("/ws", "/" + endpoint + "/stream?streams=" + joinStreams(symbols, suffix));
     }
 
+    /** 现货端点 URL：没有 /market /public 段，单 symbol 直接 base/{stream}，多 symbol 走组合流。 */
+    static String spotUrl(String baseWsUrl, List<String> symbols, String suffix) {
+        if (symbols.size() == 1) {
+            return baseWsUrl + "/" + joinStreams(symbols, suffix);
+        }
+        return spotCombinedUrl(baseWsUrl, symbols, suffix);
+    }
+
+    /** 现货组合流 URL：单 symbol 也走 /stream?streams=，报文外面带 stream 名（现货深度靠它认币）。 */
+    static String spotCombinedUrl(String baseWsUrl, List<String> symbols, String suffix) {
+        return baseWsUrl.replace("/ws", "/stream?streams=" + joinStreams(symbols, suffix));
+    }
+
     /** 期货端点裸单流 URL：不带 symbol 前缀的全市场流（如 !forceOrder@arr）。 */
     static String rawStreamUrl(String baseWsUrl, String endpoint, String stream) {
         return baseWsUrl.replace("/ws", "/" + endpoint + "/ws/" + stream);

@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -49,10 +50,27 @@ public class WsConnection {
     private volatile String url = "";
     private ScheduledFuture<?> idleWatchdog;
     private volatile ScheduledFuture<?> reconnectFuture;
-    /** 收帧和处理分开：读线程只把整条消息放进来就去要下一帧，处理由 consumer 一条线程按序做。满了丢最旧的，行情都是全量，下一条就补上 */
+    /**
+     * 收帧和处理分开：读线程只把整条消息放进来就去要下一帧，处理由 consumer 一条线程按序做。
+     * 满了丢最旧的：全量行情下一条就补上；逐笔成交这种丢一帧就少一笔的，consumer 追上后报给 onDropped 补漏
+     */
     static final int INBOX_CAPACITY = 4096;
-    private final BlockingQueue<String> inbox = new ArrayBlockingQueue<>(INBOX_CAPACITY);
+    private final BlockingQueue<Frame> inbox = new ArrayBlockingQueue<>(INBOX_CAPACITY);
     private final AtomicLong dropped = new AtomicLong();
+    /** 这一轮被挤掉的帧最早、最晚的收到时刻（0 = 没挤掉过）；读线程记，consumer 追上后取走 */
+    private final AtomicLong droppedFrom = new AtomicLong();
+    private volatile long droppedTo;
+    /** 挤掉过帧、consumer 又追上了：报被挤掉的那段收到时刻。装配期由 BinanceWsClient 接到 handler */
+    @Setter
+    private volatile BiConsumer<Long, Long> onDropped;
+    /** 丢帧最多这么久报一次，这期间挤掉的并成一段：行情剧烈时会接连挤掉，每段都报 sim 每次都要给所有币拉一遍 K 线 */
+    static final long DROP_REPORT_INTERVAL_MS = 30_000L;
+    /** 上次报丢帧的时刻；只有 consumer 线程读写 */
+    private long lastDropReportAt;
+    /** 收件箱里的一帧：原文 + 读线程收到它的时刻 */
+    private record Frame(String text, long receivedAt) {}
+    /** 正在处理的这一帧是什么时候收到的；只有 consumer 线程读写 */
+    private long frameReceivedAt;
     // 状态变化回调（连/断/重连转换时各触发一次）：装配期由 BinanceWsClient 接到 StreamHealthPublisher；默认 null 不影响现有行为。
     // 用 Runnable 而非 Consumer<本连接>：发布器发的是全量快照，不关心是哪条变的，无需入参
     @Setter
@@ -90,19 +108,48 @@ public class WsConnection {
     /** 按收到的顺序逐条交给 messageHandler；处理异常只记日志，不断流 */
     private void drain() {
         while (!shutdown.get()) {
-            String message;
+            Frame frame;
             try {
-                message = inbox.take();
+                frame = inbox.take();
             } catch (InterruptedException e) {
                 return;
             }
+            frameReceivedAt = frame.receivedAt();
             try {
-                messageHandler.accept(message);
+                messageHandler.accept(frame.text());
+                if (inbox.isEmpty()) reportDropped();
             } catch (Exception e) {
                 log.warn("{} WS消息处理失败: {}", name, e.getMessage());
             }
         }
     }
+
+    /** 读线程放进收件箱；满了挤掉最旧的一帧，记下它的收到时刻 */
+    void enqueue(String message, long receivedAt) {
+        Frame frame = new Frame(message, receivedAt);
+        if (inbox.offer(frame)) return;
+        Frame old = inbox.poll();
+        if (old != null) {
+            droppedFrom.compareAndSet(0L, old.receivedAt());
+            droppedTo = old.receivedAt();
+        }
+        inbox.offer(frame);
+        long n = dropped.incrementAndGet();
+        if (n % 1000 == 1) log.warn("{} 处理不过来，已丢 {} 帧", name, n);
+    }
+
+    /** 追上了：把挤掉的那段报出去，离上次报不到 30 秒就先攒着 */
+    private void reportDropped() {
+        if (droppedFrom.get() == 0L) return;
+        long now = System.currentTimeMillis();
+        if (now - lastDropReportAt < DROP_REPORT_INTERVAL_MS) return;
+        lastDropReportAt = now;
+        long from = droppedFrom.getAndSet(0L);
+        if (onDropped != null) onDropped.accept(from, Math.max(from, droppedTo));
+    }
+
+    /** 正在处理的这一帧是什么时候收到的；只能在 messageHandler 里调（积压时它早于处理时刻） */
+    public long frameReceivedAt() { return frameReceivedAt; }
 
     public boolean isConnected() { return connected.get(); }
 
@@ -280,13 +327,9 @@ public class WsConnection {
                 String message = buffer.toString();
                 if (!"PONG".equalsIgnoreCase(message) && !"ping".equalsIgnoreCase(message)) {
                     // 仅业务data frame更新时间戳，文本心跳不算"活的数据流"
-                    lastMessageAt = System.currentTimeMillis();
-                    if (!inbox.offer(message)) {
-                        inbox.poll();
-                        inbox.offer(message);
-                        long n = dropped.incrementAndGet();
-                        if (n % 1000 == 1) log.warn("{} 处理不过来，已丢 {} 帧", name, n);
-                    }
+                    long now = System.currentTimeMillis();
+                    lastMessageAt = now;
+                    enqueue(message, now);
                 }
                 buffer.setLength(0);
             }

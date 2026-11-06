@@ -4,8 +4,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * 一条价格连接的空窗记录：每帧记"最后一帧时间"，连上时把 [最后一帧, 现在] 发成 gap 事件，
- * sim 侧按这段空窗拉 1m K 线补漏。
+ * 一条行情连接的空窗记录：每帧记"最后一帧时间"，连上时把 [最后一帧, 现在] 发成 gap 事件，
+ * sim 侧按这段空窗拉 1m K 线补漏。kind 说是哪条连接断的：mark 标记价、futures 合约成交、spot 现货成交。
  * <p>内存值管运行中断连，Redis 值管进程重启；重连后不清内存值——连上又没来帧就断，下次 from 仍正确。
  */
 @Slf4j
@@ -29,13 +29,12 @@ final class GapTracker {
         this.publisher = publisher;
     }
 
-    /** 每帧调用。Redis 节流 5s 写一次 */
-    void touch() {
-        long now = System.currentTimeMillis();
-        lastMs = now;
-        if (now - lastRedisWriteMs < REDIS_WRITE_INTERVAL_MS) return;
-        lastRedisWriteMs = now;
-        redisTemplate.opsForValue().set(LAST_MSG_KEY_PREFIX + name, String.valueOf(now));
+    /** 每帧调用，receivedAt 是这一帧收到的时刻（积压时比处理时刻早）。Redis 节流 5s 写一次 */
+    void touch(long receivedAt) {
+        lastMs = receivedAt;
+        if (receivedAt - lastRedisWriteMs < REDIS_WRITE_INTERVAL_MS) return;
+        lastRedisWriteMs = receivedAt;
+        redisTemplate.opsForValue().set(LAST_MSG_KEY_PREFIX + name, String.valueOf(receivedAt));
     }
 
     /** 连上时调用。from 取最后一帧时间，内存没有（进程刚起）读 Redis，都没有不发 */
@@ -43,7 +42,11 @@ final class GapTracker {
         long from = lastMs;
         if (from == 0L) from = readLastMs();
         if (from == 0L) return;
-        long to = System.currentTimeMillis();
+        publishGap(from, System.currentTimeMillis());
+    }
+
+    /** 发 [from, to] 这段空窗；连接没断、只是处理不过来挤掉过帧也走这里 */
+    void publishGap(long from, long to) {
         publisher.publish("{\"type\":\"gap\",\"kind\":\"" + kind + "\",\"from\":" + from + ",\"to\":" + to + "}");
         log.info("{} 空窗 {}ms，发 gap 事件补漏", name, to - from);
     }

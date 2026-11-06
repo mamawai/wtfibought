@@ -20,6 +20,20 @@ final class StreamParse {
         return vEnd > vStart ? raw.substring(vStart, vEnd) : null;
     }
 
+    /** 组合流 {"stream":...,"data":{...}} 取出 data 对象（按括号配平）；单流没有 data 包装，原样返回 */
+    static String dataObject(String raw) {
+        int dataIdx = raw.indexOf("\"data\":");
+        if (dataIdx < 0) return raw;
+        int dataStart = dataIdx + 7;
+        int depth = 0;
+        for (int i = dataStart; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return raw.substring(dataStart, i + 1);
+        }
+        return raw.substring(dataStart);
+    }
+
     /** 解析时间戳字段（idx 指向 {@code "\"E\":"} 这类 4 字符键的起点）；解析失败返回 fallback */
     static long getEventTime(String json, int idx, long fallback) {
         if (idx >= 0) {

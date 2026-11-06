@@ -65,6 +65,7 @@ public class BinanceWsClient implements SmartLifecycle {
                     httpClient, scheduler, shutdown, h.maxIdleSeconds());
             // 接状态回调 + 登记，都在 connect() 之前，确保首帧 CONNECTING/CONNECTED 也被捕获推送
             conn.setOnStatusChange(healthPublisher::publish);
+            conn.setOnDropped(h::onDropped);
             registry.register(conn);
             h.bind(conn);
             connections.add(conn);
