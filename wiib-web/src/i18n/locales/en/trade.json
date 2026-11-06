@@ -92,7 +92,7 @@
   "sltp": {
     "sl": "Stop loss",
     "tp": "Take profit",
-    "slHelpOpen": "Auto-closes that quantity when the mark price hits the stop price; multiple levels allowed",
+    "slHelpOpen": "Auto-closes that quantity when the last price hits the stop price; multiple levels allowed",
     "tpHelpOpen": "Auto-closes that quantity when the last price hits the take-profit price; multiple levels allowed",
     "posHelp": "Closes at market when the trigger price hits; multiple levels allowed, total not over the position",
     "slPrice": "SL price",

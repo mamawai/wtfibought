@@ -44,25 +44,25 @@ flowchart TD
 
 ```text
 wiib-feed（上游进程）  交易所 WS → Redis
-  -> spot miniTicker        -> Redis 价格 KV(market:price:) + Pub/Sub(feed:price)
-  -> futures markPrice@1s   -> Redis mark KV(market:markprice: + 写入时刻 market:markprice-at:) + Pub/Sub(feed:price)
-  -> futures miniTicker     -> Redis 合约最新价 KV(market:futures-price:) + Pub/Sub(feed:price)
+  -> spot miniTicker        -> Redis 价格 KV(market:price:)
+  -> futures markPrice@1s   -> Redis mark KV(market:markprice: + 写入时刻 market:markprice-at:) + Pub/Sub(feed:price, type=markprice)
+  -> futures miniTicker     -> Redis 合约最新价 KV(market:futures-price:) + Pub/Sub(feed:price, type=futures)
                                ↑ 独立物理连接：Binance 端点拆分后 markPrice 与 miniTicker 不能同连
   -> 交易员的币 markPrice@1s / miniTicker（另两条连接，订阅集合 = Redis set futures:trader:symbols，sim 按仓位和交易员登记维护，feed 每 10 秒看一次、变了重连）
                             -> 只写 market:markprice:（带写入时刻，sim 市价开仓看它超 30 秒没更新就拒）/ market:futures-price:，不发 feed:price、不推前端
   -> forceOrder(全市场流)    -> 白名单过滤 -> force_order 表(DB, 天然跨进程)
-  -> aggTrade               -> Redis Stream(market:orderflow:<sym>, 读侧聚合)
-  -> depth20@100ms          -> Redis KV(market:depth:, DepthStreamCache)
+  -> aggTrade（合约 / 现货）  -> Redis Stream(market:orderflow:<sym> / market:spot-trade:<sym>)，sim 按顺序读来判限价/止损/止盈，合约那条 agent 还读侧聚合订单流
+  -> depth20@100ms（合约 / 现货）-> Redis KV(market:depth: / market:spot-depth:, DepthStreamCache)，sim 市价成交扫它
   -> K 线收盘                -> Redis Stream(stream:kline:closed) + crypto 5m 落库
   -> 所有 tick / K 线        -> Redis Pub/Sub(ws:broadcast:*) -> sim WsBroadcastRelay -> STOMP /topic/**
-  -> WS 断线                 -> 广播断线帧, 重连后发 gap 事件(空窗区间), sim 拉 1m K 线补触发限价/强平
+  -> WS 断线                 -> 广播断线帧, 重连后发 gap 事件(空窗区间, kind=mark/futures/spot), sim 拉 1m K 线补强平/补触发
 
 wiib-sim / wiib-agent（消费进程）  从 Redis 消费 feed 写入的行情
-  sim:   撮合/强平 + 预测回合消费 + ws:broadcast:* 中继给前端
+  sim:   成交 Stream 触发限价/止损/止盈（消费组 sim）+ 标记价强平 + 预测回合消费 + ws:broadcast:* 中继给前端
   agent: K线收盘驱动 交易员唤醒 / 策略信号 / 叙事对账；另订 feed:price 跑波动哨兵与策略触价单
 ```
 
-两条 Redis 链路分工不同，别混：**`feed:price` 是撮合/执行侧的价格总线**，不面向前端——三个订阅者，sim 的撮合与强平（价格更新触发现货限价单、永续强平、止损、止盈检查，feed 本身不撮合）、agent 的波动哨兵、策略的触价单；**`ws:broadcast:*` 才是前端拿实时行情的唯一通道**，由 sim 的 `WsBroadcastRelay` 中继成 STOMP（`crypto` / `futures` / `kline` / `prediction` / `stream-health` / `monitor` 六个频道各对一个 `/topic/**`，其中 prediction 来自 Polymarket 那条链、monitor 由 feed 与 agent 各发一份）。多实例部署时前者按进程各自消费，后者靠 Pub/Sub 让每个实例的 WebSocket 都收到。
+两条 Redis 链路分工不同，别混：**`feed:price` 是撮合/执行侧的价格总线**，不面向前端——三个订阅者，sim 的强平（标记价触发逐仓强平和全仓精查；限价单、止损止盈看成交价，走成交 Stream，feed 本身不撮合）、agent 的波动哨兵、策略的触价单；**`ws:broadcast:*` 才是前端拿实时行情的唯一通道**，由 sim 的 `WsBroadcastRelay` 中继成 STOMP（`crypto` / `futures` / `kline` / `prediction` / `stream-health` / `monitor` 六个频道各对一个 `/topic/**`，其中 prediction 来自 Polymarket 那条链、monitor 由 feed 与 agent 各发一份）。多实例部署时前者按进程各自消费，后者靠 Pub/Sub 让每个实例的 WebSocket 都收到。
 
 ### Polymarket BTC 预测
 

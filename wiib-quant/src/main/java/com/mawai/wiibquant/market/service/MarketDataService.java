@@ -178,8 +178,8 @@ public class MarketDataService {
      * 就把整条 funding_history 拖垮，历史那边的兜底也就白做了）；再久就是拿旧价冒充现价，宁可报不可用。
      * <p>
      * <b>算钱的路径不许走这里</b>：trader 下单量（TraderWakeupRunner）直调 BinanceRestClient 取实时
-     * markPrice；sim 那边限价撮合（FuturesSettlementServiceImpl.onPriceUpdate）与强平
-     * （FuturesLiquidationService）吃 feed 经 Redis 推来的 WS 实时价，资金费结算读 feed 每 tick
+     * markPrice；sim 那边限价撮合、止损止盈（TradeStreamConsumer）读 feed 写的逐笔成交 Stream，
+     * 强平（FuturesLiquidationService）吃 feed 经 Redis 推来的标记价，资金费结算读 feed 每 tick
      * 刷的 markprice 缓存。BTC 一分钟就能走 0.1~0.3%，拿缓存价格算钱是真会出偏差的。
      */
     public String premiumIndex(String symbol) {

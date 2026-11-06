@@ -17,8 +17,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 执行层行情订阅：{@link MarketStreamChannels#PRICE} 的 futures tick → 执行端口 onPriceTick，
- * 驱动 quant 侧虚拟触价单（STOP）盘中触发。取 futures 价与 sim 撮合同源（约1s粒度），
- * 触发时的市价单在 sim 按同一价格源成交，决策价≈成交价。
+ * 驱动 quant 侧虚拟触价单（STOP）盘中触发。取 futures 最新价（miniTicker，约1s粒度），
+ * 触发后下的市价单在 sim 按盘口成交。
  */
 @Slf4j
 @Component

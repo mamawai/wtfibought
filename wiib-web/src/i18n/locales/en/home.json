@@ -165,7 +165,7 @@
     },
     "tpSl": {
       "q": "How do take profit and stop loss work?",
-      "a": "Every futures position can carry several TP/SL levels, each with its own price and size. When the mark price reaches one it fills at market and you get a notification. Getting stopped out is nothing to be ashamed of. Decide your exit before you enter: liquidation is losing by default, a stop loss is losing on your own terms."
+      "a": "Every futures position can carry several TP/SL levels, each with its own price and size. When the last traded price reaches one it fills at market and you get a notification. Getting stopped out is nothing to be ashamed of. Decide your exit before you enter: liquidation is losing by default, a stop loss is losing on your own terms."
     },
     "doubleLiq": {
       "q": "What is a long-short double liquidation?",
