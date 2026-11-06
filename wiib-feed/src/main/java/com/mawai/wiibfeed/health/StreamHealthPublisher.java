@@ -13,7 +13,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 流健康事件发布器：作为各 WsConnection 的状态变化回调，某条流连/断/重连时取全量快照发 Redis
  * （STREAM_HEALTH 频道 → sim 中继 → 前端）。纯事件驱动，无定时轮询。
  * <p>单线程序列化发布：状态回调来自多条连接的不同线程，若并发发布，旧快照可能后到把新状态盖成 stale。
- * 交单线程按序取快照+发布，保证发布顺序=状态变化顺序，最后一帧必是最新态。
+ * 交单线程按序取快照+发布，保证发布顺序=状态变化顺序。sim 中继到前端那段还会乱序，前端按快照里的版本号丢旧的。
  */
 @Slf4j
 @Component

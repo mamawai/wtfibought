@@ -7,7 +7,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -24,7 +23,7 @@ public class FeedStreamController {
 
     /** 全量流健康快照（前端进面板时拉一次，之后靠 WS 事件增量刷新）。 */
     @GetMapping
-    public List<StreamHealth> list() {
+    public StreamHealthSnapshot list() {
         return registry.snapshot();
     }
 

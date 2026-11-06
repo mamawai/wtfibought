@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { subscribe } from '../hooks/stompClient';
 import { adminApi } from '../api';
-import type { FeedStreamHealth } from '../types';
+import type { FeedStreamHealth, FeedStreamHealthSnapshot } from '../types';
 import { useToast } from './ui/use-toast';
 import { cn } from '../lib/utils';
 import { Radio, RefreshCw } from 'lucide-react';
@@ -30,7 +30,7 @@ function fmtAge(ms: number, now: number): string {
 
 /**
  * feed 数据流健康面板（Admin，仅管理员）。
- * 进面板拉一次快照（GET /monitor/streams），之后订 STOMP /topic/feed/streams 实时整表替换；
+ * 进面板拉一次快照（GET /monitor/streams），之后订 STOMP /topic/feed/streams 实时整表替换，版本号旧的丢掉；
  * 每行一条 Binance 行情 WS，断开点「重试」强制重连。
  */
 export function FeedStreamHealthCard() {
@@ -40,23 +40,31 @@ export function FeedStreamHealthCard() {
   const [loadError, setLoadError] = useState(false);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  // 手上这份快照的版本号：推送经中继会乱序、拉的也可能比推的晚到，版本更旧的直接丢
+  const versionRef = useRef(0);
+
+  const apply = useCallback((snap: FeedStreamHealthSnapshot) => {
+    if (snap.version < versionRef.current) return;
+    versionRef.current = snap.version;
+    setStreams(snap.streams);
+  }, []);
 
   const fetchSnapshot = useCallback(async () => {
     try {
-      setStreams(await adminApi.feedStreams());
+      apply(await adminApi.feedStreams());
       setLoadError(false);
     } catch (e) {
       setLoadError(true);
       toast((e as Error).message || t('feed.toast.loadFailed'), 'error');
     }
-  }, [toast, t]);
+  }, [apply, toast, t]);
 
   useEffect(() => { void fetchSnapshot(); }, [fetchSnapshot]);
 
   // 实时事件：某条流状态一变，feed 推全量快照，整表替换（事件驱动，无轮询）
   useEffect(() => subscribe('/topic/feed/streams', msg => {
-    try { setStreams(JSON.parse(msg.body)); } catch { /* ignore */ }
-  }), []);
+    try { apply(JSON.parse(msg.body)); } catch { /* ignore */ }
+  }), [apply]);
 
   // 本地 1s tick：仅驱动"距上次数据 Xs"走字
   useEffect(() => {

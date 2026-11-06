@@ -17,15 +17,21 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class WsConnectionRegistry {
 
     private final List<WsConnection> connections = new CopyOnWriteArrayList<>();
+    /** 上一份快照的版本号 */
+    private long lastVersion;
 
     public void register(WsConnection conn) {
         connections.add(conn);
         log.info("[流健康] 登记 WS 连接 {}", conn.name());
     }
 
-    /** 全量健康快照（登记顺序）。 */
-    public List<StreamHealth> snapshot() {
-        return connections.stream().map(StreamHealth::of).toList();
+    /**
+     * 全量健康快照（登记顺序）。版本号严格递增：取快照那一刻的毫秒，同一毫秒就在上一份上加 1；
+     * 用墙钟起算，feed 重启后也比重启前的大。推送经 sim 中继会乱序、进面板拉的也可能比推的晚到，前端按它丢掉旧的
+     */
+    public synchronized StreamHealthSnapshot snapshot() {
+        lastVersion = Math.max(lastVersion + 1, System.currentTimeMillis());
+        return new StreamHealthSnapshot(lastVersion, connections.stream().map(StreamHealth::of).toList());
     }
 
     /** 手动重试指定流：命中即立即重连，返回是否命中（未命中→前端提示流名无效）。 */

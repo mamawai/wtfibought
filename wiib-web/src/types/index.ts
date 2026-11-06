@@ -530,6 +530,12 @@ export interface FeedStreamHealth {
   reconnectAttempt: number;
 }
 
+/** 全部流的健康快照：推送和拉取都是它，version 越大越新 */
+export interface FeedStreamHealthSnapshot {
+  version: number;
+  streams: FeedStreamHealth[];
+}
+
 // ========== P7 研判工作台 ==========
 /** 后台子运行的种类：DELEGATE=主 agent 现写任务书派出去的 worker；DEEP_ANALYSIS=深研判固定流水线 */
 export type ChildRunKind = 'DELEGATE' | 'DEEP_ANALYSIS';
