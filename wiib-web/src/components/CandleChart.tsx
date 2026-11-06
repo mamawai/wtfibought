@@ -429,7 +429,8 @@ export function CandleChart({
   const decimals = getCoinPriceDecimals(symbol);
   const base = symbol.replace('USDT', '');
 
-  const live = useKlineStream(symbol, interval);
+  // 不走实时 K 线就不订
+  const live = useKlineStream(streamLive ? symbol : undefined, interval);
   const fs = useFullscreen(rootRef);
   const drawings = useDrawings();
   const { attach: attachDrawings, tool } = drawings;
