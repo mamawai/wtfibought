@@ -3,6 +3,8 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
@@ -37,7 +39,7 @@ import static org.mockito.Mockito.*;
 /**
  * 限价开仓单成交侧（挂单期间币种格局可能已变，成交前必须复查）：
  * <ol>
- *   <li>同向仓位在且杠杆/模式一致 → 并入：均价加权、订单回填 position_id</li>
+ *   <li>同向仓位在且杠杆/模式一致 → 并入：均价加权、订单回填 position_id，随单止损止盈从成交这一刻起算</li>
  *   <li>杠杆不一致 → 撤单退款（逐仓退冻结），不硬成交也不改单</li>
  *   <li>模式冲突 → 撤单（全仓单无冻结无退款动作）</li>
  *   <li>无同向仓位 → 维持原新建行为</li>
@@ -170,6 +172,26 @@ class FuturesLimitOpenFillTest {
         verify(eventPublisher).publishAfterCommit(argThat(e -> TradeEvent.LIMIT_FILLED.equals(e.type())
                 && e.userId() == UID && e.positionId() == 1L && e.orderId() == 100L
                 && e.quantity().compareTo(BigDecimal.ONE) == 0));
+    }
+
+    /** 并进老仓位：随单止损止盈按成交那一刻起算（挂单时刻是 1000） */
+    @Test
+    void 成交并入老仓位_随单止损止盈从成交这一刻起算() {
+        FuturesPosition lp = pos(1L, "LONG", FuturesPosition.CROSS, 50, "90", "1", "1.80");
+        when(positionMapper.selectList(any())).thenReturn(List.of(lp));
+        FuturesStopLoss sl = new FuturesStopLoss("sl1", bd("100"), BigDecimal.ONE);
+        sl.setCreatedAt(1_000L);
+        FuturesTakeProfit tp = new FuturesTakeProfit("tp1", bd("130"), BigDecimal.ONE);
+        tp.setCreatedAt(1_000L);
+        FuturesOrder order = openOrder("OPEN_LONG", "CROSS", 50, "1", "110", "2.22");
+        order.setStopLosses(List.of(sl));
+        order.setTakeProfits(List.of(tp));
+        long before = System.currentTimeMillis();
+
+        service.doProcessTriggeredOrder(order);
+
+        verify(positionMapper).updateStopLosses(eq(1L), argThat(l -> l.getFirst().getCreatedAt() >= before));
+        verify(positionMapper).updateTakeProfits(eq(1L), argThat(l -> l.getFirst().getCreatedAt() >= before));
     }
 
     @Test

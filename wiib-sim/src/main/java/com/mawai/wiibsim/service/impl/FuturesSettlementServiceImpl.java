@@ -259,6 +259,11 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             return;
         }
 
+        // 随单的止损止盈从成交这一刻起算
+        long filledAt = System.currentTimeMillis();
+        if (order.getStopLosses() != null) order.getStopLosses().forEach(sl -> sl.setCreatedAt(filledAt));
+        if (order.getTakeProfits() != null) order.getTakeProfits().forEach(tp -> tp.setCreatedAt(filledAt));
+
         if (sameSide != null) {
             fillOpenOrderIntoPosition(order, sameSide, executePrice);
             return;
