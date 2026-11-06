@@ -14,7 +14,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-/** 币安 kline WS 一条消息：广播给前端的串 + 收盘 bar 喂策略 */
+/** 币安 kline WS 一条消息：广播给前端的串 + 收盘 bar 往下发 */
 class KlineStreamHandlerTest {
 
     private final KlineStreamCache cache = mock(KlineStreamCache.class);
@@ -40,7 +40,7 @@ class KlineStreamHandlerTest {
     }
 
     @Test
-    void 收盘bar喂策略_价量保留原字面量() {
+    void 收盘bar往下发_价量保留原字面量() {
         handler.handle(msg(true), true);
 
         verify(cache).onClosedBar("BTCUSDT", "5m", new KlineBar(1700000100000L, 1700000399999L,
@@ -49,7 +49,7 @@ class KlineStreamHandlerTest {
     }
 
     @Test
-    void 副连接只广播不喂策略() {
+    void 副连接只广播收盘不往下发() {
         handler.handle(msg(true), false);
 
         verify(broadcaster).broadcastKline(anyString(), anyString());

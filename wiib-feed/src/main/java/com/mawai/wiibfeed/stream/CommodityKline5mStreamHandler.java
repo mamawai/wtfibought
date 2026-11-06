@@ -8,8 +8,8 @@ import java.util.List;
 
 /**
  * 纯合约标的（大宗商品金/油 + TradFi 美股/ETF 永续）5m K线连接（轻壳）：@kline_5m，走合约 /market 端点。
- * 解析复用 {@link KlineStreamHandler#handle} 并传 feedStrategy=false——只广播给前端蜡烛图，
- * 绝不进策略 Stream（策略只吃 crypto 5m，混入会污染预测/触发）。
+ * 解析复用 {@link KlineStreamHandler#handle} 并传 publishClosed=false——只广播给前端蜡烛图，
+ * 绝不进收盘 Stream（策略只吃 crypto 5m，混入会污染预测/触发）。
  * 两组符号都未配时 buildUrl 返回空串，BinanceWsClient 据此跳过不建连。
  */
 @Component
@@ -31,6 +31,6 @@ public class CommodityKline5mStreamHandler implements StreamHandler {
 
     @Override
     public void onMessage(String raw) {
-        klineHandler.handle(raw, false);   // 只广播，不喂策略
+        klineHandler.handle(raw, false);   // 只广播，收盘 bar 不往下发
     }
 }
