@@ -206,13 +206,14 @@ final class FuturesHelper {
         return price;
     }
 
-    /** 市价开仓只认 feed 这么久内写过标记价的币 */
+    /** 市价开仓、限价单只认 feed 这么久内写过标记价的币 */
     static final long OPEN_PRICE_MAX_AGE_MS = 30_000L;
 
     /**
-     * 市价开仓用的价：同 latestFuturesPrice，但 feed 超过 30 秒没写过这个币的标记价就当没有价（断线时价格停住，不按停住的价开仓）。
+     * 市价开仓、限价单判能不能当场成交用的价：同 latestFuturesPrice，但 feed 超过 30 秒没写过这个币的标记价就当没有价，
+     * 拒单（断线时价格停住，不按停住的价成交，也判断不了限价单能不能当场成交）。
      * 心跳看标记价不看最新价：markPrice@1s 每秒必推，miniTicker 没成交就不推，成交稀的币会几十秒没帧。
-     * 平仓不走这里：下架的币要能按最后价平掉。
+     * 市价平仓不走这里：下架的币要能按最后价平掉。
      */
     static BigDecimal freshFuturesPrice(CacheService cacheService, String symbol) {
         Long at = cacheService.getMarkPriceAt(symbol);

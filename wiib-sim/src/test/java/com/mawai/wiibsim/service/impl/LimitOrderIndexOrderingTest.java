@@ -147,6 +147,6 @@ class LimitOrderIndexOrderingTest {
                 mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
                 mock(FairLockRegistry.class),
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(TradeEventPublisher.class), NoBookFillPricer.create());
+                mock(TradeEventPublisher.class));
     }
 }

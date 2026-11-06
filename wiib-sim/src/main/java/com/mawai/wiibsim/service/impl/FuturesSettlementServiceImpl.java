@@ -17,7 +17,6 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
-import com.mawai.wiibsim.service.BookFillPricer;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
@@ -64,7 +63,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final LedgerTx ledgerTx;
     /** 限价开仓成交告诉 agent：trader 的单子成交了，当场叫醒它 */
     private final TradeEventPublisher eventPublisher;
-    private final BookFillPricer fillPricer;
 
     record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
@@ -79,9 +77,9 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     @Override
     public List<TradeHit> limitHits(String symbol, List<PriceTick> ticks) {
         BigDecimal[] range = PriceTick.lowHigh(ticks);
-        double low = range[0].doubleValue();
-        double high = range[1].doubleValue();
-        // 买单只看挂单价不低于最低价的，卖单只看不高于最高价的
+        double low = Math.nextUp(range[0].doubleValue());
+        double high = Math.nextDown(range[1].doubleValue());
+        // 要严格穿过：买单只看挂单价高于最低价的，卖单只看低于最高价的
         List<TradeHit> hits = new ArrayList<>();
         collectLimitHits(LIMIT_OPEN_LONG_PREFIX + symbol, low, Double.MAX_VALUE, ticks, true, hits);
         collectLimitHits(LIMIT_CLOSE_SHORT_PREFIX + symbol, low, Double.MAX_VALUE, ticks, true, hits);
@@ -103,9 +101,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 cacheService.zRemove(key, orderId.toString());
                 continue;
             }
-            // 挂单时就穿价的 taker 单碰到挂单价就成交；躺在盘口的 maker 单要有价穿过去才算
-            boolean strict = !isLimitTaker(order, order.getOrderSide().startsWith("CLOSE"));
-            int i = PriceTick.firstTouch(ticks, toEpochMs(order.getCreatedAt()), order.getLimitPrice(), buy, strict);
+            int i = PriceTick.firstTouch(ticks, toEpochMs(order.getCreatedAt()), order.getLimitPrice(), buy, true);
             if (i < 0) continue;
             BigDecimal triggerPrice = ticks.get(i).touchPrice(order.getLimitPrice(), buy);
             hits.add(new TradeHit(i, false, order.getUserId(), () -> triggerLimitOrder(key, orderId, triggerPrice)));
@@ -218,18 +214,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
     }
 
-    /**
-     * 成交价：被动 maker 单按挂单价（被动单躺在盘口被对手吃，成交价=挂单价，跳空穿越的好处不归挂单方）；
-     * 挂单时就穿价的 taker 单主动吃对手盘，按盘口扫，没盘口用触发价，且不差于挂单价（买不高于、卖不低于）
-     */
-    private BigDecimal limitFillPrice(FuturesOrder order, boolean isTaker) {
-        if (!isTaker) return order.getLimitPrice();
-        boolean buy = "OPEN_LONG".equals(order.getOrderSide()) || "CLOSE_SHORT".equals(order.getOrderSide());
-        BigDecimal fallback = order.getFilledPrice() != null ? order.getFilledPrice() : order.getLimitPrice();
-        BigDecimal fill = fillPricer.futures(order.getSymbol(), buy, order.getQuantity(), fallback);
-        return buy ? fill.min(order.getLimitPrice()) : fill.max(order.getLimitPrice());
-    }
-
     private void processTriggeredOpenOrder(FuturesOrder order) {
         boolean isCross = FuturesPosition.CROSS.equals(order.getMarginMode());
         String side = order.getOrderSide().contains("LONG") ? "LONG" : "SHORT";
@@ -249,8 +233,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             if (side.equals(p.getSide())) sameSide = p;
         }
 
-        boolean isTaker = isLimitTaker(order, false);
-        BigDecimal executePrice = limitFillPrice(order, isTaker);
+        // 挂着的单是被别人吃掉的，成交价就是挂单价，穿价那一下的好处不归挂单方
+        BigDecimal executePrice = order.getLimitPrice();
         BigDecimal quantity = order.getQuantity();
         // 同向并入按合并后总持仓过档
         BigDecimal bracketQty = sameSide != null ? sameSide.getQuantity().add(quantity) : quantity;
@@ -271,7 +255,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         BigDecimal positionValue = executePrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(order.getLeverage()), 2, RoundingMode.CEILING);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, false);
         if (!chargeOpenFill(order, margin, commission)) return;
 
         FuturesPosition position = new FuturesPosition();
@@ -300,8 +284,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         eventPublisher.publishAfterCommit(new TradeEvent(TradeEvent.LIMIT_FILLED, order.getUserId(), position.getId(),
                 order.getId(), order.getSymbol(), position.getSide(), quantity, executePrice, null, System.currentTimeMillis()));
 
-        log.info("futures限价开仓成交 orderId={} mode={} price={} feeType={} margin={}",
-                order.getId(), order.getMarginMode(), executePrice, isTaker ? "TAKER" : "MAKER", margin);
+        log.info("futures限价开仓成交 orderId={} mode={} price={} margin={}",
+                order.getId(), order.getMarginMode(), executePrice, margin);
     }
 
     /**
@@ -327,8 +311,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         BigDecimal addValue = executePrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        boolean isTaker = isLimitTaker(order, false);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, isTaker);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, false);
         if (!chargeOpenFill(order, addMargin, commission)) return;
 
         BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
@@ -354,7 +337,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                     newEntryPrice, newMargin, newQty);
             positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
         }
-        // 同 executeMarketMerge：全仓加仓并入必须汇入 refreshUserIndex 作废强平安全带（bump 在其内）
+        // 同 mergeNow：全仓加仓并入必须汇入 refreshUserIndex 作废强平安全带（bump 在其内）
         if (position.isCross()) crossMarginService.refreshUserIndex(order.getUserId());
 
         // 回填 position_id：开仓手续费聚合进仓位已实现盈亏
@@ -363,13 +346,13 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         eventPublisher.publishAfterCommit(new TradeEvent(TradeEvent.LIMIT_FILLED, order.getUserId(), position.getId(),
                 order.getId(), order.getSymbol(), position.getSide(), addQty, executePrice, null, System.currentTimeMillis()));
 
-        log.info("futures限价开仓并入 orderId={} posId={} price={} feeType={} addMargin={} 新均价={}",
-                order.getId(), position.getId(), executePrice, isTaker ? "TAKER" : "MAKER", addMargin, newEntryPrice);
+        log.info("futures限价开仓并入 orderId={} posId={} price={} addMargin={} 新均价={}",
+                order.getId(), position.getId(), executePrice, addMargin, newEntryPrice);
     }
 
     /**
      * 限价开仓成交的资金动作，成本 = 成交价下的保证金+手续费。
-     * 成本超出挂单时冻结/预留的 frozenAmount（taker 开空按触发价成交）：超出部分要过全仓可用额度，
+     * 成本超出挂单时冻结/预留的 frozenAmount（挂单后手续费率调高了）：超出部分要过全仓可用额度，
      * 逐仓还要从余额补扣，过不去就撤单退款、返回 false。
      */
     private boolean chargeOpenFill(FuturesOrder order, BigDecimal margin, BigDecimal commission) {
@@ -425,31 +408,14 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
 
         BigDecimal closeQty = order.getQuantity();
-        boolean isTaker = isLimitTaker(order, true);
-        // 挂单时就穿价的 taker 单等于市价单，已经够强平就不按它成交：逐仓当场强平、这张单撤掉；
-        // 全仓整户等价格 tick 去爆，单子退回 TRIGGERED 交给补扫（爆了仓位没了会撤，没爆照常成交）。
-        // maker 单是先被价格碰到的，碰到时还没到强平，照常成交
-        if (isTaker) {
-            if (position.isCross()) {
-                if (crossMarginService.snapshot(order.getUserId()).liquidatable()) {
-                    orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "TRIGGERED");
-                    return;
-                }
-            } else {
-                BigDecimal mark = cacheService.getMarkPrice(position.getSymbol());
-                if (mark != null && riskService.liquidateIfReached(position, mark) != null) {
-                    orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
-                    return;
-                }
-            }
-        }
-        BigDecimal executePrice = limitFillPrice(order, isTaker);
+        // 挂着的单是被别人吃掉的，成交价就是挂单价
+        BigDecimal executePrice = order.getLimitPrice();
 
         boolean isFullClose = closeQty.compareTo(position.getQuantity()) == 0;
 
         BigDecimal marginPart = isFullClose ? position.getMargin()
                 : position.getMargin().multiply(closeQty).divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
-        CloseFill fill = closeFill(position, executePrice, closeQty, marginPart, tradingConfig, isTaker);
+        CloseFill fill = closeFill(position, executePrice, closeQty, marginPart, tradingConfig, false);
         BigDecimal closeValue = fill.value(closeQty);
 
         if (isFullClose) {
@@ -492,8 +458,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 fill.commission(), null, fill.pnl());
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
-        log.info("futures限价平仓成交 orderId={} price={} feeType={} pnl={}",
-                order.getId(), fill.price(), isTaker ? "TAKER" : "MAKER", fill.pnl());
+        log.info("futures限价平仓成交 orderId={} price={} pnl={}",
+                order.getId(), fill.price(), fill.pnl());
     }
 
     private boolean isLeverageAllowed(String symbol, int leverage, BigDecimal notional) {
@@ -713,21 +679,5 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private boolean isLimitTaker(FuturesOrder order, boolean isClose) {
-        if (!"LIMIT".equals(order.getOrderType())) return true;
-        if (order.getCommission() == null || order.getLimitPrice() == null || order.getQuantity() == null) {
-            // 兼容旧挂单：历史限价单没有预估手续费，按maker处理
-            return false;
-        }
-
-        BigDecimal baseAmount = order.getLimitPrice().multiply(order.getQuantity()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal makerCommission = tradingConfig.calculateFuturesCommission(baseAmount, isClose, false);
-        BigDecimal takerCommission = tradingConfig.calculateFuturesCommission(baseAmount, isClose, true);
-        if (makerCommission.compareTo(takerCommission) == 0) {
-            return false;
-        }
-        return order.getCommission().compareTo(takerCommission) == 0;
     }
 }

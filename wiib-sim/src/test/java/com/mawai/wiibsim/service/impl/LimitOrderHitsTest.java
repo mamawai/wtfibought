@@ -42,8 +42,6 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -53,8 +51,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 限价单看成交价触发：躺在盘口的 maker 单要严格穿过挂单价（买单要有价低于、卖单要有价高于，正好等于不算），
- * 挂单时就穿价的合约 taker 单碰到就算；只认挂单之后的行情。逐笔成交、补漏 K 线走同一套。
+ * 限价单看成交价触发：躺在盘口的挂单要严格穿过挂单价（买单要有价低于、卖单要有价高于，正好等于不算），
+ * 只认挂单之后的行情。逐笔成交、补漏 K 线走同一套。
  */
 class LimitOrderHitsTest {
 
@@ -80,15 +78,14 @@ class LimitOrderHitsTest {
 
     private final FuturesOrderMapper orderMapper = mock(FuturesOrderMapper.class);
     private final CacheService cacheService = mock(CacheService.class);
-    private final TradingConfig tradingConfig = mock(TradingConfig.class);
     private final FuturesSettlementServiceImpl futures = new FuturesSettlementServiceImpl(mock(UserService.class),
-            mock(UserMapper.class), mock(FuturesPositionMapper.class), orderMapper, tradingConfig,
+            mock(UserMapper.class), mock(FuturesPositionMapper.class), orderMapper, mock(TradingConfig.class),
             mock(FuturesLeverageBracketRegistry.class), cacheService, mock(FuturesPositionIndexService.class),
             mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
             mock(FairLockRegistry.class), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-            mock(TradeEventPublisher.class), NoBookFillPricer.create());
+            mock(TradeEventPublisher.class));
 
-    /** 开多挂单 50，挂在 createdAt；没带预估手续费按 maker */
+    /** 开多挂单 50，挂在 createdAt */
     private FuturesOrder openLong(long createdAt) {
         FuturesOrder order = new FuturesOrder();
         order.setId(1L);
@@ -104,18 +101,6 @@ class LimitOrderHitsTest {
                 .thenReturn(Set.of(ZSetOperations.TypedTuple.of("1", 50d)));
         when(orderMapper.selectById(1L)).thenReturn(order);
         return order;
-    }
-
-    /** 挂单时就穿价的 taker 单（预估手续费按吃单费率收的）：碰到挂单价就成交 */
-    @Test
-    void 合约taker单成交价碰到挂单价就触发() {
-        when(tradingConfig.calculateFuturesCommission(any(), anyBoolean(), eq(false))).thenReturn(new BigDecimal("0.01"));
-        when(tradingConfig.calculateFuturesCommission(any(), anyBoolean(), eq(true))).thenReturn(new BigDecimal("0.03"));
-        openLong(T0).setCommission(new BigDecimal("0.03"));
-
-        List<TradeHit> hits = futures.limitHits(SYM, List.of(trade("50.5", T0 + 10), trade("50", T0 + 20)));
-
-        assertThat(hits).singleElement().extracting(TradeHit::tick).isEqualTo(1);
     }
 
     @Test

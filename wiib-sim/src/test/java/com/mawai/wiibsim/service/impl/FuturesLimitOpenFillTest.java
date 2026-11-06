@@ -14,7 +14,6 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
-import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeEventPublisher;
@@ -43,8 +42,8 @@ import static org.mockito.Mockito.*;
  *   <li>杠杆不一致 → 撤单退款（逐仓退冻结），不硬成交也不改单</li>
  *   <li>模式冲突 → 撤单（全仓单无冻结无退款动作）</li>
  *   <li>无同向仓位 → 维持原新建行为</li>
- *   <li>成交成本超出挂单时的冻结/预留（taker 开空按触发价成交）→ 超出部分过可用额度、逐仓从余额补扣，
- *       补不上撤单退款；maker 单成本等于预留，不查额度</li>
+ *   <li>成交成本超出挂单时的冻结/预留（挂单后手续费率调高了）→ 超出部分过可用额度、逐仓从余额补扣，
+ *       补不上撤单退款；成本等于预留，不查额度</li>
  * </ol>
  */
 class FuturesLimitOpenFillTest {
@@ -95,8 +94,7 @@ class FuturesLimitOpenFillTest {
                 new TradingConfig(), bracketRegistry, cacheService, positionIndexService,
                 mock(FuturesRiskService.class), crossMarginService,
                 mock(CrossLiquidationService.class), mock(FairLockRegistry.class),
-                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))), eventPublisher,
-                NoBookFillPricer.create());
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))), eventPublisher);
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,
@@ -115,7 +113,7 @@ class FuturesLimitOpenFillTest {
         return p;
     }
 
-    /** TRIGGERED 限价开仓单；commission 置空按 maker 处理 → 成交价=挂单价 */
+    /** TRIGGERED 限价开仓单，成交价=挂单价 */
     private static FuturesOrder openOrder(String orderSide, String mode, int leverage, String qty, String limitPrice, String frozen) {
         FuturesOrder o = new FuturesOrder();
         o.setId(100L);
@@ -133,14 +131,11 @@ class FuturesLimitOpenFillTest {
     }
 
     /**
-     * 1x 开空 0.3 @30000，挂单时标记价 60000 → taker：冻结 9000 + 9000×0.04%=3.60；
-     * 下一个 tick 60000 触发，按触发价成交：保证金 18000、taker 费 7.20，成本比冻结多 9003.60
+     * 1x 开空 0.3 @30000：保证金 9000，现在的挂单费 9000×0.02%=1.80；
+     * 挂单时费率还是 0，只冻结了 9000，成本比冻结多 1.80
      */
-    private static FuturesOrder takerShortFilledAt60000(String mode) {
-        FuturesOrder o = openOrder("OPEN_SHORT", mode, 1, "0.3", "30000", "9003.60");
-        o.setCommission(new BigDecimal("3.60"));   // 挂单时按 taker 估的费，成交侧据此认 taker
-        o.setFilledPrice(new BigDecimal("60000")); // 触发 tick 价
-        return o;
+    private static FuturesOrder shortFrozenBeforeFeeRaise(String mode) {
+        return openOrder("OPEN_SHORT", mode, 1, "0.3", "30000", "9000");
     }
 
     /** 无全仓持仓的快照，可用额度 = balance + upnl */
@@ -246,19 +241,19 @@ class FuturesLimitOpenFillTest {
         verify(crossMarginService, never()).snapshot(anyLong());
     }
 
-    /** 冻结 9003.60、成交保证金 18000：超出的 9003.60 从余额扣 */
+    /** 冻结 9000、成交成本 9001.80：超出的 1.80 从余额扣 */
     @Test
-    void 逐仓taker开空按触发价成交_超出冻结的部分从余额补扣() {
+    void 逐仓成交成本超出冻结_超出部分从余额补扣() {
         when(positionMapper.selectList(any())).thenReturn(List.of());
         when(crossMarginService.snapshot(UID)).thenReturn(account("20000", "0"));
 
-        service.doProcessTriggeredOrder(takerShortFilledAt60000("ISOLATED"));
+        service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("ISOLATED"));
 
-        verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("-9003.60")) == 0));
-        verify(userMapper).atomicDeductFrozenBalance(eq(UID), argThat(f -> f.compareTo(bd("9003.60")) == 0));
+        verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("-1.80")) == 0));
+        verify(userMapper).atomicDeductFrozenBalance(eq(UID), argThat(f -> f.compareTo(bd("9000")) == 0));
         verify(userMapper, never()).atomicUpdateBalance(eq(UID), argThat(a -> a.signum() > 0));
         verify(positionMapper).insert(argThat((FuturesPosition p) ->
-                p.getMargin().compareTo(bd("18000")) == 0 && p.getEntryPrice().compareTo(bd("60000")) == 0));
+                p.getMargin().compareTo(bd("9000")) == 0 && p.getEntryPrice().compareTo(bd("30000")) == 0));
     }
 
     /** 可用额度够（全仓浮盈撑着）但钱包现金不够补：撤单退冻结，不建仓 */
@@ -268,11 +263,11 @@ class FuturesLimitOpenFillTest {
         when(crossMarginService.snapshot(UID)).thenReturn(account("5000", "20000"));
         when(userMapper.atomicUpdateBalance(eq(UID), argThat(a -> a.signum() < 0))).thenReturn(null);
 
-        service.doProcessTriggeredOrder(takerShortFilledAt60000("ISOLATED"));
+        service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("ISOLATED"));
 
         verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
-        verify(userMapper).atomicDeductFrozenBalance(eq(UID), argThat(f -> f.compareTo(bd("9003.60")) == 0));
-        verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("9003.60")) == 0));
+        verify(userMapper).atomicDeductFrozenBalance(eq(UID), argThat(f -> f.compareTo(bd("9000")) == 0));
+        verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("9000")) == 0));
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
         verify(orderMapper, never()).casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any());
     }
@@ -280,23 +275,23 @@ class FuturesLimitOpenFillTest {
     @Test
     void 逐仓超出部分过不了可用额度_撤单退冻结_余额不先扣() {
         when(positionMapper.selectList(any())).thenReturn(List.of());
-        when(crossMarginService.snapshot(UID)).thenReturn(account("9003.59", "0"));
+        when(crossMarginService.snapshot(UID)).thenReturn(account("1.79", "0"));
 
-        service.doProcessTriggeredOrder(takerShortFilledAt60000("ISOLATED"));
+        service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("ISOLATED"));
 
         verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
         verify(userMapper, never()).atomicUpdateBalance(eq(UID), argThat(a -> a.signum() < 0));
-        verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("9003.60")) == 0));
+        verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("9000")) == 0));
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
     }
 
-    /** 全仓成交后占用按 18000 算、比挂单预留多 9003.60，可用额度不够就撤单 */
+    /** 全仓比挂单预留多占 1.80，可用额度不够就撤单 */
     @Test
-    void 全仓taker成交成本超出预留_可用不够_撤单不建仓() {
+    void 全仓成交成本超出预留_可用不够_撤单不建仓() {
         when(positionMapper.selectList(any())).thenReturn(List.of());
-        when(crossMarginService.snapshot(UID)).thenReturn(account("9003.59", "0"));
+        when(crossMarginService.snapshot(UID)).thenReturn(account("1.79", "0"));
 
-        service.doProcessTriggeredOrder(takerShortFilledAt60000("CROSS"));
+        service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("CROSS"));
 
         verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
@@ -305,14 +300,14 @@ class FuturesLimitOpenFillTest {
     }
 
     @Test
-    void 全仓taker成交成本超出预留_可用够_照常成交只扣手续费() {
+    void 全仓成交成本超出预留_可用够_照常成交只扣手续费() {
         when(positionMapper.selectList(any())).thenReturn(List.of());
-        when(crossMarginService.snapshot(UID)).thenReturn(account("9003.60", "0"));
+        when(crossMarginService.snapshot(UID)).thenReturn(account("1.80", "0"));
 
-        service.doProcessTriggeredOrder(takerShortFilledAt60000("CROSS"));
+        service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("CROSS"));
 
-        verify(userMapper).atomicSettleBalance(eq(UID), argThat(c -> c.compareTo(bd("-7.20")) == 0));
+        verify(userMapper).atomicSettleBalance(eq(UID), argThat(c -> c.compareTo(bd("-1.80")) == 0));
         verify(userMapper, never()).atomicUpdateBalance(anyLong(), any());
-        verify(positionMapper).insert(argThat((FuturesPosition p) -> p.getMargin().compareTo(bd("18000")) == 0));
+        verify(positionMapper).insert(argThat((FuturesPosition p) -> p.getMargin().compareTo(bd("9000")) == 0));
     }
 }

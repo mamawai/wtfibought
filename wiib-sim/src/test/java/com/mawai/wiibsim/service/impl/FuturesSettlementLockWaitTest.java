@@ -12,7 +12,6 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
-import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeEventPublisher;
@@ -95,7 +94,7 @@ class FuturesSettlementLockWaitTest {
                 riskService, crossMarginService,
                 crossLiquidationService, lockRegistry,
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(TradeEventPublisher.class), NoBookFillPricer.create());
+                mock(TradeEventPublisher.class));
     }
 
     private static FuturesPosition isolatedLong(long id) {
@@ -113,7 +112,7 @@ class FuturesSettlementLockWaitTest {
         return p;
     }
 
-    /** TRIGGERED 限价单；commission 空按 maker 处理 → 成交价=挂单价 */
+    /** TRIGGERED 限价单，成交价=挂单价 */
     private static FuturesOrder triggered(String orderSide, Long positionId, String frozen) {
         FuturesOrder o = new FuturesOrder();
         o.setId(100L);
