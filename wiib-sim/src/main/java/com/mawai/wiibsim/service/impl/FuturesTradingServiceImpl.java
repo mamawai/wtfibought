@@ -21,8 +21,10 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.BookFillPricer;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -63,6 +65,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     /** 反手的半成功要把开仓失败的原因成文带回前端，绕开了全局处理器，只能自己查词表 */
     private final MessageCatalog messages;
     private final LedgerTx ledgerTx;
+    private final FuturesRiskService riskService;
+    private final BookFillPricer fillPricer;
 
     // ==================== 开仓 ====================
 
@@ -112,8 +116,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
                 .filter(p -> p.getSide().equals(request.getSide())).findFirst().orElse(null);
 
         if ("MARKET".equals(request.getOrderType())) {
-            // 只认 feed 30 秒内写过的价：断线时不按停住的价开仓
-            BigDecimal price = freshFuturesPrice(cacheService, request.getSymbol());
+            // 按盘口扫出成交价；没盘口退回最新价，且只认 feed 30 秒内写过的价：断线时不按停住的价开仓
+            BigDecimal price = fillPricer.futures(request.getSymbol(), "LONG".equals(request.getSide()),
+                    request.getQuantity(), freshFuturesPrice(cacheService, request.getSymbol()));
             // 交易过滤器（对齐Binance exchangeInfo）：步长对齐 + 名义额≥minNotional，加仓单同样受限
             tradeFilterRegistry.validateFuturesOrder(request.getSymbol(), request.getQuantity(), price);
             // 同向已有仓位：Binance 无独立"加仓"概念，同向下单即并入现有仓位
@@ -323,7 +328,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal positionValue = limitPrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         String orderSide = "LONG".equals(request.getSide()) ? "OPEN_LONG" : "OPEN_SHORT";
-        boolean isTaker = isLimitTaker(orderSide, limitPrice, markPrice);
+        boolean isTaker = isLimitTaker(orderSide, request.getSymbol(), quantity, limitPrice, markPrice);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
         BigDecimal frozenAmount = margin.add(commission);
 
@@ -445,6 +450,10 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         closeReq.setOrderType("MARKET");   // quantity 不设=锁内取实时持仓量全平
         // 这步失败正常抛：什么都还没发生。属主与状态校验由 doClosePosition 在仓位锁内做
         FuturesOrderResponse closed = closePosition(userId, closeReq);
+        // 平仓时已经到强平、按强平处理掉了：仓位是被强平的，不再反向开仓
+        if ("LIQUIDATED".equals(closed.getStatus())) {
+            return new ReverseResult(closed, null, new BizException(ErrorCode.FUTURES_LIQUIDATED).render(messages));
+        }
 
         // 新仓参数一律取自平仓回执：那份是 doClosePosition 在仓位锁内读到的快照。
         // 自己在锁外先查一遍的话，这中间 adjustLeverage 跑完就会拿旧杠杆去开新仓——
@@ -476,22 +485,35 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     }
 
     private FuturesOrderResponse executeMarketClose(Long userId, FuturesPosition position, BigDecimal closeQty) {
-        BigDecimal currentPrice = getPrice(position.getSymbol());
-        BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), currentPrice, closeQty);
-        BigDecimal closeValue = currentPrice.multiply(closeQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
+        // 已经够强平、只是强平还没跑到：全仓整户等价格 tick 去爆，这里不让平；逐仓当场按强平处理（整仓）
+        if (position.isCross()) {
+            if (crossMarginService.snapshot(userId).liquidatable()) throw new BizException(ErrorCode.FUTURES_LIQUIDATING);
+        } else {
+            BigDecimal mark = cacheService.getMarkPrice(position.getSymbol());
+            if (mark != null) {
+                FuturesOrder liquidated = riskService.liquidateIfReached(position, mark);
+                if (liquidated != null) return buildOrderResponse(liquidated);
+            }
+        }
+
+        // 平多是卖、平空是买，按盘口扫；没盘口退回最新价
+        BigDecimal price = fillPricer.futures(position.getSymbol(), "SHORT".equals(position.getSide()),
+                closeQty, getPrice(position.getSymbol()));
 
         boolean isFullClose = closeQty.compareTo(position.getQuantity()) == 0;
 
         // 占用/划扣两种记账：全仓保证金没离开过余额，平仓只结盈亏净额（可为负，亏穿走破产）；
-        // 逐仓把仓位口袋里的钱(保证金±盈亏-费)拿回来，亏损上限就是保证金，返还不为负
+        // 逐仓把仓位口袋里的钱(保证金±盈亏-费)拿回来，亏损上限就是保证金，closeFill 已封顶
         BigDecimal marginPart = isFullClose ? position.getMargin()
                 : position.getMargin().multiply(closeQty).divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
+        CloseFill fill = closeFill(position, price, closeQty, marginPart, tradingConfig, true);
+        BigDecimal closeValue = fill.value(closeQty);
 
         if (isFullClose) {
-            int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", currentPrice, pnl);
+            int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", fill.price(), fill.pnl());
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
             positionIndexService.unregisterAll(position);
+            cancelCloseOrders(position.getId(), orderMapper, cacheService);
         } else {
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
@@ -507,9 +529,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
 
         if (position.isCross()) {
-            crossMarginService.settle(userId, pnl.subtract(commission));
+            crossMarginService.settle(userId, fill.pnl().subtract(fill.commission()));
         } else {
-            userMapper.atomicUpdateBalance(userId, marginPart.add(pnl).subtract(commission).max(BigDecimal.ZERO));
+            userMapper.atomicUpdateBalance(userId, fill.left(marginPart));
         }
 
         FuturesOrder order = new FuturesOrder();
@@ -521,15 +543,15 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setMarginMode(position.getMarginMode());
         order.setQuantity(closeQty);
         order.setLeverage(position.getLeverage());
-        order.setFilledPrice(currentPrice);
+        order.setFilledPrice(fill.price());
         order.setFilledAmount(closeValue);
-        order.setCommission(commission);
-        order.setRealizedPnl(pnl);
+        order.setCommission(fill.commission());
+        order.setRealizedPnl(fill.pnl());
         order.setStatus("FILLED");
         orderMapper.insert(order);
 
         log.info("futures市价平仓 userId={} posId={} mode={} qty={} price={} pnl={}",
-                userId, position.getId(), position.getMarginMode(), closeQty, currentPrice, pnl);
+                userId, position.getId(), position.getMarginMode(), closeQty, fill.price(), fill.pnl());
 
         return buildOrderResponse(order);
     }
@@ -552,7 +574,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
 
         String orderSide = "LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT";
-        boolean isTaker = isLimitTaker(orderSide, limitPrice, markPrice);
+        boolean isTaker = isLimitTaker(orderSide, position.getSymbol(), closeQty, limitPrice, markPrice);
         BigDecimal closeValue = limitPrice.multiply(closeQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, isTaker);
 
@@ -877,6 +899,17 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         return map;
     }
 
+    /** 了结每个仓位的那张平仓单的状态 */
+    private Map<Long, String> closedByPosition(List<FuturesPosition> positions) {
+        if (positions.isEmpty()) return Map.of();
+        Long[] ids = positions.stream().map(FuturesPosition::getId).toArray(Long[]::new);
+        Map<Long, String> map = new HashMap<>();
+        for (Map<String, Object> row : orderMapper.lastCloseStatusByPositionIds(ids)) {
+            map.put(((Number) row.get("position_id")).longValue(), (String) row.get("status"));
+        }
+        return map;
+    }
+
     @Override
     public List<FuturesPositionDTO> getClosedPositions(Long userId, String symbol, int limit) {
         LambdaQueryWrapper<FuturesPosition> wrapper = new LambdaQueryWrapper<>();
@@ -890,6 +923,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         List<FuturesPosition> rows = positionMapper.selectList(wrapper);
         // 净盈亏按订单流水聚合
         Map<Long, BigDecimal> realizedMap = sumRealizedByPosition(rows);
+        Map<Long, String> closedByMap = closedByPosition(rows);
         // 已平仓只出静态字段，不走 buildPositionDTO 的实时价计算
         return rows.stream().map(pos -> {
             FuturesPositionDTO dto = new FuturesPositionDTO();
@@ -903,12 +937,13 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             dto.setEntryPrice(pos.getEntryPrice());
             dto.setMargin(pos.getMargin());
             dto.setFundingFeeTotal(pos.getFundingFeeTotal());
-            // 全平不清保护单列表（只有部分平仓会改写），随行带出：AI Trader复盘据此推断了结方式
-            // （closedPrice越过止损价=止损带走/越过止盈价=止盈带走/带内=主动平仓）
+            // 全平不清保护单列表（只有部分平仓会改写），随行带出：了结时在岗的那组档位
             dto.setStopLosses(pos.getStopLosses());
             dto.setTakeProfits(pos.getTakeProfits());
             dto.setStatus(pos.getStatus());
             dto.setClosedPrice(pos.getClosedPrice());
+            // 了结方式看了结它的那张平仓单：止损止盈按盘口成交，成交价可能没越过触发价，不能拿价去猜
+            dto.setClosedBy(closedByMap.get(pos.getId()));
             // 净盈亏 = 各平仓单盈亏 − 开平手续费 − 资金费；清零的仓位没有平仓单，保持 null
             dto.setClosedPnl(pos.getClosedPnl() == null ? null
                     : realizedMap.getOrDefault(pos.getId(), BigDecimal.ZERO).subtract(pos.getFundingFeeTotal()));
@@ -1038,13 +1073,18 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         return FuturesHelper.markPrice(cacheService, symbol);
     }
 
-    private boolean isLimitTaker(String orderSide, BigDecimal limitPrice, BigDecimal markPrice) {
+    /**
+     * 挂上就能成交的是 taker：对面盘口在挂单价以内的量够整笔吃掉（没盘口看标记价够不够得着）。
+     * 够不着整笔的当 maker 挂着，被成交穿过按挂单价成交
+     */
+    private boolean isLimitTaker(String orderSide, String symbol, BigDecimal qty, BigDecimal limitPrice,
+                                 BigDecimal markPrice) {
         boolean buy = switch (orderSide) {
             case "OPEN_LONG", "CLOSE_SHORT" -> true;
             case "OPEN_SHORT", "CLOSE_LONG" -> false;
             default -> throw new IllegalArgumentException("Invalid orderSide: " + orderSide);
         };
-        return buy ? limitPrice.compareTo(markPrice) >= 0 : limitPrice.compareTo(markPrice) <= 0;
+        return fillPricer.futuresWithinLimit(symbol, buy, qty, limitPrice, markPrice) != null;
     }
 
     FuturesPosition getUserPosition(Long userId, Long positionId) {

@@ -12,6 +12,12 @@ public interface FuturesPositionIndexService {
     /** 开仓时注册该仓位全部触发索引：LIQ(仅逐仓) + SL + TP。SL/TP 为 null 或空即跳过 */
     void registerPositionIndex(FuturesPosition position);
 
+    /**
+     * 按库里所有 OPEN 仓位把触发索引补回去（ZADD 同 member 只覆盖 score，重复跑无害）。启动重建和每小时对账都是它：
+     * 摘了索引、事务却回滚的那些（Redis 不跟着回滚），靠这个捞回来接着盯价
+     */
+    void reconcilePositionIndex();
+
     /** 平仓/强平/爆仓/重置时摘掉该仓位全部触发索引 */
     void unregisterAll(FuturesPosition position);
 

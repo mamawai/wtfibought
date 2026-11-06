@@ -1,17 +1,17 @@
 package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.market.KlineBar;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 public interface FuturesSettlementService {
 
-    void onPriceUpdate(String symbol, BigDecimal price);
-
-    /** 空窗补漏：按空窗期 1m K 线补触发限价单，逐单按创建时间过滤（挂单之后的行情才算） */
-    void recoverGap(String symbol, List<KlineBar> bars);
+    /**
+     * 这段行情穿过的限价单：买单（开多、平空）要有价低于挂单价，卖单（开空、平多）要有价高于挂单价，
+     * 挂单时就穿价的 taker 单碰到挂单价就算；挂单之后的行情才算。逐笔成交、补漏 K 线、兜底巡检都走这里
+     */
+    List<TradeHit> limitHits(String symbol, List<PriceTick> ticks);
 
     void executeTriggeredOrders();
 

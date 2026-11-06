@@ -23,8 +23,11 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -89,10 +92,13 @@ class FuturesLockEntryTest {
                 mock(UserService.class), userMapper, positionMapper, orderMapper,
                 new TradingConfig(), lockRegistry, cacheService,
                 indexService, brackets, crossMargin,
-                new TradeFilterRegistry(mock(BinanceRestClient.class)), new MessageCatalog(), ledgerTx);
+                new TradeFilterRegistry(mock(BinanceRestClient.class)), new MessageCatalog(), ledgerTx,
+                mock(FuturesRiskService.class), NoBookFillPricer.create());
         risk = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper,
                 new TradingConfig(), lockRegistry, cacheService, indexService, brackets,
-                crossMargin, mock(TradeNotificationService.class), tx, ledgerTx);
+                crossMargin, mock(TradeNotificationService.class), tx, ledgerTx,
+                new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(BankruptcyService.class),
+                NoBookFillPricer.create());
     }
 
     /** 逐仓多 1 张 @100，保证金 10 */
@@ -211,9 +217,10 @@ class FuturesLockEntryTest {
 
     @Test
     void 强平_止损_止盈_等锁超时_抛处理中交给索引回填() {
-        assertProcessing(() -> risk.forceClose(1L, new BigDecimal("90")));
-        assertProcessing(() -> risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95")));
-        assertProcessing(() -> risk.batchTriggerTakeProfit(1L, List.of("tp1"), new BigDecimal("110")));
+        long now = System.currentTimeMillis();
+        assertProcessing(() -> risk.forceClose(1L, new BigDecimal("90"), now));
+        assertProcessing(() -> risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), now));
+        assertProcessing(() -> risk.batchTriggerTakeProfit(1L, List.of("tp1"), new BigDecimal("110"), now));
 
         verify(lockRegistry, times(3)).tryLockAsSystem(POS_KEY);
         verify(lockRegistry, never()).tryLockAsUser(anyString());
@@ -244,7 +251,7 @@ class FuturesLockEntryTest {
         // 等锁期间价格已经回到 99，成交仍按触发那一刻的 95
         when(cacheService.getMarkPrice(SYM)).thenReturn(new BigDecimal("99"));
 
-        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"));
+        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
 
         ArgumentCaptor<BigDecimal> pnl = ArgumentCaptor.forClass(BigDecimal.class);
         InOrder inOrder = inOrder(lockRegistry, positionMapper, posLock);
@@ -262,7 +269,7 @@ class FuturesLockEntryTest {
         when(positionMapper.selectById(1L)).thenReturn(p);
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
 
-        risk.batchTriggerTakeProfit(1L, List.of("tp1"), new BigDecimal("110"));
+        risk.batchTriggerTakeProfit(1L, List.of("tp1"), new BigDecimal("110"), System.currentTimeMillis());
 
         verify(positionMapper).casClosePosition(eq(1L), eq("CLOSED"), eq(new BigDecimal("110")), any());
         verify(posLock).unlock();
@@ -273,7 +280,7 @@ class FuturesLockEntryTest {
         when(lockRegistry.tryLockAsSystem(POS_KEY)).thenReturn(posLock);
         when(positionMapper.selectById(1L)).thenReturn(position());
 
-        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"));
+        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
 
         verify(positionMapper, never()).casClosePosition(anyLong(), anyString(), any(), any());
         verify(positionMapper, never()).atomicPartialClose(anyLong(), any(), any());
@@ -287,7 +294,7 @@ class FuturesLockEntryTest {
         // 改止损会换新 id：库里现在只有 sl2
         when(positionMapper.selectById(1L)).thenReturn(withStopLoss("sl2", "1"));
 
-        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"));
+        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
 
         verify(positionMapper, never()).casClosePosition(anyLong(), anyString(), any(), any());
         verify(positionMapper, never()).atomicPartialClose(anyLong(), any(), any());
@@ -303,7 +310,7 @@ class FuturesLockEntryTest {
         when(positionMapper.selectById(1L)).thenReturn(p);
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
 
-        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"));
+        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
 
         ArgumentCaptor<FuturesOrder> order = ArgumentCaptor.forClass(FuturesOrder.class);
         verify(positionMapper).casClosePosition(eq(1L), eq("CLOSED"), eq(new BigDecimal("95")), any());
@@ -318,7 +325,7 @@ class FuturesLockEntryTest {
         when(lockRegistry.tryLockAsSystem(POS_KEY)).thenReturn(posLock);
         when(positionMapper.selectById(1L)).thenReturn(p);
 
-        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"));
+        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
 
         verify(positionMapper, never()).casClosePosition(anyLong(), anyString(), any(), any());
         verify(orderMapper, never()).insert(any(FuturesOrder.class));

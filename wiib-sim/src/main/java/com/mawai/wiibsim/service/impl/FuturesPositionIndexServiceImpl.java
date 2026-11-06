@@ -44,6 +44,11 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
 
     @PostConstruct
     void init() {
+        reconcilePositionIndex();
+    }
+
+    @Override
+    public void reconcilePositionIndex() {
         List<FuturesPosition> positions = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
                 .eq(FuturesPosition::getStatus, "OPEN"));
 
@@ -56,12 +61,12 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
             } catch (Exception e) {
                 // 单条仓位失败不挂启动：未配置档位的 symbol 或脏数据时仅记录告警
                 failed++;
-                log.warn("重建futures ZSet索引失败 posId={} symbol={} side={}: {}",
+                log.warn("对账futures仓位索引失败 posId={} symbol={} side={}: {}",
                         pos.getId(), pos.getSymbol(), pos.getSide(), e.getMessage());
             }
         }
 
-        log.info("重建futures ZSet索引 共{}个仓位 成功={} 失败={}", positions.size(), ok, failed);
+        log.info("对账futures仓位索引 共{}个仓位 成功={} 失败={}", positions.size(), ok, failed);
     }
 
     @Override

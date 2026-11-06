@@ -17,6 +17,8 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.apache.ibatis.annotations.Select;
@@ -181,7 +183,8 @@ class CrossOccupancyGuardTest {
                 new TradingConfig(), mock(FairLockRegistry.class), cacheService,
                 mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
+                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                mock(FuturesRiskService.class), NoBookFillPricer.create());
 
         FuturesAddMarginRequest req = new FuturesAddMarginRequest();
         req.setPositionId(2L);

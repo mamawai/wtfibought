@@ -7,14 +7,18 @@ import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
+import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -83,13 +87,17 @@ class TradeNotificationAnchorTest {
         when(bracketRegistry.calcMaintenanceMargin(anyString(), any())).thenReturn(new BigDecimal("50"));
 
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
+        TradeFilterRegistry filterRegistry = new TradeFilterRegistry(mock(BinanceRestClient.class));
+        BankruptcyService bankruptcy = mock(BankruptcyService.class);
         riskService = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper, tradingConfig,
                 mock(FairLockRegistry.class), cacheService, indexService,
-                bracketRegistry, crossMarginService, tradeNotification, tx, new LedgerTx(tx));
+                bracketRegistry, crossMarginService, tradeNotification, tx, new LedgerTx(tx), filterRegistry,
+                bankruptcy, NoBookFillPricer.create());
 
         crossLiquidation = new CrossLiquidationServiceImpl(crossMarginService, positionMapper, orderMapper,
                 tradingConfig, cacheService, indexService, mock(FairLockRegistry.class),
-                tradeNotification, new CrossBandRegistry(), riskService, tx);
+                tradeNotification, new CrossBandRegistry(), riskService, tx, filterRegistry, userMapper, bankruptcy,
+                NoBookFillPricer.create());
     }
 
     private static FuturesPosition isolatedLong() {
@@ -115,12 +123,12 @@ class TradeNotificationAnchorTest {
         when(positionMapper.selectById(9L)).thenReturn(pos);
         when(positionMapper.casClosePosition(eq(9L), anyString(), any(), any())).thenReturn(1);
 
-        riskService.doForceClose(9L, new BigDecimal("90"));
+        riskService.doForceClose(9L, new BigDecimal("90"), System.currentTimeMillis());
 
         ArgumentCaptor<BigDecimal> pnl = ArgumentCaptor.forClass(BigDecimal.class);
         verify(tradeNotification).liquidation(eq(pos), eq(new BigDecimal("90")), pnl.capture());
-        // LONG 从 100 跌到 90，持 0.5 → (90-100)*0.5 = -5
-        assertThat(pnl.getValue()).isEqualByComparingTo("-5");
+        // LONG 从 100 跌到 90，持 0.5 → (90-100)*0.5 = -5，再算上清算费 1.25%×45 = 0.56
+        assertThat(pnl.getValue()).isEqualByComparingTo("-5.56");
     }
 
     @Test
@@ -128,7 +136,7 @@ class TradeNotificationAnchorTest {
         when(positionMapper.selectById(9L)).thenReturn(isolatedLong());
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(0);  // 已被别的路径平掉
 
-        riskService.doForceClose(9L, new BigDecimal("90"));
+        riskService.doForceClose(9L, new BigDecimal("90"), System.currentTimeMillis());
 
         verify(tradeNotification, never()).liquidation(any(), any(), any());
     }
@@ -139,7 +147,7 @@ class TradeNotificationAnchorTest {
         closed.setStatus("CLOSED");
         when(positionMapper.selectById(9L)).thenReturn(closed);
 
-        riskService.doForceClose(9L, new BigDecimal("90"));
+        riskService.doForceClose(9L, new BigDecimal("90"), System.currentTimeMillis());
 
         verify(tradeNotification, never()).liquidation(any(), any(), any());
     }
@@ -155,7 +163,7 @@ class TradeNotificationAnchorTest {
         when(positionMapper.selectById(9L)).thenReturn(pos);
         when(positionMapper.atomicPartialClose(eq(9L), any(), any())).thenReturn(1);
 
-        riskService.doBatchTrigger(9L, List.of("sl1"), new BigDecimal("95"), true);
+        riskService.doBatchTrigger(9L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis(), true);
 
         ArgumentCaptor<BigDecimal> qty = ArgumentCaptor.forClass(BigDecimal.class);
         verify(tradeNotification).protectiveClose(eq(pos), qty.capture(), eq(new BigDecimal("95")), any(), eq(true));
@@ -170,7 +178,7 @@ class TradeNotificationAnchorTest {
         when(positionMapper.selectById(9L)).thenReturn(pos);
         when(positionMapper.casClosePosition(eq(9L), anyString(), any(), any())).thenReturn(1);
 
-        riskService.doBatchTrigger(9L, List.of("tp1"), new BigDecimal("110"), false);
+        riskService.doBatchTrigger(9L, List.of("tp1"), new BigDecimal("110"), System.currentTimeMillis(), false);
 
         verify(tradeNotification).protectiveClose(eq(pos), any(), eq(new BigDecimal("110")), any(), eq(false));
     }
@@ -182,7 +190,7 @@ class TradeNotificationAnchorTest {
         when(positionMapper.selectById(9L)).thenReturn(pos);
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(0);
 
-        riskService.doBatchTrigger(9L, List.of("sl1"), new BigDecimal("95"), true);
+        riskService.doBatchTrigger(9L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis(), true);
 
         verify(tradeNotification, never()).protectiveClose(any(), any(), any(), any(), anyBoolean());
     }
@@ -210,7 +218,7 @@ class TradeNotificationAnchorTest {
         when(cacheService.getMarkPrice(anyString())).thenReturn(new BigDecimal("90"));
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
 
-        crossLiquidation.liquidateAll(7L, null, null, List.of(9L, 10L));
+        crossLiquidation.liquidateAll(7L, null, null, System.currentTimeMillis(), List.of(9L, 10L));
 
         ArgumentCaptor<BigDecimal> settle = ArgumentCaptor.forClass(BigDecimal.class);
         verify(tradeNotification).crossLiquidation(eq(7L), eq(2), settle.capture());
@@ -227,7 +235,7 @@ class TradeNotificationAnchorTest {
         when(cacheService.getMarkPrice(anyString())).thenReturn(new BigDecimal("90"));
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(0);
 
-        crossLiquidation.liquidateAll(7L, null, null, List.of(9L));
+        crossLiquidation.liquidateAll(7L, null, null, System.currentTimeMillis(), List.of(9L));
 
         verify(tradeNotification, never()).crossLiquidation(anyLong(), anyInt(), any());
     }

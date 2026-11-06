@@ -41,6 +41,7 @@ class BankruptcyServiceImplTest {
     private UserService userService;
     private UserMapper userMapper;
     private CryptoPositionService cryptoPositionService;
+    private FuturesPositionMapper futuresPositionMapper;
     private BankruptcyServiceImpl service;
 
     @BeforeEach
@@ -48,6 +49,7 @@ class BankruptcyServiceImplTest {
         userService = mock(UserService.class);
         userMapper = mock(UserMapper.class);
         cryptoPositionService = mock(CryptoPositionService.class);
+        futuresPositionMapper = mock(FuturesPositionMapper.class);
         AssetValuationService assetValuationService = mock(AssetValuationService.class);
         when(cryptoPositionService.calculateCryptoMarketValue(UID)).thenReturn(BigDecimal.ZERO);
         when(assetValuationService.predictionMarketValue(UID)).thenReturn(BigDecimal.ZERO);
@@ -55,7 +57,7 @@ class BankruptcyServiceImplTest {
         service = new BankruptcyServiceImpl(
                 userService, userMapper, cryptoPositionService, new TradingConfig(),
                 mock(CryptoOrderMapper.class), mock(CryptoPositionMapper.class),
-                mock(FuturesOrderMapper.class), mock(FuturesPositionMapper.class),
+                mock(FuturesOrderMapper.class), futuresPositionMapper,
                 mock(CacheService.class), mock(FuturesPositionIndexService.class),
                 mock(PredictionBetMapper.class), assetValuationService,
                 mock(UserLedgerMapper.class), mock(ResetQuotaService.class),
@@ -114,5 +116,36 @@ class BankruptcyServiceImplTest {
 
         verify(userMapper).markBankrupt(eq(UID), any());
         verifyNoInteractions(cryptoPositionService);
+    }
+
+    // ==================== 强平/爆仓结算后 ====================
+
+    @Test
+    void 还有合约仓位开着_先不判也不锁行() {
+        when(futuresPositionMapper.exists(any())).thenReturn(true);
+
+        service.bankruptIfNothingLeft(UID);
+
+        verify(userMapper, never()).selectByIdForUpdate(anyLong());
+        verify(userMapper, never()).markBankrupt(anyLong(), any());
+    }
+
+    @Test
+    void 现金扣借款还有剩_不估值不破产() {
+        when(userMapper.selectByIdForUpdate(UID)).thenReturn(user("0.01", "0"));
+
+        service.bankruptIfNothingLeft(UID);
+
+        verifyNoInteractions(cryptoPositionService);
+        verify(userMapper, never()).markBankrupt(anyLong(), any());
+    }
+
+    @Test
+    void 交易侧什么都不剩_破产() {
+        when(userMapper.selectByIdForUpdate(UID)).thenReturn(user("0", "0"));
+
+        service.bankruptIfNothingLeft(UID);
+
+        verify(userMapper).markBankrupt(eq(UID), any());
     }
 }

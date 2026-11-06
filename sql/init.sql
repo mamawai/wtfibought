@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS futures_order (
     filled_amount DECIMAL(18,2),
     margin_amount DECIMAL(18,2),
     commission DECIMAL(18,2) DEFAULT 0,
+    liquidation_fee DECIMAL(18,2),
     realized_pnl DECIMAL(18,2),
     stop_losses JSONB,
     take_profits JSONB,
@@ -216,6 +217,7 @@ CREATE TABLE IF NOT EXISTS futures_order (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE futures_order ADD COLUMN IF NOT EXISTS liquidation_fee DECIMAL(18,2);
 
 COMMENT ON TABLE futures_order IS '永续合约订单表';
 COMMENT ON COLUMN futures_order.user_id IS '用户ID';
@@ -232,6 +234,7 @@ COMMENT ON COLUMN futures_order.filled_price IS '成交价格';
 COMMENT ON COLUMN futures_order.filled_amount IS '成交金额';
 COMMENT ON COLUMN futures_order.margin_amount IS '保证金金额';
 COMMENT ON COLUMN futures_order.commission IS '手续费';
+COMMENT ON COLUMN futures_order.liquidation_fee IS '强平清算费=费率×成交额，从剩余保证金里扣、扣到0为止；只有强平单有，老强平单为NULL';
 COMMENT ON COLUMN futures_order.realized_pnl IS '已实现盈亏';
 COMMENT ON COLUMN futures_order.stop_losses IS '止损列表(JSONB)';
 COMMENT ON COLUMN futures_order.take_profits IS '止盈列表(JSONB)';

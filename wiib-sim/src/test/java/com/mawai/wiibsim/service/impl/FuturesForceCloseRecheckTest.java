@@ -2,13 +2,17 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
+import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,7 +64,9 @@ class FuturesForceCloseRecheckTest {
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         riskService = new FuturesRiskServiceImpl(positionMapper, mock(FuturesOrderMapper.class), mock(UserMapper.class),
                 new TradingConfig(), lockRegistry, cacheService, indexService, brackets,
-                mock(CrossMarginService.class), mock(TradeNotificationService.class), tx, new LedgerTx(tx));
+                mock(CrossMarginService.class), mock(TradeNotificationService.class), tx, new LedgerTx(tx),
+                new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(BankruptcyService.class),
+                NoBookFillPricer.create());
     }
 
     private static FuturesPosition isolatedLong(String margin) {
@@ -83,7 +89,7 @@ class FuturesForceCloseRecheckTest {
         // 锁内读到的是追加后的 5000：5000−610=4390 > 维持保证金 99390×0.4%=397.56
         when(positionMapper.selectById(9L)).thenReturn(isolatedLong("5000"));
 
-        riskService.forceClose(9L, TICK);
+        riskService.forceClose(9L, TICK, System.currentTimeMillis());
 
         verify(positionMapper, never()).casClosePosition(anyLong(), anyString(), any(), any());
         ArgumentCaptor<Double> score = ArgumentCaptor.forClass(Double.class);
@@ -97,7 +103,7 @@ class FuturesForceCloseRecheckTest {
         when(positionMapper.selectById(9L)).thenReturn(isolatedLong("1000"));
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
 
-        riskService.forceClose(9L, TICK);
+        riskService.forceClose(9L, TICK, System.currentTimeMillis());
 
         verify(positionMapper).casClosePosition(eq(9L), eq("LIQUIDATED"), eq(TICK), any());
         verify(cacheService, never()).zAdd(anyString(), anyString(), anyDouble());

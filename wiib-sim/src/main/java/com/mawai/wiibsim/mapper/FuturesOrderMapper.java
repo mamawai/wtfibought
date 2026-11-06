@@ -3,6 +3,7 @@ package com.mawai.wiibsim.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -40,16 +41,40 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
                           @Param("marginAmount") BigDecimal marginAmount,
                           @Param("realizedPnl") BigDecimal realizedPnl);
 
-    /** 仓位已实现盈亏：开/加仓单只贡献-fee，平仓单贡献 pnl-fee；只算已成交状态（强平单也是成交），资金费不在此表另行累计。
+    /** 仓位已实现盈亏：开/加仓单只贡献-fee，平仓单贡献 pnl-fee，强平单再减清算费；只算已成交状态（强平单也是成交），资金费不在此表另行累计。
      *  在场持仓和已平仓位都用它。ID 集合走 = ANY(数组)，同 CommentMapper.selectChildPreviews 的取舍 */
     @Select("""
-            SELECT position_id, COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0)), 0) AS amount
+            SELECT position_id,
+                   COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0) AS amount
             FROM futures_order
             WHERE status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
               AND position_id = ANY(#{positionIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
             GROUP BY position_id
             """)
     List<Map<String, Object>> sumRealizedPnlByPositionIds(@Param("positionIds") Long[] positionIds);
+
+    /** 每个仓位最后成交的那张平仓单的状态，已平仓位就是了结它的那张；成交时刻看 updated_at（限价单是触发成交那一刻） */
+    @Select("""
+            SELECT DISTINCT ON (position_id) position_id, status
+            FROM futures_order
+            WHERE order_side LIKE 'CLOSE%'
+              AND status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
+              AND position_id = ANY(#{positionIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+            ORDER BY position_id, updated_at DESC, id DESC
+            """)
+    List<Map<String, Object>> lastCloseStatusByPositionIds(@Param("positionIds") Long[] positionIds);
+
+    /**
+     * 仓位全平以后撤掉它名下还挂着的平仓限价单，返回撤掉的单（摘索引用）。
+     * 只动 PENDING：正在触发的单跟这句 CAS 抢，抢输的那边自己会按仓位已平撤单。写法同 UserMapper 类注释的 UPDATE...RETURNING
+     */
+    @Select("""
+            UPDATE futures_order SET status = 'CANCELLED', updated_at = NOW()
+            WHERE position_id = #{positionId} AND status = 'PENDING' AND order_side LIKE 'CLOSE%'
+            RETURNING id, symbol, order_side
+            """)
+    @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+    List<FuturesOrder> cancelPendingCloseOrders(@Param("positionId") Long positionId);
 
     /** CAS标记为TRIGGERED */
     @Update("UPDATE futures_order SET status = 'TRIGGERED', filled_price = #{triggerPrice}, updated_at = NOW() " +
@@ -63,20 +88,20 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
 
     // 全仓挂单占用聚合已并入 FuturesPositionMapper.selectCrossSnapshot（三查合一），此处不再单列
 
-    /** 用户所有已平仓单的已实现盈亏（已扣手续费） */
-    @Select("SELECT COALESCE(SUM(realized_pnl - COALESCE(commission, 0)), 0) FROM futures_order " +
-            "WHERE user_id = #{userId} AND realized_pnl IS NOT NULL")
+    /** 用户所有已平仓单的已实现盈亏（已扣手续费和强平清算费） */
+    @Select("SELECT COALESCE(SUM(realized_pnl - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0) " +
+            "FROM futures_order WHERE user_id = #{userId} AND realized_pnl IS NOT NULL")
     BigDecimal sumRealizedPnl(@Param("userId") Long userId);
 
-    /** 分符号已实现盈亏（已扣手续费）：crypto 合约与大宗商品合约分开归集，四分类用 */
-    @Select("SELECT symbol, COALESCE(SUM(realized_pnl - COALESCE(commission, 0)), 0) AS amount " +
+    /** 分符号已实现盈亏（已扣手续费和强平清算费）：crypto 合约与大宗商品合约分开归集，四分类用 */
+    @Select("SELECT symbol, COALESCE(SUM(realized_pnl - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0) AS amount " +
             "FROM futures_order WHERE user_id = #{userId} AND realized_pnl IS NOT NULL GROUP BY symbol")
     List<Map<String, Object>> sumRealizedPnlBySymbol(@Param("userId") Long userId);
 
-    /** 排行榜交易盈利：所有最终成交单都扣手续费，开仓/加仓单realized_pnl为空只贡献-fee */
+    /** 排行榜交易盈利：所有最终成交单都扣手续费、强平单再扣清算费，开仓/加仓单realized_pnl为空只贡献-fee */
     @Select("""
             SELECT user_id,
-                   COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0)), 0) AS amount
+                   COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0) AS amount
             FROM futures_order
             WHERE status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
             GROUP BY user_id

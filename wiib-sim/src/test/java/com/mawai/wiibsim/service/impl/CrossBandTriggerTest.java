@@ -5,11 +5,16 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
+import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.CrossMarginService.CrossAccount;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
@@ -81,7 +86,9 @@ class CrossBandTriggerTest {
         service = new CrossLiquidationServiceImpl(crossMargin, positionMapper, orderMapper,
                 new TradingConfig(), cacheService, mock(FuturesPositionIndexService.class),
                 lockRegistry, mock(TradeNotificationService.class), registry,
-                mock(FuturesRiskService.class), new TransactionTemplate(mock(PlatformTransactionManager.class)));
+                mock(FuturesRiskService.class), new TransactionTemplate(mock(PlatformTransactionManager.class)),
+                new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(UserMapper.class),
+                mock(BankruptcyService.class), NoBookFillPricer.create());
     }
 
     /** LONG 20@100、20x、占用100 */
@@ -181,7 +188,7 @@ class CrossBandTriggerTest {
     void 锁后复检_排队线程发现新鲜带且钉价带内_不读库() {
         registry.put(UID, registry.epoch(UID), Map.of(SYM, new double[]{98.425, 101.575}));
         // 模拟排队拿到锁的线程：前一个精查已重建带且钉价在带内 → 数学安全，免掉快照
-        service.checkUser(UID, SYM, new BigDecimal("100"));
+        service.checkUser(UID, SYM, new BigDecimal("100"), System.currentTimeMillis());
         verify(crossMargin, never()).snapshot(anyLong(), any(), any());
     }
 
@@ -279,7 +286,7 @@ class CrossBandTriggerTest {
         when(crossMargin.snapshot(UID, SYM, PIN)).thenReturn(staleLiquidatable(), afterStopLossStillLiquidatable());
         when(positionMapper.selectById(1L)).thenReturn(btcLong("0.5", "500"));
 
-        service.checkUser(UID, SYM, PIN);
+        service.checkUser(UID, SYM, PIN, System.currentTimeMillis());
 
         // 0.5 张：(99300−100000)×0.5 = −350；按旧的 1 张会是 −700
         ArgumentCaptor<BigDecimal> pnl = ArgumentCaptor.forClass(BigDecimal.class);
@@ -289,11 +296,13 @@ class CrossBandTriggerTest {
         ArgumentCaptor<FuturesOrder> order = ArgumentCaptor.forClass(FuturesOrder.class);
         verify(orderMapper).insert(order.capture());
         assertThat(order.getValue().getQuantity()).isEqualByComparingTo("0.5");
+        // 清算费 1.25%×49650=620.63，但余额只剩 500−369.86=130.14，只收这么多
+        assertThat(order.getValue().getLiquidationFee()).isEqualByComparingTo("130.14");
 
-        // −350 − 手续费 49650×0.0004=19.86
+        // −350 − 手续费 49650×0.0004=19.86 − 清算费 130.14，余额正好扣到 0
         ArgumentCaptor<BigDecimal> settle = ArgumentCaptor.forClass(BigDecimal.class);
         verify(crossMargin).settle(eq(UID), settle.capture());
-        assertThat(settle.getValue()).isEqualByComparingTo("-369.86");
+        assertThat(settle.getValue()).isEqualByComparingTo("-500");
 
         InOrder inOrder = inOrder(lockRegistry, positionMapper, crossMargin, posLock, userLock);
         inOrder.verify(lockRegistry).tryLockAsSystem("futures:cross:liq:" + UID);

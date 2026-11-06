@@ -12,18 +12,21 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+/** 标记价驱动逐仓强平和全仓精查；最新价 tick 是给 quant 的，sim 不处理（限价单、止损止盈看成交 Stream） */
 class MatchPriceConsumerTest {
 
-    private final CryptoOrderService cryptoOrderService = mock(CryptoOrderService.class);
     private final FuturesLiquidationService liquidationService = mock(FuturesLiquidationService.class);
-    private final FuturesSettlementService settlementService = mock(FuturesSettlementService.class);
     private final CrossLiquidationService crossLiquidationService = mock(CrossLiquidationService.class);
+    private final TradeStreamConsumer tradeStreamConsumer = mock(TradeStreamConsumer.class);
     private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
     @SuppressWarnings("unchecked")
     private final ValueOperations<String, String> valueOps = mock(ValueOperations.class);
@@ -35,9 +38,8 @@ class MatchPriceConsumerTest {
     }
 
     private MatchPriceConsumer consumer() {
-        return new MatchPriceConsumer(
-                mock(RedisMessageListenerContainer.class), redisTemplate, cryptoOrderService,
-                liquidationService, settlementService, crossLiquidationService,
+        return new MatchPriceConsumer(mock(RedisMessageListenerContainer.class), redisTemplate,
+                liquidationService, crossLiquidationService, tradeStreamConsumer,
                 mock(BinanceRestClient.class), mock(BinanceProperties.class));
     }
 
@@ -48,26 +50,19 @@ class MatchPriceConsumerTest {
     }
 
     @Test
-    void dispatchesSpotToOnPriceUpdate() {
-        consumer().onMessage(msg("{\"symbol\":\"BTCUSDT\",\"type\":\"spot\",\"price\":\"50000\"}"), null);
-        // 撮合在虚拟线程异步执行，用 timeout 等待
-        verify(cryptoOrderService, timeout(1000)).onPriceUpdate(eq("BTCUSDT"), eq(new BigDecimal("50000")));
-    }
-
-    @Test
-    void dispatchesFuturesToSettlement() {
-        consumer().onMessage(msg("{\"symbol\":\"BTCUSDT\",\"type\":\"futures\",\"price\":\"50000\"}"), null);
-        verify(settlementService, timeout(1000)).onPriceUpdate(eq("BTCUSDT"), eq(new BigDecimal("50000")));
-    }
-
-    @Test
-    void dispatchesMarkPriceToLiquidationWithCurrentPriceFromKv() {
-        when(valueOps.get("market:futures-price:BTCUSDT")).thenReturn("49950");
-
+    void 标记价_逐仓强平和全仓精查() {
         consumer().onMessage(msg("{\"symbol\":\"BTCUSDT\",\"type\":\"markprice\",\"price\":\"50000\"}"), null);
-        // 强平：markPrice 来自事件，currentPrice 从 KV 读
-        verify(liquidationService, timeout(1000))
-                .checkOnPriceUpdate(eq("BTCUSDT"), eq(new BigDecimal("50000")), eq(new BigDecimal("49950")));
+
+        // 撮合在虚拟线程异步执行，用 timeout 等待
+        verify(liquidationService, timeout(1000)).checkOnPriceUpdate(eq("BTCUSDT"), eq(new BigDecimal("50000")));
+        verify(crossLiquidationService, timeout(1000)).onPriceTick(eq("BTCUSDT"), eq(new BigDecimal("50000")));
     }
 
+    @Test
+    void 最新价tick_sim不处理() {
+        consumer().onMessage(msg("{\"symbol\":\"BTCUSDT\",\"type\":\"futures\",\"price\":\"50000\"}"), null);
+
+        verify(liquidationService, after(300).never()).checkOnPriceUpdate(any(), any());
+        verifyNoInteractions(crossLiquidationService, tradeStreamConsumer);
+    }
 }

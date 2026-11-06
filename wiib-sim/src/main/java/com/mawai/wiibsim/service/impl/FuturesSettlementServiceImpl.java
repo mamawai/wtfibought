@@ -8,7 +8,6 @@ import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
@@ -18,12 +17,15 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.BookFillPricer;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesSettlementService;
+import com.mawai.wiibsim.service.PriceTick;
 import com.mawai.wiibsim.service.TradeEventPublisher;
+import com.mawai.wiibsim.service.TradeHit;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import jakarta.annotation.PostConstruct;
@@ -62,6 +64,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final LedgerTx ledgerTx;
     /** 限价开仓成交告诉 agent：trader 的单子成交了，当场叫醒它 */
     private final TradeEventPublisher eventPublisher;
+    private final BookFillPricer fillPricer;
 
     record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
@@ -74,34 +77,47 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     // ==================== 限价单触发 ====================
 
     @Override
-    public void onPriceUpdate(String symbol, BigDecimal price) {
-        String openLongKey = LIMIT_OPEN_LONG_PREFIX + symbol;
-        String openShortKey = LIMIT_OPEN_SHORT_PREFIX + symbol;
-        String closeLongKey = LIMIT_CLOSE_LONG_PREFIX + symbol;
-        String closeShortKey = LIMIT_CLOSE_SHORT_PREFIX + symbol;
-
-        // 只查不摘：DB是事实、索引跟着事实走，CAS落定后由triggerLimitOrder摘自己那条
-        fireHits(openLongKey, cacheService.zRangeByScoreWithScores(openLongKey, price.doubleValue(), Double.MAX_VALUE), price);
-        fireHits(openShortKey, cacheService.zRangeByScoreWithScores(openShortKey, 0, price.doubleValue()), price);
-        fireHits(closeLongKey, cacheService.zRangeByScoreWithScores(closeLongKey, 0, price.doubleValue()), price);
-        fireHits(closeShortKey, cacheService.zRangeByScoreWithScores(closeShortKey, price.doubleValue(), Double.MAX_VALUE), price);
+    public List<TradeHit> limitHits(String symbol, List<PriceTick> ticks) {
+        BigDecimal[] range = PriceTick.lowHigh(ticks);
+        double low = range[0].doubleValue();
+        double high = range[1].doubleValue();
+        // 买单只看挂单价不低于最低价的，卖单只看不高于最高价的
+        List<TradeHit> hits = new ArrayList<>();
+        collectLimitHits(LIMIT_OPEN_LONG_PREFIX + symbol, low, Double.MAX_VALUE, ticks, true, hits);
+        collectLimitHits(LIMIT_CLOSE_SHORT_PREFIX + symbol, low, Double.MAX_VALUE, ticks, true, hits);
+        collectLimitHits(LIMIT_OPEN_SHORT_PREFIX + symbol, 0, high, ticks, false, hits);
+        collectLimitHits(LIMIT_CLOSE_LONG_PREFIX + symbol, 0, high, ticks, false, hits);
+        return hits;
     }
 
-    /** 命中项逐个起虚拟线程触发，成交价按 tick 价 */
-    private void fireHits(String key, Set<ZSetOperations.TypedTuple<String>> hits, BigDecimal triggerPrice) {
-        if (hits == null || hits.isEmpty()) return;
-        for (var tuple : hits) {
+    /** 只查不摘：DB是事实、索引跟着事实走，CAS落定后由triggerLimitOrder摘自己那条 */
+    private void collectLimitHits(String key, double min, double max, List<PriceTick> ticks, boolean buy,
+                                  List<TradeHit> hits) {
+        Set<ZSetOperations.TypedTuple<String>> candidates = cacheService.zRangeByScoreWithScores(key, min, max);
+        if (candidates == null) return;
+        for (var tuple : candidates) {
             Long orderId = Long.parseLong(Objects.requireNonNull(tuple.getValue()));
-            Thread.startVirtualThread(() -> triggerLimitOrder(key, orderId, triggerPrice));
+            FuturesOrder order = orderMapper.selectById(orderId);
+            if (order == null) {
+                // DB 里没这单了，索引是过期项，摘掉
+                cacheService.zRemove(key, orderId.toString());
+                continue;
+            }
+            // 挂单时就穿价的 taker 单碰到挂单价就成交；躺在盘口的 maker 单要有价穿过去才算
+            boolean strict = !isLimitTaker(order, order.getOrderSide().startsWith("CLOSE"));
+            int i = PriceTick.firstTouch(ticks, toEpochMs(order.getCreatedAt()), order.getLimitPrice(), buy, strict);
+            if (i < 0) continue;
+            BigDecimal triggerPrice = ticks.get(i).touchPrice(order.getLimitPrice(), buy);
+            hits.add(new TradeHit(i, false, order.getUserId(), () -> triggerLimitOrder(key, orderId, triggerPrice)));
         }
     }
 
     private void triggerLimitOrder(String zsetKey, Long orderId, BigDecimal triggerPrice) {
         try {
-            // 同一单被多个tick并发打进来也只有一个CAS成功，其余affected=0，无害
+            // 同一单被几条路径（成交 Stream、补漏、巡检）并发打进来也只有一个CAS成功，其余affected=0，无害
             boolean triggered = markOrderTriggered(orderId, triggerPrice);
             // CAS正常返回才摘索引：没改到说明这单早不是PENDING，索引是过期项，一样该清；
-            // 抛异常不摘，单子还是PENDING、索引还在，下个tick重来
+            // 抛异常不摘，单子还是PENDING、索引还在，下一笔穿过再来
             cacheService.zRemove(zsetKey, orderId.toString());
             if (!triggered) return;
             FuturesOrder order = orderMapper.selectById(orderId);
@@ -189,24 +205,32 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             return;
         }
 
-        // 成交价口径：被动 maker 单按挂单价成交（真实交易所语义——被动单躺在盘口被对手吃，成交价=挂单价，
-        // 跳空穿越的好处不归挂单方）；挂单时即穿价的 taker 单按触发价成交（主动吃对手价）。
-        // 顺带统一了实时触发（原用触发价）与宕机补漏（原用挂单价）两条路径的口径。
-        boolean isCloseOrder = order.getOrderSide().startsWith("CLOSE");
-        BigDecimal executePrice = isLimitTaker(order, isCloseOrder) ? order.getFilledPrice() : order.getLimitPrice();
-        if (executePrice == null) executePrice = order.getLimitPrice();
-
-        if (order.getOrderSide().startsWith("OPEN")) {
-            processTriggeredOpenOrder(order, executePrice);
-        } else if (order.getOrderSide().startsWith("INCREASE")) {
+        if (order.getOrderSide().startsWith("INCREASE")) {
             // 加仓链路已删除（同向下单即合并进仓位）：存量历史加仓挂单触发时撤单退款自清，免手动迁移
             cancelTriggeredOrderAndRefund(order, "increase_removed");
+            return;
+        }
+
+        if (order.getOrderSide().startsWith("CLOSE")) {
+            processTriggeredCloseOrder(order);
         } else {
-            processTriggeredCloseOrder(order, executePrice);
+            processTriggeredOpenOrder(order);
         }
     }
 
-    private void processTriggeredOpenOrder(FuturesOrder order, BigDecimal executePrice) {
+    /**
+     * 成交价：被动 maker 单按挂单价（被动单躺在盘口被对手吃，成交价=挂单价，跳空穿越的好处不归挂单方）；
+     * 挂单时就穿价的 taker 单主动吃对手盘，按盘口扫，没盘口用触发价，且不差于挂单价（买不高于、卖不低于）
+     */
+    private BigDecimal limitFillPrice(FuturesOrder order, boolean isTaker) {
+        if (!isTaker) return order.getLimitPrice();
+        boolean buy = "OPEN_LONG".equals(order.getOrderSide()) || "CLOSE_SHORT".equals(order.getOrderSide());
+        BigDecimal fallback = order.getFilledPrice() != null ? order.getFilledPrice() : order.getLimitPrice();
+        BigDecimal fill = fillPricer.futures(order.getSymbol(), buy, order.getQuantity(), fallback);
+        return buy ? fill.min(order.getLimitPrice()) : fill.max(order.getLimitPrice());
+    }
+
+    private void processTriggeredOpenOrder(FuturesOrder order) {
         boolean isCross = FuturesPosition.CROSS.equals(order.getMarginMode());
         String side = order.getOrderSide().contains("LONG") ? "LONG" : "SHORT";
 
@@ -225,6 +249,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             if (side.equals(p.getSide())) sameSide = p;
         }
 
+        boolean isTaker = isLimitTaker(order, false);
+        BigDecimal executePrice = limitFillPrice(order, isTaker);
         BigDecimal quantity = order.getQuantity();
         // 同向并入按合并后总持仓过档
         BigDecimal bracketQty = sameSide != null ? sameSide.getQuantity().add(quantity) : quantity;
@@ -240,7 +266,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         BigDecimal positionValue = executePrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(order.getLeverage()), 2, RoundingMode.CEILING);
-        boolean isTaker = isLimitTaker(order, false);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
         if (!chargeOpenFill(order, margin, commission)) return;
 
@@ -387,7 +412,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 .eq(FuturesPosition::getStatus, "OPEN"));
     }
 
-    private void processTriggeredCloseOrder(FuturesOrder order, BigDecimal executePrice) {
+    private void processTriggeredCloseOrder(FuturesOrder order) {
         FuturesPosition position = positionMapper.selectById(order.getPositionId());
         if (position == null || !"OPEN".equals(position.getStatus())) {
             orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
@@ -395,18 +420,35 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
 
         BigDecimal closeQty = order.getQuantity();
-        BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), executePrice, closeQty);
-        BigDecimal closeValue = executePrice.multiply(closeQty).setScale(2, RoundingMode.HALF_UP);
         boolean isTaker = isLimitTaker(order, true);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, isTaker);
+        // 挂单时就穿价的 taker 单等于市价单，已经够强平就不按它成交：逐仓当场强平、这张单撤掉；
+        // 全仓整户等价格 tick 去爆，单子退回 TRIGGERED 交给补扫（爆了仓位没了会撤，没爆照常成交）。
+        // maker 单是先被价格碰到的，碰到时还没到强平，照常成交
+        if (isTaker) {
+            if (position.isCross()) {
+                if (crossMarginService.snapshot(order.getUserId()).liquidatable()) {
+                    orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "TRIGGERED");
+                    return;
+                }
+            } else {
+                BigDecimal mark = cacheService.getMarkPrice(position.getSymbol());
+                if (mark != null && riskService.liquidateIfReached(position, mark) != null) {
+                    orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
+                    return;
+                }
+            }
+        }
+        BigDecimal executePrice = limitFillPrice(order, isTaker);
 
         boolean isFullClose = closeQty.compareTo(position.getQuantity()) == 0;
 
         BigDecimal marginPart = isFullClose ? position.getMargin()
                 : position.getMargin().multiply(closeQty).divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
+        CloseFill fill = closeFill(position, executePrice, closeQty, marginPart, tradingConfig, isTaker);
+        BigDecimal closeValue = fill.value(closeQty);
 
         if (isFullClose) {
-            int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", executePrice, pnl);
+            int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", fill.price(), fill.pnl());
             if (affected == 0) {
                 // 仓位已被并发平掉，订单取消，禁止重复返款
                 orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
@@ -414,6 +456,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             }
 
             positionIndexService.unregisterAll(position);
+            cancelCloseOrders(position.getId(), orderMapper, cacheService);
         } else {
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) {
@@ -432,19 +475,20 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             }
         }
 
-        // 全仓只结盈亏净额(可为负，穿仓由settle处理)；逐仓返还保证金±盈亏，下限0
+        // 全仓只结盈亏净额(可为负，穿仓由settle处理)；逐仓返还保证金±盈亏−手续费，closeFill 已封顶
         if (position.isCross()) {
-            crossMarginService.settle(order.getUserId(), pnl.subtract(commission));
+            crossMarginService.settle(order.getUserId(), fill.pnl().subtract(fill.commission()));
         } else {
             // 覆盖方法级默认 FUTURES_LIMIT_DEDUCT：这笔是平仓结算返还，不是开仓扣款
             LedgerCtx.mark(FUTURES_CLOSE_SETTLE, "FUTURES_ORDER", order.getId());
-            userMapper.atomicUpdateBalance(order.getUserId(), marginPart.add(pnl).subtract(commission).max(BigDecimal.ZERO));
+            userMapper.atomicUpdateBalance(order.getUserId(), fill.left(marginPart));
         }
-        int filled = orderMapper.casUpdateToFilled(order.getId(), null, executePrice, closeValue, commission, null, pnl);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), null, fill.price(), closeValue,
+                fill.commission(), null, fill.pnl());
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         log.info("futures限价平仓成交 orderId={} price={} feeType={} pnl={}",
-                order.getId(), executePrice, isTaker ? "TAKER" : "MAKER", pnl);
+                order.getId(), fill.price(), isTaker ? "TAKER" : "MAKER", fill.pnl());
     }
 
     private boolean isLeverageAllowed(String symbol, int leverage, BigDecimal notional) {
@@ -470,59 +514,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
         log.info("futures限价单触发后取消 orderId={} reason={} refund={}",
                 order.getId(), reason, frozenAmount);
-    }
-
-    // ==================== 空窗补漏 ====================
-
-    @Override
-    public void recoverGap(String symbol, List<KlineBar> bars) {
-        if (bars.isEmpty()) return;
-        // 整段极值先粗筛一遍索引，逐单再按各自挂单时间算区间
-        BigDecimal[] all = KlineBar.lowHighAfter(bars, 0);
-        double low = all[0].doubleValue();
-        double high = all[1].doubleValue();
-
-        String openLongKey = LIMIT_OPEN_LONG_PREFIX + symbol;
-        String openShortKey = LIMIT_OPEN_SHORT_PREFIX + symbol;
-        String closeLongKey = LIMIT_CLOSE_LONG_PREFIX + symbol;
-        String closeShortKey = LIMIT_CLOSE_SHORT_PREFIX + symbol;
-
-        // 开多/平空看区间低点，开空/平多看高点
-        int count = 0;
-        count += recoverHits(openLongKey, cacheService.zRangeByScoreWithScores(openLongKey, low, Double.MAX_VALUE), bars, true);
-        count += recoverHits(openShortKey, cacheService.zRangeByScoreWithScores(openShortKey, 0, high), bars, false);
-        count += recoverHits(closeLongKey, cacheService.zRangeByScoreWithScores(closeLongKey, 0, high), bars, false);
-        count += recoverHits(closeShortKey, cacheService.zRangeByScoreWithScores(closeShortKey, low, Double.MAX_VALUE), bars, true);
-
-        if (count > 0) {
-            log.info("futures空窗补漏触发限价单 symbol={} 共{}个", symbol, count);
-        }
-    }
-
-    /** 逐单按挂单时间之后的区间复核，命中才触发，成交价按挂单价 */
-    private int recoverHits(String key, Set<ZSetOperations.TypedTuple<String>> hits,
-                            List<KlineBar> bars, boolean lowSide) {
-        if (hits == null || hits.isEmpty()) return 0;
-        int count = 0;
-        for (var tuple : hits) {
-            Long orderId = Long.parseLong(Objects.requireNonNull(tuple.getValue()));
-            FuturesOrder order = orderMapper.selectById(orderId);
-            if (order == null) {
-                // DB 里没这单了，索引是过期项，摘掉
-                cacheService.zRemove(key, orderId.toString());
-                continue;
-            }
-            BigDecimal[] range = KlineBar.lowHighAfter(bars, toEpochMs(order.getCreatedAt()));
-            if (range == null) continue;   // 挂单晚于整段行情
-            BigDecimal limitPrice = order.getLimitPrice();
-            boolean hit = lowSide
-                    ? range[0].compareTo(limitPrice) <= 0
-                    : range[1].compareTo(limitPrice) >= 0;
-            if (!hit) continue;
-            Thread.startVirtualThread(() -> triggerLimitOrder(key, orderId, limitPrice));
-            count++;
-        }
-        return count;
     }
 
     // ==================== 补处理TRIGGERED孤儿单 ====================

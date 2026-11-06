@@ -15,7 +15,9 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.apache.ibatis.annotations.Select;
@@ -59,7 +61,8 @@ class FuturesClosedPositionsTest {
                 new TradingConfig(), mock(FairLockRegistry.class), mock(CacheService.class),
                 mock(FuturesPositionIndexService.class), mock(FuturesLeverageBracketRegistry.class),
                 mock(CrossMarginService.class), new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
+                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                mock(FuturesRiskService.class), NoBookFillPricer.create());
     }
 
     private static FuturesPosition closed(long id, String lastClosePnl, String funding) {
@@ -95,6 +98,16 @@ class FuturesClosedPositionsTest {
                 .thenReturn(List.of(Map.<String, Object>of("position_id", 7L, "amount", new BigDecimal("-12.00"))));
 
         assertThat(service.getClosedPositions(UID, null, 50).getFirst().getClosedPnl()).isNull();
+    }
+
+    /** 了结方式给的是了结它那张平仓单的状态：止盈按盘口成交，平仓价不一定越过止盈价，复盘不能拿价去猜 */
+    @Test
+    void 带出了结它的那张平仓单的状态() {
+        when(positionMapper.selectList(any())).thenReturn(List.of(closed(1165L, "660.30", "3.20")));
+        when(orderMapper.lastCloseStatusByPositionIds(any()))
+                .thenReturn(List.of(Map.<String, Object>of("position_id", 1165L, "status", "TAKE_PROFIT")));
+
+        assertThat(service.getClosedPositions(UID, null, 50).getFirst().getClosedBy()).isEqualTo("TAKE_PROFIT");
     }
 
     @Test

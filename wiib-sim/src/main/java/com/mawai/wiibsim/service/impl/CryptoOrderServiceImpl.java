@@ -14,7 +14,6 @@ import com.mawai.wiibcommon.enums.OrderSide;
 import com.mawai.wiibcommon.enums.OrderStatus;
 import com.mawai.wiibcommon.enums.OrderType;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.Ledger;
@@ -25,23 +24,25 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoOrderService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.BStockService;
+import com.mawai.wiibsim.service.BookFillPricer;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.MarginAccountService;
+import com.mawai.wiibsim.service.PriceTick;
+import com.mawai.wiibsim.service.TradeHit;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -65,6 +66,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final TradeFilterRegistry tradeFilterRegistry;
     private final TransactionTemplate transactionTemplate;
     private final LedgerTx ledgerTx;
+    private final BookFillPricer fillPricer;
 
     private static final int TRIGGERED_ORDER_BATCH_SIZE = 200;
     private static final String LIMIT_BUY_ZSET_PREFIX = "crypto:limit:buy:";
@@ -86,8 +88,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     // ==================== 买入 ====================
 
     /**
-     * 三条买入分支的资金语义不同（现货 / 杠杆 / 限价冻结），而三个执行方法全是私有 + 同类自调用，
-     * @Ledger 标它们是空操作。所以方法级只在这里标一次当默认（普通市价买入这条最常走），
+     * 三条买入分支的资金语义不同（现货买入 / 杠杆 / 限价冻结），而执行方法全是私有 + 同类自调用，
+     * @Ledger 标它们是空操作。所以方法级只在这里标一次当默认（现货买入这条最常走，挂上就能成交的限价单也算它），
      * 另两条分支各自在动钱之前 LedgerCtx.mark 覆盖成精确类型。
      */
     @Override
@@ -97,25 +99,20 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         validateRequest(request);
         User user = getAndValidateUser(userId);
         BigDecimal price = getCryptoPrice(request.getSymbol());
-        // 交易过滤器（对齐Binance exchangeInfo）：步长对齐 + 名义额≥minNotional（限价按挂单价估）
         boolean isMarketBuy = OrderType.MARKET.getCode().equals(request.getOrderType());
+        // 市价按盘口扫出成交价，没盘口用最新价
+        BigDecimal fillPrice = isMarketBuy ? fillPricer.spot(request.getSymbol(), true, request.getQuantity(), price) : null;
+        // 交易过滤器（对齐Binance exchangeInfo）：步长对齐 + 名义额≥minNotional（限价按挂单价估）
         tradeFilterRegistry.validateSpotBuy(request.getSymbol(), request.getQuantity(),
-                isMarketBuy ? price : request.getLimitPrice());
+                isMarketBuy ? fillPrice : request.getLimitPrice());
         int leverageMultiple = marginAccountService.normalizeLeverageMultiple(request.getLeverageMultiple());
 
         // 市价
-        if (OrderType.MARKET.getCode().equals(request.getOrderType())) {
-            BigDecimal amount = price.multiply(request.getQuantity()).setScale(2, RoundingMode.HALF_UP);
+        if (isMarketBuy) {
+            if (leverageMultiple <= 1) return buyNow(userId, user, request, fillPrice, null);
+
+            BigDecimal amount = fillPrice.multiply(request.getQuantity()).setScale(2, RoundingMode.HALF_UP);
             BigDecimal commission = tradingConfig.calculateCryptoCommission(amount);
-
-            if (leverageMultiple <= 1) {
-                BigDecimal totalCost = amount.add(commission);
-                if (user.getBalance().compareTo(totalCost) < 0) throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
-                // 现货买入=余额钱包流出，被全仓仓位占用的部分不能拿来买币
-                crossMarginService.assertCanAfford(userId, totalCost);
-                return executeMarketBuy(userId, request.getSymbol(), request.getQuantity(), price, amount, commission);
-            }
-
             if (!tradingConfig.getMargin().isEnabled() || leverageMultiple > tradingConfig.getMargin().getMaxLeverage()) {
                 throw new BizException(ErrorCode.LEVERAGE_MULTIPLE_INVALID);
             }
@@ -124,12 +121,16 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
             BigDecimal cashNeed = margin.add(commission);
             if (user.getBalance().compareTo(cashNeed) < 0) throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
             crossMarginService.assertCanAfford(userId, cashNeed);
-            return executeMarketBuyWithLeverage(userId, request.getSymbol(), request.getQuantity(), price, amount, commission, margin, borrowed, leverageMultiple);
+            return executeMarketBuyWithLeverage(userId, request.getSymbol(), request.getQuantity(), fillPrice, amount, commission, margin, borrowed, leverageMultiple);
         }
 
         // 限价买单
         if (leverageMultiple > 1) throw new BizException(ErrorCode.LEVERAGE_ONLY_FOR_MARKET_BUY);
         tradingConfig.validateLimitPrice(request.getLimitPrice(), price);
+        // 卖盘在挂单价以内的量够整笔吃掉（没盘口看现价够不够得着），挂上就能成交：当场成交，不进挂单簿
+        BigDecimal takePrice = fillPricer.spotWithinLimit(request.getSymbol(), true, request.getQuantity(),
+                request.getLimitPrice(), price);
+        if (takePrice != null) return buyNow(userId, user, request, takePrice, request.getLimitPrice());
         BigDecimal freezeAmount = request.getLimitPrice().multiply(request.getQuantity()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal estimatedCommission = tradingConfig.calculateCryptoCommission(freezeAmount);
         BigDecimal totalFreeze = freezeAmount.add(estimatedCommission);
@@ -156,12 +157,15 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         BigDecimal price = getCryptoPrice(request.getSymbol());
 
         if (OrderType.MARKET.getCode().equals(request.getOrderType())) {
-            BigDecimal amount = price.multiply(request.getQuantity()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal commission = tradingConfig.calculateCryptoCommission(amount);
-            return executeMarketSell(userId, request.getSymbol(), request.getQuantity(), price, amount, commission);
+            // 市价按盘口扫出成交价，没盘口用最新价
+            return sellNow(userId, request, fillPricer.spot(request.getSymbol(), false, request.getQuantity(), price), null);
         }
 
         tradingConfig.validateLimitPrice(request.getLimitPrice(), price);
+        // 买盘在挂单价以内的量够整笔卖掉（没盘口看现价够不够得着），挂上就能成交：当场成交，不进挂单簿
+        BigDecimal takePrice = fillPricer.spotWithinLimit(request.getSymbol(), false, request.getQuantity(),
+                request.getLimitPrice(), price);
+        if (takePrice != null) return sellNow(userId, request, takePrice, request.getLimitPrice());
         return createLimitSellOrder(userId, request);
     }
 
@@ -215,18 +219,33 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         return page.convert(this::buildResponse);
     }
 
-    // ==================== 市价买入执行 ====================
+    // ==================== 当场成交的买入 ====================
 
-    private CryptoOrderResponse executeMarketBuy(Long userId, String symbol, BigDecimal quantity,
-                                                  BigDecimal price, BigDecimal amount, BigDecimal commission) {
-        userService.updateBalance(userId, amount.add(commission).negate());
+    /** 市价单、挂上就能成交的限价单（limitPrice 为空是市价单）：余额要够成交额 + 手续费 */
+    private CryptoOrderResponse buyNow(Long userId, User user, CryptoOrderRequest request,
+                                       BigDecimal price, BigDecimal limitPrice) {
+        String symbol = request.getSymbol();
+        BigDecimal quantity = request.getQuantity();
+        BigDecimal amount = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal commission = tradingConfig.calculateCryptoCommission(amount);
+        BigDecimal totalCost = amount.add(commission);
+        if (user.getBalance().compareTo(totalCost) < 0) throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
+        // 现货买入=余额钱包流出，被全仓仓位占用的部分不能拿来买币
+        crossMarginService.assertCanAfford(userId, totalCost);
+
+        userService.updateBalance(userId, totalCost.negate());
         cryptoPositionService.addPosition(userId, symbol, quantity, price);
 
-        CryptoOrder order = buildOrder(userId, symbol, OrderSide.BUY.getCode(), OrderType.MARKET.getCode(),
-                quantity, 1, null, price, amount, commission, null, OrderStatus.FILLED.getCode());
+        CryptoOrder order = buildOrder(userId, symbol, OrderSide.BUY.getCode(), orderType(limitPrice),
+                quantity, 1, limitPrice, price, amount, commission, null, OrderStatus.FILLED.getCode());
         baseMapper.insert(order);
-        log.info("crypto市价买入 userId={} {} qty={} price={} amount={}", userId, symbol, quantity, price, amount);
+        log.info("crypto{}买入 userId={} {} qty={} price={} amount={}",
+                limitPrice == null ? "市价" : "限价当场", userId, symbol, quantity, price, amount);
         return buildResponse(order);
+    }
+
+    private static String orderType(BigDecimal limitPrice) {
+        return limitPrice == null ? OrderType.MARKET.getCode() : OrderType.LIMIT.getCode();
     }
 
     private CryptoOrderResponse executeMarketBuyWithLeverage(Long userId, String symbol, BigDecimal quantity,
@@ -246,20 +265,24 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         return buildResponse(order);
     }
 
-    // ==================== 市价卖出执行（瞬时到账） ====================
+    // ==================== 当场成交的卖出（瞬时到账） ====================
 
-    private CryptoOrderResponse executeMarketSell(Long userId, String symbol, BigDecimal quantity,
-                                                   BigDecimal price, BigDecimal amount, BigDecimal commission) {
+    /** 市价单、挂上就能成交的限价单（limitPrice 为空是市价单） */
+    private CryptoOrderResponse sellNow(Long userId, CryptoOrderRequest request, BigDecimal price, BigDecimal limitPrice) {
+        String symbol = request.getSymbol();
+        BigDecimal quantity = request.getQuantity();
+        BigDecimal amount = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal commission = tradingConfig.calculateCryptoCommission(amount);
         BigDecimal netAmount = amount.subtract(commission);
         cryptoPositionService.reducePosition(userId, symbol, quantity);
 
-        CryptoOrder order = buildOrder(userId, symbol, OrderSide.SELL.getCode(), OrderType.MARKET.getCode(),
-                quantity, 1, null, price, amount, commission, null, OrderStatus.FILLED.getCode());
+        CryptoOrder order = buildOrder(userId, symbol, OrderSide.SELL.getCode(), orderType(limitPrice),
+                quantity, 1, limitPrice, price, amount, commission, null, OrderStatus.FILLED.getCode());
         baseMapper.insert(order);
 
         boolean bStock = settleSellProceeds(userId, symbol, order.getId(), netAmount);
-        log.info("{}市价卖出 userId={} {} qty={} price={} net={}",
-                bStock ? "bStock" : "crypto", userId, symbol, quantity, price, netAmount);
+        log.info("{}{}卖出 userId={} {} qty={} price={} net={}", bStock ? "bStock" : "crypto",
+                limitPrice == null ? "市价" : "限价当场", userId, symbol, quantity, price, netAmount);
         return buildResponse(order);
     }
 
@@ -358,9 +381,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
             return false;
         }
 
-        BigDecimal executePrice = order.getTriggerPrice();
-        if (executePrice == null) return false;
-
+        // 挂着的单是被别人吃掉的，成交价就是挂单价，穿价那一下的好处不归挂单方
+        BigDecimal executePrice = order.getLimitPrice();
         BigDecimal amount = executePrice.multiply(order.getQuantity()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal commission = tradingConfig.calculateCryptoCommission(amount);
 
@@ -387,31 +409,44 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         return true;
     }
 
-    // ==================== WS事件驱动限价单 ====================
+    // ==================== 行情触发限价单 ====================
 
     @Override
-    public void onPriceUpdate(String symbol, BigDecimal price) {
-        String buyKey = LIMIT_BUY_ZSET_PREFIX + symbol;
-        String sellKey = LIMIT_SELL_ZSET_PREFIX + symbol;
+    public List<TradeHit> limitHits(String symbol, List<PriceTick> ticks) {
+        BigDecimal[] range = PriceTick.lowHigh(ticks);
+        List<TradeHit> hits = new ArrayList<>();
+        // 要严格穿过：买单只看挂单价高于最低价的，卖单只看低于最高价的
+        collectLimitHits(LIMIT_BUY_ZSET_PREFIX + symbol, Math.nextUp(range[0].doubleValue()), Double.MAX_VALUE,
+                ticks, true, hits);
+        collectLimitHits(LIMIT_SELL_ZSET_PREFIX + symbol, 0, Math.nextDown(range[1].doubleValue()),
+                ticks, false, hits);
+        return hits;
+    }
 
-        // 买单：limitPrice >= currentPrice → 触发
-        Set<String> buyHits = stringRedisTemplate.opsForZSet().rangeByScore(buyKey, price.doubleValue(), Double.MAX_VALUE);
-        // 卖单：limitPrice <= currentPrice → 触发
-        Set<String> sellHits = stringRedisTemplate.opsForZSet().rangeByScore(sellKey, 0, price.doubleValue());
-
-        // 只查不预删：DB是事实、索引跟着事实走。抢不到锁或CAS抛错时索引原地留着，下个tick照样捞得到
-        if (buyHits != null) {
-            for (String id : buyHits) triggerAndExecuteOrder(buyKey, Long.parseLong(id), price);
-        }
-        if (sellHits != null) {
-            for (String id : sellHits) triggerAndExecuteOrder(sellKey, Long.parseLong(id), price);
+    /** 只查不预删：DB是事实、索引跟着事实走。抢不到锁或CAS抛错时索引原地留着，下一笔穿过照样捞得到 */
+    private void collectLimitHits(String key, double min, double max, List<PriceTick> ticks, boolean buy,
+                                  List<TradeHit> hits) {
+        Set<String> candidates = stringRedisTemplate.opsForZSet().rangeByScore(key, min, max);
+        if (candidates == null) return;
+        for (String id : candidates) {
+            Long orderId = Long.parseLong(id);
+            CryptoOrder order = baseMapper.selectById(orderId);
+            if (order == null) {
+                // DB 里没这单了，索引是过期项，摘掉
+                stringRedisTemplate.opsForZSet().remove(key, id);
+                continue;
+            }
+            int i = PriceTick.firstTouch(ticks, toEpochMs(order.getCreatedAt()), order.getLimitPrice(), buy, true);
+            if (i < 0) continue;
+            BigDecimal triggerPrice = ticks.get(i).touchPrice(order.getLimitPrice(), buy);
+            hits.add(new TradeHit(i, false, order.getUserId(), () -> triggerAndExecuteOrder(key, orderId, triggerPrice)));
         }
     }
 
     private void triggerAndExecuteOrder(String zsetKey, Long orderId, BigDecimal triggerPrice) {
         String lockKey = "crypto:order:execute:" + orderId;
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) return;   // 有人正在处理这单，索引不动，下个tick再来
+        if (lockValue == null) return;   // 有人正在处理这单，索引不动，下一笔穿过再来
         try {
             markOrderTriggered(orderId, triggerPrice);
             // CAS正常返回才摘索引：没改到说明这单早不是PENDING，索引是过期项，一样该清
@@ -425,52 +460,6 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         } finally {
             redisLockUtil.unlock(lockKey, lockValue);
         }
-    }
-
-    // ==================== 空窗补漏 ====================
-
-    @Override
-    public void recoverGap(String symbol, List<KlineBar> bars) {
-        if (bars.isEmpty()) return;
-        // 整段极值先粗筛一遍索引，逐单再按各自挂单时间算区间
-        BigDecimal[] all = KlineBar.lowHighAfter(bars, 0);
-        String buyKey = LIMIT_BUY_ZSET_PREFIX + symbol;
-        String sellKey = LIMIT_SELL_ZSET_PREFIX + symbol;
-
-        Set<ZSetOperations.TypedTuple<String>> buyHits = stringRedisTemplate.opsForZSet()
-                .rangeByScoreWithScores(buyKey, all[0].doubleValue(), Double.MAX_VALUE);
-        Set<ZSetOperations.TypedTuple<String>> sellHits = stringRedisTemplate.opsForZSet()
-                .rangeByScoreWithScores(sellKey, 0, all[1].doubleValue());
-
-        int count = recoverHits(buyKey, buyHits, bars, true) + recoverHits(sellKey, sellHits, bars, false);
-        if (count > 0) log.info("crypto空窗补漏触发限价单 symbol={} 共{}个", symbol, count);
-    }
-
-    // 空窗里价格已穿过，按挂单价成交；摘索引同样交给 triggerAndExecuteOrder（CAS落定后才摘）
-    private int recoverHits(String key, Set<ZSetOperations.TypedTuple<String>> hits,
-                            List<KlineBar> bars, boolean buySide) {
-        if (hits == null || hits.isEmpty()) return 0;
-        int count = 0;
-        for (var tuple : hits) {
-            Long orderId = Long.parseLong(Objects.requireNonNull(tuple.getValue()));
-            CryptoOrder order = baseMapper.selectById(orderId);
-            if (order == null) {
-                // DB 里没这单了，索引是过期项，摘掉
-                stringRedisTemplate.opsForZSet().remove(key, orderId.toString());
-                continue;
-            }
-            BigDecimal[] range = KlineBar.lowHighAfter(bars, toEpochMs(order.getCreatedAt()));
-            if (range == null) continue;   // 挂单晚于整段行情
-            BigDecimal limitPrice = order.getLimitPrice();
-            // 买单看区间低点有没有穿到挂单价，卖单看高点
-            boolean hit = buySide
-                    ? range[0].compareTo(limitPrice) <= 0
-                    : range[1].compareTo(limitPrice) >= 0;
-            if (!hit) continue;
-            triggerAndExecuteOrder(key, orderId, limitPrice);
-            count++;
-        }
-        return count;
     }
 
     // ==================== ZSet索引管理 ====================

@@ -22,6 +22,7 @@ public class FuturesOrderResponse {
     private BigDecimal filledAmount;
     private BigDecimal marginAmount;
     private BigDecimal commission;
+    private BigDecimal liquidationFee; // 强平清算费，强平单才有
     private BigDecimal realizedPnl;
     private String status;
     private LocalDateTime createdAt;

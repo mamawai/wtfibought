@@ -239,6 +239,8 @@ export interface PositionFill {
   price: number;
   amount: number;
   commission: number;
+  /** 强平清算费，强平单才有，其余为 null */
+  liquidationFee: number | null;
   /** 平仓单才有，开/加仓单为 null */
   realizedPnl: number | null;
   filledAt: string;
@@ -268,8 +270,10 @@ export interface PositionHistoryItem {
   /** 累计投入保证金，回报率的分母 */
   investedMargin: number;
   commission: number;
+  /** 强平清算费，没被强平过为 0 */
+  liquidationFee: number;
   fundingFeeTotal: number;
-  /** 已实现盈亏（净额）：已扣手续费与资金费，口径同排行榜「交易盈利」 */
+  /** 已实现盈亏（净额）：已扣手续费、强平清算费与资金费，口径同排行榜「交易盈利」 */
   realizedPnl: number;
   /** 投资回报率(%)；分母为 0 时 null */
   roiPct: number | null;

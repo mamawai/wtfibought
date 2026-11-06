@@ -27,11 +27,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -114,6 +116,45 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         transactionTemplate.executeWithoutResult(_ -> liquidateUser(userMapper.selectByIdForUpdate(userId), LocalDate.now()));
     }
 
+    /**
+     * 强平提交后顺手判一下；判不了只记日志，不能让已经提交的强平报错，工作日 17 点的破产检查还会再判。
+     * 调用方在提交之后的回调里调，线程上还挂着刚提交完的那个事务：另开一个新事务，不然写的东西不归任何事务管
+     */
+    @Override
+    public void bankruptIfNothingLeft(Long userId) {
+        try {
+            // 还有合约仓位开着先不判：等最后一个仓位平掉再判，这里就不会去碰别的仓位的行锁
+            if (futuresPositionMapper.exists(new LambdaQueryWrapper<FuturesPosition>()
+                    .eq(FuturesPosition::getUserId, userId)
+                    .eq(FuturesPosition::getStatus, "OPEN"))) {
+                return;
+            }
+            TransactionTemplate newTx = new TransactionTemplate(
+                    Objects.requireNonNull(transactionTemplate.getTransactionManager()));
+            newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            newTx.executeWithoutResult(_ -> {
+                User locked = userMapper.selectByIdForUpdate(userId);
+                // 没有合约仓位时其余资产都不为负：现金扣掉借款还有剩就不会破产，省掉一次全量估值
+                if (cashNet(locked).signum() > 0) return;
+                if (shouldBankrupt(locked)) {
+                    liquidateUser(locked, LocalDate.now());
+                }
+            });
+        } catch (Exception e) {
+            log.error("强平后判破产失败 userId={}", userId, e);
+        }
+    }
+
+    /** 余额 + 冻结 − 借款本金 − 利息 */
+    private static BigDecimal cashNet(User user) {
+        return nz(user.getBalance()).add(nz(user.getFrozenBalance()))
+                .subtract(nz(user.getMarginLoanPrincipal())).subtract(nz(user.getMarginInterestAccrued()));
+    }
+
+    private static BigDecimal nz(BigDecimal v) {
+        return v != null ? v : BigDecimal.ZERO;
+    }
+
     private boolean shouldBankrupt(User user) {
         if (user == null) {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
@@ -122,11 +163,6 @@ public class BankruptcyServiceImpl implements BankruptcyService {
             return false;
         }
         Long userId = user.getId();
-
-        BigDecimal balance = user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO;
-        BigDecimal frozen = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
-        BigDecimal principal = user.getMarginLoanPrincipal() != null ? user.getMarginLoanPrincipal() : BigDecimal.ZERO;
-        BigDecimal interest = user.getMarginInterestAccrued() != null ? user.getMarginInterestAccrued() : BigDecimal.ZERO;
 
         // 现货持仓市值（crypto + bStock，均在 crypto_position）
         BigDecimal marketValue = cryptoPositionService.calculateCryptoMarketValue(userId);
@@ -145,13 +181,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         marketValue = marketValue.add(assetValuationService.predictionMarketValue(userId));
 
         // 游戏钱包刻意不计入：破产判定只看交易侧净资产，游戏钱包既救不了你、破产时也会被清空
-        BigDecimal netAssets = balance
-                .add(frozen)
-                .add(marketValue)
-                .subtract(principal)
-                .subtract(interest);
-
-        return netAssets.compareTo(BigDecimal.ZERO) <= 0;
+        return cashNet(user).add(marketValue).compareTo(BigDecimal.ZERO) <= 0;
     }
 
     void liquidateUser(User before, LocalDate today) {

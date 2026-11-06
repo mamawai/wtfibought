@@ -13,7 +13,9 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.Test;
@@ -71,7 +73,8 @@ class CrossLeverageBandInvalidateTest {
                 new TradingConfig(), lockRegistry, cacheService,
                 mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
+                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                mock(FuturesRiskService.class), NoBookFillPricer.create());
 
         FuturesAdjustLeverageRequest req = new FuturesAdjustLeverageRequest();
         req.setSymbol("BTCUSDT");

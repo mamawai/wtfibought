@@ -60,6 +60,7 @@ error:
   futuresLeverageOnlyUp: Leverage on an isolated position can only go up; use add-margin to top it up
   futuresLeverageMismatch: Leverage differs from your existing position on this coin - adjust it first
   futuresMarginModeConflict: Margin mode differs from your existing position on this coin
+  futuresLiquidating: Your cross-margin account has hit its liquidation line and is being liquidated - closing is blocked for now
   # Prediction codes 1900+
   predictionRoundLocked: This round is locked
   predictionRoundNotFound: No such round

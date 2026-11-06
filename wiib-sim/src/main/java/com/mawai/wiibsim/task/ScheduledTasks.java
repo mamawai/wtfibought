@@ -5,12 +5,14 @@ import com.mawai.wiibsim.service.CryptoOrderService;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FundingRateService;
 import com.mawai.wiibsim.service.FuturesLiquidationService;
+import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesSettlementService;
 import com.mawai.wiibsim.service.TraderSymbolService;
 import com.mawai.wiibsim.service.RankingService;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.PredictionService;
+import com.mawai.wiibsim.service.TradeStreamConsumer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -38,6 +40,8 @@ public class ScheduledTasks {
     private final PredictionService predictionService;
     private final TraderSymbolService traderSymbolService;
     private final FundingRateService fundingRateService;
+    private final TradeStreamConsumer tradeStreamConsumer;
+    private final FuturesPositionIndexService futuresPositionIndexService;
     private final TradeFilterRegistry tradeFilterRegistry;
 
     /** 交易员集合：每分钟按库里的仓位和登记重算，变了才写 Redis，feed 按它订行情 */
@@ -70,12 +74,16 @@ public class ScheduledTasks {
         Thread.startVirtualThread(crossLiquidationService::sweepAll);
     }
 
-    /**
-     * 逐仓强平/止损/止盈兜底轮询。与上面全仓那条同频
-     */
+    /** 逐仓强平兜底轮询。与上面全仓那条同频 */
     @Scheduled(fixedRate = 30 * 1000)
     public void sweepFuturesLiquidation() {
         Thread.startVirtualThread(futuresLiquidationService::sweepAll);
+    }
+
+    /** 限价单、止损、止盈兜底轮询：按缓存的最新成交价再判一遍，主触发是读成交 Stream */
+    @Scheduled(fixedRate = 30 * 1000)
+    public void sweepTradeTriggers() {
+        Thread.startVirtualThread(tradeStreamConsumer::sweep);
     }
 
     /** futures孤儿TRIGGERED补扫：触发了没成交掉的限价单（等锁超时、进程重启） */
@@ -142,12 +150,13 @@ public class ScheduledTasks {
         });
     }
 
-    /** futures每小时：限价单索引对账 */
+    /** futures每小时：限价单索引、仓位强平/止损/止盈索引对账 */
     @Scheduled(cron = "0 0 * * * *")
     public void futuresHourlyMaintenance() {
         Thread.startVirtualThread(() -> {
             try {
                 futuresSettlementService.reconcileLimitOrderIndex();
+                futuresPositionIndexService.reconcilePositionIndex();
             } catch (Exception e) {
                 log.error("futures小时维护失败", e);
             }

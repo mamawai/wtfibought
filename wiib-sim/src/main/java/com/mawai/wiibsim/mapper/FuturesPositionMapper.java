@@ -140,7 +140,7 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
      * 非聚合不可：部分平仓后仓位表的 closed_pnl/quantity 是残值，真实数字只能从订单表加出来。
      * 子查询里也带 user_id，走 idx_fo_user 只扫这个人的单。
      * 状态四选（FILLED/STOP_LOSS/TAKE_PROFIT/LIQUIDATED 是订单终态），漏一个少算一段盈亏。
-     * 已实现盈亏与 ROI 在 SQL 里减完手续费和资金费一步到位。
+     * 已实现盈亏与 ROI 在 SQL 里减完手续费、强平清算费和资金费一步到位。
      * symbol 可选过滤用 (? IS NULL OR p.symbol = ?)：访问路径是 user_id 索引，计划中性；
      * null 才是"不筛"，空串由 PositionHistoryService 归一。
      */
@@ -152,6 +152,7 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
                    COALESCE(o.closed_qty, 0)      AS closed_qty,
                    COALESCE(o.close_amount, 0)    AS close_amount,
                    COALESCE(o.commission, 0)      AS commission,
+                   COALESCE(o.liquidation_fee, 0) AS liquidation_fee,
                    COALESCE(o.invested_margin, 0) AS invested_margin,
                    CASE WHEN COALESCE(o.closed_qty, 0) > 0
                         THEN ROUND(o.close_amount / o.closed_qty, 8) END AS close_avg_price,
@@ -166,7 +167,8 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
                        SUM(CASE WHEN order_side LIKE 'CLOSE%' THEN COALESCE(filled_amount, 0) ELSE 0 END)  AS close_amount,
                        SUM(CASE WHEN order_side LIKE 'CLOSE%' THEN 0 ELSE COALESCE(margin_amount, 0) END)  AS invested_margin,
                        SUM(COALESCE(commission, 0))                                                        AS commission,
-                       SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0))                            AS net_pnl
+                       SUM(COALESCE(liquidation_fee, 0))                                                   AS liquidation_fee,
+                       SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)) AS net_pnl
                 FROM futures_order
                 WHERE user_id = #{userId}
                   AND status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
@@ -189,7 +191,7 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
     @Select("""
             SELECT position_id, id AS order_id, order_side, order_type, status,
                    quantity, filled_price AS price, filled_amount AS amount,
-                   commission, realized_pnl, updated_at AS filled_at
+                   commission, liquidation_fee, realized_pnl, updated_at AS filled_at
             FROM futures_order
             WHERE status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
               AND position_id = ANY(#{positionIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})

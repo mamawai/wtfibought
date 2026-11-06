@@ -59,6 +59,7 @@ error:
   futuresLeverageOnlyUp: 逐仓持仓杠杆只能调高，补保证金请用追加保证金
   futuresLeverageMismatch: 杠杆与该币现有仓位不一致，请先调整杠杆
   futuresMarginModeConflict: 保证金模式与该币现有仓位不一致
+  futuresLiquidating: 全仓账户已触及强平线，正在强平，暂时不能平仓
   # Prediction错误码 1900+
   predictionRoundLocked: 回合已锁定
   predictionRoundNotFound: 回合不存在

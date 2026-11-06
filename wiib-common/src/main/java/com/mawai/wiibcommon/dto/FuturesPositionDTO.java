@@ -26,6 +26,7 @@ public class FuturesPositionDTO {
     private String status;
     private BigDecimal closedPrice;
     private BigDecimal closedPnl; // 已平仓位的净盈亏：各平仓单盈亏−手续费−资金费，订单流水聚合
+    private String closedBy; // 了结那张平仓单的状态：STOP_LOSS 止损 / TAKE_PROFIT 止盈 / LIQUIDATED 强平 / FILLED 主动平仓；没有平仓单为 null
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

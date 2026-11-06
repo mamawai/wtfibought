@@ -5,9 +5,7 @@ import com.baomidou.mybatisplus.spring.service.IService;
 import com.mawai.wiibcommon.dto.CryptoOrderRequest;
 import com.mawai.wiibcommon.dto.CryptoOrderResponse;
 import com.mawai.wiibcommon.entity.CryptoOrder;
-import com.mawai.wiibcommon.market.KlineBar;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 public interface CryptoOrderService extends IService<CryptoOrder> {
@@ -23,11 +21,11 @@ public interface CryptoOrderService extends IService<CryptoOrder> {
     /** 执行已触发的限价单 */
     void  executeTriggeredOrders();
 
-    /** WS价格到达时检查限价单（事件驱动） */
-    void onPriceUpdate(String symbol, BigDecimal price);
-
-    /** 空窗补漏：按空窗期 1m K 线补触发限价单，逐单按创建时间过滤（挂单之后的行情才算） */
-    void recoverGap(String symbol, List<KlineBar> bars);
+    /**
+     * 这段行情穿过的限价单：买单要有价低于挂单价，卖单要有价高于挂单价，挂单之后的行情才算。
+     * 逐笔成交、补漏 K 线、兜底巡检都走这里
+     */
+    List<TradeHit> limitHits(String symbol, List<PriceTick> ticks);
 
     /** 限价单索引对账：DB里的PENDING挂单全部补回ZSet（纯追加、幂等） */
     void reconcileLimitOrderIndex();

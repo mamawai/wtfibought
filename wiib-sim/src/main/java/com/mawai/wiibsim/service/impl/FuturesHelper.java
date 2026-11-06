@@ -9,6 +9,8 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
+import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -50,6 +52,16 @@ final class FuturesHelper {
         cacheService.zRemove(key, order.getId().toString());
     }
 
+    /**
+     * 仓位全平了：它名下还挂着的平仓限价单撤掉、摘索引（平仓单不冻结钱，不用退）。
+     * 摘索引在事务提交之前，事务回滚了单子退回 PENDING 而索引已经没了，由每小时的 reconcileLimitOrderIndex 补回来
+     */
+    static void cancelCloseOrders(Long positionId, FuturesOrderMapper orderMapper, CacheService cacheService) {
+        for (FuturesOrder order : orderMapper.cancelPendingCloseOrders(positionId)) {
+            removeFromLimitZSet(order, cacheService);
+        }
+    }
+
     static String getLimitZSetKey(String orderSide, String symbol) {
         return switch (orderSide) {
             // INCREASE_* 仅存量历史挂单路由（重建/过期/撤单），触发即自清撤单，不再产生新单
@@ -76,6 +88,43 @@ final class FuturesHelper {
         } else {
             return entryPrice.subtract(exitPrice).multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         }
+    }
+
+    /** 一笔平仓落账用的成交价、盈亏、手续费 */
+    record CloseFill(BigDecimal price, BigDecimal pnl, BigDecimal commission) {
+        /** 成交额 */
+        BigDecimal value(BigDecimal qty) {
+            return price.multiply(qty).setScale(2, RoundingMode.HALF_UP);
+        }
+
+        /** 逐仓这部分平完还剩多少：保证金 ± 盈亏 − 手续费 */
+        BigDecimal left(BigDecimal marginPart) {
+            return marginPart.add(pnl).subtract(commission);
+        }
+    }
+
+    /**
+     * 按 price 平掉 qty 的结算，marginPart 是这部分对应的保证金，手续费按成交额和吃单/挂单算。
+     * 逐仓亏损封在 marginPart 以内：成交价越过破产价就按破产价记、盈亏记 −marginPart、不收手续费；
+     * 没越过但剩下的不够付手续费，手续费收到剩下的为止。全仓原样，亏穿由账户结算走破产。
+     */
+    static CloseFill closeFill(FuturesPosition position, BigDecimal price, BigDecimal qty, BigDecimal marginPart,
+                               TradingConfig tradingConfig, boolean isTaker) {
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(
+                price.multiply(qty).setScale(2, RoundingMode.HALF_UP), true, isTaker);
+        BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, qty);
+        if (position.isCross()) return new CloseFill(price, pnl, commission);
+        BigDecimal left = marginPart.add(pnl);
+        if (left.signum() <= 0) return new CloseFill(bankruptcyPrice(position), marginPart.negate(), BigDecimal.ZERO);
+        return new CloseFill(price, pnl, commission.min(left));
+    }
+
+    /** 逐仓破产价：亏光全部保证金的那个价 */
+    static BigDecimal bankruptcyPrice(FuturesPosition position) {
+        BigDecimal perUnit = position.getMargin().divide(position.getQuantity(), 8, RoundingMode.HALF_UP);
+        return "LONG".equals(position.getSide())
+                ? position.getEntryPrice().subtract(perUnit)
+                : position.getEntryPrice().add(perUnit);
     }
 
     static void validateSlPrice(BigDecimal price, String side, BigDecimal refPrice) {
@@ -141,6 +190,7 @@ final class FuturesHelper {
         resp.setFilledAmount(order.getFilledAmount());
         resp.setMarginAmount(order.getMarginAmount());
         resp.setCommission(order.getCommission());
+        resp.setLiquidationFee(order.getLiquidationFee());
         resp.setRealizedPnl(order.getRealizedPnl());
         resp.setStatus(order.getStatus());
         resp.setCreatedAt(order.getCreatedAt());

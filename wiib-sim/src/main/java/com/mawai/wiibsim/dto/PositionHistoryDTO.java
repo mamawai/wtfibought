@@ -51,11 +51,14 @@ public class PositionHistoryDTO {
     /** 累计手续费（开、平两头都算） */
     private BigDecimal commission;
 
+    /** 强平清算费，没被强平过为 0 */
+    private BigDecimal liquidationFee;
+
     /** 累计资金费 */
     private BigDecimal fundingFeeTotal;
 
     /**
-     * 已实现盈亏（净额）= 各平仓单盈亏 − 手续费 − 资金费。
+     * 已实现盈亏（净额）= 各平仓单盈亏 − 手续费 − 强平清算费 − 资金费。
      * 口径跟排行榜「交易盈利」一致：这些费用都是真金白银扣走的，不该从这个数里藏起来。
      */
     private BigDecimal realizedPnl;

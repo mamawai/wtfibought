@@ -172,4 +172,25 @@ class TradeFilterRegistryTest {
         assertThat(reg.allSpot().get("NVDABUSDT").stepSize()).isEqualByComparingTo("0.01");
         assertThat(reg.allSpot().get("NVDABUSDT").minNotional()).isEqualByComparingTo("10");
     }
+
+    @Test
+    void 清算费率_官方覆盖快照_缺字段沿用快照_表外按默认一档() {
+        BinanceRestClient client = mock(BinanceRestClient.class);
+        // BTC 官方改成 1%，表外的 PEPE 收进来；ETH 没带这个字段
+        when(client.getFuturesExchangeInfo()).thenReturn("""
+                {"symbols":[
+                  {"symbol":"BTCUSDT","liquidationFee":"0.010000","filters":[]},
+                  {"symbol":"PEPEUSDT","liquidationFee":"0.025000","filters":[]},
+                  {"symbol":"ETHUSDT","filters":[]}
+                ]}""");
+
+        TradeFilterRegistry reg = new TradeFilterRegistry(client);
+        assertThat(reg.liquidationFeeRate("BTCUSDT")).isEqualByComparingTo("0.0125");   // 刷新前是快照
+        reg.refreshFromBinance();
+
+        assertThat(reg.liquidationFeeRate("BTCUSDT")).isEqualByComparingTo("0.01");
+        assertThat(reg.liquidationFeeRate("PEPEUSDT")).isEqualByComparingTo("0.025");
+        assertThat(reg.liquidationFeeRate("ETHUSDT")).isEqualByComparingTo("0.0125");
+        assertThat(reg.liquidationFeeRate("FOOUSDT")).isEqualByComparingTo("0.015");
+    }
 }

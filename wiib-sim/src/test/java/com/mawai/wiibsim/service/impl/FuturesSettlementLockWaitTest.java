@@ -12,6 +12,7 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeEventPublisher;
@@ -94,7 +95,7 @@ class FuturesSettlementLockWaitTest {
                 riskService, crossMarginService,
                 crossLiquidationService, lockRegistry,
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(TradeEventPublisher.class));
+                mock(TradeEventPublisher.class), NoBookFillPricer.create());
     }
 
     private static FuturesPosition isolatedLong(long id) {

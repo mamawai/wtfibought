@@ -1,7 +1,6 @@
 package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.cache.CacheService;
-import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
@@ -12,15 +11,27 @@ import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FuturesLiquidationService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.PriceTick;
+import com.mawai.wiibsim.service.TradeHit;
+import com.mawai.wiibsim.service.TraderSymbolService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static com.mawai.wiibsim.service.impl.FuturesHelper.*;
 
+/**
+ * 逐仓强平看标记价（markprice tick、标记价补漏、巡检），止损止盈看成交价（{@link #stopHits}）。
+ * 三种索引都是摘取即删：摘到的那条路径负责执行或放回，别的路径同时扫也扫不到它。
+ * 每小时对账会把库里还在的项补回去，正在执行的项可能被再摘一次，执行都在仓位锁里按库里现状复核，重复摘到也不会重复成交。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -28,236 +39,208 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
 
     private final FuturesRiskService futuresRiskService;
     private final CacheService cacheService;
-    private final BinanceProperties props;
+    private final TraderSymbolService traderSymbolService;
     private final FuturesPositionMapper positionMapper;
     private final FuturesPositionIndexService positionIndexService;
     private final CrossLiquidationService crossLiquidationService;
 
-    private enum HitKind { LIQ, SL, TP }
-
-    private record RecoveryEntry(HitKind kind, String key, String member, double score) {}
-
-    private static class PositionHitGroup {
-        boolean liq;
-        final List<String> slIds = new ArrayList<>();
-        final List<String> tpIds = new ArrayList<>();
-        final List<RecoveryEntry> recovery = new ArrayList<>();
+    /** 从止损/止盈索引摘出来的一档，放回用 key/member/score */
+    private record Claim(String key, String member, double score, boolean stopLoss) {
+        String itemId() {
+            return member.substring(member.indexOf(':') + 1);
+        }
     }
 
+    /** 同一格摸到、触发价一样的同类档并成一次平仓 */
+    private record HitKey(int tick, boolean stopLoss, BigDecimal price) {}
+
+    /** 库里一档的触发价，和它从哪一刻起算 */
+    private record Level(BigDecimal price, long since) {}
+
+    // ==================== 强平（标记价） ====================
+
     @Override
-    public void checkOnPriceUpdate(String symbol, BigDecimal markPrice, BigDecimal currentPrice) {
+    public void checkOnPriceUpdate(String symbol, BigDecimal markPrice) {
         double mp = markPrice.doubleValue();
-        double cp = currentPrice.doubleValue();
-        Map<String, PositionHitGroup> groups = new HashMap<>();
-
-        // LIQ: LONG强平 markPrice≤liqPrice → score≥markPrice; SHORT反之
-        collectLiq(LIQ_LONG_PREFIX + symbol, mp, Double.MAX_VALUE, groups);
-        collectLiq(LIQ_SHORT_PREFIX + symbol, 0, mp, groups);
-
-        // SL: LONG止损 markPrice≤slPrice → score≥markPrice; SHORT反之
-        collectSl(SL_LONG_PREFIX + symbol, mp, Double.MAX_VALUE, groups);
-        collectSl(SL_SHORT_PREFIX + symbol, 0, mp, groups);
-
-        // TP: LONG止盈 currentPrice≥tpPrice → score≤currentPrice; SHORT反之
-        collectTp(TP_LONG_PREFIX + symbol, 0, cp, groups);
-        collectTp(TP_SHORT_PREFIX + symbol, cp, Double.MAX_VALUE, groups);
-
-        for (var entry : groups.entrySet()) {
-            processGroup(entry.getKey(), entry.getValue(), markPrice, currentPrice);
-        }
+        long now = System.currentTimeMillis();
+        // 多头 markPrice ≤ 强平价 → score ≥ markPrice；空头反之
+        liquidate(cacheService.zRangeByScoreAndRemove(LIQ_LONG_PREFIX + symbol, mp, Double.MAX_VALUE).keySet(),
+                markPrice, now);
+        liquidate(cacheService.zRangeByScoreAndRemove(LIQ_SHORT_PREFIX + symbol, 0, mp).keySet(), markPrice, now);
     }
 
     /**
-     * 空窗补漏：整段极值先粗筛一遍索引（摘取即删），再逐仓位、逐档位按创建时间复核——
-     * 空窗里的插针只对"那时已经存在"的仓位/档位算数，不成立的把索引原样回填。
+     * 空窗补漏：整段极值先粗筛一遍强平索引（摘取即删），再逐仓位按开仓时间复核——
+     * 开仓之后的标记价穿过强平价才算，不算的原样放回
      */
     @Override
-    public void recoverGap(String symbol, List<KlineBar> markBars, List<KlineBar> futBars) {
+    public void recoverGap(String symbol, List<KlineBar> markBars) {
         if (markBars.isEmpty()) return;
-        List<KlineBar> fut = futBars.isEmpty() ? markBars : futBars;
-        BigDecimal[] allMark = KlineBar.lowHighAfter(markBars, 0);
-        BigDecimal[] allFut = KlineBar.lowHighAfter(fut, 0);
-        double mL = allMark[0].doubleValue();
-        double mH = allMark[1].doubleValue();
-        double fL = allFut[0].doubleValue();
-        double fH = allFut[1].doubleValue();
-
-        Map<String, PositionHitGroup> groups = new HashMap<>();
-        collectLiq(LIQ_LONG_PREFIX + symbol, mL, Double.MAX_VALUE, groups);
-        collectLiq(LIQ_SHORT_PREFIX + symbol, 0, mH, groups);
-        collectSl(SL_LONG_PREFIX + symbol, mL, Double.MAX_VALUE, groups);
-        collectSl(SL_SHORT_PREFIX + symbol, 0, mH, groups);
-        collectTp(TP_LONG_PREFIX + symbol, 0, fH, groups);
-        collectTp(TP_SHORT_PREFIX + symbol, fL, Double.MAX_VALUE, groups);
-
-        for (var entry : groups.entrySet()) {
-            FuturesPosition pos = positionMapper.selectById(Long.parseLong(entry.getKey()));
-            PositionHitGroup group = entry.getValue();
-            // 仓位没了，索引是过期项，不回填
-            if (pos == null) continue;
-
-            boolean isLong = "LONG".equals(pos.getSide());
-            long posSince = toEpochMs(pos.getCreatedAt());
-            BigDecimal[] posMark = KlineBar.lowHighAfter(markBars, posSince);
-            BigDecimal[] posFut = KlineBar.lowHighAfter(fut, posSince);
-            if (posMark == null || posFut == null) {
-                // 仓位开在整段行情之后，一项都不该触发
-                restore(pos, group.recovery, true);
-                continue;
-            }
-
-            PositionHitGroup keep = verify(group, pos, isLong, posSince, markBars, fut);
-            if (!keep.liq && keep.slIds.isEmpty() && keep.tpIds.isEmpty()) continue;
-
-            // 钉价：mark 侧多头钉区间低点、空头钉高点；止盈侧多头钉合约价高点、空头钉低点
-            BigDecimal markPx = isLong ? posMark[0] : posMark[1];
-            BigDecimal curPx = isLong ? posFut[1] : posFut[0];
-            processGroup(entry.getKey(), keep, markPx, curPx);
-        }
+        BigDecimal[] all = KlineBar.lowHighAfter(markBars, 0);
+        String longKey = LIQ_LONG_PREFIX + symbol;
+        String shortKey = LIQ_SHORT_PREFIX + symbol;
+        recoverLiq(longKey, cacheService.zRangeByScoreAndRemove(longKey, all[0].doubleValue(), Double.MAX_VALUE),
+                markBars, true);
+        recoverLiq(shortKey, cacheService.zRangeByScoreAndRemove(shortKey, 0, all[1].doubleValue()), markBars, false);
     }
 
-    /** 逐项按各自 since 复核，命中的留下、不成立的回填索引 */
-    private PositionHitGroup verify(PositionHitGroup group, FuturesPosition pos, boolean isLong,
-                                    long posSince, List<KlineBar> markBars, List<KlineBar> fut) {
-        PositionHitGroup keep = new PositionHitGroup();
-        for (RecoveryEntry re : group.recovery) {
-            String itemId = re.kind() == HitKind.LIQ ? null : re.member().substring(re.member().indexOf(':') + 1);
-            long since = switch (re.kind()) {
-                case LIQ -> posSince;
-                case SL -> slSince(pos, itemId, posSince);
-                case TP -> tpSince(pos, itemId, posSince);
-            };
-            // 强平/止损看 mark 区间，止盈看合约价区间；多头看低点穿没穿、空头看高点，止盈反过来
-            BigDecimal[] range = KlineBar.lowHighAfter(re.kind() == HitKind.TP ? fut : markBars, since);
-            boolean lowSide = re.kind() == HitKind.TP ? !isLong : isLong;
-            boolean hit = range != null && (lowSide
-                    ? range[0].doubleValue() <= re.score()
-                    : range[1].doubleValue() >= re.score());
+    private void recoverLiq(String key, Map<String, Double> claimed, List<KlineBar> markBars, boolean isLong) {
+        // 钉价是空窗里的价，时刻记成空窗第一根 K 线开盘：按钉价成交，不扫现在的盘口
+        long pinAt = markBars.getFirst().openTime();
+        for (var e : claimed.entrySet()) {
+            FuturesPosition pos = positionMapper.selectById(Long.parseLong(e.getKey()));
+            // 仓位没了，索引是过期项，不放回
+            if (pos == null || !"OPEN".equals(pos.getStatus())) continue;
+            BigDecimal[] range = KlineBar.lowHighAfter(markBars, toEpochMs(pos.getCreatedAt()));
+            boolean hit = range != null && (isLong
+                    ? range[0].doubleValue() <= e.getValue()
+                    : range[1].doubleValue() >= e.getValue());
             if (!hit) {
-                cacheService.zAdd(re.key(), re.member(), re.score());
+                cacheService.zAdd(key, e.getKey(), e.getValue());
                 continue;
             }
-            keep.recovery.add(re);
-            switch (re.kind()) {
-                case LIQ -> keep.liq = true;
-                case SL -> keep.slIds.add(itemId);
-                case TP -> keep.tpIds.add(itemId);
-            }
-        }
-        return keep;
-    }
-
-    /** 档位创建时间与仓位创建时间取晚的（限价单带的档位是下单时间，早于仓位）；旧数据没档位时间就用仓位的 */
-    private static long slSince(FuturesPosition pos, String id, long posSince) {
-        if (pos.getStopLosses() == null) return posSince;
-        for (FuturesStopLoss sl : pos.getStopLosses()) {
-            if (id.equals(sl.getId())) return sl.getCreatedAt() == null ? posSince : Math.max(sl.getCreatedAt(), posSince);
-        }
-        return posSince;
-    }
-
-    private static long tpSince(FuturesPosition pos, String id, long posSince) {
-        if (pos.getTakeProfits() == null) return posSince;
-        for (FuturesTakeProfit tp : pos.getTakeProfits()) {
-            if (id.equals(tp.getId())) return tp.getCreatedAt() == null ? posSince : Math.max(tp.getCreatedAt(), posSince);
-        }
-        return posSince;
-    }
-
-    /**
-     * 摘下来的项按库里现状放回：仓位还开着才放，止损/止盈档位还在才放（执行掉的库里已经没了）。
-     * withLiq=强平项也放回，按当前仓位重算；强平正常走完时 forceClose 已在锁内放回过，不用再放
-     */
-    private void restore(FuturesPosition pos, List<RecoveryEntry> recovery, boolean withLiq) {
-        if (pos == null || !"OPEN".equals(pos.getStatus())) return;
-        for (RecoveryEntry re : recovery) {
-            if (re.kind() == HitKind.LIQ) {
-                if (withLiq) positionIndexService.registerLiquidation(pos);
-                continue;
-            }
-            String itemId = re.member().substring(re.member().indexOf(':') + 1);
-            boolean alive = re.kind() == HitKind.SL
-                    ? pos.getStopLosses() != null && pos.getStopLosses().stream().anyMatch(s -> itemId.equals(s.getId()))
-                    : pos.getTakeProfits() != null && pos.getTakeProfits().stream().anyMatch(t -> itemId.equals(t.getId()));
-            if (alive) cacheService.zAdd(re.key(), re.member(), re.score());
+            // 钉价：多头钉区间低点、空头钉高点
+            liquidate(Set.of(e.getKey()), isLong ? range[0] : range[1], pinAt);
         }
     }
 
-    /**
-     * 一个仓位的命中项处理体：先处理强平/止损这一侧，同批的止盈等下一秒；
-     * 处理完（中途失败也一样）把还有效的项放回索引
-     */
-    private void processGroup(String posId, PositionHitGroup group, BigDecimal markPrice, BigDecimal currentPrice) {
-        Thread.startVirtualThread(() -> {
+    /** 摘出来的仓位各起虚拟线程强平；锁内复核不够强平会自己放回索引，抛异常（等锁超时）在这里放回 */
+    private void liquidate(Set<String> posIds, BigDecimal price, long priceAt) {
+        for (String posId : posIds) {
             Long pid = Long.parseLong(posId);
-            boolean failed = false;
-            try {
-                if (group.liq) {
-                    liquidateInTouchOrder(pid, group, markPrice);
-                } else if (!group.slIds.isEmpty()) {
-                    triggerStopLoss(pid, group.slIds, markPrice);
-                } else {
-                    futuresRiskService.batchTriggerTakeProfit(pid, group.tpIds, currentPrice);
+            Thread.startVirtualThread(() -> {
+                try {
+                    futuresRiskService.forceClose(pid, price, priceAt);
+                } catch (Exception e) {
+                    log.error("futures强平失败 posId={}，放回强平索引", pid, e);
+                    FuturesPosition pos = positionMapper.selectById(pid);
+                    if (pos != null && "OPEN".equals(pos.getStatus())) positionIndexService.registerLiquidation(pos);
                 }
+            });
+        }
+    }
+
+    // ==================== 止损止盈（成交价） ====================
+
+    @Override
+    public List<TradeHit> stopHits(String symbol, List<PriceTick> ticks) {
+        BigDecimal[] range = PriceTick.lowHigh(ticks);
+        double low = range[0].doubleValue();
+        double high = range[1].doubleValue();
+        // 多头止损、空头止盈在下面：价摸到或低于触发价就算；空头止损、多头止盈在上面
+        Map<Long, List<Claim>> byPosition = new LinkedHashMap<>();
+        claim(SL_LONG_PREFIX + symbol, low, Double.MAX_VALUE, true, byPosition);
+        claim(TP_SHORT_PREFIX + symbol, low, Double.MAX_VALUE, false, byPosition);
+        claim(SL_SHORT_PREFIX + symbol, 0, high, true, byPosition);
+        claim(TP_LONG_PREFIX + symbol, 0, high, false, byPosition);
+
+        List<TradeHit> hits = new ArrayList<>();
+        byPosition.forEach((pid, claims) -> {
+            try {
+                collectStopHits(pid, claims, ticks, hits);
             } catch (Exception e) {
-                log.error("futures仓位处理失败 posId={}, 恢复索引", posId, e);
-                failed = true;
+                // 已经从索引摘下来了，判不了就原样放回，下一笔摸到再来
+                log.error("futures止损止盈判定失败 posId={}，放回索引", pid, e);
+                claims.forEach(c -> cacheService.zAdd(c.key(), c.member(), c.score()));
             }
-            restore(positionMapper.selectById(pid), group.recovery, failed);
         });
+        return hits;
     }
 
-    /**
-     * 逐仓同批命中强平和止损：价格先触及的先执行（多头价高的先、空头价低的先，同价止损先）。
-     * 每一步都在仓位锁内按库里最新状态复核
-     */
-    private void liquidateInTouchOrder(Long pid, PositionHitGroup group, BigDecimal markPrice) {
-        RecoveryEntry liq = group.recovery.stream().filter(re -> re.kind() == HitKind.LIQ).findFirst().orElseThrow();
-        boolean isLong = liq.key().startsWith(LIQ_LONG_PREFIX);
-        List<String> before = new ArrayList<>();
-        List<String> after = new ArrayList<>();
-        for (RecoveryEntry re : group.recovery) {
-            if (re.kind() != HitKind.SL) continue;
-            boolean first = isLong ? re.score() >= liq.score() : re.score() <= liq.score();
-            (first ? before : after).add(re.member().substring(re.member().indexOf(':') + 1));
+    private void claim(String key, double min, double max, boolean stopLoss, Map<Long, List<Claim>> byPosition) {
+        for (var e : cacheService.zRangeByScoreAndRemove(key, min, max).entrySet()) {
+            String member = e.getKey();
+            Long pid = Long.parseLong(member.substring(0, member.indexOf(':')));
+            byPosition.computeIfAbsent(pid, k -> new ArrayList<>()).add(new Claim(key, member, e.getValue(), stopLoss));
         }
-        if (!before.isEmpty()) futuresRiskService.batchTriggerStopLoss(pid, before, markPrice);
-        futuresRiskService.forceClose(pid, markPrice);
-        if (!after.isEmpty()) futuresRiskService.batchTriggerStopLoss(pid, after, markPrice);
     }
 
-    /** 全仓止损转给账户级处理，在用户级锁内跟强平比先后；逐仓直接执行 */
-    private void triggerStopLoss(Long pid, List<String> slIds, BigDecimal markPrice) {
+    /** 一个仓位摘出来的档：从档位挂上那一刻起找第一格摸到它的行情，没摸到的原样放回 */
+    private void collectStopHits(Long pid, List<Claim> claims, List<PriceTick> ticks, List<TradeHit> hits) {
         FuturesPosition pos = positionMapper.selectById(pid);
-        if (pos != null && pos.isCross()) {
-            crossLiquidationService.triggerStopLoss(pos, slIds, markPrice);
-        } else {
-            futuresRiskService.batchTriggerStopLoss(pid, slIds, markPrice);
+        // 仓位没了，索引是过期项，不放回
+        if (pos == null || !"OPEN".equals(pos.getStatus())) return;
+        boolean isLong = "LONG".equals(pos.getSide());
+        long posSince = toEpochMs(pos.getCreatedAt());
+        Map<HitKey, List<Claim>> grouped = new LinkedHashMap<>();
+        for (Claim c : claims) {
+            Level level = level(pos, c, posSince);
+            // 库里已经没这档（执行掉了、改掉了），索引是过期项
+            if (level == null) continue;
+            // 多头止损、空头止盈是价从上往下摸
+            boolean below = c.stopLoss() == isLong;
+            int i = PriceTick.firstTouch(ticks, level.since(), level.price(), below, false);
+            if (i < 0) {
+                cacheService.zAdd(c.key(), c.member(), c.score());
+                continue;
+            }
+            HitKey k = new HitKey(i, c.stopLoss(), ticks.get(i).touchPrice(level.price(), below));
+            grouped.computeIfAbsent(k, x -> new ArrayList<>()).add(c);
+        }
+        grouped.forEach((k, group) -> hits.add(new TradeHit(k.tick(), k.stopLoss(), pos.getUserId(),
+                () -> execute(pos, k, group, ticks.get(k.tick()).at()))));
+    }
+
+    /** 执行一组命中；失败把这组里库里还在的档放回索引，下一笔摸到再来 */
+    private void execute(FuturesPosition pos, HitKey k, List<Claim> group, long priceAt) {
+        List<String> ids = group.stream().map(Claim::itemId).toList();
+        try {
+            if (!k.stopLoss()) {
+                futuresRiskService.batchTriggerTakeProfit(pos.getId(), ids, k.price(), priceAt);
+            } else if (pos.isCross()) {
+                // 全仓止损在用户级锁里执行，跟爆仓串行
+                crossLiquidationService.triggerStopLoss(pos, ids, k.price(), priceAt);
+            } else {
+                futuresRiskService.batchTriggerStopLoss(pos.getId(), ids, k.price(), priceAt);
+            }
+        } catch (Exception e) {
+            log.error("futures{}触发失败 posId={} ids={}，放回索引", k.stopLoss() ? "止损" : "止盈", pos.getId(), ids, e);
+            FuturesPosition latest = positionMapper.selectById(pos.getId());
+            if (latest == null || !"OPEN".equals(latest.getStatus())) return;
+            for (Claim c : group) {
+                if (level(latest, c, 0L) != null) cacheService.zAdd(c.key(), c.member(), c.score());
+            }
         }
     }
 
     /**
-     * 逐仓强平/止损/止盈的兜底巡检，补的是主触发链路会静默丢消息的那段空窗。
+     * 库里的这一档，没了返回 null。since 取档位创建时间与仓位创建时间晚的那个
+     * （限价单带的档位是下单时间，早于仓位）；旧数据没档位时间就用仓位的
+     */
+    private static Level level(FuturesPosition pos, Claim c, long posSince) {
+        if (c.stopLoss()) {
+            if (pos.getStopLosses() == null) return null;
+            for (FuturesStopLoss sl : pos.getStopLosses()) {
+                if (c.itemId().equals(sl.getId())) return new Level(sl.getPrice(), since(sl.getCreatedAt(), posSince));
+            }
+            return null;
+        }
+        if (pos.getTakeProfits() == null) return null;
+        for (FuturesTakeProfit tp : pos.getTakeProfits()) {
+            if (c.itemId().equals(tp.getId())) return new Level(tp.getPrice(), since(tp.getCreatedAt(), posSince));
+        }
+        return null;
+    }
+
+    private static long since(Long itemCreatedAt, long posSince) {
+        return itemCreatedAt == null ? posSince : Math.max(itemCreatedAt, posSince);
+    }
+
+    // ==================== 兜底巡检 ====================
+
+    /**
+     * 逐仓强平的兜底巡检，补的是标记价 Pub/Sub 会静默丢消息的那段空窗：sim 订阅连接断开重连期间穿越的价格没人补，
+     * 且全程不报错；MatchPriceConsumer 的启动补漏只在进程启动那一次跑。交易员的币不发标记价频道，逐仓强平全靠这里。
+     * 全仓侧有 sweepCrossAccounts 每 30 秒兜着；限价单、止损止盈的巡检在 TradeStreamConsumer#sweep。
      * <p>
-     * 主触发是 feed 经 Redis Pub/Sub 推来的价格 tick。Pub/Sub 不存消息，sim 这边订阅连接一旦断开
-     * （Redis 重启、网络抖动、慢消费者撞 client-output-buffer-limit 被踢），Spring 的容器会自动重连，
-     * 但<b>重连期间穿越的价格没人补，且全程不报错</b>。而 MatchPriceConsumer 的启动补漏挂在
-     * @PostConstruct 上，只在进程启动那一次跑——运行中断连它够不着。
-     * <p>
-     * 全仓侧早有 sweepCrossAccounts 每 30 秒兜着（见 ScheduledTasks），逐仓这边一直缺，本方法补齐。
-     * <p>
-     * 直接复用 {@link #checkOnPriceUpdate} 而不另写一套判定：那边摘索引用的是
-     * zRangeByScoreAndRemove（<b>摘取即删</b>），已经处理过的仓位早不在 ZSet 里，再扫一遍也扫不到，
-     * 天然幂等。所以巡检与 tick 唯一的差别只是价格从"推过来"变成"自己取"。
+     * 直接复用 {@link #checkOnPriceUpdate}：强平索引摘取即删，处理过的仓位早不在 ZSet 里，再扫一遍也扫不到，天然幂等。
      */
     @Override
     public void sweepAll() {
-        for (String symbol : props.getAllFuturesSymbols()) {
+        for (String symbol : traderSymbolService.allFuturesSymbols()) {
             try {
-                // 两个价各有各的兜底口径，走 helper 而不是自己判 null——
-                // FuturesHelper#markPrice 的注释记着：调用方各写一份时有一份把兜底写成了现货价
-                checkOnPriceUpdate(symbol, markPrice(cacheService, symbol),
-                        latestFuturesPrice(cacheService, symbol));
+                // 标记价，缺了用合约最新价
+                checkOnPriceUpdate(symbol, markPrice(cacheService, symbol));
             } catch (BizException e) {
                 // 价格缓存还没热（刚启动 / 该标的行情未到），等下一轮即可，不是故障
                 log.debug("[FuturesLiq] 兜底巡检跳过 symbol={} 价格不可用", symbol);
@@ -265,42 +248,5 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
                 log.error("[FuturesLiq] 兜底巡检失败 symbol={}", symbol, e);
             }
         }
-    }
-
-    private void collectLiq(String key, double min, double max, Map<String, PositionHitGroup> groups) {
-        Map<String, Double> hits = cacheService.zRangeByScoreAndRemove(key, min, max);
-        if (hits.isEmpty()) return;
-        for (var e : hits.entrySet()) {
-            PositionHitGroup g = groups.computeIfAbsent(e.getKey(), k -> new PositionHitGroup());
-            g.liq = true;
-            g.recovery.add(new RecoveryEntry(HitKind.LIQ, key, e.getKey(), e.getValue()));
-        }
-    }
-
-    private void collectSl(String key, double min, double max, Map<String, PositionHitGroup> groups) {
-        Map<String, Double> hits = cacheService.zRangeByScoreAndRemove(key, min, max);
-        if (hits.isEmpty()) return;
-        for (var e : hits.entrySet()) {
-            solveHits(key, e, groups, true);
-        }
-    }
-
-    private void collectTp(String key, double min, double max, Map<String, PositionHitGroup> groups) {
-        Map<String, Double> hits = cacheService.zRangeByScoreAndRemove(key, min, max);
-        if (hits.isEmpty()) return;
-        for (var e : hits.entrySet()) {
-            solveHits(key, e, groups, false);
-        }
-    }
-
-    private void solveHits(String key, Map.Entry<String, Double> e, Map<String, PositionHitGroup> groups, boolean isSL) {
-        String member = e.getKey();
-        int sep = member.indexOf(':');
-        String posId = member.substring(0, sep);
-        String id = member.substring(sep + 1);
-        PositionHitGroup g = groups.computeIfAbsent(posId, k -> new PositionHitGroup());
-        if (isSL) g.slIds.add(id);
-        else g.tpIds.add(id);
-        g.recovery.add(new RecoveryEntry(isSL ? HitKind.SL : HitKind.TP, key, member, e.getValue()));
     }
 }

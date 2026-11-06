@@ -44,6 +44,8 @@ public class FuturesOrder {
 
     private BigDecimal commission; // 手续费
 
+    private BigDecimal liquidationFee; // 强平清算费(强平单才有)
+
     private BigDecimal realizedPnl; // 已实现盈亏(平仓单才有)
 
     @TableField(typeHandler = FuturesStopLossListTypeHandler.class)

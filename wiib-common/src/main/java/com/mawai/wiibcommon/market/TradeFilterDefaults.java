@@ -5,7 +5,7 @@ import java.math.RoundingMode;
 import java.util.Map;
 
 /**
- * Binance 交易过滤器默认值（LOT_SIZE 步长 + 最小名义额），实拉 exchangeInfo 快照 2026-07-23。
+ * Binance 交易过滤器默认值（LOT_SIZE 步长 + 最小名义额），实拉 exchangeInfo 快照 2026-07-23；外加合约强平清算费率。
  * <p>
  * 兜底用途：sim 的 TradeFilterRegistry 启动时拉官方 exchangeInfo 覆盖这份（拉不到用这份）；
  * quant 的 PositionSizer 下单定量直接用这份做步长对齐（回测/实盘同一口径）。
@@ -59,6 +59,28 @@ public final class TradeFilterDefaults {
             Map.entry("SPCXBUSDT", f("0.001",   "5")),
             Map.entry("QQQBUSDT",  f("0.001",   "5")),
             Map.entry("SOXLBUSDT", f("0.001",   "5")));
+
+    /** 合约强平清算费率（exchangeInfo 的 liquidationFee，费 = 费率 × 成交额），主网实拉 2026-11-06 */
+    public static final Map<String, BigDecimal> LIQUIDATION_FEE = Map.ofEntries(
+            Map.entry("BTCUSDT",     new BigDecimal("0.0125")),
+            Map.entry("ETHUSDT",     new BigDecimal("0.0125")),
+            Map.entry("XRPUSDT",     new BigDecimal("0.0125")),
+            Map.entry("BNBUSDT",     new BigDecimal("0.0125")),
+            Map.entry("DOGEUSDT",    new BigDecimal("0.015")),
+            Map.entry("SOLUSDT",     new BigDecimal("0.015")),
+            Map.entry("ZECUSDT",     new BigDecimal("0.015")),
+            Map.entry("HYPEUSDT",    new BigDecimal("0.02")),
+            Map.entry("XAUUSDT",     new BigDecimal("0.015")),
+            Map.entry("CLUSDT",      new BigDecimal("0.015")),
+            Map.entry("SNDKUSDT",    new BigDecimal("0.015")),
+            Map.entry("SOXLUSDT",    new BigDecimal("0.015")),
+            Map.entry("SKHYNIXUSDT", new BigDecimal("0.015")),
+            Map.entry("MUUSDT",      new BigDecimal("0.015")),
+            Map.entry("KORUUSDT",    new BigDecimal("0.015")),
+            Map.entry("SPCXUSDT",    new BigDecimal("0.015")));
+
+    /** 表外的币按 1.5% */
+    public static final BigDecimal DEFAULT_LIQUIDATION_FEE = new BigDecimal("0.015");
 
     /** 未配置 symbol 返回 null，调用方按"不校验"处理 */
     public static Filter futures(String symbol) {

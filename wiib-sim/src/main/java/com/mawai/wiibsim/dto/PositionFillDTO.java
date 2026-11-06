@@ -42,6 +42,9 @@ public class PositionFillDTO {
 
     private BigDecimal commission;
 
+    /** 强平清算费，强平单才有，其余为 null */
+    private BigDecimal liquidationFee;
+
     /** 已实现盈亏，平仓单才有；开/加仓单为 null */
     private BigDecimal realizedPnl;
 

@@ -83,6 +83,9 @@ function FillRow({ fill, symbol }: { fill: PositionFill; symbol: string }) {
       </span>
       <span className="num text-[10px] text-muted-foreground ml-auto shrink-0">
         {t('history.fee', { value: fmtNum(fill.commission) })}
+        {fill.liquidationFee != null && fill.liquidationFee > 0 && (
+          <span className="ml-2">{t('history.liqFee', { value: fmtNum(fill.liquidationFee) })}</span>
+        )}
       </span>
       {/* 开/加仓单没有已实现盈亏，留空位对齐，不填 0 冒充"这笔不赚不亏" */}
       <span className="num text-[11px] font-semibold w-20 text-right shrink-0">
@@ -189,7 +192,7 @@ function Row({ item }: { item: PositionHistoryItem }) {
             item.fills.map(f => <FillRow key={f.orderId} fill={f} symbol={item.symbol} />)
           )}
 
-          {/* 盈亏构成：已实现盈亏已经把手续费和资金费减完了，这里摊开是为了看清钱花在哪 */}
+          {/* 盈亏构成：已实现盈亏已经把手续费、强平清算费和资金费减完了，这里摊开是为了看清钱花在哪 */}
           <div className="flex flex-wrap gap-x-5 gap-y-1 px-3 py-2.5 border-t border-border/30">
             <span className="text-[10px] text-muted-foreground">
               {t('history.investedMargin')} <span className="num text-foreground">{fmtNum(item.investedMargin)}</span>
@@ -197,6 +200,11 @@ function Row({ item }: { item: PositionHistoryItem }) {
             <span className="text-[10px] text-muted-foreground">
               {t('history.commission')} <span className="num text-loss">-{fmtNum(item.commission)}</span>
             </span>
+            {item.liquidationFee > 0 && (
+              <span className="text-[10px] text-muted-foreground">
+                {t('history.liquidationFee')} <span className="num text-loss">-{fmtNum(item.liquidationFee)}</span>
+              </span>
+            )}
             <span className="text-[10px] text-muted-foreground">
               {t('history.fundingFee')} <FundingFee value={item.fundingFeeTotal} />
             </span>

@@ -11,15 +11,16 @@ import java.util.List;
  * 全仓强平引擎。
  *
  * <p>与逐仓的"静态强平价 + ZSet 价格穿越"不同：全仓强平线随余额和所有仓位浮盈亏实时变化、
- * 跨 symbol 耦合，无法预存静态价。改用账户级健康检查：价格 tick 定向触发（只查该 symbol 上
+ * 跨 symbol 耦合，无法预存静态价。改用账户级健康检查：标记价 tick 定向触发（只查该 symbol 上
  * 有全仓仓位、且价格出了安全带的用户，带的数学见 CrossBandRegistry）+ 低频兜底轮询。</p>
  *
- * <p>插针语义：tick 价作为"钉住价"随触发一路传到判定与结算——哪怕缓存价下一秒回落，
- * 触发那一刻的插针价仍是该 symbol 的估值与强平结算价（其余 symbol 照缓存），对齐
- * "mark 触线即爆"。宕机/断连空窗由 {@link #recoverGap} 的区间高低两端补触发 + 30s 兜底轮询覆盖。</p>
+ * <p>插针语义：tick 价作为"钉住价"随触发一路传到判定——哪怕缓存价下一秒回落，
+ * 触发那一刻的插针价仍是该 symbol 的估值（其余 symbol 照缓存），对齐"mark 触线即爆"。
+ * 平仓按各仓自己的盘口扫，没盘口或钉价是旧价（补漏）才按钉价。
+ * 宕机/断连空窗由 {@link #recoverGap} 的区间高低两端补触发 + 30s 兜底轮询覆盖。</p>
  *
- * <p>爆仓 = 全组爆：equity ≤ Σ维持保证金时，该用户所有全仓仓位按 mark 价一次性强平，
- * 盈亏净额直接结算进余额钱包（可为负）；结算后余额 &lt; 0 即穿仓 → 立即破产
+ * <p>爆仓 = 全组爆：equity ≤ Σ维持保证金时，该用户所有全仓仓位一次性强平，
+ * 盈亏净额减清算费直接结算进余额钱包（可为负）；结算后余额 &lt; 0 即穿仓 → 立即破产
  * （清空两个钱包，次一交易日重置初始资金）。</p>
  */
 public interface CrossLiquidationService {
@@ -37,18 +38,18 @@ public interface CrossLiquidationService {
     void checkUser(Long userId);
 
     /**
-     * 单用户健康检查，pinSymbol 的估值与强平结算钉在 pinPrice（插针语义）；
+     * 单用户健康检查，pinSymbol 的估值钉在 pinPrice（插针语义），pinAt 是这个价出现的时刻；
      * 带用户级锁（有界等待，插针触发绝不静默丢弃），可安全并发调用。
      */
-    void checkUser(Long userId, String pinSymbol, BigDecimal pinPrice);
+    void checkUser(Long userId, String pinSymbol, BigDecimal pinPrice, long pinAt);
 
     /** 兜底轮询：检查所有持有全仓仓位的用户（无钉住价，顺带重建全员安全带） */
     void sweepAll();
 
     /**
-     * 全仓仓位的止损命中（仓位级索引摘出来的）：在用户级锁内跟强平比先后再执行。
-     * 按 price 账户不可爆就直接执行这批止损；可爆就和 {@link #checkUser} 走同一段先后处理。
-     * 用户级锁等不到、或中途等仓位锁超时，抛 ORDER_PROCESSING。
+     * 全仓仓位的止损命中（成交价摸到止损价）：在用户级锁内执行，跟爆仓串行。
+     * 账户按现在的标记价已经够爆就先爆仓、止损作废；不够爆就执行这批止损。
+     * 用户级锁等不到、或爆仓时等仓位锁超时，抛 ORDER_PROCESSING。
      */
-    void triggerStopLoss(FuturesPosition position, Collection<String> slIds, BigDecimal price);
+    void triggerStopLoss(FuturesPosition position, Collection<String> slIds, BigDecimal price, long priceAt);
 }

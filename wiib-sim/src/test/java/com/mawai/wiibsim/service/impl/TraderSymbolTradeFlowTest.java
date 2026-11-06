@@ -18,7 +18,9 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.Test;
@@ -74,7 +76,8 @@ class TraderSymbolTradeFlowTest {
                 new TradingConfig(), mock(FairLockRegistry.class), cache,
                 mock(FuturesPositionIndexService.class), new FuturesLeverageBracketRegistry(), crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
+                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                mock(FuturesRiskService.class), NoBookFillPricer.create());
     }
 
     @Test
@@ -98,6 +101,9 @@ class TraderSymbolTradeFlowTest {
         pos.setId(1L);
         when(positionMapper.selectById(1L)).thenReturn(pos);
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
+        // 全仓平仓前要看账户够不够爆：这里远没到
+        when(crossMargin.snapshot(UID)).thenReturn(new CrossMarginService.CrossAccount(new BigDecimal("1000"),
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, java.util.List.of(), Map.of()));
         FuturesCloseRequest close = new FuturesCloseRequest();
         close.setPositionId(1L);
         close.setOrderType("MARKET");

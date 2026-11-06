@@ -81,6 +81,7 @@ public enum ErrorCode {
     FUTURES_LEVERAGE_ONLY_UP(1763, "error.futuresLeverageOnlyUp"),
     FUTURES_LEVERAGE_MISMATCH(1764, "error.futuresLeverageMismatch"),
     FUTURES_MARGIN_MODE_CONFLICT(1765, "error.futuresMarginModeConflict"),
+    FUTURES_LIQUIDATING(1766, "error.futuresLiquidating"),
 
     // Prediction错误码 1900+
     PREDICTION_ROUND_LOCKED(1900, "error.predictionRoundLocked"),

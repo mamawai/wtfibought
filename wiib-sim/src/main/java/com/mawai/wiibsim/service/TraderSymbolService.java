@@ -8,6 +8,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.SortedSet;
@@ -43,6 +44,13 @@ public class TraderSymbolService {
             redis.opsForZSet().add(WATCH_KEY, s, expireAt);
         }
         refresh();
+    }
+
+    /** sim 盯着的全部合约币：feed 配置里的 + 交易员的币（交易员的币没有成交 Stream，只靠巡检） */
+    public Set<String> allFuturesSymbols() {
+        Set<String> symbols = new LinkedHashSet<>(binanceProperties.getAllFuturesSymbols());
+        symbols.addAll(redis.opsForSet().members(SYMBOLS_KEY));
+        return symbols;
     }
 
     /** 登记那一刻和每分钟定时各算一次，串行 */
