@@ -81,7 +81,7 @@ class FuturesSettlementLockWaitTest {
         when(bracketRegistry.getEffectiveMaxLeverage(anyString(), any())).thenReturn(150);
         when(lockRegistry.tryLockAsSystem(POS_KEY)).thenReturn(posLock);
         when(orderMapper.casMarkProcessing(anyLong())).thenReturn(1);
-        when(orderMapper.casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(orderMapper.casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(positionMapper.atomicIncreasePosition(anyLong(), any(), any(), any())).thenReturn(1);
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
         when(positionMapper.atomicAddFundingFeeTotal(anyLong(), any())).thenReturn(1);

@@ -79,7 +79,7 @@ class FuturesLimitOpenFillTest {
         when(bracketRegistry.getEffectiveMaxLeverage(anyString(), any())).thenReturn(150);
         when(orderMapper.casMarkProcessing(anyLong())).thenReturn(1);
         when(orderMapper.casUpdateStatus(anyLong(), anyString(), anyString())).thenReturn(1);
-        when(orderMapper.casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(orderMapper.casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(positionMapper.atomicIncreasePosition(anyLong(), any(), any(), any())).thenReturn(1);
         // 资金方法返"变动后余额"，非 null 即成功；具体数值本类不断言，给个占位即可。
         // 这些值也不会流进账本：记账切面只织在真 Spring 代理上，裸 mock 单测里压根不参与
@@ -161,7 +161,8 @@ class FuturesLimitOpenFillTest {
                 argThat(q -> q.compareTo(BigDecimal.ONE) == 0),
                 argThat(m -> m.compareTo(new BigDecimal("2.20")) == 0));
         verify(userMapper).atomicSettleBalance(eq(UID), argThat(c -> c.compareTo(new BigDecimal("-0.02")) == 0));
-        verify(orderMapper).casUpdateToFilled(eq(100L), eq(1L), any(), any(), any(), any(), any());
+        verify(orderMapper).casUpdateToFilled(eq(100L), eq(1L), argThat(q -> q.compareTo(BigDecimal.ONE) == 0),
+                any(), any(), any(), any(), any());
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
         // 成交即告诉 agent：事件带仓位 id、订单 id 和这次成交的量
         verify(eventPublisher).publishAfterCommit(argThat(e -> TradeEvent.LIMIT_FILLED.equals(e.type())
@@ -269,7 +270,7 @@ class FuturesLimitOpenFillTest {
         verify(userMapper).atomicDeductFrozenBalance(eq(UID), argThat(f -> f.compareTo(bd("9000")) == 0));
         verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("9000")) == 0));
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
-        verify(orderMapper, never()).casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any());
+        verify(orderMapper, never()).casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

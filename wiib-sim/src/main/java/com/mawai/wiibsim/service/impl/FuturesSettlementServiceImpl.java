@@ -276,7 +276,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         positionMapper.insert(position);
 
         // 回填 position_id：限价开仓下单时仓位未生成，不补上这单的开仓手续费就聚合不进仓位已实现盈亏
-        int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), executePrice, positionValue, commission, margin, null);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), quantity, executePrice, positionValue,
+                commission, margin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         positionIndexService.registerPositionIndex(position);
@@ -341,7 +342,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (position.isCross()) crossMarginService.refreshUserIndex(order.getUserId());
 
         // 回填 position_id：开仓手续费聚合进仓位已实现盈亏
-        int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), executePrice, addValue, commission, addMargin, null);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), addQty, executePrice, addValue,
+                commission, addMargin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
         eventPublisher.publishAfterCommit(new TradeEvent(TradeEvent.LIMIT_FILLED, order.getUserId(), position.getId(),
                 order.getId(), order.getSymbol(), position.getSide(), addQty, executePrice, null, System.currentTimeMillis()));
@@ -407,7 +409,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             return;
         }
 
-        BigDecimal closeQty = order.getQuantity();
+        // 剩下的仓位不够这张单平，就把剩下的全平掉
+        BigDecimal closeQty = order.getQuantity().min(position.getQuantity());
         // 挂着的单是被别人吃掉的，成交价就是挂单价
         BigDecimal executePrice = order.getLimitPrice();
 
@@ -431,7 +434,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         } else {
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) {
-                // 可平数量不足或已关闭，订单取消，禁止重复返款
+                // 仓位已被并发平掉或改掉，订单取消，禁止重复返款
                 orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
                 return;
             }
@@ -454,12 +457,12 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             LedgerCtx.mark(FUTURES_CLOSE_SETTLE, "FUTURES_ORDER", order.getId());
             userMapper.atomicUpdateBalance(order.getUserId(), fill.left(marginPart));
         }
-        int filled = orderMapper.casUpdateToFilled(order.getId(), null, fill.price(), closeValue,
+        int filled = orderMapper.casUpdateToFilled(order.getId(), null, closeQty, fill.price(), closeValue,
                 fill.commission(), null, fill.pnl());
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
-        log.info("futures限价平仓成交 orderId={} price={} pnl={}",
-                order.getId(), fill.price(), fill.pnl());
+        log.info("futures限价平仓成交 orderId={} qty={} price={} pnl={}",
+                order.getId(), closeQty, fill.price(), fill.pnl());
     }
 
     private boolean isLeverageAllowed(String symbol, int leverage, BigDecimal notional) {

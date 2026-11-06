@@ -22,10 +22,14 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
                         @Param("oldStatus") String oldStatus,
                         @Param("newStatus") String newStatus);
 
-    /** CAS更新为FILLED；positionId 仅限价开仓成交时传（下单时仓位未生成，成交回填才能让仓位聚合到开仓手续费） */
+    /**
+     * CAS更新为FILLED；quantity 是实际成交量（限价平仓时剩下的仓位不够，就只平剩下的）；
+     * positionId 仅限价开仓成交时传（下单时仓位未生成，成交回填才能让仓位聚合到开仓手续费）
+     */
     @Update("UPDATE futures_order SET " +
             "status = 'FILLED', " +
             "position_id = COALESCE(#{positionId}, position_id), " +
+            "quantity = #{quantity}, " +
             "filled_price = #{filledPrice}, " +
             "filled_amount = #{filledAmount}, " +
             "commission = #{commission}, " +
@@ -35,6 +39,7 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             "WHERE id = #{orderId} AND status = 'PROCESSING'")
     int casUpdateToFilled(@Param("orderId") Long orderId,
                           @Param("positionId") Long positionId,
+                          @Param("quantity") BigDecimal quantity,
                           @Param("filledPrice") BigDecimal filledPrice,
                           @Param("filledAmount") BigDecimal filledAmount,
                           @Param("commission") BigDecimal commission,
