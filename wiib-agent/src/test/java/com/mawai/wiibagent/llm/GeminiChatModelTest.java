@@ -154,20 +154,26 @@ class GeminiChatModelTest {
                 .isEqualTo("你是助手");
         assertThat(body.get("generationConfig").get("thinkingConfig").path("thinkingLevel").asString(null))
                 .isEqualTo("HIGH");
+        assertThat(body.get("generationConfig").get("thinkingConfig").path("includeThoughts").asBoolean(false)).isTrue();
         assertThat(body.get("tools")).hasSize(1);
         assertThat(body.get("tools").get(0).has("google_search")).isTrue();
         assertThat(body.get("contents").get(0).path("role").asString(null)).isEqualTo("user");
     }
 
+    /** none 关思考就不要摘要帧；档位留空不传档位，但 includeThoughts 照带 */
     @Test
-    void 请求侧_档位none为预算0_留空不传() {
+    void 请求侧_档位none为预算0_留空只带includeThoughts() {
         chunks = PLAIN;
         model("none", false, mock(ToolCallingManager.class)).call(new Prompt("q"));
-        assertThat(body().get("generationConfig").get("thinkingConfig").path("thinkingBudget").asInt(0))
-                .isZero();
+        JsonNode none = body().get("generationConfig").get("thinkingConfig");
+        assertThat(none.path("thinkingBudget").asInt(-1)).isZero();
+        assertThat(none.has("includeThoughts")).isFalse();
 
         model().call(new Prompt("q"));
-        assertThat(body().has("generationConfig")).isFalse();
+        JsonNode blank = body().get("generationConfig").get("thinkingConfig");
+        assertThat(blank.has("thinkingLevel")).isFalse();
+        assertThat(blank.has("thinkingBudget")).isFalse();
+        assertThat(blank.path("includeThoughts").asBoolean(false)).isTrue();
     }
 
     /**
@@ -269,7 +275,7 @@ class GeminiChatModelTest {
                 plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
                 allowWebSearch(m)));
 
-        assertThat(lastRequestBody).isEqualTo("{\"generationConfig\":{\"temperature\":0.3,\"thinkingConfig\":{\"thinkingLevel\":\"LOW\"}},\"systemInstruction\":{\"parts\":[{\"text\":\"你是助手\\n\\n【摘要】第1段\"}]},"
+        assertThat(lastRequestBody).isEqualTo("{\"generationConfig\":{\"temperature\":0.3,\"thinkingConfig\":{\"thinkingLevel\":\"LOW\",\"includeThoughts\":true}},\"systemInstruction\":{\"parts\":[{\"text\":\"你是助手\\n\\n【摘要】第1段\"}]},"
                 + "\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"问题 📈 \\\"引号\\\" \\\\ /\"}]},{\"role\":\"model\",\"parts\":[{\"text\":\"旧答\\n第二行\"},"
                 + "{\"functionCall\":{\"name\":\"get_price\",\"args\":{\"qty\":1.50}}},{\"functionCall\":{\"name\":\"get_price\","
                 + "\"args\":{},\"id\":\"call_0\"}}]},{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"get_price\","

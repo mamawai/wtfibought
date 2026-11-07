@@ -30,7 +30,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * Gemini generateContent 协议（/v1beta/models/{model}:streamGenerateContent?alt=sse）。
  * <p>
- * 思考档位：留空不传；none → {@code thinkingConfig.thinkingBudget=0}；其余 → {@code thinkingConfig.thinkingLevel}（大写枚举）。
+ * 思考档位：none → {@code thinkingConfig.thinkingBudget=0}；其余 → {@code thinkingConfig.thinkingLevel}（大写枚举，留空不传档位），
+ * 并带 {@code includeThoughts=true}：思考期间也有帧，首帧/帧间隔超时才量得准。思考摘要帧解析时跳过。
  * 服务端搜索声明 {@code {google_search:{}}}，和函数工具同一请求时带 {@code toolConfig.includeServerSideToolInvocations=true}
  * （官方 API 的要求；Antigravity 来源带了也不收，那种端点的搜索走 {@link WebSearchTool} 单独发）；
  * 搜索只有完成态（groundingMetadata），没有"开始"信号。
@@ -94,14 +95,19 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
         if (temp != null) {
             generation.put("temperature", temp);
         }
+        // 思考期间上游一个帧都不发，首帧要等想完才来；带 includeThoughts 让它边想边吐思考摘要帧，
+        // SSE 的首帧/帧间隔超时才不会把长思考当挂死。摘要帧 toFrames 里直接跳过，不进正文也不回传
+        ObjectNode thinking = MAPPER.createObjectNode();
         if ("none".equals(reasoningEffort)) {
-            generation.set("thinkingConfig", MAPPER.createObjectNode().put("thinkingBudget", 0));
-        } else if (reasoningEffort != null) {
-            generation.set("thinkingConfig", MAPPER.createObjectNode().put("thinkingLevel", reasoningEffort.toUpperCase()));
+            thinking.put("thinkingBudget", 0);
+        } else {
+            if (reasoningEffort != null) {
+                thinking.put("thinkingLevel", reasoningEffort.toUpperCase());
+            }
+            thinking.put("includeThoughts", true);
         }
-        if (!generation.isEmpty()) {
-            body.set("generationConfig", generation);
-        }
+        generation.set("thinkingConfig", thinking);
+        body.set("generationConfig", generation);
 
         StringBuilder system = new StringBuilder();
         ArrayNode contents = MAPPER.createArrayNode();

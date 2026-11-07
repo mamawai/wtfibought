@@ -60,8 +60,8 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
     /** SSE 相邻事件最大间隔：防半开连接把消费方永久挂死。5 分钟是给高档长思考的静默期留余量——
      *  多数服务端思考期间也会发 reasoning 事件/keepalive 注释行，都算心跳 */
     private static final Duration STREAM_IDLE_TIMEOUT = Duration.ofMinutes(5);
-    /** SSE 首事件超时：首帧不涉及思考静默，60s 已是极宽松的界。只防"上游完全无响应"——
-     *  带 keepalive 心跳的挂死字节级超时拦不住，那种病由 doCall 的整体超时兜 */
+    /** SSE 首事件超时：首帧不涉及思考静默（Gemini 靠 includeThoughts 让思考期间也有帧），60s 已是极宽松的界。
+     *  只防"上游完全无响应"——带 keepalive 心跳的挂死字节级超时拦不住，那种病由 doCall 的整体超时兜 */
     private static final Duration FIRST_EVENT_TIMEOUT = Duration.ofSeconds(60);
 
     /**
