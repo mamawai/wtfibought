@@ -102,6 +102,7 @@ public class PromptGenFacts {
                 "harness", prompts.get(lang, "promptgen.harness", Map.of(
                         "maxSymbols", TraderService.MAX_SYMBOLS,
                         "maxCalls", TraderWakeupRunner.MAX_MODEL_CALLS,
+                        "maxWatches", TradeGuard.MAX_WATCHES,
                         "maxChars", TraderService.MAX_CUSTOM_PROMPT,
                         // Set.of 每次启动迭代顺序不同，排一下让提示词文本稳定
                         "playTypes", TradeGuard.PLAY_TYPES.stream().sorted().collect(Collectors.joining(", ")))),
@@ -146,7 +147,7 @@ public class PromptGenFacts {
                 .divide(BigDecimal.valueOf(leverage).multiply(knownPct), 2, RoundingMode.HALF_UP);
     }
 
-    /** 这个周期上止损距离的噪音线（%）：interval 形如 5m / 1h / 4h */
+    /** 这个周期上止损距离的噪音线（%）：interval 形如 15m / 1h / 4h */
     static BigDecimal noiseStopPct(String interval) {
         int unit = switch (interval.charAt(interval.length() - 1)) {
             case 'h' -> 60;
