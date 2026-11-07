@@ -44,25 +44,30 @@ flowchart TD
 
 ```text
 wiib-feed（上游进程）  交易所 WS → Redis
+  （订阅范围：现货各流订 symbols ∪ stock-symbols；合约各流订 symbols ∪ commodity / tradfi / crypto-futures 三组纯合约；K 线另见下）
   -> spot miniTicker        -> Redis 价格 KV(market:price:)
   -> futures markPrice@1s   -> Redis mark KV(market:markprice: + 写入时刻 market:markprice-at:) + Pub/Sub(feed:price, type=markprice)
   -> futures miniTicker     -> Redis 合约最新价 KV(market:futures-price:) + Pub/Sub(feed:price, type=futures)
                                ↑ 独立物理连接：Binance 端点拆分后 markPrice 与 miniTicker 不能同连
-  -> 交易员的币 markPrice@1s / miniTicker（另两条连接，订阅集合 = Redis set futures:trader:symbols，sim 按仓位和交易员登记维护，feed 每 10 秒看一次、变了重连）
+  -> 名单外的币 markPrice@1s / miniTicker（代码里叫"交易员的币"，另两条连接，订阅集合 = Redis set futures:trader:symbols：
+                               交易员（wiib-alpha）登记要下单的币 ∪ 不在 feed 配置里的未平仓位，sim 维护，feed 每 10 秒看一次、变了重连）
                             -> 只写 market:markprice:（带写入时刻，sim 市价开仓看它超 30 秒没更新就拒）/ market:futures-price:，不发 feed:price、不推前端
   -> forceOrder(全市场流)    -> 白名单过滤 -> force_order 表(DB, 天然跨进程)
   -> aggTrade（合约 / 现货）  -> Redis Stream(market:orderflow:<sym> / market:spot-trade:<sym>)，sim 按顺序读来判限价/止损/止盈，合约那条 agent 还读侧聚合订单流
   -> depth20@100ms（合约 / 现货）-> Redis KV(market:depth: / market:spot-depth:, DepthStreamCache)，sim 市价成交扫它
-  -> K 线收盘                -> Redis Stream(stream:kline:closed) + crypto 5m 落库
-  -> 所有 tick / K 线        -> Redis Pub/Sub(ws:broadcast:*) -> sim WsBroadcastRelay -> STOMP /topic/**
+  -> K 线（4 条连接，都推前端；只有加密币 5m 往下游送）
+       5m      加密币(symbols ∪ crypto-futures-symbols) -> 收盘 bar 落库(kline_history) + Redis Stream(stream:kline:closed)
+       5m      非加密纯合约(commodity ∪ tradfi)          -> 只推前端
+       15m/1h  全部合约标的                              -> 只推前端（蜡烛图 15m / 1h 档；4h / 1d 没有连接，前端用价格 tick 更新最后一根）
+  -> 价格 tick（现货价 / 标记价 / 合约最新价）与 K 线 -> Redis Pub/Sub(ws:broadcast:*) -> sim WsBroadcastRelay -> STOMP /topic/**
   -> WS 断线                 -> 广播断线帧, 重连后发 gap 事件(空窗区间, kind=mark/futures/spot), sim 拉 1m K 线补强平/补触发
 
 wiib-sim / wiib-agent（消费进程）  从 Redis 消费 feed 写入的行情
   sim:   成交 Stream 触发限价/止损/止盈（消费组 sim）+ 标记价强平 + 预测回合消费 + ws:broadcast:* 中继给前端
-  agent: K线收盘驱动 交易员唤醒 / 策略信号 / 叙事对账；另订 feed:price 跑波动哨兵与策略触价单
+  agent: K线收盘驱动 交易员唤醒 / 策略信号 / 叙事对账；另订 feed:price 跑波动哨兵、盯盘哨兵与策略触价单
 ```
 
-两条 Redis 链路分工不同，别混：**`feed:price` 是撮合/执行侧的价格总线**，不面向前端——三个订阅者，sim 的强平（标记价触发逐仓强平和全仓精查；限价单、止损止盈看成交价，走成交 Stream，feed 本身不撮合）、agent 的波动哨兵、策略的触价单；**`ws:broadcast:*` 才是前端拿实时行情的唯一通道**，由 sim 的 `WsBroadcastRelay` 中继成 STOMP（`crypto` / `futures` / `kline` / `prediction` / `stream-health` / `monitor` 六个频道各对一个 `/topic/**`，其中 prediction 来自 Polymarket 那条链、monitor 由 feed 与 agent 各发一份）。多实例部署时前者按进程各自消费，后者靠 Pub/Sub 让每个实例的 WebSocket 都收到。
+两条 Redis 链路分工不同，别混：**`feed:price` 是撮合/执行侧的价格总线**，不面向前端——四个订阅者，sim 的强平（标记价触发逐仓强平和全仓精查；限价单、止损止盈看成交价，走成交 Stream，feed 本身不撮合）、agent 的波动哨兵和盯盘哨兵、策略的触价单；**`ws:broadcast:*` 才是前端拿实时行情的唯一通道**，由 sim 的 `WsBroadcastRelay` 中继成 STOMP（`crypto` / `futures` / `kline` / `prediction` / `stream-health` / `monitor` 六个频道各对一个 `/topic/**`，其中 prediction 来自 Polymarket 那条链、monitor 由 feed 与 agent 各发一份）。多实例部署时前者按进程各自消费，后者靠 Pub/Sub 让每个实例的 WebSocket 都收到。
 
 ### Polymarket BTC 预测
 
@@ -119,8 +124,8 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │
 ├── wiib-feed/                        # ① 数据流上游进程（:8081）
 │   ├── stream/                       # 14 个 StreamHandler（现货价 / 现货成交 / 现货深度 / 合约 markPrice
-│   │                                 #   / 合约 miniTicker / 合约深度 / 合约成交 / 强平 / 交易员的币两条
-│   │                                 #   / crypto·商品各周期 K 线）
+│   │                                 #   / 合约 miniTicker / 合约深度 / 合约成交 / 强平 / 名单外的币两条
+│   │                                 #   / K 线四条：加密币 5m、非加密 5m、全部合约 15m 与 1h）
 │   │                                 # + GapTracker 断连空窗记录 + MatchPricePublisher
 │   └── BinanceWsClient / PolymarketWsClient / KlineStreamCache / monitor
 │                                     # / health(内部流健康+重试)

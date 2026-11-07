@@ -5,7 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * 15m K线副连接（轻壳）：@kline_15m。仅广播给前端蜡烛图(7天视图)，解析复用 {@link KlineStreamHandler#handle}
+ * 15m K线副连接（轻壳）：@kline_15m，订全部合约标的。仅广播给前端蜡烛图(15m 周期)，解析复用 {@link KlineStreamHandler#handle}
  * 并传 publishClosed=false——15m 绝不进收盘 Stream（下游只吃 5m，混入会污染预测/触发）。属 /market 端点。
  */
 @Component
@@ -20,7 +20,7 @@ public class Kline15mStreamHandler implements StreamHandler {
 
     @Override
     public String buildUrl() {
-        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getSymbols(), "kline_15m");
+        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getAllFuturesSymbols(), "kline_15m");
     }
 
     @Override

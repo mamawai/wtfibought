@@ -207,10 +207,9 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const changePct = day.base > 0 ? (change / day.base) * 100 : 0;
   const isUp = change >= 0;
 
-  // K线实时驱动分派：crypto 合约 5m/15m/1h 有后端广播（含量/额），4h/1d 没有；
-  // 大宗商品/美股永续只有 5m 广播；现货全部由价格 tick 驱动最后一根。
+  // K线实时驱动分派：合约 5m/15m/1h 有后端广播（含量/额），4h/1d 没有；现货全部由价格 tick 驱动最后一根。
   // 无广播的档位量/额停在进页时的 REST 快照，只有 OHLC 随价格流跳
-  const klineLive = isFuturesMode && (cfg.futuresOnly ? chartIv === '5m' : KLINE_BROADCAST.includes(chartIv));
+  const klineLive = isFuturesMode && KLINE_BROADCAST.includes(chartIv);
   const chartTick = useMemo(() => {
     if (tick?.ts == null) return null;
     const p = isFuturesMode ? (tick.fp ?? tick.price) : tick.price;
