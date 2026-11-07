@@ -535,7 +535,8 @@
     "move": { "up": "再涨 {{pct}}%", "down": "再跌 {{pct}}%" },
     "hold": {
       "title": "手上的仓位",
-      "sum": "{{p}} 个持仓 · {{o}} 个挂单",
+      "positionsN_other": "{{count}} 个持仓",
+      "ordersN_other": "{{count}} 个挂单",
       "floating": "浮动 {{v}}",
       "flat": "空仓观望中",
       "long": "做多 {{lev}}×",
@@ -548,6 +549,7 @@
       "noSl": "没设止损",
       "noTp": "没设止盈",
       "trigger": "{{move}} 触发",
+      "locked": "锁利润",
       "limitLong": "挂单 · 限价做多 {{lev}}×",
       "limitShort": "挂单 · 限价做空 {{lev}}×",
       "limitCloseLong": "挂单 · 限价平多",

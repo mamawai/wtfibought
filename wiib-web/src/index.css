@@ -1087,7 +1087,7 @@ html.dark .cr-ov.is-full ~ .cr-halo { opacity: .24; }
   .tr-beat.on{background:var(--color-foreground)}
   .tr-beat.thin{width:1px;margin-left:0}
   .tr-now{position:absolute;top:-7px;bottom:-7px;width:2px;margin-left:-1px;background:var(--color-primary)}
-  .tr-now span{position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;color:var(--color-primary);white-space:nowrap}
+  .tr-now span{position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);font-size:11px;font-style:normal;font-weight:700;color:var(--color-primary);white-space:nowrap}
   .tr-hdl{position:absolute;top:-9px;bottom:-9px;width:16px;margin-left:-8px;border:0;padding:0;background:transparent;pointer-events:none}
   .tr-hdl::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:4px;background:var(--color-foreground)}
   .tr-hdl b{position:absolute;bottom:calc(100% + 4px);left:50%;transform:translateX(-50%);font-size:13px;font-weight:800;background:var(--color-foreground);color:var(--color-background);padding:2px 7px;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -1262,7 +1262,7 @@ html.dark .cr-ov.is-full ~ .cr-halo { opacity: .24; }
   .tr-pc-fill.dn{background:var(--color-loss)}
   .tr-pc-entry{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:color-mix(in srgb,var(--color-muted-foreground) 60%,transparent)}
   .tr-pc-now{position:absolute;top:-7px;bottom:-7px;width:2px;margin-left:-1px;background:var(--color-foreground);transition:left .9s var(--ease-control)}
-  .tr-pc-now span{position:absolute;bottom:calc(100% + 3px);left:50%;font-size:11.5px;font-weight:800;white-space:nowrap}
+  .tr-pc-now span{position:absolute;bottom:calc(100% + 3px);left:50%;font-size:11.5px;font-style:normal;font-weight:800;white-space:nowrap}
   .tr-pc-ends{display:flex;justify-content:space-between;gap:12px;margin-top:8px;font-size:12.5px;font-weight:700}
   .tr-pc-ends em{display:block;font-style:normal;font-weight:600;font-size:11.5px;color:var(--color-muted-foreground)}
   .tr-pc-ends .r{text-align:right}

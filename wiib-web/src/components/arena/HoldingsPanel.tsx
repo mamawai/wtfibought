@@ -81,6 +81,8 @@ function PositionCard({ p, plan, mark }: { p: FuturesPosition; plan?: AiTraderPl
   const px = (v: number) => formatCoinPrice(p.symbol, v);
   const sl = nearestSl(p);
   const tp = nearestTp(p);
+  // 止损挪过了开仓价（锁了利润）：开仓价在条外，不画那根线
+  const locked = sl != null && (long ? sl > p.entryPrice : sl < p.entryPrice);
   // 条上的位置：左头止损、右头止盈，多空都是往右离止盈更近
   const at = (v: number) => sl == null || tp == null ? 0
     : Math.max(0, Math.min(100, (long ? (v - sl) / (tp - sl) : (sl - v) / (sl - tp)) * 100));
@@ -101,7 +103,7 @@ function PositionCard({ p, plan, mark }: { p: FuturesPosition; plan?: AiTraderPl
       {sl != null && tp != null && (
         <div className="tr-pc-bar" aria-hidden="true">
           <i className={cn('tr-pc-fill', pn >= pe ? 'up' : 'dn')} style={{ left: `${Math.min(pe, pn)}%`, width: `${Math.abs(pn - pe)}%` }} />
-          <i className="tr-pc-entry" style={{ left: `${pe}%` }} />
+          {!locked && <i className="tr-pc-entry" style={{ left: `${pe}%` }} />}
           <i className="tr-pc-now" style={{ left: `${pn}%` }}>
             {/* 现价贴着两头时，标签往里收，不出条 */}
             <span className="num" style={{ transform: `translateX(${pn > 85 ? 'calc(-100% + 1px)' : pn < 15 ? '-1px' : '-50%'})` }}>
@@ -113,7 +115,7 @@ function PositionCard({ p, plan, mark }: { p: FuturesPosition; plan?: AiTraderPl
       {/* 多档全列出来，离触发多远按最近那档算 */}
       <div className="tr-pc-ends num">
         {sl != null
-          ? <span className="dn">{t('wb.hold.sl', { price: levelsText(p.symbol, p.stopLosses) })}<em>{t('wb.hold.trigger', { move: moveText(sl, mark) })}</em></span>
+          ? <span className="dn">{t('wb.hold.sl', { price: levelsText(p.symbol, p.stopLosses) })}{locked && ` · ${t('wb.hold.locked')}`}<em>{t('wb.hold.trigger', { move: moveText(sl, mark) })}</em></span>
           : <span className="mute">{t('wb.hold.noSl')}</span>}
         {tp != null
           ? <span className="r up">{t('wb.hold.tp', { price: levelsText(p.symbol, p.takeProfits) })}<em>{t('wb.hold.trigger', { move: moveText(tp, mark) })}</em></span>
@@ -176,7 +178,7 @@ export function Holdings({ positions, orders, plans }: {
   return (
     <div>
       <div className={BLK_H}>
-        <h2>{t('wb.hold.title')}<small>{t('wb.hold.sum', { p: positions.length, o: orders.length })}</small></h2>
+        <h2>{t('wb.hold.title')}<small>{t('wb.hold.positionsN', { count: positions.length })} · {t('wb.hold.ordersN', { count: orders.length })}</small></h2>
         {positions.length > 0 && (
           <b className={cn('num text-[14px] font-bold', floating >= 0 ? 'up' : 'dn')}>{t('wb.hold.floating', { v: signed(floating) })}</b>
         )}
