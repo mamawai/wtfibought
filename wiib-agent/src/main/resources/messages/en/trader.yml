@@ -40,7 +40,7 @@ trader:
     promptTooLong: Trading instructions are at most 4000 characters
     leverageRange: The leverage range must sit within 1~{{max}}x
     leverageInverted: The lower bound of the leverage range cannot exceed the upper bound
-    marginRange: The margin cap per position must be between 0.1% and 100%
+    marginRange: The margin cap per position must be between 0.1% and 50%
     hedgeNeedsTwoSlots: Hedging needs two position slots, so it cannot be on while only one position is allowed
     alertMultTooLow: The sensitivity multiplier cannot go below 1.0 (thresholds may only be raised)
     # Wake-window parse failures. WakeWindow.parse throws these keys; TraderService renders them

@@ -40,7 +40,7 @@ trader:
     promptTooLong: 交易指令不超过4000字符
     leverageRange: 杠杆区间须在 1~{{max}} 倍之内
     leverageInverted: 杠杆区间下界不能大于上界
-    marginRange: 单笔保证金占比上限须在 0.1~100% 之内
+    marginRange: 单笔保证金占比上限须在 0.1~50% 之内
     hedgeNeedsTwoSlots: 只允许一个仓位时无法开启多空双开（双开本身需要两个仓位）
     alertMultTooLow: 警报灵敏度系数不能低于 1.0（阈值只能调高不能调低）
     # 唤醒时段的解析失败。WakeWindow.parse 抛的是这些 key，由 TraderService 渲染

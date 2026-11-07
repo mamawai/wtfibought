@@ -15,10 +15,14 @@ class KlineHistoryWarmupTest {
     @Test
     void backfillsAllConfiguredSymbolsOverHistoryWindow() {
         FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        BinanceProperties props = new BinanceProperties();
+        props.setSymbols(List.of("BTCUSDT", "ETHUSDT", "SOLUSDT"));
+        // 只有永续的加密币也要回补
+        props.setCryptoFuturesSymbols(List.of("HYPEUSDT"));
 
-        warmup(store, List.of("BTCUSDT", "ETHUSDT", "SOLUSDT")).run();
+        new KlineHistoryWarmup(store, props).run();
 
-        assertThat(store.symbols).containsExactly("BTCUSDT", "ETHUSDT", "SOLUSDT");
+        assertThat(store.symbols).containsExactly("BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT");
         assertThat(store.lastToMs - store.lastFromMs).isEqualTo(Duration.ofDays(90).toMillis());
     }
 

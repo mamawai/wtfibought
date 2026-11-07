@@ -126,12 +126,18 @@ binance:
   futures-ws-url: wss://fstream.binance.com/ws
   rest-base-url: https://api.binance.com
   futures-rest-base-url: https://fapi.binance.com
+  # 这两组合起来就是 trader 可选的币，也是启动时回补 90 天 5m 历史的币
   symbols:
     - BTCUSDT
     - ETHUSDT
     - DOGEUSDT
     - SOLUSDT
     - XRPUSDT
+    - BNBUSDT
+    - ZECUSDT
+  # 纯合约加密币(Binance 主站只有永续没现货)
+  crypto-futures-symbols:
+    - HYPEUSDT
 
 # 策略实盘执行下单走 testnet(行情仍主网)；key 不填则 testnet 轨不可用，sim 轨不受影响
 binance-testnet:

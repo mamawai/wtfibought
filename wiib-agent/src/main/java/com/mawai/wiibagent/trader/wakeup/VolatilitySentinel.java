@@ -39,10 +39,11 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 在基准线附近来回蹭不算几段）。一段行情里每个 trader 最多被叫一次（振幅碰到它自己的阈值那一刻），
  * 持续高位不重复叫；结束后再穿上来才是新一段。
  * <p>
- * 基准阈值 180 天历史校准（2026-08-08，kline_history 5m bar 振幅口径），
- * 目标包络：波动日 10~20 次/日、平日 <10 次/日。市场性状变了可重跑校准：
+ * 基准阈值 2026-11-06 校准：Binance 公开 5m K 线（data.binance.vision），窗口 05-11 ~ 11-05 共 177 天。
+ * 每根振幅 = (high-low)/low，按北京时间分天数"振幅 ≥ 候选阈值"的根数，中位数算平日、95 分位算波动日，
+ * 取波动日少于 20 次的最低一档。市场性状变了可在 kline_history 上重跑：
  * <pre>
- * WITH amp AS (SELECT symbol, to_timestamp(open_time/1000)::date d, (high-low)/low*100 a
+ * WITH amp AS (SELECT symbol, (to_timestamp(open_time/1000) AT TIME ZONE 'Asia/Shanghai')::date d, (high-low)/low*100 a
  *   FROM kline_history WHERE interval_code='5m' AND symbol IN (白名单) AND open_time > 近180天ms),
  * daily AS (SELECT symbol, d, count(*) FILTER (WHERE a>=候选阈值) c FROM amp GROUP BY symbol, d)
  * SELECT symbol, percentile_cont(0.5) WITHIN GROUP (ORDER BY c) 平日,
@@ -54,13 +55,16 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 @RequiredArgsConstructor
 public class VolatilitySentinel implements MessageListener {
 
-    /** 每币基准阈值%（即平台下限，用户只能经灵敏度系数调高）：BTC平日3次/波动日18次量级 */
+    /** 每币基准阈值%（即平台下限，用户只能经灵敏度系数调高）；行尾是校准窗口里平日 / 波动日每天超线几根 */
     static final Map<String, BigDecimal> BASE_THRESHOLD_PCT = Map.of(
-            "BTCUSDT", new BigDecimal("0.6"),
-            "ETHUSDT", new BigDecimal("0.8"),
-            "XRPUSDT", new BigDecimal("0.8"),
-            "SOLUSDT", new BigDecimal("0.9"),
-            "DOGEUSDT", new BigDecimal("1.0"));
+            "BTCUSDT", new BigDecimal("0.6"),    // 1 / 11
+            "BNBUSDT", new BigDecimal("0.6"),    // 1 / 12.8
+            "ETHUSDT", new BigDecimal("0.7"),    // 3 / 18
+            "SOLUSDT", new BigDecimal("0.9"),    // 2 / 16
+            "DOGEUSDT", new BigDecimal("0.9"),   // 2 / 16.2
+            "XRPUSDT", new BigDecimal("0.9"),    // 1 / 18.4
+            "HYPEUSDT", new BigDecimal("1.2"),   // 1 / 18.2
+            "ZECUSDT", new BigDecimal("1.6"));   // 2 / 16.2
 
     /** 警报只服务 1h/4h：5m/15m 自身节奏已够密，被惊醒的边际价值撑不起被打断的成本 */
     static final Set<String> ALERT_INTERVALS = Set.of("1h", "4h");

@@ -113,7 +113,7 @@ class VolatilitySentinelTest {
         assertThat(VolatilitySentinel.effectiveThreshold("BTCUSDT", new BigDecimal("0.5")))
                 .isEqualByComparingTo("0.6");
         assertThat(VolatilitySentinel.effectiveThreshold("DOGEUSDT", null))
-                .isEqualByComparingTo("1.0");
+                .isEqualByComparingTo("0.9");
     }
 
     /** 边沿触发：穿上基准线报一次，持续高位不再报，回落到基准线下再穿上来才再报；系数高的要等振幅够到自己的阈值 */

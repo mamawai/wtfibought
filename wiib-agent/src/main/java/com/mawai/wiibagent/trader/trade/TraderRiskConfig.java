@@ -15,9 +15,9 @@ public record TraderRiskConfig(int leverageMin, int leverageMax, BigDecimal marg
 
     /** 配置校验用的绝对边界；实际可用杠杆还受 sim 按名义价值分档限制（超档由 sim 拒并回传拒因） */
     public static final int LEVERAGE_HARD_MAX = 125;
-    /** 占比上限本身的可配范围 */
+    /** 占比上限本身的可配范围：最高 50%，一笔新仓最多押一半权益 */
     public static final BigDecimal MARGIN_PCT_HARD_MIN = new BigDecimal("0.1");
-    public static final BigDecimal MARGIN_PCT_HARD_MAX = new BigDecimal("100");
+    public static final BigDecimal MARGIN_PCT_HARD_MAX = new BigDecimal("50");
 
     /** 主人没填时的默认规格；建 trader 与改配置两处共用同一份 */
     public static final int DEF_LEV_MIN = 3;

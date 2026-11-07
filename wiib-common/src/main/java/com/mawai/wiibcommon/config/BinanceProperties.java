@@ -22,7 +22,7 @@ public class BinanceProperties {
     private List<String> commoditySymbols;
     /** TradFi 合约（美股/ETF 永续：闪迪/美光/SpaceX 等）符号：纯合约、无现货，流处理同大宗商品。 */
     private List<String> tradfiSymbols;
-    /** 纯合约加密币（Binance 主站只有永续没现货，如 HYPE）：流处理同大宗商品，盈亏仍归 crypto 桶。 */
+    /** 纯合约加密币（Binance 主站只有永续没现货，如 HYPE）：不进现货流；5m K线按加密币走（落库、进收盘 Stream），盈亏归 crypto 桶。 */
     private List<String> cryptoFuturesSymbols;
 
     /** 现货订阅全集 = crypto symbols ∪ bStock stockSymbols。现货的价、逐笔成交、盘口流用；两组互斥，直接拼接不去重。 */
@@ -42,11 +42,24 @@ public class BinanceProperties {
         return all;
     }
 
-    /** 纯合约标的全集（无现货）= commoditySymbols ∪ tradfiSymbols ∪ cryptoFuturesSymbols。纯合约 5m K线流用。 */
+    /** 纯合约标的全集（无现货）= 非加密纯合约 ∪ cryptoFuturesSymbols。 */
     public List<String> getFuturesOnlySymbols() {
+        List<String> all = getNonCryptoFuturesSymbols();
+        if (cryptoFuturesSymbols != null) all.addAll(cryptoFuturesSymbols);
+        return all;
+    }
+
+    /** 加密币全集 = symbols ∪ cryptoFuturesSymbols。5m K线主连接（落库 + 收盘 Stream）、trader 可选币、启动回补都用这份。 */
+    public List<String> getAllCryptoSymbols() {
+        List<String> all = new ArrayList<>(symbols == null ? List.of() : symbols);
+        if (cryptoFuturesSymbols != null) all.addAll(cryptoFuturesSymbols);
+        return all;
+    }
+
+    /** 非加密的纯合约标的 = commoditySymbols ∪ tradfiSymbols。只广播不落库的 5m K线副连接用。 */
+    public List<String> getNonCryptoFuturesSymbols() {
         List<String> all = new ArrayList<>(commoditySymbols == null ? List.of() : commoditySymbols);
         if (tradfiSymbols != null) all.addAll(tradfiSymbols);
-        if (cryptoFuturesSymbols != null) all.addAll(cryptoFuturesSymbols);
         return all;
     }
 }

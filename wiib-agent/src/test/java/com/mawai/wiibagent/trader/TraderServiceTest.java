@@ -97,7 +97,7 @@ class TraderServiceTest {
     /** 币种上限 3：单轮工具预算按币摊，4 个被拦；3 个过这道校验（后面才卡在端点上） */
     @Test
     void rejectsMoreThanThreeSymbols() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
@@ -113,7 +113,7 @@ class TraderServiceTest {
     /** 警报灵敏度系数只能 ≥1.0：系数<1 等于把每币基准阈值（平台下限）调低 */
     @Test
     void alertMultBelowOneRejected() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, req(null, null, null, null, null, true, new java.math.BigDecimal("0.5")));
@@ -124,7 +124,7 @@ class TraderServiceTest {
     /** 杠杆上界卡在 125：再往上 sim 的分档表也接不住 */
     @Test
     void leverageBeyondHardMaxRejected() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, req(null, 50, 200, null, null, null, null));
@@ -135,7 +135,7 @@ class TraderServiceTest {
     /** 区间下界大于上界＝空集，模型永远开不出仓 */
     @Test
     void invertedLeverageRangeRejected() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, req(null, 100, 50, null, null, null, null));
@@ -146,7 +146,7 @@ class TraderServiceTest {
     /** 单仓 + 双开是自相矛盾的组合（双开本身要两个仓位），入口就拦掉 */
     @Test
     void hedgeWithSinglePositionRejected() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, req(null, null, null, false, true, null, null));
@@ -157,7 +157,7 @@ class TraderServiceTest {
     /** 端点库空着不能创建：模型是从库里选的，没得选就得先去配 */
     @Test
     void createWithoutAnyEndpointRejected() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
@@ -171,7 +171,7 @@ class TraderServiceTest {
     /** 创建：显式选的端点要连通性测试；通过后入库并把 TRADER 用途绑到它 */
     @Test
     void createTestsChosenEndpointAndBinds() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
         UserLlmEndpoint chosen = endpoint(5, "deepseek-chat");
         when(endpointService.get(1L, 5L)).thenReturn(chosen);
@@ -190,7 +190,7 @@ class TraderServiceTest {
     /** 时段格式错直接回消息 */
     @Test
     void wakeWindowBadFormatRejected() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, null,
@@ -203,7 +203,7 @@ class TraderServiceTest {
     /** 4h 档 21:00-23:00 一根都不收盘 = 永眠，拦在入口 */
     @Test
     void wakeWindowWithoutAnyBoundaryRejected() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "4h", null, null,
@@ -216,7 +216,7 @@ class TraderServiceTest {
     /** 合法时段落库为归一化文本 */
     @Test
     void wakeWindowPersistedNormalized() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
         UserLlmEndpoint chosen = endpoint(5, "deepseek-chat");
         when(endpointService.get(1L, 5L)).thenReturn(chosen);
@@ -235,7 +235,7 @@ class TraderServiceTest {
     /** 连通性测试不过：不入库、不绑定 */
     @Test
     void createRejectedWhenEndpointUnreachable() {
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectOne(any())).thenReturn(null);
         UserLlmEndpoint chosen = endpoint(5, "deepseek-chat");
         when(endpointService.defaultOf(1L)).thenReturn(chosen);
@@ -398,7 +398,7 @@ class TraderServiceTest {
         t.setRoundNo(1);
         t.setStatus(AiTrader.STATUS_RUNNING);
         when(traderMapper.selectOne(any())).thenReturn(t);
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         UserLlmEndpoint current = endpoint(5, "deepseek-chat");
         when(endpointService.defaultOf(1L)).thenReturn(current);
         when(modelFactory.endpointFor(t)).thenReturn(current);
@@ -429,7 +429,7 @@ class TraderServiceTest {
         t.setUserId(1L);
         t.setRoundNo(1);
         when(traderMapper.selectOne(any())).thenReturn(t);
-        when(binanceProperties.getSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(modelFactory.endpointFor(t)).thenReturn(endpoint(5, "deepseek-chat"));
         UserLlmEndpoint next = endpoint(6, "deepseek-reasoner");
         when(endpointService.get(1L, 6L)).thenReturn(next);

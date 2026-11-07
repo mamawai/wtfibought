@@ -715,17 +715,19 @@ CREATE TABLE IF NOT EXISTS ai_trader (
 
 COMMENT ON TABLE ai_trader IS 'AI Trader：用户BYOK自主交易代理（每用户1个，独立sim子账户，公开竞技场）';
 COMMENT ON COLUMN ai_trader.status IS 'PAUSED/RUNNING/LIQUIDATED';
-COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分隔（须在binance.symbols范围内）';
+COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分隔（须在agent的binance.symbols+crypto-futures-symbols范围内）';
 COMMENT ON COLUMN ai_trader.interval_code IS '心跳周期 15m/1h/4h：每根该级别K线收盘例行唤醒一次定期复查；两次心跳之间由止损止盈、盯盘条件命中、持仓事件、波动警报叫醒。5m已下线（存量迁15m）';
 -- 5m 档下线：存量迁到 15m（幂等）
 UPDATE ai_trader SET interval_code = '15m' WHERE interval_code = '5m';
 -- 保证金占比下限已删，只留上限（幂等）
 ALTER TABLE ai_trader DROP COLUMN IF EXISTS margin_pct_min;
+-- 保证金占比上限最高 50%：存量超过的压到 50（幂等）
+UPDATE ai_trader SET margin_pct_max = 50 WHERE margin_pct_max > 50;
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：方法/风格/纪律的唯一来源（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';
-COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/ETH0.8/XRP0.8/SOL0.9/DOGE1.0%)×本系数，180天历史校准见VolatilitySentinel';
+COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/BNB0.6/ETH0.7/SOL0.9/DOGE0.9/XRP0.9/HYPE1.2/ZEC1.6%)×本系数，校准方法见VolatilitySentinel';
 COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：reviewer每日复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
@@ -734,7 +736,7 @@ COMMENT ON COLUMN ai_trader.sim_user_id IS '当前局sim子账户userId，每局
 COMMENT ON COLUMN ai_trader.round_no IS '局数：爆仓/手动重置+1开新局，历史留档';
 COMMENT ON COLUMN ai_trader.leverage_min IS '杠杆区间下界：模型必须从[min,max]里选，越界护栏拒（不截断——悄悄改值会让模型的止损计算失真）';
 COMMENT ON COLUMN ai_trader.leverage_max IS '杠杆区间上界，1~125；实际可用还受sim按名义价值分档限制，超档由sim拒并回传拒因';
-COMMENT ON COLUMN ai_trader.margin_pct_max IS '单笔保证金占权益%上限，0.1~100，没有下限；只约束开新仓，加仓量由模型自己斟酌';
+COMMENT ON COLUMN ai_trader.margin_pct_max IS '单笔保证金占权益%上限，0.1~50，没有下限；只约束开新仓，加仓量由模型自己斟酌';
 COMMENT ON COLUMN ai_trader.allow_multi_position IS '允许同时持有多个仓位；false=全账户至多一仓（挂单一并计数，否则挂几单就能绕过）';
 COMMENT ON COLUMN ai_trader.allow_hedge IS '允许同币多空双开；仅在allow_multi_position=true时有意义（双开天然占两个仓位）';
 

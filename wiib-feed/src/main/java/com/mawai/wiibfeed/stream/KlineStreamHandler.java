@@ -11,7 +11,10 @@ import tools.jackson.databind.JsonNode;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
-/** 5m K线流：@kline_5m。每次更新(含未收盘)→广播给前端蜡烛图；收盘 bar→KlineStreamCache（落库 + 收盘 Stream）。属 /market 端点。 */
+/**
+ * 5m K线流：@kline_5m，订全部加密币（含只有永续的 HYPE）。每次更新(含未收盘)→广播给前端蜡烛图；
+ * 收盘 bar→KlineStreamCache（落库 + 收盘 Stream）。属 /market 端点。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -26,7 +29,7 @@ public class KlineStreamHandler implements StreamHandler {
 
     @Override
     public String buildUrl() {
-        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getSymbols(), "kline_5m");
+        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getAllCryptoSymbols(), "kline_5m");
     }
 
     @Override
@@ -36,7 +39,7 @@ public class KlineStreamHandler implements StreamHandler {
 
     /**
      * 解析一条 kline 消息：恒广播当前根(含未收盘)给前端；publishClosed 时再把收盘 bar 交给 KlineStreamCache（5m 落库 + 写收盘 Stream）。
-     * 15m/1h/商品/bStock 副连接复用本方法并传 publishClosed=false——只广播，
+     * 15m、1h 连接和非加密 5m 副连接复用本方法并传 publishClosed=false——只广播，
      * 绝不进收盘 Stream（下游策略/唤醒/对账只吃 crypto 5m，混进来会污染）。
      */
     public void handle(String raw, boolean publishClosed) {

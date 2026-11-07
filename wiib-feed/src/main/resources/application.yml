@@ -78,7 +78,7 @@ binance:
     - MUUSDT
     - KORUUSDT
     - SPCXUSDT
-  # 纯合约加密币(Binance 主站只有永续没现货)：与商品同链路，只进合约流
+  # 纯合约加密币(Binance 主站只有永续没现货)：只进合约流；5m K 线跟上面的加密币一起落库、进收盘 Stream
   crypto-futures-symbols:
     - HYPEUSDT
 

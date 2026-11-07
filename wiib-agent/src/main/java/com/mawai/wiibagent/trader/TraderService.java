@@ -489,7 +489,7 @@ public class TraderService {
         if (spec != null) {
             return spec;
         }
-        List<String> whitelist = binanceProperties.getSymbols();
+        List<String> whitelist = binanceProperties.getAllCryptoSymbols();
         Set<String> symbols = parseSymbols(req.symbols());
         if (symbols.isEmpty()) {
             return messages.get("trader.config.symbolRequired");
@@ -498,7 +498,7 @@ public class TraderService {
         if (symbols.size() > MAX_SYMBOLS) {
             return messages.get("trader.config.tooManySymbols", Map.of("max", MAX_SYMBOLS));
         }
-        if (whitelist == null || !new HashSet<>(whitelist).containsAll(symbols)) {
+        if (!new HashSet<>(whitelist).containsAll(symbols)) {
             return messages.get("trader.config.symbolNotAllowed", Map.of("whitelist", whitelist));
         }
         if (req.customPrompt() != null && req.customPrompt().length() > MAX_CUSTOM_PROMPT) {
