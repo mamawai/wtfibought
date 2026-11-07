@@ -25,9 +25,6 @@ const INTERVALS = ['5m', '15m', '1h', '4h', '1d'] as const;
 type ChartInterval = (typeof INTERVALS)[number];
 const IV_KEY = 'wiib-chart-interval';
 
-/** feed 只为这三档开了 WS 广播（Kline5m/15m/1h StreamHandler）；不在表里的走价格 tick 驱动最后一根 */
-const KLINE_BROADCAST: readonly string[] = ['5m', '15m', '1h'];
-
 export function CoinRoute() {
   const { symbol } = useParams<{ symbol: string }>();
   const s = symbol && COIN_MAP[symbol] ? symbol : DEFAULT_SYMBOL;
@@ -207,9 +204,9 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const changePct = day.base > 0 ? (change / day.base) * 100 : 0;
   const isUp = change >= 0;
 
-  // K线实时驱动分派：合约 5m/15m/1h 有后端广播（含量/额），4h/1d 没有；现货全部由价格 tick 驱动最后一根。
-  // 无广播的档位量/额停在进页时的 REST 快照，只有 OHLC 随价格流跳
-  const klineLive = isFuturesMode && KLINE_BROADCAST.includes(chartIv);
+  // K线实时驱动分派：合约各周期都有后端 K 线广播（含量/额）；现货由价格 tick 驱动最后一根，
+  // 量/额停在进页时的 REST 快照，只有 OHLC 随价格流跳
+  const klineLive = isFuturesMode;
   const chartTick = useMemo(() => {
     if (tick?.ts == null) return null;
     const p = isFuturesMode ? (tick.fp ?? tick.price) : tick.price;

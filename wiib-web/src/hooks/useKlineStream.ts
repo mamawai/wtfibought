@@ -3,7 +3,7 @@ import { subscribe } from './stompClient';
 
 /** 后端 /topic/kline/{symbol} 推送的实时 K 线（含未收盘的当前根）。字段与 KlineStreamHandler.broadcastKline 契约一致。 */
 export interface KlineTick {
-  i: string;       // interval：5m / 15m / 1h（feed 只为这三档开了广播连接）
+  i: string;       // interval：5m / 15m / 1h / 4h / 1d
   t: number;       // 开盘时刻（ms）
   o: number;
   h: number;
@@ -16,8 +16,8 @@ export interface KlineTick {
 }
 
 /**
- * 订阅某 symbol 的实时 K 线流；同一 topic 混着 5m/15m/1h，按 interval 过滤只取当前视图所需。
- * 仅合约（后端只广播合约 kline）；4h/1d 没有广播连接，调用方走价格 tick 驱动，本 hook 恒返回 null。
+ * 订阅某 symbol 的实时 K 线流；同一 topic 混着各周期，按 interval 过滤只取当前视图所需。
+ * 仅合约（后端只广播合约 kline），现货调用方走价格 tick 驱动。
  */
 export function useKlineStream(symbol: string | undefined, interval: string): KlineTick | null {
   // tick 挂 key：symbol/interval 切换时旧数据按 null 返回，免去 effect 里同步 setState 清空

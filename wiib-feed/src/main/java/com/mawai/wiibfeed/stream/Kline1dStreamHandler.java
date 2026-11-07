@@ -1,0 +1,30 @@
+package com.mawai.wiibfeed.stream;
+
+import com.mawai.wiibcommon.config.BinanceProperties;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+/**
+ * 1d K线副连接（轻壳）：@kline_1d，订全部合约标的。仅广播给前端蜡烛图(1d 周期)，解析复用 {@link KlineStreamHandler#handle}
+ * 并传 publishClosed=false——与 15m 同理，绝不进收盘 Stream（下游只吃 5m）。属 /market 端点。
+ */
+@Component
+@RequiredArgsConstructor
+public class Kline1dStreamHandler implements StreamHandler {
+
+    private final BinanceProperties props;
+    private final KlineStreamHandler klineHandler;
+
+    @Override public String name() { return "Kline1d"; }
+    @Override public long maxIdleSeconds() { return 360; }
+
+    @Override
+    public String buildUrl() {
+        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getAllFuturesSymbols(), "kline_1d");
+    }
+
+    @Override
+    public void onMessage(String raw) {
+        klineHandler.handle(raw, false);   // 只广播，收盘 bar 不往下发
+    }
+}

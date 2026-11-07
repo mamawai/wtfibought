@@ -55,10 +55,10 @@ wiib-feed（上游进程）  交易所 WS → Redis
   -> forceOrder(全市场流)    -> 白名单过滤 -> force_order 表(DB, 天然跨进程)
   -> aggTrade（合约 / 现货）  -> Redis Stream(market:orderflow:<sym> / market:spot-trade:<sym>)，sim 按顺序读来判限价/止损/止盈，合约那条 agent 还读侧聚合订单流
   -> depth20@100ms（合约 / 现货）-> Redis KV(market:depth: / market:spot-depth:, DepthStreamCache)，sim 市价成交扫它
-  -> K 线（4 条连接，都推前端；只有加密币 5m 往下游送）
-       5m      加密币(symbols ∪ crypto-futures-symbols) -> 收盘 bar 落库(kline_history) + Redis Stream(stream:kline:closed)
-       5m      非加密纯合约(commodity ∪ tradfi)          -> 只推前端
-       15m/1h  全部合约标的                              -> 只推前端（蜡烛图 15m / 1h 档；4h / 1d 没有连接，前端用价格 tick 更新最后一根）
+  -> K 线（6 条连接，都推前端；只有加密币 5m 往下游送）
+       5m            加密币(symbols ∪ crypto-futures-symbols) -> 收盘 bar 落库(kline_history) + Redis Stream(stream:kline:closed)
+       5m            非加密纯合约(commodity ∪ tradfi)          -> 只推前端
+       15m/1h/4h/1d  全部合约标的，每个周期一条                -> 只推前端（合约蜡烛图各档；现货不推 K 线，前端用价格 tick 更新最后一根）
   -> 价格 tick（现货价 / 标记价 / 合约最新价）与 K 线 -> Redis Pub/Sub(ws:broadcast:*) -> sim WsBroadcastRelay -> STOMP /topic/**
   -> WS 断线                 -> 广播断线帧, 重连后发 gap 事件(空窗区间, kind=mark/futures/spot), sim 拉 1m K 线补强平/补触发
 
@@ -123,9 +123,9 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │                                     # / KlineHistoryStore / ForceOrder mapper / InternalApiFilter
 │
 ├── wiib-feed/                        # ① 数据流上游进程（:8081）
-│   ├── stream/                       # 14 个 StreamHandler（现货价 / 现货成交 / 现货深度 / 合约 markPrice
+│   ├── stream/                       # 16 个 StreamHandler（现货价 / 现货成交 / 现货深度 / 合约 markPrice
 │   │                                 #   / 合约 miniTicker / 合约深度 / 合约成交 / 强平 / 名单外的币两条
-│   │                                 #   / K 线四条：加密币 5m、非加密 5m、全部合约 15m 与 1h）
+│   │                                 #   / K 线六条：加密币 5m、非加密 5m、全部合约 15m / 1h / 4h / 1d）
 │   │                                 # + GapTracker 断连空窗记录 + MatchPricePublisher
 │   └── BinanceWsClient / PolymarketWsClient / KlineStreamCache / monitor
 │                                     # / health(内部流健康+重试)

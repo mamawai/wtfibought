@@ -39,7 +39,7 @@ public class KlineStreamHandler implements StreamHandler {
 
     /**
      * 解析一条 kline 消息：恒广播当前根(含未收盘)给前端；publishClosed 时再把收盘 bar 交给 KlineStreamCache（5m 落库 + 写收盘 Stream）。
-     * 15m、1h 连接和非加密 5m 副连接复用本方法并传 publishClosed=false——只广播，
+     * 15m/1h/4h/1d 连接和非加密 5m 副连接复用本方法并传 publishClosed=false——只广播，
      * 绝不进收盘 Stream（下游策略/唤醒/对账只吃 crypto 5m，混进来会污染）。
      */
     public void handle(String raw, boolean publishClosed) {
