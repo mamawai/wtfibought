@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.*;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -26,13 +27,17 @@ public class CollectDataNode {
     private final ForceOrderService forceOrderService;
     private final DepthStreamCache depthStreamCache;
     private final DeribitClient deribitClient;
+    /** 只有合约、没有现货盘的标的（HYPE、黄金原油等） */
+    private final Set<String> futuresOnlySymbols;
 
     public CollectDataNode(BinanceRestClient binanceRestClient, ForceOrderService forceOrderService,
-                           DepthStreamCache depthStreamCache, DeribitClient deribitClient) {
+                           DepthStreamCache depthStreamCache, DeribitClient deribitClient,
+                           Set<String> futuresOnlySymbols) {
         this.binanceRestClient = binanceRestClient;
         this.forceOrderService = forceOrderService;
         this.depthStreamCache = depthStreamCache;
         this.deribitClient = deribitClient;
+        this.futuresOnlySymbols = futuresOnlySymbols;
     }
 
     /** 采集入口；preFetchedFearGreed 非空则跳过 FGI 拉取（调度器可能已预取）。 */
@@ -66,8 +71,10 @@ public class CollectDataNode {
         // 谁都不能低于 30——BuildFeaturesBuilder 那里 <30 根整条周期直接跳过，还会连带打质量标记。
         String[] intervals = {"1m", "5m", "15m", "1h", "4h", "1d"};
         int[] limits = {120, 120, 120, 48, 40, 40};
-        // 现货只出基差与领先滞后两个特征，各自回看不超过 5 根
-        String[] spotIntervals = {"1m", "5m"};
+        // 现货只出基差与领先滞后两个特征，各自回看不超过 5 根。
+        // 只有合约的标的没现货盘，现货 K 线、ticker、盘口都不请求
+        boolean hasSpot = !futuresOnlySymbols.contains(symbol);
+        String[] spotIntervals = hasSpot ? new String[]{"1m", "5m"} : new String[0];
         int[] spotLimits = {40, 40};
 
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(COLLECT_TIMEOUT_SECONDS);
@@ -92,7 +99,7 @@ public class CollectDataNode {
                         () -> binanceRestClient.getKlines(symbol, spotIntervals[idx], spotLimits[idx], null));
             }
             var tickerF = executor.submit(() -> binanceRestClient.getFutures24hTicker(symbol));
-            var spotTickerF = executor.submit(() -> binanceRestClient.get24hTicker(symbol));
+            Future<String> spotTickerF = hasSpot ? executor.submit(() -> binanceRestClient.get24hTicker(symbol)) : null;
             var fundingF = executor.submit(() -> binanceRestClient.getPremiumIndex(symbol));
             var fundingHistF = executor.submit(() -> binanceRestClient.getFundingRateHistory(symbol, 48));
             var obF = executor.submit(() -> {
@@ -102,7 +109,7 @@ public class CollectDataNode {
                 }
                 return binanceRestClient.getFuturesOrderbook(symbol, 20);
             });
-            var spotObF = executor.submit(() -> binanceRestClient.getOrderbook(symbol, 20));
+            Future<String> spotObF = hasSpot ? executor.submit(() -> binanceRestClient.getOrderbook(symbol, 20)) : null;
             var oiHistF = executor.submit(() -> binanceRestClient.getOpenInterestHist(symbol, "5m", 48));
             var lsrF = executor.submit(() -> binanceRestClient.getLongShortRatio(symbol));
             var forceOrdersF = executor.submit(() -> buildForceOrdersJson(symbol));
@@ -136,11 +143,11 @@ public class CollectDataNode {
 
             // 收集其他数据
             tickerMap.put(symbol, safeGet(tickerF, "ticker", deadlineNanos));
-            putIfNotNull(spotTickerMap, symbol, safeGet(spotTickerF, "spotTicker", deadlineNanos));
+            putIfNotNull(spotTickerMap, symbol, spotTickerF != null ? safeGet(spotTickerF, "spotTicker", deadlineNanos) : null);
             putIfNotNull(fundingRateMap, symbol, safeGet(fundingF, "funding", deadlineNanos));
             putIfNotNull(fundingRateHistMap, symbol, safeGet(fundingHistF, "fundingRateHist", deadlineNanos));
             putIfNotNull(orderbookMap, symbol, safeGet(obF, "orderbook", deadlineNanos));
-            putIfNotNull(spotOrderbookMap, symbol, safeGet(spotObF, "spotOrderbook", deadlineNanos));
+            putIfNotNull(spotOrderbookMap, symbol, spotObF != null ? safeGet(spotObF, "spotOrderbook", deadlineNanos) : null);
             putIfNotNull(openInterestHistMap, symbol, safeGet(oiHistF, "openInterestHist", deadlineNanos));
             putIfNotNull(longShortRatioMap, symbol, safeGet(lsrF, "longShortRatio", deadlineNanos));
             putIfNotNull(forceOrdersMap, symbol, safeGet(forceOrdersF, "forceOrders", deadlineNanos));

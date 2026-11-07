@@ -3,6 +3,7 @@ package com.mawai.wiibquant.market.service;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.DepthStreamCache;
@@ -48,8 +49,10 @@ class MarketDataServiceTest {
     private final OrderFlowAggregator orderFlowAggregator = mock(OrderFlowAggregator.class);
 
     private MarketDataService service(long ttlMillis) {
+        BinanceProperties props = new BinanceProperties();
+        props.setCryptoFuturesSymbols(List.of("HYPEUSDT"));
         return new MarketDataService(binanceRestClient, forceOrderService, depthStreamCache,
-                deribitClient, orderFlowAggregator, KlineInterval.M5, ttlMillis);
+                deribitClient, orderFlowAggregator, props, KlineInterval.M5, ttlMillis);
     }
 
     @Test
@@ -259,6 +262,21 @@ class MarketDataServiceTest {
 
         assertThat(depth).isEqualTo(WS_DEPTH);
         verify(binanceRestClient, never()).getFuturesOrderbook(anyString(), anyInt());
+    }
+
+    /** 只有合约的币没有现货盘：现货 K 线、ticker、盘口都不请求，合约那边照常；有现货的币照常请求现货 */
+    @Test
+    void 只有合约的币不请求现货() {
+        MarketDataService service = service(60_000);
+
+        service.assemble("HYPEUSDT");
+        service.assemble("BTCUSDT");
+
+        verify(binanceRestClient, never()).getKlines(eq("HYPEUSDT"), anyString(), anyInt(), any());
+        verify(binanceRestClient, never()).get24hTicker("HYPEUSDT");
+        verify(binanceRestClient, never()).getOrderbook(eq("HYPEUSDT"), anyInt());
+        verify(binanceRestClient).getFutures24hTicker("HYPEUSDT");
+        verify(binanceRestClient).get24hTicker("BTCUSDT");
     }
 
     /**

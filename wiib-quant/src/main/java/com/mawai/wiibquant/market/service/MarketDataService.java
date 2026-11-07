@@ -1,5 +1,6 @@
 package com.mawai.wiibquant.market.service;
 
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -19,6 +20,7 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -103,11 +105,13 @@ public class MarketDataService {
                              DepthStreamCache depthStreamCache,
                              DeribitClient deribitClient,
                              OrderFlowAggregator orderFlowAggregator,
+                             BinanceProperties binanceProperties,
                              @Value("${trading.decision-interval:M5}") KlineInterval decisionInterval,
                              @Value("${quant.toolkit.assembly-ttl-ms:60000}") long ttlMillis) {
         this.binanceRestClient = binanceRestClient;
         this.depthStreamCache = depthStreamCache;
-        this.collectNode = new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient);
+        this.collectNode = new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient,
+                Set.copyOf(binanceProperties.getFuturesOnlySymbols()));
         this.featuresBuilder = new BuildFeaturesBuilder(orderFlowAggregator, decisionInterval);
         this.ttlMillis = ttlMillis;
     }
