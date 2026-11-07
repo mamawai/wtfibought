@@ -1,4 +1,5 @@
 import i18n from '../../i18n';
+import type { AiTraderDecisionView } from '../../types';
 
 /**
  * trader agent 每次唤醒拿到的全部工具（与后端 TraderWakeupRunner.wakeTools 同一份清单）：
@@ -9,7 +10,7 @@ export const TRADE_TOOLS = [
 ] as const;
 export const DATA_TOOLS = [
   'klines', 'kline_structure', 'indicators', 'market_snapshot', 'funding_history', 'orderbook_depth', 'option_iv',
-  'derivatives_history', 'whale_positions', 'news_search',
+  'derivatives_history', 'whale_positions', 'news_search', 'cross_asset_snapshot',
 ] as const;
 
 /** 工具 id → 词表 key（存 key 不存文案：模块级常量只算一次，切语言不会失效） */
@@ -20,6 +21,7 @@ const TOOL_KEY: Record<string, string> = {
   indicators: 'tool.indicators', market_snapshot: 'tool.marketSnapshot', funding_history: 'tool.fundingHistory',
   orderbook_depth: 'tool.orderbookDepth', option_iv: 'tool.optionIv', news_search: 'tool.newsSearch',
   derivatives_history: 'tool.derivativesHistory', whale_positions: 'tool.whalePositions',
+  cross_asset_snapshot: 'tool.crossAssetSnapshot',
 };
 
 /** 工具的展示名；表里没有的（后端加了新工具）原样显示 id */
@@ -38,6 +40,23 @@ export interface ActionRow {
   rejected?: string;
   error?: string;
   args?: Record<string, unknown>;
+}
+
+export function parseActions(json: string | null): ActionRow[] {
+  try {
+    return json ? JSON.parse(json) as ActionRow[] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 不算「动过仓位」的交易工具：布盯盘、查账户 */
+const NOT_ACTING = new Set(['set_watch', 'get_account']);
+
+/** 这轮做成了的交易动作（布盯盘、查账户、被拒、出错的不算） */
+export function doneTrades(d: AiTraderDecisionView): ActionRow[] {
+  return parseActions(d.actionsJson)
+    .filter(a => TRADE_TOOL_SET.has(a.tool) && !NOT_ACTING.has(a.tool) && !a.rejected && a.status !== 'error');
 }
 
 /** 交易动作的关键参数一行话（按工具挑重点，不倒整个 JSON）。词表在函数体里现查，切语言即变 */
@@ -98,6 +117,7 @@ export function dataArgsSummary(tool: string, args: Record<string, unknown>): st
     case 'whale_positions':
       return g('symbol');
     case 'news_search':
+    case 'cross_asset_snapshot':
       return '';
     default:
       return null;

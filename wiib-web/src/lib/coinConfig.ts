@@ -10,6 +10,8 @@ export interface CoinCfg {
   symbol: string;
   /** 展示名。BTC/SOXL 这类本身就是代号，写死字面量；黄金/闪迪这类要随语言变的写成 getter（见 COIN_MAP） */
   name: string;
+  /** 全称，trader 选币卡上跟代号并排显示；只有加密币有 */
+  fullName?: string;
   pair: string;
   tvSymbol: string;
   futuresTvSymbol: string;
@@ -39,51 +41,51 @@ export interface CoinCfg {
  */
 export const COIN_MAP: Record<string, CoinCfg> = {
   BTCUSDT: {
-    symbol: 'BTCUSDT', name: 'BTC', pair: 'BTC / USDT', tvSymbol: 'BINANCE:BTCUSD', futuresTvSymbol: 'BINANCE:BTCUSDT.P',
+    symbol: 'BTCUSDT', name: 'BTC', fullName: 'Bitcoin', pair: 'BTC / USDT', tvSymbol: 'BINANCE:BTCUSD', futuresTvSymbol: 'BINANCE:BTCUSDT.P',
     icon: Btc,
     colorClass: 'text-orange-500', bgClass: 'bg-orange-500/10', hoverBgClass: 'hover:bg-orange-500/20', gradientClass: 'from-orange-500/5',
     chartColor: '#f97316',
   },
   ETHUSDT: {
-    symbol: 'ETHUSDT', name: 'ETH', pair: 'ETH / USDT', tvSymbol: 'BINANCE:ETHUSD', futuresTvSymbol: 'BINANCE:ETHUSDT.P',
+    symbol: 'ETHUSDT', name: 'ETH', fullName: 'Ethereum', pair: 'ETH / USDT', tvSymbol: 'BINANCE:ETHUSD', futuresTvSymbol: 'BINANCE:ETHUSDT.P',
     icon: Eth,
     colorClass: 'text-indigo-400', bgClass: 'bg-indigo-500/10', hoverBgClass: 'hover:bg-indigo-500/20', gradientClass: 'from-indigo-500/5',
     chartColor: '#818cf8',
   },
   DOGEUSDT: {
-    symbol: 'DOGEUSDT', name: 'DOGE', pair: 'DOGE / USDT', tvSymbol: 'BINANCE:DOGEUSDT', futuresTvSymbol: 'BINANCE:DOGEUSDT.P',
+    symbol: 'DOGEUSDT', name: 'DOGE', fullName: 'Dogecoin', pair: 'DOGE / USDT', tvSymbol: 'BINANCE:DOGEUSDT', futuresTvSymbol: 'BINANCE:DOGEUSDT.P',
     priceDecimals: 5, icon: Doge,
     colorClass: 'text-amber-500', bgClass: 'bg-amber-500/10', hoverBgClass: 'hover:bg-amber-500/20', gradientClass: 'from-amber-500/5',
     chartColor: '#f59e0b',
   },
   SOLUSDT: {
-    symbol: 'SOLUSDT', name: 'SOL', pair: 'SOL / USDT', tvSymbol: 'BINANCE:SOLUSDT', futuresTvSymbol: 'BINANCE:SOLUSDT.P',
+    symbol: 'SOLUSDT', name: 'SOL', fullName: 'Solana', pair: 'SOL / USDT', tvSymbol: 'BINANCE:SOLUSDT', futuresTvSymbol: 'BINANCE:SOLUSDT.P',
     icon: Sol,
     colorClass: 'text-purple-500', bgClass: 'bg-purple-500/10', hoverBgClass: 'hover:bg-purple-500/20', gradientClass: 'from-purple-500/5',
     chartColor: '#a855f7',
   },
   XRPUSDT: {
-    symbol: 'XRPUSDT', name: 'XRP', pair: 'XRP / USDT', tvSymbol: 'BINANCE:XRPUSDT', futuresTvSymbol: 'BINANCE:XRPUSDT.P',
+    symbol: 'XRPUSDT', name: 'XRP', fullName: 'XRP Ledger', pair: 'XRP / USDT', tvSymbol: 'BINANCE:XRPUSDT', futuresTvSymbol: 'BINANCE:XRPUSDT.P',
     priceDecimals: 4, icon: Xrp,
     // 官方 X 符号是黑/白单色，图标跟前景色走；面板底色/走势线仍用蓝系区分
     colorClass: 'text-foreground', bgClass: 'bg-sky-500/10', hoverBgClass: 'hover:bg-sky-500/20', gradientClass: 'from-sky-500/5',
     chartColor: '#0ea5e9',
   },
   BNBUSDT: {
-    symbol: 'BNBUSDT', name: 'BNB', pair: 'BNB / USDT', tvSymbol: 'BINANCE:BNBUSDT', futuresTvSymbol: 'BINANCE:BNBUSDT.P',
+    symbol: 'BNBUSDT', name: 'BNB', fullName: 'BNB Chain', pair: 'BNB / USDT', tvSymbol: 'BINANCE:BNBUSDT', futuresTvSymbol: 'BINANCE:BNBUSDT.P',
     icon: Bnb,
     colorClass: 'text-yellow-400', bgClass: 'bg-yellow-400/10', hoverBgClass: 'hover:bg-yellow-400/20', gradientClass: 'from-yellow-400/5',
     chartColor: '#f0b90b',
   },
   ZECUSDT: {
-    symbol: 'ZECUSDT', name: 'ZEC', pair: 'ZEC / USDT', tvSymbol: 'BINANCE:ZECUSDT', futuresTvSymbol: 'BINANCE:ZECUSDT.P',
+    symbol: 'ZECUSDT', name: 'ZEC', fullName: 'Zcash', pair: 'ZEC / USDT', tvSymbol: 'BINANCE:ZECUSDT', futuresTvSymbol: 'BINANCE:ZECUSDT.P',
     icon: Zec,
     colorClass: 'text-amber-400', bgClass: 'bg-amber-400/10', hoverBgClass: 'hover:bg-amber-400/20', gradientClass: 'from-amber-400/5',
     chartColor: '#f4b728',
   },
   // HYPE：Binance 主站只有永续没现货，归 crypto 但按纯合约走
   HYPEUSDT: {
-    symbol: 'HYPEUSDT', name: 'HYPE', pair: 'HYPE / USDT', tvSymbol: 'BINANCE:HYPEUSDT.P', futuresTvSymbol: 'BINANCE:HYPEUSDT.P',
+    symbol: 'HYPEUSDT', name: 'HYPE', fullName: 'Hyperliquid', pair: 'HYPE / USDT', tvSymbol: 'BINANCE:HYPEUSDT.P', futuresTvSymbol: 'BINANCE:HYPEUSDT.P',
     priceDecimals: 3, icon: Hype,
     colorClass: 'text-teal-400', bgClass: 'bg-teal-400/10', hoverBgClass: 'hover:bg-teal-400/20', gradientClass: 'from-teal-400/5',
     chartColor: '#50d2c1', futuresOnly: true,

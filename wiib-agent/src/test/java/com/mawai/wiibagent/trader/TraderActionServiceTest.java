@@ -2,6 +2,7 @@ package com.mawai.wiibagent.trader;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -13,6 +14,7 @@ import com.mawai.wiibagent.trader.TraderActionService.ActionResult;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
+import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,15 +24,19 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -447,6 +453,15 @@ class TraderActionServiceTest {
             w.getTargetSql();
             return w.getParamNameValuePairs().containsValue(AiTraderDecision.KIND_REVIEW) ? reviewRow : wakeRow;
         });
+        // 今天醒了几次：只数北京时间零点起的，跳过的不算
+        long todayStart = LocalDate.now(WakeWindow.ZONE).atStartOfDay(WakeWindow.ZONE).toInstant().toEpochMilli();
+        when(decisionMapper.selectMaps(any())).thenAnswer(inv -> {
+            QueryWrapper<AiTraderDecision> w = inv.getArgument(0);
+            w.getTargetSql();
+            assertThat(w.getParamNameValuePairs()).containsValues(todayStart, AiTraderDecision.STATUS_SKIPPED);
+            return List.of(Map.of("kind", AiTraderDecision.KIND_TRADE, "n", 7L),
+                    Map.of("kind", AiTraderDecision.KIND_WATCH, "n", 1L));
+        });
 
         ActionPanel p = service.panel(ME);
 
@@ -459,6 +474,7 @@ class TraderActionServiceTest {
         assertThat(p.nextWakeAt()).isEqualTo(1_700_000_000_000L);
         // 面板显示的拒因，就是真点下去会拿到的那一句
         assertThat(p.wakeBlockedReason()).isEqualTo("距下一次例行唤醒不足30秒");
+        assertThat(p.todayWakes()).containsExactly(entry(AiTraderDecision.KIND_TRADE, 7L), entry(AiTraderDecision.KIND_WATCH, 1L));
         assertThat(p.lastReviewAt()).isEqualTo(epochMs(reviewedAt));
         assertThat(p.lastReviewStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
         assertThat(p.hasReviewMaterial()).isTrue();

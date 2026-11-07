@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -11,11 +12,14 @@ import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
+import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.time.ZoneId;
@@ -55,11 +59,12 @@ public class TraderActionService {
      * 动作面板的一次性状态：三张卡要显示的东西全在这里，前端一个请求填满面板。
      *
      * @param wakeBlockedReason   null=可唤醒，否则是不能唤醒的原话
+     * @param todayWakes          今天（北京时间）本局醒了几次，按叫醒原因分，多的在前；跳过的不算
      * @param reviewBlockedReason null=可复盘（有没有素材另看 hasReviewMaterial）
      * @param noteRounds          当前留言剩余轮次，0=无待读留言
      */
     public record ActionPanel(boolean hasTrader, String name, String status, String pausedReason,
-                              Long lastWakeAt, Long nextWakeAt, String wakeBlockedReason,
+                              Long lastWakeAt, Long nextWakeAt, String wakeBlockedReason, Map<String, Long> todayWakes,
                               Long lastReviewAt, String lastReviewStatus,
                               boolean hasReviewMaterial, String reviewBlockedReason,
                               String note, int noteRounds, int noteMaxRounds, int noteMaxChars) {
@@ -223,7 +228,7 @@ public class TraderActionService {
     public ActionPanel panel(long userId) {
         AiTrader t = traderService.mine(userId);
         if (t == null) {
-            return new ActionPanel(false, null, null, null, null, null, null, null, null,
+            return new ActionPanel(false, null, null, null, null, null, null, Map.of(), null, null,
                     false, null, null, 0, MAX_NOTE_ROUNDS, MAX_NOTE_CHARS);
         }
         WakeState wake = wakeState(t, RequestLang.current());
@@ -232,7 +237,7 @@ public class TraderActionService {
         String reviewBlocked = reviewBlockedReason(t);
         return new ActionPanel(
                 true, t.getName(), t.getStatus(), t.getPausedReason(),
-                wake.lastWakeAt(), wake.nextWakeAt(), wake.blockedReason(),
+                wake.lastWakeAt(), wake.nextWakeAt(), wake.blockedReason(), todayWakes(t),
                 lastReview == null ? null : epochMs(lastReview.getCreatedAt()),
                 lastReview == null ? null : lastReview.getStatus(),
                 reviewRunner.hasMaterial(t, System.currentTimeMillis()),
@@ -240,6 +245,25 @@ public class TraderActionService {
                 t.getOwnerNote(),
                 t.getOwnerNoteRounds() == null ? 0 : t.getOwnerNoteRounds(),
                 MAX_NOTE_ROUNDS, MAX_NOTE_CHARS);
+    }
+
+    /** 今天（北京时间零点起）本局醒了几次，按叫醒原因分，多的在前；复盘不算醒来，跳过的不算 */
+    private Map<String, Long> todayWakes(AiTrader t) {
+        long dayStart = LocalDate.now(WakeWindow.ZONE).atStartOfDay(WakeWindow.ZONE).toInstant().toEpochMilli();
+        List<Map<String, Object>> rows = decisionMapper.selectMaps(new QueryWrapper<AiTraderDecision>()
+                .select("kind", "COUNT(*) AS n")
+                .eq("trader_id", t.getId())
+                .eq("round_no", t.getRoundNo())
+                .in("kind", AiTraderDecision.WAKE_KINDS)
+                .ne("status", AiTraderDecision.STATUS_SKIPPED)
+                .ge("wake_time", dayStart)
+                .groupBy("kind")
+                .orderByDesc("n"));
+        Map<String, Long> out = new LinkedHashMap<>();
+        for (Map<String, Object> r : rows) {
+            out.put((String) r.get("kind"), ((Number) r.get("n")).longValue());
+        }
+        return out;
     }
 
     /** 本局最新的一条指定类型决策行；含 ERROR，面板要说得清"上次复盘失败了" */

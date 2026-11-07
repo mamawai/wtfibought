@@ -620,6 +620,8 @@ export interface TraderActionPanel {
   nextWakeAt: number | null;
   /** null=可唤醒，否则是不能唤醒的原话，直接显示给用户 */
   wakeBlockedReason: string | null;
+  /** 今天（北京时间）本局醒了几次：叫醒原因 → 次数，多的在前；跳过的不算 */
+  todayWakes: Record<string, number>;
   lastReviewAt: number | null;
   lastReviewStatus: string | null;
   hasReviewMaterial: boolean;
@@ -864,7 +866,7 @@ export interface TraderSpec {
   /** 杠杆区间，1~125；实际可用还受交易所按名义价值分档限制 */
   leverageMin: number;
   leverageMax: number;
-  /** 单笔保证金占权益%上限，0.1~100，没有下限；只约束开新仓，加仓量由模型自己斟酌 */
+  /** 单笔保证金占权益%上限，0.1~50，没有下限；只约束开新仓，加仓量由模型自己斟酌 */
   marginPctMax: number;
   /** 允许同时持有多个仓位；关=全账户至多一仓（挂单也占坑） */
   allowMultiPosition: boolean;
@@ -941,6 +943,27 @@ export interface TraderDetailView {
   memory: string | null;
   /** 最近一次复盘写 memory 的 wakeTime(ms)，没有=null */
   lastReviewAt: number | null;
+  /** 下次例行唤醒时刻(ms)；不在运行中为 null */
+  nextWakeAt: number | null;
+  /** 本局还在盯的条件 */
+  watches: TraderWatch[];
+}
+
+/** 它给自己布的一条盯盘条件（ai_trader_watch 原样），命中就叫醒它 */
+export interface TraderWatch {
+  id: number;
+  symbol: string;
+  kind: 'TOUCH_ABOVE' | 'TOUCH_BELOW' | 'CLOSE_ABOVE' | 'CLOSE_BELOW' | 'AT_TIME';
+  /** 价位；AT_TIME 为 null */
+  level: number | null;
+  /** CLOSE_* 的周期 5m/15m/1h/4h/1d；别的为 null */
+  period: string | null;
+  /** AT_TIME 的时刻 ms；别的为 null */
+  atTime: number | null;
+  /** 它给下一轮自己的备注：这条命中意味着什么 */
+  note: string;
+  /** 布下它的那轮唤醒时刻 ms */
+  createdWakeTime: number;
 }
 
 /** 每次唤醒一条决策（竞技场时间线） */

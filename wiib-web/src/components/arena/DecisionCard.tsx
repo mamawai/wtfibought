@@ -7,14 +7,8 @@ import type { AiTraderDecisionView, WakeTrace } from '../../types';
 import { Markdown } from '../Markdown';
 import { ReasoningFold } from './ReasoningFold';
 import { WakeTraceView } from './WakeTraceView';
-import { TRADE_TOOL_SET, toolName, tradeArgsSummary, type ActionRow } from './traderTools';
-
-/** 状态徽章存的是词表 key：模块级常量只算一次，存翻好的字面量切了语言也不会变 */
-const STATUS_CHIP: Record<string, { labelKey: string; cls: string }> = {
-  OK: { labelKey: 'decision.ok', cls: '' },
-  ERROR: { labelKey: 'decision.error', cls: 'dn' },
-  SKIPPED: { labelKey: 'decision.skipped', cls: 'mute' },
-};
+import { parseActions, TRADE_TOOL_SET, toolName, tradeArgsSummary } from './traderTools';
+import { KIND_CHIP, useKindLabel } from './useKindLabel';
 
 /** 复盘紫：复盘行混在时间线上要能一眼分清 */
 const REVIEW_INK = '#7c5cff';
@@ -40,15 +34,9 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
     traceRequested.current = true;
     void traderApi.decisionTrace(d.traderId, d.id).then(setTrace, () => { traceRequested.current = false; });
   };
+  const kindLabel = useKindLabel();
   const isReview = d.kind === 'REVIEW';
-  const status = STATUS_CHIP[d.status] ?? STATUS_CHIP.OK;
-  const actions = useMemo<ActionRow[]>(() => {
-    try {
-      return d.actionsJson ? JSON.parse(d.actionsJson) as ActionRow[] : [];
-    } catch {
-      return [];
-    }
-  }, [d.actionsJson]);
+  const actions = useMemo(() => parseActions(d.actionsJson), [d.actionsJson]);
   const dataCalls = actions.filter(a => !TRADE_TOOL_SET.has(a.tool));
   const trades = actions.filter(a => TRADE_TOOL_SET.has(a.tool));
   // 同一工具多周期连查几次只点名一次；出错的排前面露出来
@@ -81,14 +69,11 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
           // 观望门控跳过的复盘行（SKIPPED）不是失败：灰徽章，error 字段带着跳过缘由
           ) : d.status === 'SKIPPED' ? <span className="chip mute">{t('decision.skipped')}</span>
             : <span className="chip dn">{t('decision.reviewFailed')}</span>
-        ) : (
+        ) : d.status === 'SKIPPED' ? <span className="chip mute">{t('decision.skipped')}</span> : (
           <>
-            <span className={cn('chip', status.cls)}>{t(status.labelKey)}</span>
-            {/* 警报＝哨兵在极端波动时叫醒的，事件＝止损/止盈/强平/限价成交叫醒的，手动＝扳机在主人手里（对话轨 wake_trader），都不是例行K线节奏 */}
-            {d.kind === 'ALERT' && <span className="chip wn">{t('decision.alert')}</span>}
-            {d.kind === 'EVENT' && <span className="chip wn">{t('decision.event')}</span>}
-            {d.kind === 'WATCH' && <span className="chip wn">{t('decision.watch')}</span>}
-            {d.kind === 'MANUAL' && <span className="chip mute">{t('term.manualWake')}</span>}
+            {/* 是什么叫醒它的：例行心跳 / 盯盘触发 / 持仓有变化 / 剧烈波动 / 手动 */}
+            <span className={cn('chip', KIND_CHIP[d.kind])}>{kindLabel(d.kind, !!mine, d.intervalCode)}</span>
+            {d.status === 'ERROR' && <span className="chip dn">{t('decision.error')}</span>}
           </>
         )}
         <span className="num text-[13px] mute">{fmtDateTime(d.wakeTime)}</span>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, Loader2, RefreshCw, X } from 'lucide-react';
@@ -7,16 +7,18 @@ import { useToast } from '../components/ui/use-toast';
 import { DatePicker } from '../components/ui/date-picker';
 import { Markdown } from '../components/Markdown';
 import { DecisionCard } from '../components/arena/DecisionCard';
-import { EquityCurve } from '../components/arena/EquityCurve';
+import { EquityCurve, type CurveEvent } from '../components/arena/EquityCurve';
+import { HeartbeatStrip } from '../components/arena/HeartbeatStrip';
+import { Holdings, WatchList } from '../components/arena/HoldingsPanel';
 import { LiveRunCard } from '../components/arena/LiveRunCard';
-import { PlanBlock } from '../components/arena/PlanBlock';
-import { PositionsTable } from '../components/arena/PositionsTable';
 import { ScoreStrip } from '../components/arena/ScoreStrip';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { TradeCard } from '../components/arena/TradeCard';
+import { doneTrades } from '../components/arena/traderTools';
 import { useCountUp } from '../hooks/useCountUp';
 import { useStagger } from '../hooks/useStagger';
-import { cn, dayBounds, fmtDate, fmtDateTime, fmtNum, fmtSignedPct, fmtTime, fmtTokens, DAY_MS } from '../lib/utils';
+import { COIN_MAP } from '../lib/coinConfig';
+import { cn, dayBounds, fmtDate, fmtDateTime, fmtNum, fmtSignedPct, fmtTokens, parseServerTime, DAY_MS } from '../lib/utils';
 import type { AiTraderDecisionView, TradeDecisionRef, TradeRecordView, TraderDetailView, TraderEquityPoint } from '../types';
 
 const REFRESH_MS = 60_000;
@@ -25,12 +27,15 @@ const PAGE = 50;
 const RANGES = [3, 7, 14, 30, 0] as const;
 type Range = typeof RANGES[number];
 type Tab = 'timeline' | 'trades';
+/** 时间线筛选：全部 / 动过仓位的 / 被叫醒的（例行心跳之外） / 复盘 */
+const FILTERS = ['all', 'acted', 'woken', 'review'] as const;
+type Filter = typeof FILTERS[number];
+const WOKEN_KINDS = new Set(['WATCH', 'EVENT', 'ALERT', 'MANUAL']);
 
 /** 块头：和分节头同一套排版，只是间距紧一档 */
 const BLK_H = 'sec-h mb-4';
 
-/** 币种列表 BTCUSDT,ETHUSDT → BTC / ETH */
-const symbolList = (symbols: string) => symbols.split(',').map(s => s.replace('USDT', '')).join(' / ');
+const coinName = (symbol: string) => COIN_MAP[symbol]?.name ?? symbol.replace('USDT', '');
 
 /**
  * 最大回撤%：净值从峰值回落的最大幅度，口径同后端 ReviewMaterialAssembler——
@@ -83,8 +88,8 @@ function NotesCard({ title, time, content, empty }: {
 }
 
 /**
- * trader 详情：记分牌 → 六格仪表条 → 左主栏（净值 + 现场 + 时间线）‖ 右侧栏（持仓 + 计划 + 经验账本）。
- * 决策时间线是这页的正餐，整页滚不封顶；窄屏两栏堆成一列，卡序另排（见布局处注释）。
+ * trader 工作台：页头（背后是币代号水印）→ 心跳条 → 记分条 → 左主栏（净值 + 实时思考 + 时间线）‖ 右栏（仓位 + 盯盘 + 笔记）。
+ * 时间线是这页的正餐，整页滚不封顶；窄屏两栏堆成一列，卡序另排（见布局处注释）。
  */
 export function ArenaDetail() {
   const { t } = useTranslation(['ai', 'common']);
@@ -105,13 +110,16 @@ export function ArenaDetail() {
   // 时间线按天：null=不限日期；yyyy-MM-dd 是新加坡时区那一天
   const [day, setDay] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('timeline');
+  const [filter, setFilter] = useState<Filter>('all');
   // 从已了结交易跳过来要找的那一条决策：描边 + 滚到它
   const [focusId, setFocusId] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // 时间线/已了结共用一个逐项登场：两个列表同一时刻只有一个挂着
   const staggerRef = useStagger<HTMLDivElement>();
-  // 现场卡报上来的"刚跑完一轮"时刻：新决策行、净值点、持仓都在那一刻落库，据此立刻重拉
+  // 实时思考卡报上来的"刚跑完一轮"时刻：新决策行、净值点、持仓都在那一刻落库，据此立刻重拉
   const [endedAt, setEndedAt] = useState(0);
+  // 它正醒着想事（只有主人看得到）：心跳条亮橙线
+  const [liveRunning, setLiveRunning] = useState(false);
 
   // load 最近一次发请求时的 trader 和局，也就是当前筛选
   const loadAtRef = useRef<{ traderId: number; round: number | null } | null>(null);
@@ -241,6 +249,7 @@ export function ArenaDetail() {
   const jumpToDecision = (d: TradeDecisionRef) => {
     jumpTargetRef.current = d.id;
     setTab('timeline');
+    setFilter('all');
     setRound(null);
     setDay(fmtDate(d.wakeTime));
     setFocusId(d.id);
@@ -266,6 +275,34 @@ export function ArenaDetail() {
   const windowDelta = visible.length > 1 ? visible[visible.length - 1].equity - visible[0].equity : null;
   const windowPct = windowDelta != null && visible[0].equity ? windowDelta / visible[0].equity * 100 : null;
 
+  // 净值图悬停时写出这个点上开平了哪笔单子
+  const curveEvents = useMemo<CurveEvent[]>(() => {
+    const side = (s: string) => t(s === 'LONG' ? 'term.long' : 'term.short');
+    const events: CurveEvent[] = [];
+    for (const r of trades) {
+      events.push({ at: r.openedAt, text: t('wb.ev.open', { coin: coinName(r.symbol), side: side(r.side) }) });
+      if (r.closedPnl != null) {
+        events.push({
+          at: r.closedAt,
+          text: t('wb.ev.close', {
+            coin: coinName(r.symbol), how: t(`trade.closeManner.${r.closeMannerKey}`),
+            pnl: `${r.closedPnl >= 0 ? '+' : '-'}${fmtNum(Math.abs(r.closedPnl))}`,
+          }),
+        });
+      }
+    }
+    for (const p of detail?.positions ?? []) {
+      events.push({ at: parseServerTime(p.createdAt).getTime(), text: t('wb.ev.open', { coin: coinName(p.symbol), side: side(p.side) }) });
+    }
+    return events;
+  }, [trades, detail, t]);
+
+  // 时间线筛选：每条只解析一次动作
+  const actedIds = useMemo(() => new Set(decisions.filter(d => doneTrades(d).length > 0).map(d => d.id)), [decisions]);
+  const passes = (d: AiTraderDecisionView, f: Filter) =>
+    f === 'all' || (f === 'review' ? d.kind === 'REVIEW' : f === 'woken' ? WOKEN_KINDS.has(d.kind) : actedIds.has(d.id));
+  const shown = decisions.filter(d => passes(d, filter));
+
   // tr=这只 trader（不叫 t，那是词表查询函数）
   const tr = detail?.trader;
   const st = tr ? (STATUS_META[tr.status] ?? STATUS_META.PAUSED) : null;
@@ -281,7 +318,7 @@ export function ArenaDetail() {
     : [];
   const roundLabel = viewingHistory ? `R${viewingRound}` : t('detail.thisRound');
 
-  // 记分牌：第几天＝曲线首点到末点（末点就是最近一次唤醒）；笔数/胜率从已了结交易现算，只有当前局的
+  // 记分条：第几天＝曲线首点到末点（末点就是最近一次唤醒）；笔数/胜率从已了结交易现算，只有当前局的
   const dayNo = curve.length > 0
     ? Math.floor((curve[curve.length - 1].wakeTime - curve[0].wakeTime) / DAY_MS) + 1
     : null;
@@ -290,61 +327,88 @@ export function ArenaDetail() {
   const maxDd = maxDrawdownPct(curve);
   // token 那格的微标签跟着时间线筛选走：翻到某天就是那天，没翻就是当前看的这一局
   const tokenScope = day ? day.slice(5) : roundLabel;
+  // 心跳条第四格：在盯几条，其中看价格的几条
+  const watchN = detail?.watches.length ?? 0;
+  const priceWatchN = detail?.watches.filter(w => w.kind !== 'AT_TIME').length ?? 0;
 
   const tabBtn = (on: boolean) => cn('pb-2.5 -mb-px inline-flex items-center gap-2 text-[15px] border-b-2 cursor-pointer',
     on ? 'text-foreground font-extrabold border-foreground' : 'mute font-semibold border-transparent');
 
   return (
     <div className="wrap">
-      {/* 记分牌：左身份 + 局次，右收益率 + 权益 */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-8 items-end pt-8">
-        <div>
-          <Link to="/arena" className="inline-flex items-center gap-1 text-[13px] mute mb-2.5">
-            <ChevronLeft className="w-3.5 h-3.5" />{t('term.backToArena')}
-          </Link>
-          <div className="flex items-baseline gap-4 flex-wrap">
-            <b className="cond text-[56px] font-bold leading-none">{tr?.name ?? '…'}</b>
-            {tr && st && (
-              <span className={cn('chip', st.chip)}>
-                {tr.status === 'RUNNING' && <i className="dot pulse" />}{t(st.labelKey)}
-              </span>
-            )}
-            {tr?.mine && <span className="chip fill orange">{t('arena.mine')}</span>}
+      {/* 页头：左名字 + 一行说明 + 局次，右收益率 + 权益；背后是它交易的币代号水印 */}
+      <section className="relative overflow-hidden pt-8 pb-10">
+        {tr && (
+          <div className="tr-hwm" aria-hidden="true">
+            {tr.symbols.split(',').map(s => (
+              <b key={s} style={{ '--c': COIN_MAP[s]?.chartColor ?? 'currentColor' } as CSSProperties}>{coinName(s)}</b>
+            ))}
+          </div>
+        )}
+        <div className="relative grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-8 items-end">
+          <div>
+            <Link to="/arena" className="inline-flex items-center gap-1 text-[13px] mute mb-2.5">
+              <ChevronLeft className="w-3.5 h-3.5" />{t('term.backToArena')}
+            </Link>
+            <div className="flex items-center gap-3.5 flex-wrap">
+              <b className="cond text-[56px] font-bold leading-none">{tr?.name ?? '…'}</b>
+              {tr && st && (
+                <span className={cn('chip', st.chip)}>
+                  {tr.status === 'RUNNING' && <i className="dot pulse" />}{t(st.labelKey)}
+                </span>
+              )}
+              {tr?.mine && <span className="chip fill orange">{t('arena.mine')}</span>}
+            </div>
             {tr && (
-              <span className="text-[14px] mute">
-                {tr.model ?? t('term.noModel')} · {tr.intervalCode} · {symbolList(tr.symbols)} · {tr.wakeWindow ?? t('detail.allDayWake')}
-              </span>
+              <div className="text-[14px] mute mt-3">
+                {[
+                  tr.model ?? t('term.noModel'),
+                  t('wb.meta.beat', { iv: tr.intervalCode }),
+                  tr.wakeWindow ? t('wb.meta.window', { win: tr.wakeWindow.replace('-', '–') }) : t('detail.allDayWake'),
+                  t('wb.meta.round', { n: tr.roundNo }),
+                ].join(' · ')}
+              </div>
             )}
           </div>
-          <div className="flex items-center gap-2.5 flex-wrap mt-3 text-[13px] mute">
-            {/* 局次：每局是独立子账户各自注资 10000，曲线与时间线同进同出；只有一局时不出现 */}
-            {rounds.length > 1 && (
-              <>
-                <span>{t('detail.round')}</span>
-                <div className="seg">
-                  {rounds.map(r => (
-                    <button key={r} type="button" className={cn('num', r === viewingRound && 'on')}
-                            onClick={() => pickRound(r === tr?.roundNo ? null : r)}>R{r}</button>
-                  ))}
-                </div>
-              </>
-            )}
-            <button type="button" className="ibtn" aria-label={t('common:refresh')}
-                    onClick={() => { load(); setRefreshNonce(n => n + 1); }}>
-              <RefreshCw className="ic" />
-            </button>
+          <div className="num xl:text-right">
+            <b ref={pctRef} className={cn('cond block text-[72px] font-bold leading-none', (tr?.pnlPct ?? 0) >= 0 ? 'up' : 'dn')} />
+            <div className="flex items-baseline gap-3.5 xl:justify-end mt-2 text-[14px] mute">
+              <span>{t('term.equity')} <b ref={eqRef} className="text-foreground text-[18px] font-semibold [font-stretch:85%]" /></span>
+              <span>{t('detail.initialLabel')}</span>
+            </div>
+            <div className="flex items-center gap-2.5 flex-wrap xl:justify-end mt-3 text-[13px] mute">
+              {/* 局次：每局是独立子账户各自注资 10000，曲线与时间线同进同出；只有一局时不出现 */}
+              {rounds.length > 1 && (
+                <>
+                  <span>{t('detail.round')}</span>
+                  <div className="seg">
+                    {rounds.map(r => (
+                      <button key={r} type="button" className={cn('num', r === viewingRound && 'on')}
+                              onClick={() => pickRound(r === tr?.roundNo ? null : r)}>R{r}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button type="button" className="ibtn" aria-label={t('common:refresh')}
+                      onClick={() => { load(); setRefreshNonce(n => n + 1); }}>
+                <RefreshCw className="ic" />
+              </button>
+            </div>
           </div>
         </div>
-        <div className="num xl:text-right">
-          <b ref={pctRef} className={cn('cond block text-[72px] font-bold leading-none', (tr?.pnlPct ?? 0) >= 0 ? 'up' : 'dn')} />
-          <div className="flex items-baseline gap-3.5 xl:justify-end mt-2 text-[14px] mute">
-            <span>{t('term.equity')} <b ref={eqRef} className="text-foreground text-[18px] font-semibold [font-stretch:85%]" /></span>
-            <span>{t('detail.initialLabel')}</span>
-          </div>
-        </div>
-      </div>
+      </section>
 
-      {/* 仪表条：六格平铺，窄屏三格两行 */}
+      {tr && st && detail && (
+        <HeartbeatStrip key={traderId} traderId={traderId} intervalCode={tr.intervalCode} wakeWindow={tr.wakeWindow}
+                        running={tr.status === 'RUNNING'} idleText={t(st.labelKey)} nextWakeAt={detail.nextWakeAt}
+                        mine={tr.mine} live={liveRunning} refreshKey={detail}
+                        extra={{
+                          k: t('wb.hb.watch'), v: t('wb.hb.watchN', { n: watchN }),
+                          s: watchN ? t('wb.hb.watchMix', { p: priceWatchN, t: watchN - priceWatchN }) : t('wb.hb.watchNone'),
+                        }} />
+      )}
+
+      {/* 记分条：六格平铺，窄屏三格两行 */}
       <ScoreStrip cells={[
         { label: roundLabel, value: dayNo != null ? t('detail.dayN', { n: dayNo }) : '—' },
         { label: t('detail.closedCount'), value: t('detail.tradesN', { count: closed.length }) },
@@ -364,16 +428,16 @@ export function ArenaDetail() {
       {tr?.pausedReason && (
         <div className="mt-3.5 border-l-4 border-warning pl-3 py-1 text-[13px] text-warning">{tr.pausedReason}</div>
       )}
-      {/* 持仓/计划/已了结是实时现查当前账户的，看历史局时跟曲线不是同一局，一条横幅说清楚 */}
+      {/* 持仓/盯盘/已了结是实时现查当前账户的，看历史局时跟曲线不是同一局，一条横幅说清楚 */}
       {viewingHistory && (
         <div className="mt-3.5 border-l-4 border-warning pl-3 py-1 text-[13px] text-warning">
           {t('detail.historyRoundBanner', { viewing: viewingRound, cur: tr.roundNo })}
         </div>
       )}
 
-      {/* 贯通两栏：左主栏 曲线 + 现场（唤醒中才有）+ 时间线，右侧栏 持仓 + 计划 + 经验账本。
+      {/* 贯通两栏：左主栏 曲线 + 实时思考（醒着才有）+ 时间线，右栏 仓位 + 盯盘 + 笔记。
           窄屏两个栏 div 退成 contents，六块直接落进外层单列 grid，再靠 order 排成
-          曲线 → 现场 → 持仓 → 计划 → 笔记 → 时间线：时间线能一直往下加载，压在最后才不会把别的挤没 */}
+          曲线 → 实时思考 → 仓位 → 盯盘 → 笔记 → 时间线：时间线能一直往下加载，压在最后才不会把别的挤没 */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-10">
         <div className="contents xl:flex xl:col-span-7 xl:flex-col xl:gap-11">
           <div className="order-1 xl:order-none">
@@ -388,14 +452,14 @@ export function ArenaDetail() {
               </div>
             </div>
             {visible.length > 1
-              ? <EquityCurve points={visible} lastLabel={t('detail.lastWake', { time: fmtTime(visible[visible.length - 1].wakeTime) })} />
-              : <div className="h-[280px] flex items-center justify-center text-[14px] mute">{t('detail.notEnoughPoints')}</div>}
+              ? <EquityCurve points={visible} events={curveEvents} />
+              : <div className="h-[300px] flex items-center justify-center text-[14px] mute">{t('detail.notEnoughPoints')}</div>}
           </div>
 
-          {/* 现场只给主人：门控必须在这层，LiveRunCard 一挂载就建流，卡片内部 return null 拦不住 */}
-          {/* 主人这边常挂着（里面的流要一直连着），唤醒中才渲染出来 */}
+          {/* 实时思考只给主人：门控必须在这层，LiveRunCard 一挂载就建流，卡片内部 return null 拦不住 */}
+          {/* 主人这边常挂着（里面的流要一直连着），醒着才渲染出来 */}
           {tr?.mine && (
-            <LiveRunCard traderId={traderId} intervalCode={tr.intervalCode} onEnded={setEndedAt}
+            <LiveRunCard traderId={traderId} intervalCode={tr.intervalCode} onEnded={setEndedAt} onRunning={setLiveRunning}
                          className="order-2 xl:order-none" />
           )}
 
@@ -426,22 +490,32 @@ export function ArenaDetail() {
             </div>
 
             {tab === 'timeline' ? (
-              decisions.length === 0 ? (
-                <div className="py-10 text-center text-[14px] mute">{day ? t('detail.noDecisionsDay') : t('detail.noDecisions')}</div>
-              ) : (
-                <>
-                  <div ref={staggerRef}>
-                    {decisions.map(d => <DecisionCard key={d.id} d={d} mine={tr?.mine} highlight={d.id === focusId} />)}
+              <>
+                {/* 筛选只在已经拉下来的这些里挑，计数也是 */}
+                <div className="flex gap-1.5 flex-wrap mt-3.5 mb-1">
+                  {FILTERS.map(f => (
+                    <button key={f} type="button" className={cn('tr-fchip', filter === f && 'on')} onClick={() => setFilter(f)}>
+                      {t(`wb.filter.${f}`)}<em className="num">{decisions.filter(d => passes(d, f)).length}</em>
+                    </button>
+                  ))}
+                </div>
+                {shown.length === 0 ? (
+                  <div className="py-10 text-center text-[14px] mute">
+                    {decisions.length > 0 ? t('wb.filter.none') : day ? t('detail.noDecisionsDay') : t('detail.noDecisions')}
                   </div>
-                  {hasMore && (
-                    <div className="py-4">
-                      <button type="button" onClick={loadMore} disabled={loadingMore} className="btn sm w-full disabled:opacity-40">
-                        {loadingMore && <Loader2 className="ic animate-spin" />}{t('detail.loadMore')}
-                      </button>
-                    </div>
-                  )}
-                </>
-              )
+                ) : (
+                  <div ref={staggerRef}>
+                    {shown.map(d => <DecisionCard key={d.id} d={d} mine={tr?.mine} highlight={d.id === focusId} />)}
+                  </div>
+                )}
+                {hasMore && decisions.length > 0 && (
+                  <div className="py-4">
+                    <button type="button" onClick={loadMore} disabled={loadingMore} className="btn sm w-full disabled:opacity-40">
+                      {loadingMore && <Loader2 className="ic animate-spin" />}{t('detail.loadMore')}
+                    </button>
+                  </div>
+                )}
+              </>
             ) : (
               trades.length === 0 ? (
                 <div className="py-10 text-center text-[14px] mute">{t('detail.noTrades')}</div>
@@ -455,26 +529,14 @@ export function ArenaDetail() {
           </div>
         </div>
 
-        <div className="contents xl:flex xl:col-span-5 xl:flex-col xl:gap-10">
+        <div className="contents xl:flex xl:col-span-5 xl:flex-col xl:gap-11">
           <div className="order-3 xl:order-none">
-            <div className={BLK_H}>
-              <h2>{t('detail.positionsTitle')}</h2>
-            </div>
-            {detail && (detail.positions.length === 0 && detail.pendingOrders.length === 0
-              ? <div className="py-6 text-[14px] mute">{t('detail.flat')}</div>
-              : <PositionsTable positions={detail.positions} orders={detail.pendingOrders} />)}
+            {detail && <Holdings positions={detail.positions} orders={detail.pendingOrders} plans={detail.plans} />}
           </div>
-
-          {/* 计划是本局存活的，归档的配在已了结卡里；经验账本跨局累积不随局次切换 */}
           <div className="order-4 xl:order-none">
-            <div className={BLK_H}>
-              <h2>{t('detail.plansTitle')}<small>{t('detail.plansActive', { n: detail?.plans.length ?? 0 })}</small></h2>
-            </div>
-            {detail && (detail.plans.length === 0
-              ? <div className="py-6 text-[14px] mute">{t('detail.noPlans')}</div>
-              : detail.plans.map(pl => <PlanBlock key={pl.id} plan={pl} />))}
+            {detail && <WatchList watches={detail.watches} />}
           </div>
-
+          {/* 经验账本跨局累积，不随局次切换 */}
           <div className="order-5 xl:order-none">
             <div className={BLK_H}>
               <h2>{t('detail.notesTitle')}</h2>
