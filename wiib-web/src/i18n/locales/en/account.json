@@ -148,23 +148,6 @@
       "placeholder": "Percentage, e.g. 0.05 means 0.05%/day",
       "hint": "The input is a percentage; 0.05%/day is decimal=0.0005."
     },
-    "jev": {
-      "title": "Jev predictor",
-      "hint": "When on, the three arms bet on the prediction market together: v5-1 watches the odds for a while after an odds jump before picking a side, v5-2 asks Jev at the moment of a jump whether it is worth a bet and watches only if it is, and v5-3 asks Jev every 30 seconds from 60 seconds after the open. The switch is stored in Redis, so it survives restarts; an arm whose wallet cannot afford a bet stops on its own, and the switch turns itself off only when all three have stopped. A new run creates three runs at once: one per arm, each with its own bot account (jev-prediction-r plus the run number) funded with $500, all sharing one version note. Older runs are archived and can still be viewed run by run on the Jev page.",
-      "on": "Running",
-      "off": "Off",
-      "noKey": "The platform JEV_API_KEY is not set, so it cannot be turned on",
-      "turnOn": "Turn on",
-      "turnOff": "Turn off",
-      "view": "Open the Jev page",
-      "noRuns": "No arm runs started yet",
-      "liveRuns": "Running: {{runs}}",
-      "newRun": "New run",
-      "newRunWhileOn": "Turn it off before starting a new run",
-      "labelPh": "Version note (optional, shared by the three runs), e.g. r5",
-      "confirmNewRun": "Start new runs (one per arm)",
-      "newRunDone": "Runs {{from}}–{{to}} started; turn the switch on to begin"
-    },
     "invite": {
       "title": "Invite codes",
       "maxUses": "Uses per code",

@@ -51,25 +51,24 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *     <li>
  *         {@link #init()} 立即执行 {@code liveDataWs.connect()}。
  *         live-data 连接成功后回调 {@link #onLiveDataConnected(WebSocket)}，
- *         订阅 btc/usd 的 {@code crypto_prices_twap_sixty} 和 {@code crypto_prices_chainlink} 两个主题。
+ *         订阅 btc/usd 的 {@code crypto_prices_twap_sixty} 主题。
  *     </li>
  *     <li>
- *         live-data 后续每条消息进入 {@link #onLiveDataMessage(String)}，按主题分开：
+ *         live-data 后续每条消息进入 {@link #onLiveDataMessage(String)}，
  *         TWAP 进 {@link #onTwapPrice(JsonNode)}，写折线图历史并广播 {@code /topic/prediction/price}，
- *         官网 TWAP 盘显示的当前价就是这条流；现货进 {@link #onSpotPrice(JsonNode)}，只写预测员用的现货历史。
+ *         官网 TWAP 盘显示的当前价就是这条流。
  *     </li>
  *     <li>
  *         {@link #init()} 同时启动两条文本 {@code PING} 心跳：live-data 每 5 秒、CLOB 每 10 秒。
  *         Polymarket WS 需要应用层心跳保活；心跳返回的 {@code PONG} 在 {@link WsConnection} 内过滤，
  *         不进入业务 JSON 解析。两条连接都开了 30 秒静默看门狗：PONG 不算消息，30 秒没有业务消息就重连。
  *         两条连接另外每秒看一次数据旧不旧（{@link #reconnectIfLagging}）：CLOB 盘口消息时间旧过 3 秒、
- *         LiveData 的 Chainlink 现货时间旧过 5 秒，就换一条新连接。
+ *         LiveData 的 TWAP 时间旧过 5 秒，就换一条新连接。
  *     </li>
  *     <li>
  *         {@link #init()} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
  *         再 {@link #flushBook()} 把有变化的盘口写 Redis、广播 {@code /topic/prediction/market}；
- *         每秒一次 {@link #sampleBook()}：把盘口最后更新时刻和 UP 中间价各写一笔 Redis，并补推一次当前盘口，
- *         预测员靠前者判断盘口是不是旧了，靠后者看最近 30 秒赔率怎么动和最近 15 秒有没有突变。
+ *         每秒一次 {@link #repushBook()}，给刚打开页面的人补推一次当前盘口。
  *     </li>
  *     <li>
  *         {@link #init()} 启动虚拟线程执行 {@link #prepareCurrentMarket(long)}。
@@ -138,14 +137,14 @@ public class PolymarketWsClient implements SmartLifecycle {
     private volatile String lastSubscribedSlug;
     private volatile String currentUpAssetId;
     private volatile String currentDownAssetId;
-    /** 盘口最近一次变化的时刻，取消息自带的 timestamp（Polymarket 那边的时间）：推送落后几秒它就旧几秒。每秒采样写 Redis */
+    /** 盘口最近一次变化的时刻，取消息自带的 timestamp（Polymarket 那边的时间）：推送落后几秒它就旧几秒，CLOB 判落后用 */
     private volatile long bookUpdatedAtMs;
     /** 盘口内存最新值，按 token 存：WS 每条消息只改这里，每拍再写 Redis、推给页面 */
     private final Map<String, Top> tops = new ConcurrentHashMap<>();
     private volatile boolean bookDirty;
-    private long lastSampleSec;
-    /** Chainlink 现货最新一点的时刻（Chainlink 自己的时间戳），LiveData 判落后用 */
-    private volatile long spotTsMs;
+    private long lastSecond;
+    /** TWAP 最新一点的时刻（消息自带的整秒时间戳），LiveData 判落后用 */
+    private volatile long twapTsMs;
 
     /** 一个 token 的买一卖一，null = 这一档空 */
     private record Top(BigDecimal bid, BigDecimal ask) {
@@ -159,15 +158,14 @@ public class PolymarketWsClient implements SmartLifecycle {
     /** 官方心跳要求：live-data(RTDS) 每 5 秒发 PING，CLOB 市场频道每 10 秒 */
     private static final int LIVE_DATA_PING_SECONDS = 5;
     private static final int CLOB_PING_SECONDS = 10;
-    /** 结算和官网当前价都用 Chainlink 60 秒 TWAP（市场配置 btc-5m-twap-60）；现货只给预测员 */
+    /** 结算和官网当前价都用 Chainlink 60 秒 TWAP（市场配置 btc-5m-twap-60） */
     private static final String TWAP_TOPIC = "crypto_prices_twap_sixty";
-    private static final String SPOT_TOPIC = "crypto_prices_chainlink";
     private static final long ROUND_STREAM_MAXLEN = 1_000L;
     /** 连着这么久没收到业务消息（PONG 不算）就当断了重连：TCP 活着但不推数据时价会停住 */
     private static final long WS_MAX_IDLE_SECONDS = 30;
     /** CLOB 盘口数据旧过这么久就主动重连 */
     private static final long CLOB_MAX_LAG_MS = 3_000;
-    /** Chainlink 现货旧过这么久就主动重连 LiveData */
+    /** TWAP 旧过这么久就主动重连 LiveData；正常比收到时晚 1~2 秒 */
     private static final long LIVE_DATA_MAX_LAG_MS = 5_000;
     /** 连接至少活这么久才判落后 */
     private static final long WS_MIN_LIFE_MS = 10_000;
@@ -195,17 +193,17 @@ public class PolymarketWsClient implements SmartLifecycle {
         scheduler.scheduleAtFixedRate(this::tick, BOOK_TICK_MS, BOOK_TICK_MS, TimeUnit.MILLISECONDS);
     }
 
-    /** 一拍：先看要不要换回合，再把有变化的盘口写 Redis、推给页面；每秒采样一次、查一次两条连接落后 */
+    /** 一拍：先看要不要换回合，再把有变化的盘口写 Redis、推给页面；每秒补推一次盘口、查一次两条连接落后 */
     private void tick() {
         checkRoundRotation();
         try {
             flushBook();
             long sec = System.currentTimeMillis() / 1000;
-            if (sec != lastSampleSec) {
-                lastSampleSec = sec;
-                sampleBook();
+            if (sec != lastSecond) {
+                lastSecond = sec;
+                repushBook();
                 reconnectIfLagging(clobWs, bookUpdatedAtMs, CLOB_MAX_LAG_MS);
-                reconnectIfLagging(liveDataWs, spotTsMs, LIVE_DATA_MAX_LAG_MS);
+                reconnectIfLagging(liveDataWs, twapTsMs, LIVE_DATA_MAX_LAG_MS);
             }
         } catch (Exception e) {
             log.warn("盘口刷新失败: {}", e.getMessage());
@@ -225,18 +223,10 @@ public class PolymarketWsClient implements SmartLifecycle {
         broadcastBook(up, down);
     }
 
-    /** 盘口最后更新时刻、UP 中间价各写一笔，再推一次当前盘口给刚打开页面的人；预测员靠前两者判旧、看赔率怎么动和有没有突变 */
-    private void sampleBook() {
-        long updatedAt = bookUpdatedAtMs;
-        if (updatedAt <= 0) return;
-        cacheService.putPredictionBookUpdatedAt(updatedAt);
-        Top up = top(currentUpAssetId);
-        // 一边没有报价不记
-        if (up.bid() != null && up.ask() != null) {
-            BigDecimal mid = up.bid().add(up.ask()).divide(BigDecimal.TWO, 4, RoundingMode.HALF_UP);
-            cacheService.addPredictionUpMidPoint(System.currentTimeMillis(), mid);
-        }
-        broadcastBook(up, top(currentDownAssetId));
+    /** 给刚打开页面的人补推一次当前盘口；这一回合还没收到过盘口不推 */
+    private void repushBook() {
+        if (bookUpdatedAtMs <= 0) return;
+        broadcastBook(top(currentUpAssetId), top(currentDownAssetId));
     }
 
     /** 连接活够 10 秒、数据还旧过 maxLagMs，就立即重连换一条；重连失败走 WsConnection 自己的退避 */
@@ -273,7 +263,7 @@ public class PolymarketWsClient implements SmartLifecycle {
 
     private void onLiveDataConnected(WebSocket ws) {
         ws.sendText(buildLiveDataSubscribeMsg(), true);
-        log.info("已发送订阅: chainlink twap + spot");
+        log.info("已发送订阅: chainlink twap");
     }
 
     private void onClobConnected(WebSocket ws) {
@@ -557,32 +547,22 @@ public class PolymarketWsClient implements SmartLifecycle {
             String topic = msg.path("topic").asString(null);
             if (TWAP_TOPIC.equals(topic)) {
                 onTwapPrice(msg);
-            } else if (SPOT_TOPIC.equals(topic)) {
-                onSpotPrice(msg);
             }
         } catch (Exception e) {
             log.warn("解析live-data消息失败: {}", e.getMessage());
         }
     }
 
-    /** TWAP 就是官网的当前价：写折线图历史并广播给页面 */
+    /** TWAP 就是官网的当前价：写折线图历史并广播给页面。连上时先来的一条历史快照没有 payload.value，不处理 */
     private void onTwapPrice(JsonNode msg) {
-        BigDecimal value = msg.path("payload").path("value").asDecimal(null);
+        JsonNode payload = msg.path("payload");
+        BigDecimal value = payload.path("value").asDecimal(null);
         if (value == null) return;
+        twapTsMs = payload.path("timestamp").asLong();
 
         long now = System.currentTimeMillis();
         cacheService.addBtcTwapPoint(now, value);
         broadcastService.broadcastPrediction("price", "{\"price\":\"" + value.toPlainString() + "\",\"ts\":" + now + "}");
-    }
-
-    /** 现货只给预测员算公平价，页面不用；时刻是 Chainlink 自己的整秒时间戳 */
-    private void onSpotPrice(JsonNode msg) {
-        JsonNode payload = msg.path("payload");
-        BigDecimal value = payload.path("value").asDecimal(null);
-        if (value == null) return;
-        long ts = payload.path("timestamp").asLong();
-        cacheService.addBtcPricePoint(ts, value);
-        spotTsMs = ts;
     }
 
     // ==================== CLOB WS ====================
@@ -702,14 +682,12 @@ public class PolymarketWsClient implements SmartLifecycle {
 
     // ==================== 订阅消息构建 ====================
 
-    /** TWAP + 现货两个主题，filters 是 JSON 字符串 */
+    /** 只订 TWAP，filters 是 JSON 字符串 */
     private static String buildLiveDataSubscribeMsg() {
         ObjectNode msg = MAPPER.createObjectNode();
         msg.put("action", "subscribe");
-        ArrayNode subs = msg.putArray("subscriptions");
-        for (String topic : new String[]{TWAP_TOPIC, SPOT_TOPIC}) {
-            subs.addObject().put("topic", topic).put("type", "*").put("filters", "{\"symbol\":\"btc/usd\"}");
-        }
+        msg.putArray("subscriptions").addObject()
+                .put("topic", TWAP_TOPIC).put("type", "*").put("filters", "{\"symbol\":\"btc/usd\"}");
         return MAPPER.writeValueAsString(msg);
     }
 

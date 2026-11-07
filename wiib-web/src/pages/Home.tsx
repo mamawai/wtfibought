@@ -17,7 +17,7 @@ import { Sparkline } from '../components/fx/Sparkline';
 import { DayDetailModal } from '../components/DayDetailModal';
 import { useCountUp } from '../hooks/useCountUp';
 import { useStagger } from '../hooks/useStagger';
-import { List, DollarSign, Target, Settings2, Swords, Bot } from 'lucide-react';
+import { List, DollarSign, Target, Settings2, Swords } from 'lucide-react';
 import type { AssetSnapshot, User } from '../types';
 import { useUserStore } from '../stores/userStore';
 import { cn, fmtDate, fmtNum, fmtSignedPct, fmtSignedUsd, parseServerTime } from '../lib/utils';
@@ -31,17 +31,16 @@ function shouldShowNotice() {
   return !d || d !== new Date().toDateString();
 }
 
-/** 入口一排六格 */
+/** 入口一排五格 */
 const ENTRIES = [
   { icon: List, k: 'stocks', to: '/bstock' },
   { icon: DollarSign, k: 'crypto', to: '/coin' },
   { icon: Swords, k: 'arena', to: '/arena' },
   { icon: Target, k: 'prediction', to: '/prediction' },
-  { icon: Bot, k: 'jev', to: '/jev' },
   { icon: Settings2, k: 'ai', to: '/ai' },
 ];
 
-/** 格间细线：手机两列、md 三列、xl 六列，各自把每行头一格的左线和左内边距去掉 */
+/** 格间细线：手机两列、md 三列、xl 五列，各自把每行头一格的左线和左内边距去掉 */
 const entryCls = (i: number) => cn(
   'group flex items-baseline gap-2 min-w-0 px-4 py-2 border-l border-border',
   i % 2 === 0 && 'pl-0 border-l-0',
@@ -236,12 +235,12 @@ export function Home() {
         </section>
       )}
 
-      {/* ====== 入口一排六格 ====== */}
+      {/* ====== 入口一排五格 ====== */}
       <section className="sec tight mt-8 pt-3.5 [&_.sec-h]:mb-3">
         <div className="sec-h">
           <h2>{t('entries.title')}</h2>
         </div>
-        <div ref={entriesRef} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        <div ref={entriesRef} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
           {ENTRIES.map(({ icon: Icon, k, to }, i) => (
             <Link key={to} to={to} className={entryCls(i)}>
               <span className={ENTRY_NAME}><Icon className={ENTRY_IC} />{t(`quick.${k}`)}</span>

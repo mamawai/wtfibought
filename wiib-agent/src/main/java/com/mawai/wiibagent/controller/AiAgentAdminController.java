@@ -4,16 +4,12 @@ import com.mawai.wiibcommon.annotation.RequireAdmin;
 import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
-import com.mawai.wiibcommon.entity.JevPredictionRun;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.BinanceWeightMeter;
-import com.mawai.wiibagent.jev.JevPlatformConfig;
-import com.mawai.wiibagent.jev.predictor.JevPredictionRuns;
-import com.mawai.wiibagent.jev.predictor.JevPredictionSwitch;
 import com.mawai.wiibagent.llm.BaseUrlGuard;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.news.NewsEventCollector;
@@ -50,9 +46,6 @@ public class AiAgentAdminController {
     private final AiModelAssignmentMapper assignmentMapper;
     private final ByokModelBuilder modelBuilder;
     private final NewsEventCollector newsEventCollector;
-    private final JevPlatformConfig jevPlatform;
-    private final JevPredictionSwitch jevSwitch;
-    private final JevPredictionRuns jevRuns;
     /** 管理页的校验与回执跟界面语言 */
     private final MessageCatalog messages;
     private final BinanceRestClient binanceRestClient;
@@ -274,51 +267,6 @@ public class AiAgentAdminController {
         return Result.ok(r);
     }
 
-    // ========== Jev 预测员开关 ==========
-
-    /**
-     * configured=平台 JEV_API_KEY 配了；enabled=开关开着，两个都真、且有在跑的局才真跑；
-     * runs 是在跑的局，按 v5-1、v5-2、v5-3 排，还没开过带组的局是空的
-     */
-    public record JevPredictionState(boolean configured, boolean enabled, List<JevPredictionRun> runs) {
-    }
-
-    @GetMapping("/jev-prediction")
-    @Operation(summary = "Jev 预测员开关状态与在跑的三局")
-    public Result<JevPredictionState> jevPrediction() {
-        return Result.ok(jevState());
-    }
-
-    @PostMapping("/jev-prediction/new-run")
-    @Operation(summary = "Jev 预测员重新开局：三组各建一局一个新账户注资，旧局留档；开关开着不让开")
-    public Result<JevPredictionState> newJevRun(@RequestBody JevNewRunRequest req) {
-        if (jevSwitch.isOn()) {
-            return Result.fail(messages.get("agent.admin.jevRunWhileOn"));
-        }
-        for (JevPredictionRun run : jevRuns.startNew(req.getLabel())) {
-            log.info("[JevPred] 管理员重新开局 R{} arm={} label={}", run.getRunNo(), run.getArm(), run.getLabel());
-        }
-        return Result.ok(jevState());
-    }
-
-    private JevPredictionState jevState() {
-        return new JevPredictionState(jevPlatform.enabled(), jevSwitch.isOn(), jevRuns.active());
-    }
-
-    @PostMapping("/jev-prediction")
-    @Operation(summary = "开/关 Jev 预测员（存 Redis，重启不丢）")
-    public Result<JevPredictionState> setJevPrediction(@RequestBody JevPredictionRequest req) {
-        if (req.getEnabled() == null) {
-            return Result.fail(messages.get("agent.admin.paramsIncomplete", Map.of("what", "enabled")));
-        }
-        if (req.getEnabled() && !jevPlatform.enabled()) {
-            return Result.fail(messages.get("agent.admin.jevKeyMissing"));
-        }
-        jevSwitch.set(req.getEnabled());
-        log.info("[JevPred] 管理员{}预测员", req.getEnabled() ? "打开" : "关闭");
-        return Result.ok(jevState());
-    }
-
     // 量化触发端点（快照/vol验证）已随预测管线下线（2026-08：生产验证无前瞻信息）。
     // quant-config 开关端点已删：开关框架自 v1 调权清理后空转（无注册开关），随死表清理一并拆除。
 
@@ -396,17 +344,6 @@ public class AiAgentAdminController {
     public static class NewsBackfillRequest {
         /** 补最近几条 */
         private Integer count;
-    }
-
-    @Data
-    public static class JevPredictionRequest {
-        private Boolean enabled;
-    }
-
-    @Data
-    public static class JevNewRunRequest {
-        /** 版本说明，可空 */
-        private String label;
     }
 
 }

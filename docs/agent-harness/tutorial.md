@@ -50,7 +50,7 @@ flowchart LR
 
 ## 第 1 章 · 热身：两个小文件（20 分钟）
 
-目的是熟悉这个仓库的代码风格和注释密度，别一上来就啃几百上千行的大文件（最大的几个是 `JevPredictionRunner` 833 行、`TradeTools` 657 行、`ExperienceLedger` 652 行、`TraderWakeupRunner` 649 行）。
+目的是熟悉这个仓库的代码风格和注释密度，别一上来就啃几百上千行的大文件（最大的几个是 `TradeTools` 657 行、`ExperienceLedger` 652 行、`TraderWakeupRunner` 649 行）。
 
 | 文件 | 行数 | 读它干什么 |
 |---|---|---|

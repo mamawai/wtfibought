@@ -118,19 +118,16 @@ class CacheServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void btcPriceHistoryGoesThroughZSet() {
+    void btcTwapHistoryGoesThroughZSet() {
         ZSetOperations<String, String> zset = mock(ZSetOperations.class);
         StringRedisTemplate stringRedisTemplate = mock(StringRedisTemplate.class);
         when(stringRedisTemplate.opsForZSet()).thenReturn(zset);
         CacheService cache = new CacheService(mock(RedisTemplate.class), stringRedisTemplate);
 
-        // 现货和 TWAP 各写各的 key
-        cache.addBtcPricePoint(1700000000000L, new BigDecimal("95000.5"));
-        verify(zset).add("prediction:btcprice:history", "1700000000000:95000.5", 1700000000000.0);
-        // 裁掉 6 分钟外的旧点
-        verify(zset).removeRangeByScore("prediction:btcprice:history", 0, 1699999640000.0);
         cache.addBtcTwapPoint(1700000000000L, new BigDecimal("95010.25"));
         verify(zset).add("prediction:btctwap:history", "1700000000000:95010.25", 1700000000000.0);
+        // 裁掉 6 分钟外的旧点
+        verify(zset).removeRangeByScore("prediction:btctwap:history", 0, 1699999640000.0);
 
         // 页面折线图读 TWAP
         ZSetOperations.TypedTuple<String> tuple =

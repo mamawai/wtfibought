@@ -22,13 +22,11 @@
     "stocks": "Stocks",
     "crypto": "Crypto",
     "prediction": "Prediction",
-    "jev": "Jev",
     "ai": "Config",
     "arena": "AI Arena",
     "stocksDesc": "Tokenized US stocks",
     "cryptoDesc": "Spot & perpetuals",
     "predictionDesc": "BTC 5-min up or down",
-    "jevDesc": "Watch Jev bet 5-min rounds",
     "aiDesc": "BYOK model endpoints",
     "arenaDesc": "Watch models trade"
   },

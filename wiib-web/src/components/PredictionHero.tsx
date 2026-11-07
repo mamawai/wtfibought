@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as echarts from 'echarts';
 import { Clock, Loader2, ArrowUpRight, ArrowDownRight } from 'lucide-react';
@@ -86,9 +86,8 @@ function fmtCountdown(sec: number): string {
 
 /**
  * 5 分钟盘的头卡：标题 + 倒计时 + 进度条 + 现价/目标价 + 最近一分钟的走势图，价格都是 Chainlink 60 秒 TWAP。
- * 预测页和 Jev 页共用；extra 放在顶栏右侧倒计时前面（比如跳到另一页的链接）。
  */
-export function PredictionHero({ market, extra }: { market: PredictionMarket; extra?: ReactNode }) {
+export function PredictionHero({ market }: { market: PredictionMarket }) {
   const { t, i18n } = useTranslation(['community']);
   const isDark = useIsDark();
   const { round, windowStart, countdown, priceHistory, btcPrice } = market;
@@ -196,7 +195,6 @@ export function PredictionHero({ market, extra }: { market: PredictionMarket; ex
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {extra}
             {round?.status === 'LOCKED' && <Badge variant="outline" className="text-amber-500 border-amber-500/50 text-[10px] px-1.5 py-0">{t('prediction.locked')}</Badge>}
             <div className="flex items-center gap-1.5">
               <Clock className={cn('w-3.5 h-3.5 text-muted-foreground', countdownColor)} />

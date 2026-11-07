@@ -39,12 +39,6 @@ public interface UserService extends IService<User> {
     User ensureQuantAccount(String username, BigDecimal initialBalance);
 
     /**
-     * 幂等建/取只有游戏钱包的机器人账户（Jev 预测员用）：交易余额 0，初始资金全进 game_balance，
-     * 建号与补记初始资金同一事务。已存在直接返回、不重复入金。
-     */
-    User ensureGameAccount(String username, BigDecimal initialGameBalance);
-
-    /**
      * 补记建号赠送的初始资金。建号走的是 INSERT（balance 是列值，不穿任何 atomic 方法），
      * 记账切面抓不到——不补这一笔，用户开局账本就对不上余额。
      * <p>
@@ -97,11 +91,6 @@ public interface UserService extends IService<User> {
      * 更新游戏钱包（正数增加，负数减少，预测市场用）
      */
     void updateGameBalance(Long userId, BigDecimal amount);
-
-    /**
-     * 读游戏钱包余额（非空；用户不存在抛异常）
-     */
-    BigDecimal getGameBalance(Long userId);
 
     /**
      * 余额钱包→游戏钱包划转（记流水）

@@ -33,7 +33,7 @@ export interface PredictionMarket {
 
 /**
  * 5 分钟盘的行情：当前回合、服务端时钟校准、倒计时、价格历史、WS 推送的价 / 回合 / 盘口 / 成交流。
- * 预测页和 Jev 页共用；旧回合结算推送到了会调 onSettled，页面自己刷注单/余额。
+ * 旧回合结算推送到了会调 onSettled，页面自己刷注单/余额。
  * 推送都在订阅回调里落 state（事件，不是 effect 体），回调里要判"是不是旧回合"，读最新 round 走 ref。
  */
 export function usePredictionMarket(onSettled?: () => void): PredictionMarket {

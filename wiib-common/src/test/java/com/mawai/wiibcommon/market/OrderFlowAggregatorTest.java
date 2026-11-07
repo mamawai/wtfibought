@@ -93,62 +93,6 @@ class OrderFlowAggregatorTest {
         assertThat(lowerMs).isBetween(before - 185_000, after - 185_000);
     }
 
-    /** 窗口里第一笔到最后一笔的价差；窗口外的不算，不到两笔回 null */
-    @Test
-    @SuppressWarnings("unchecked")
-    void priceChangeFromFirstToLastTradeInWindow() {
-        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
-        StreamOperations<String, Object, Object> streamOps = mock(StreamOperations.class);
-        when(redisTemplate.opsForStream()).thenReturn(streamOps);
-        OrderFlowAggregator agg = new OrderFlowAggregator(redisTemplate);
-
-        long now = System.currentTimeMillis();
-        MapRecord<String, Object, Object> stale = mapRecord("BTCUSDT", now - 20_000, 86_000, 1, "0");
-        MapRecord<String, Object, Object> first = mapRecord("BTCUSDT", now - 8_000, 86_010, 1, "0");
-        MapRecord<String, Object, Object> last = mapRecord("BTCUSDT", now, 86_025, 1, "1");
-        when(streamOps.range(eq("market:orderflow:BTCUSDT"), any(Range.class))).thenReturn(List.of(stale, first, last));
-        assertThat(agg.priceChange("BTCUSDT", 10)).isEqualTo(15.0);
-
-        when(streamOps.range(eq("market:orderflow:BTCUSDT"), any(Range.class))).thenReturn(List.of(stale, last));
-        assertThat(agg.priceChange("BTCUSDT", 10)).isNull();
-    }
-
-    /** 一次读、按边界分段：起点之前的不算，边界上的归后一段，末段不封顶；没成交的段是全 0，读不到回 null */
-    @Test
-    @SuppressWarnings("unchecked")
-    void metricsBetweenSplitsByBounds() {
-        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
-        StreamOperations<String, Object, Object> streamOps = mock(StreamOperations.class);
-        when(redisTemplate.opsForStream()).thenReturn(streamOps);
-        OrderFlowAggregator agg = new OrderFlowAggregator(redisTemplate);
-
-        long t0 = 1_000_000;
-        long[] bounds = {t0, t0 + 30_000, t0 + 60_000, t0 + 90_000};
-        when(streamOps.range(eq("market:orderflow:BTCUSDT"), any(Range.class))).thenReturn(List.of(
-                mapRecord("BTCUSDT", t0 - 1, 100, 9, "1"),              // 起点之前
-                mapRecord("BTCUSDT", t0, 100, 3, "0"),                  // 第 1 段：买 300
-                mapRecord("BTCUSDT", t0 + 10_000, 100, 1, "1"),         // 第 1 段：卖 100
-                mapRecord("BTCUSDT", t0 + 60_000, 100, 2, "1"),         // 正好在边界上，归第 3 段
-                mapRecord("BTCUSDT", t0 + 95_000, 100, 2, "0")));       // 晚于末个边界，也归第 3 段
-
-        List<OrderFlowAggregator.Metrics> m = agg.getMetricsBetween("BTCUSDT", bounds);
-
-        assertThat(m).hasSize(3);
-        assertThat(m.get(0).tradeCount()).isEqualTo(2);
-        assertThat(m.get(0).totalVolumeUsdt()).isEqualTo(400.0);
-        assertThat(m.get(0).tradeDelta()).isCloseTo(0.5, within(1e-9));
-        assertThat(m.get(1)).isEqualTo(new OrderFlowAggregator.Metrics(0, 0, 0, 0, 0));
-        assertThat(m.get(2).tradeCount()).isEqualTo(2);
-        assertThat(m.get(2).tradeDelta()).isCloseTo(0.0, within(1e-9));
-        // 只读一次，服务端从首个边界往前 5 秒切
-        ArgumentCaptor<Range<String>> captor = ArgumentCaptor.forClass(Range.class);
-        verify(streamOps).range(eq("market:orderflow:BTCUSDT"), captor.capture());
-        assertThat(captor.getValue().getLowerBound().getValue().orElseThrow()).isEqualTo((t0 - 5_000) + "-0");
-
-        when(streamOps.range(eq("market:orderflow:BTCUSDT"), any(Range.class))).thenReturn(List.of());
-        assertThat(agg.getMetricsBetween("BTCUSDT", bounds)).isNull();
-    }
-
     private static MapRecord<String, Object, Object> mapRecord(String symbol, long ts, double p, double q, String bm) {
         Map<Object, Object> m = new LinkedHashMap<>();
         m.put("ts", Long.toString(ts));

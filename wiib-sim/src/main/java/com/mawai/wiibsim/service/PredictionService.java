@@ -11,9 +11,6 @@ public interface PredictionService {
 
     PredictionRoundResponse getCurrentRound();
 
-    /** 某个窗口的回合（状态/结果/开收盘价），没有这回合返回 null */
-    PredictionRoundResponse getRound(long windowStart);
-
     PredictionBetResponse buy(Long userId, PredictionBuyRequest req);
 
     PredictionBetResponse sell(Long userId, Long betId, BigDecimal contracts);

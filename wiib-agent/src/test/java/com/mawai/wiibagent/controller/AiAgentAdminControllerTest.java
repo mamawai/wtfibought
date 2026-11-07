@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.controller;
 
-import com.mawai.wiibagent.jev.JevPlatformConfig;
-import com.mawai.wiibagent.jev.predictor.JevPredictionRuns;
-import com.mawai.wiibagent.jev.predictor.JevPredictionSwitch;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.news.NewsEventCollector;
 import com.mawai.wiibagent.runtime.AiAgentRuntimeManager;
@@ -35,8 +32,7 @@ class AiAgentAdminControllerTest {
     private final AiRuntimeConfigMapper configMapper = mock(AiRuntimeConfigMapper.class);
     private final ByokModelBuilder builder = mock(ByokModelBuilder.class);
     private final AiAgentAdminController controller = new AiAgentAdminController(runtime, configMapper,
-            mock(AiModelAssignmentMapper.class), builder, mock(NewsEventCollector.class), mock(JevPlatformConfig.class),
-            mock(JevPredictionSwitch.class), mock(JevPredictionRuns.class), new MessageCatalog(),
+            mock(AiModelAssignmentMapper.class), builder, mock(NewsEventCollector.class), new MessageCatalog(),
             mock(BinanceRestClient.class));
 
     private static AiRuntimeConfig saved() {

@@ -90,8 +90,8 @@ To self-host:
 
    ```bash
    psql -U postgres -c "CREATE DATABASE wiib;"
-   psql -U postgres -d wiib -f sql/init.sql      # business + quant + AI runtime (34 tables)
-   psql -U postgres -d wiib -f sql/bstock.sql    # bStock static table + 10 seed tickers (35 in total)
+   psql -U postgres -d wiib -f sql/init.sql      # business + quant + AI runtime (37 tables)
+   psql -U postgres -d wiib -f sql/bstock.sql    # bStock static table + 10 seed tickers (38 in total)
    ```
 
 4. Copy the environment template and fill in the three required values `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN` (generate the last one with `openssl rand -base64 24`). The sign-in options (LinuxDo, Google, password) can all stay unset: with none configured, the login page shows a single Enter button that signs you in as the admin.

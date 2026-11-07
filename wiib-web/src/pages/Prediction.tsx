@@ -2,7 +2,6 @@ import { fmtNum, fmtDateTime, fmtTime, toCents } from '../lib/utils';
 import { HelpTip } from '../components/HelpTip';
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 import { predictionApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { usePredictionMarket, WINDOW_SECONDS } from '../hooks/usePredictionMarket';
@@ -13,7 +12,7 @@ import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { WalletTransferModal } from '../components/WalletTransferModal';
 import { PredictionHero } from '../components/PredictionHero';
-import { TrendingUp, TrendingDown, Loader2, Wallet, ArrowLeftRight, Bot } from 'lucide-react';
+import { TrendingUp, TrendingDown, Loader2, Wallet, ArrowLeftRight } from 'lucide-react';
 import type { PredictionRound, PredictionBet, PageResult } from '../types';
 
 /** Polymarket 吃单费：份数 × 0.07 × p × (1 − p)，与后端 PredictionFee 同一公式 */
@@ -166,12 +165,8 @@ export function Prediction() {
         {t('prediction.beta')}
       </div>
 
-      {/* ── Hero: 标题 + 倒计时 + 价格 + 图表；右上角进 Jev 页 ── */}
-      <PredictionHero market={market} extra={
-        <Link to="/jev" className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-primary transition-colors">
-          <Bot className="w-3.5 h-3.5" />{t('prediction.jev.jevView')}
-        </Link>
-      } />
+      {/* ── Hero: 标题 + 倒计时 + 价格 + 图表 ── */}
+      <PredictionHero market={market} />
 
       {/* ── 交易面板 + Live Trades ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

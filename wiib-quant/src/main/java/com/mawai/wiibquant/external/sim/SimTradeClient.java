@@ -189,8 +189,8 @@ public class SimTradeClient {
         }
     }
 
-    /** 拆 Result 壳：sim 业务失败统一转异常抛出。包内其他 sim 客户端共用 */
-    static <T> T unwrap(Result<T> result) {
+    /** 拆 Result 壳：sim 业务失败统一转异常抛出。 */
+    private static <T> T unwrap(Result<T> result) {
         if (result == null) {
             throw new IllegalStateException("sim internal api 空响应");
         }

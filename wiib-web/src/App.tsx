@@ -21,7 +21,6 @@ import { Admin } from './pages/Admin';
 import { Intro } from './pages/Intro';
 import { Me } from './pages/Me';
 import { Prediction } from './pages/Prediction';
-import { JevPrediction } from './pages/JevPrediction';
 import { AiAgent } from './pages/AiAgent';
 import { Arena } from './pages/Arena';
 import { ArenaDetail } from './pages/ArenaDetail';
@@ -146,7 +145,6 @@ function App() {
                   <Route path="/admin" element={<Admin />} />
                   <Route path="/me" element={<Me />} />
                   <Route path="/prediction" element={<Prediction />} />
-                  <Route path="/jev" element={<JevPrediction />} />
                   <Route path="/ai" element={<AiAgent />} />
                   <Route path="/my-trader" element={<MyTrader />} />
                   <Route path="/prompt-gen" element={<Suspense fallback={pageLoading}><PromptGen /></Suspense>} />

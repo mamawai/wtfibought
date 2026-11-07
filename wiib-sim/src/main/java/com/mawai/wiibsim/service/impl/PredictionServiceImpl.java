@@ -154,13 +154,6 @@ public class PredictionServiceImpl implements PredictionService {
     }
 
     @Override
-    public PredictionRoundResponse getRound(long windowStart) {
-        PredictionRound round = roundMapper.selectOne(
-                new LambdaQueryWrapper<PredictionRound>().eq(PredictionRound::getWindowStart, windowStart));
-        return round == null ? null : toRoundResponse(round);
-    }
-
-    @Override
     @Ledger(PREDICTION_BUY)
     public PredictionBetResponse buy(Long userId, PredictionBuyRequest req) {
         String side = req.getSide();

@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
-import { adminApi, jevPredictionApi } from '../api';
-import type { AiKeyConfig, AiKeyView, AiModelAssignment, InviteCode, JevSwitchState } from '../types';
+import { adminApi } from '../api';
+import type { AiKeyConfig, AiKeyView, AiModelAssignment, InviteCode } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -12,7 +12,6 @@ import { useToast } from '../components/ui/use-toast';
 import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
 import { MonitorCarousel } from '../components/MonitorCarousel';
 import { DEFAULT_CONTEXT_WINDOW, LlmEndpointForm, type LlmEndpointValue } from '../components/LlmEndpointForm';
-import { runName } from '../components/jev/format';
 import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Ban } from 'lucide-react';
 
 /** 功能位名称的词表 key，顺序即页面上的行序。常量在组件外，存翻译结果会在模块加载那一刻定死，切语言不跟着变 */
@@ -62,11 +61,6 @@ export function Admin() {
   // 快讯补拉：补最近几条
   const [backfillCount, setBackfillCount] = useState('100');
 
-  // Jev 预测员总开关
-  const [jevSwitch, setJevSwitch] = useState<JevSwitchState | null>(null);
-  // 重新开局的版本说明，null = 确认栏没打开
-  const [jevNewRunLabel, setJevNewRunLabel] = useState<string | null>(null);
-
   const fetchInterestRate = useCallback(async () => {
     setRateLoading(true);
     try {
@@ -114,7 +108,6 @@ export function Admin() {
       fetchAiKeys();
       fetchAssignments();
       fetchInviteCodes();
-      jevPredictionApi.switchState().then(setJevSwitch).catch(() => { /* ignore */ });
     }
   }, [user, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchInviteCodes]);
 
@@ -142,32 +135,6 @@ export function Admin() {
       setInterestRatePct(String(updated > 0 ? updated * 100 : 0));
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
-  };
-
-  const handleJevSwitch = async (enabled: boolean) => {
-    setActionLoading('jevSwitch');
-    try {
-      setJevSwitch(await jevPredictionApi.setSwitch(enabled));
-    } catch (e) {
-      toast((e as Error).message || t('admin.actionFailed'), 'error');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleJevNewRun = async () => {
-    setActionLoading('jevNewRun');
-    try {
-      const s = await jevPredictionApi.newRun(jevNewRunLabel ?? '');
-      setJevSwitch(s);
-      setJevNewRunLabel(null);
-      // 一次建三局，局号连着
-      toast(t('admin.jev.newRunDone', { from: s.runs[0].runNo, to: s.runs[s.runs.length - 1].runNo }), 'success');
-    } catch (e) {
-      toast((e as Error).message || t('admin.actionFailed'), 'error');
-    } finally {
-      setActionLoading(null);
-    }
   };
 
   // ========== AI Key 操作 ==========
@@ -345,58 +312,6 @@ export function Admin() {
               <div className="text-xs text-muted-foreground">{t('admin.rate.hint')}</div>
             </CardContent>
           </Card>
-
-          {/* Jev 预测员总开关 */}
-          {jevSwitch && (
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">{t('admin.jev.title')}</CardTitle>
-                  <Link to="/jev" className="text-xs font-bold text-primary hover:underline">{t('admin.jev.view')}</Link>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Badge variant={jevSwitch.enabled ? 'default' : 'secondary'}>
-                    {jevSwitch.enabled ? t('admin.jev.on') : t('admin.jev.off')}
-                  </Badge>
-                  <Button size="sm" variant={jevSwitch.enabled ? 'outline' : 'default'}
-                          onClick={() => void handleJevSwitch(!jevSwitch.enabled)}
-                          disabled={actionLoading !== null || (!jevSwitch.enabled && !jevSwitch.configured)}>
-                    {jevSwitch.enabled ? t('admin.jev.turnOff') : t('admin.jev.turnOn')}
-                  </Button>
-                  {!jevSwitch.configured && <span className="text-xs text-destructive">{t('admin.jev.noKey')}</span>}
-                </div>
-                {/* 局次：在跑的三组各一局；关着才能重新开局 */}
-                <div className="flex flex-wrap items-center gap-3 text-sm">
-                  <span className="font-semibold">
-                    {jevSwitch.runs.length > 0
-                      ? t('admin.jev.liveRuns', { runs: jevSwitch.runs.map(runName).join(' / ') })
-                      : t('admin.jev.noRuns')}
-                  </span>
-                  {jevSwitch.runs[0]?.label && <span className="text-muted-foreground">{jevSwitch.runs[0].label}</span>}
-                  <Button size="sm" variant="outline" onClick={() => setJevNewRunLabel('')}
-                          disabled={actionLoading !== null || jevSwitch.enabled || jevNewRunLabel !== null}>
-                    {t('admin.jev.newRun')}
-                  </Button>
-                  {jevSwitch.enabled && <span className="text-xs text-muted-foreground">{t('admin.jev.newRunWhileOn')}</span>}
-                </div>
-                {jevNewRunLabel !== null && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Input className="max-w-xs" value={jevNewRunLabel} maxLength={60} placeholder={t('admin.jev.labelPh')}
-                           onChange={e => setJevNewRunLabel(e.target.value)} disabled={actionLoading !== null} />
-                    <Button size="sm" onClick={() => void handleJevNewRun()} disabled={actionLoading !== null}>
-                      {t('admin.jev.confirmNewRun')}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setJevNewRunLabel(null)} disabled={actionLoading !== null}>
-                      {t('common:cancel')}
-                    </Button>
-                  </div>
-                )}
-                <div className="text-xs text-muted-foreground">{t('admin.jev.hint')}</div>
-              </CardContent>
-            </Card>
-          )}
 
           {/* ========== 邀请码（注册凭证，可配次数/批量生成/作废） ========== */}
           <Card>

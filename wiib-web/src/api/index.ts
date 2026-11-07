@@ -4,7 +4,6 @@ import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnMa
 import type { BacktestTaskStatus, BacktestEventsPage, BacktestKlinesPage, BacktestResultPayload, ReplayCoverage, HistoryKlinesPayload, ReplayCoachRequest, ReplayCoachEvent } from '../types';
 import type { LedgerEntry, LedgerBizTypeOption, PublicTrade, UserProfile, PositionHistoryItem, RankingSort } from '../types';
 import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose } from '../types';
-import type { JevPredictionOverview, JevPredictionDecisionView, JevBet, JevSwitchState } from '../types';
 import type { PromptGenEvent, PromptGenView } from '../types';
 import type { User, PageResult, RankingItem, CommentItem, NotificationItem, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiKeyView, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderExperience, TraderSpec, StrategySignalState, FeedStreamHealthSnapshot, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, WorkbenchPrefs, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
 
@@ -523,20 +522,6 @@ export const llmEndpointApi = {
   /** 表单里的"测试连通性"按钮：先 ping，勾了联网搜索的再探一次搜索 */
   test: (req: LlmEndpointSaveRequest, id?: number) =>
     api.post<unknown, void>('/ai/llm-endpoints/test', req, { params: id != null ? { id } : {} }),
-};
-
-// ========== Jev 预测员（平台级展示） ==========
-/** 三个读接口都按局看，run 不传是在跑的 v5-1 那一局 */
-export const jevPredictionApi = {
-  overview: (run?: number) => api.get<unknown, JevPredictionOverview>('/ai/jev-prediction/overview', { params: { run } }),
-  /** 这一局最近的决策带 Jev 的回答，Jev 页右栏一次拿全；v5-3 每回合最多 8 行，51 条是最近六个多回合，突变两组只在有突变时才有行 */
-  feed: (limit = 51, run?: number) =>
-    api.get<unknown, JevPredictionDecisionView[]>('/ai/jev-prediction/feed', { params: { limit, run } }),
-  bets: (limit = 30, run?: number) => api.get<unknown, JevBet[]>('/ai/jev-prediction/bets', { params: { limit, run } }),
-  // 预测员总开关与重新开局（管理员）
-  switchState: () => api.get<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction'),
-  setSwitch: (enabled: boolean) => api.post<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction', { enabled }),
-  newRun: (label: string) => api.post<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction/new-run', { label }),
 };
 
 /** 快讯（news_event 存档行，首页快讯卡数据源） */
