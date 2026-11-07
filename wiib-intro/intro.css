@@ -111,6 +111,7 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 .chip svg { width: 12px; height: 12px; }
 .chip.up { border-color: var(--gain); } .chip.dn { border-color: var(--loss); } .chip.wn { border-color: var(--warning); } .chip.mute { border-color: var(--muted-fg); }
 .chip.rv { border-color: var(--review); color: var(--review); }
+.chip.pr { border-color: var(--primary); color: var(--primary); }
 .chip.fill { background: var(--fg); color: var(--bg); }
 .chip.fill.up { background: var(--gain); border-color: var(--gain); color: #fff; }
 .chip.fill.dn { background: var(--loss); border-color: var(--loss); color: #fff; }
@@ -155,17 +156,16 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 .hero-h { margin-top: 18px; font-size: clamp(76px, 10.4vw, 196px); font-weight: 700; font-stretch: 70%; letter-spacing: -.04em; line-height: .86; }
 .hero-h i { color: var(--primary); font-style: normal; }
 
-/* 逐字排版（.letters 由 JS 拆成一字一格）：一行一个裁切窗，字从基线后面升上来；
-   升完荡一道宽度波；鼠标靠近哪个字哪个字变宽变粗（Archivo 的 wdth 轴） */
+/* 逐字排版（.letters 由 JS 拆成一字一格）：加 .risen 后逐字浮现——淡入、微微上浮、由虚变实 */
 .js .letters:not(.split) { visibility: hidden; }
-.letters .ln { display: block; overflow: hidden; padding-top: .12em; margin-top: -.12em; white-space: nowrap; }
+.letters .ln { display: block; white-space: nowrap; }
 .letters .ch {
-  display: inline-block; transform: translateY(115%);
-  transition: transform .9s cubic-bezier(.16, 1, .3, 1) calc(var(--i, 0) * 38ms), font-stretch .45s var(--ease), font-weight .45s var(--ease);
+  display: inline-block; opacity: 0; transform: translateY(.12em); filter: blur(4px);
+  transition: opacity 1.2s cubic-bezier(.22, 1, .36, 1) calc(var(--i, 0) * 55ms),
+    transform 1.2s cubic-bezier(.22, 1, .36, 1) calc(var(--i, 0) * 55ms),
+    filter 1.2s cubic-bezier(.22, 1, .36, 1) calc(var(--i, 0) * 55ms);
 }
-.letters.risen .ch { transform: none; }
-.letters.wave .ch { animation: ch-wave .9s cubic-bezier(.45, 0, .55, 1) calc(var(--i, 0) * 45ms) both; }
-@keyframes ch-wave { 50% { font-stretch: 108%; } }
+.letters.risen .ch { opacity: 1; transform: none; filter: none; }
 .hero .sub { font-size: clamp(17px, 1.45vw, 22px); font-weight: 600; line-height: 1.45; letter-spacing: -.01em; }
 .cta-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 24px; }
 /* 规格：键值行，灰线分行 */
@@ -333,11 +333,11 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 .foot-spec { font-size: 12px; font-weight: 600; letter-spacing: .1em; color: var(--muted-fg); }
 
 /* ============================================================
-   模拟看板：照 App 的 trader 详情页（记分牌 → 六格仪表条 → 左主栏 ‖ 右侧栏）
+   模拟看板：照 App 的 trader 工作台（页头 → 心跳条 → 六格记分条 → 左主栏 ‖ 右侧栏）
    外面一圈 1px 墨框，标明这是一块示意版面
    ============================================================ */
 .dash { position: relative; border: 1px solid var(--fg); padding: 30px 32px 4px; overflow: hidden; }
-/* 默认折叠：只露出记分牌、仪表条和净值曲线，点「展开」滚落到底 */
+/* 默认折叠：只露出页头、心跳条、记分条和净值曲线，点「展开」滚落到底 */
 .dash.anim { transition: max-height .95s cubic-bezier(.16, 1, .3, 1); }
 .dash-fold { position: absolute; left: 0; right: 0; bottom: 0; height: 76px; z-index: 3; display: flex; align-items: center; justify-content: center; background: var(--bg); border-top: 1px dashed var(--muted-fg); }
 .dash-more { display: flex; justify-content: center; padding: 28px 0 24px; }
@@ -358,6 +358,15 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 .strip > div:last-child { border-right: 0; }
 .strip .k { font-size: 12.5px; color: var(--muted-fg); }
 .strip .v { margin-top: 4px; font-size: 26px; font-weight: 600; font-stretch: 80%; letter-spacing: -.02em; line-height: 1.1; white-space: nowrap; }
+
+/* 心跳条：心跳档位 / 下次心跳倒计时 / 上次醒来 / 在盯几条，跟记分条同一套排版，多一行小字 */
+.hb { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 24px; border-top: 2px solid var(--fg); border-bottom: 1px solid var(--border); }
+.hb > div { min-width: 0; padding: 14px 16px; border-right: 1px solid var(--border); }
+.hb > div:first-child { padding-left: 0; }
+.hb > div:last-child { border-right: 0; }
+.hb .k { font-size: 12.5px; color: var(--muted-fg); }
+.hb .v { margin-top: 4px; font-size: 26px; font-weight: 600; font-stretch: 80%; letter-spacing: -.02em; line-height: 1.1; white-space: nowrap; }
+.hb .s { margin-top: 3px; font-size: 12.5px; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .dash-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 40px; margin-top: 40px; }
 .dash-main { display: flex; flex-direction: column; gap: 44px; min-width: 0; }
@@ -383,6 +392,12 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 .tab { display: inline-flex; align-items: center; gap: 8px; margin-bottom: -1px; padding: 0 0 10px; background: none; border: 0; border-bottom: 2px solid transparent; font-size: 15px; font-weight: 600; color: var(--muted-fg); cursor: pointer; }
 .tab.on { color: var(--fg); font-weight: 800; border-bottom-color: var(--fg); }
 .tab .chip { padding: 0 5px; font-size: 10.5px; }
+/* 时间线筛选：只在已经拉下来的这些里挑，计数也是 */
+.fchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 4px; }
+.fchip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 1px solid var(--border); background: none; font-size: 12.5px; font-weight: 700; color: var(--muted-fg); cursor: pointer; transition: background-color .2s, color .2s, border-color .2s; }
+.fchip.on { border-color: var(--fg); background: var(--fg); color: var(--bg); }
+.fchip em { font-style: normal; opacity: .7; }
+@media (hover: hover) { .fchip:hover:not(.on) { border-color: var(--muted-fg); } }
 
 /* 决策卡：每条一格，1px 灰线隔开；复盘左边一道色线 */
 .dec { padding: 20px 0; border-bottom: 1px solid var(--border); }
@@ -418,19 +433,42 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 .tc-times { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 13px; color: var(--muted-fg); }
 .tc-links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 12px; font-size: 13px; }
 
-/* 持仓表：四列 + 副行，表头 1px 墨线，挂单行浅底灰字 */
-.ptbl { width: 100%; border-collapse: collapse; }
-.ptbl th { padding: 0 8px 8px; border-bottom: 1px solid var(--fg); font-size: 12px; font-weight: 600; color: var(--muted-fg); text-align: left; white-space: nowrap; }
-.ptbl td { padding: 12px 8px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; white-space: nowrap; }
-.ptbl th:first-child, .ptbl td:first-child { padding-left: 0; }
-.ptbl th:last-child, .ptbl td:last-child { padding-right: 0; }
-.ptbl .r { text-align: right; }
-.ptbl td > b { font-weight: 700; }
-.ptbl .sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted-fg); }
-.ptbl .sub.up { color: var(--gain); } .ptbl .sub.dn { color: var(--loss); }
-.ptbl tr.order td { background: var(--card-2); color: var(--muted-fg); }
+/* 手上的仓位：一仓一张卡，浮盈跟着现价走；底下一根止损（左）到止盈（右）的条，竖线是现价 */
+.hold-float { font-size: 14px; font-weight: 700; }
+.pc { padding: 16px 0 14px; border-bottom: 1px solid var(--border); }
+.pc-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pc-h .sym { font-size: 20px; font-weight: 800; font-stretch: 80%; }
+.pc-pnl { margin-left: auto; text-align: right; font-size: 22px; font-weight: 700; font-stretch: 78%; line-height: 1.05; }
+.pc-pnl em { display: block; margin-top: 2px; font-style: normal; font-size: 12px; font-weight: 600; font-stretch: 100%; color: var(--muted-fg); }
+.pc-pnl.wait { font-size: 14px; font-stretch: 100%; color: var(--muted-fg); }
+.pc-q { margin-top: 3px; font-size: 13px; color: var(--muted-fg); }
+.pc-bar { position: relative; height: 8px; margin-top: 34px; background: var(--card-2); border-left: 3px solid var(--loss); border-right: 3px solid var(--gain); }
+.pc-fill { position: absolute; top: 0; bottom: 0; opacity: .6; transition: left .9s var(--ease), width .9s var(--ease); }
+.pc-fill.up { background: var(--gain); }
+.pc-fill.dn { background: var(--loss); }
+.pc-entry { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: color-mix(in srgb, var(--muted-fg) 60%, transparent); }
+.pc-now { position: absolute; top: -7px; bottom: -7px; width: 2px; margin-left: -1px; background: var(--fg); transition: left .9s var(--ease); }
+.pc-now span { position: absolute; bottom: calc(100% + 3px); left: 50%; font-size: 11.5px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.pc-ends { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 12.5px; font-weight: 700; }
+.pc-ends em { display: block; font-style: normal; font-weight: 600; font-size: 11.5px; color: var(--muted-fg); }
+.pc-ends .r { text-align: right; }
+.pc-ord { margin: 10px 0 0; font-size: 13.5px; line-height: 1.6; }
+.pc-why { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.6; }
+.pc-why span { display: inline-block; min-width: 72px; margin-right: 8px; color: var(--muted-fg); font-weight: 600; }
 
-/* 交易计划 */
+/* 它的盯盘：看价格的按离现价远近排，看时间的排后面；离得很近的标「快到了」 */
+.wl-desc { margin: -6px 0 4px; font-size: 13px; line-height: 1.6; color: var(--muted-fg); }
+.wl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.wl-b b { display: block; font-size: 14.5px; font-weight: 800; }
+.wl-b > span { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.55; color: var(--muted-fg); }
+.wl-r { text-align: right; white-space: nowrap; }
+.wl-r b { display: block; font-size: 14px; font-weight: 700; }
+.wl-r span { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted-fg); }
+.wl .soon { display: none; margin-left: 8px; padding: 1px 6px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 800; vertical-align: 2px; }
+.wl.near .soon { display: inline-block; }
+.wl.near .wl-r b { color: var(--primary); }
+
+/* 交易计划（挂在做完的交易里） */
 .plan { padding: 16px 0; border-bottom: 1px solid var(--border); }
 .plan.embedded { margin-top: 12px; padding: 12px 0 0; border-top: 1px dashed var(--border); border-bottom: 0; }
 .plan-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -643,8 +681,7 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .reveal { opacity: 1; transform: none; transition: none; }
-  .letters .ch { transform: none; transition: none; }
-  .letters.wave .ch { animation: none; }
+  .letters .ch { opacity: 1; transform: none; filter: none; transition: none; }
   .drawline::before { transform: none; transition: none; }
   .drawline::after { display: none; }
   .sec-head h2 { clip-path: none; transform: none; transition: none; }
@@ -654,6 +691,7 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
   .eq-reveal, .eq-late { animation: none; opacity: 1; }
   .nav-dot { transition: none; }
   .node, .wires path, .nrow, .nchip { transition: none; }
+  .pc-fill, .pc-now, .fchip { transition: none; }
   .node.on .ndot, .node.hold .ndot, .chip .dot.pulse { animation: none; }
   .tline { animation: none; }
   .btn, .ibtn, .seg button { transition: none; }
@@ -663,7 +701,7 @@ svg[data-icon] { width: 16px; height: 16px; flex: none; }
 html.shot .reveal { opacity: 1; transform: none; transition: none; }
 html.shot .eq-reveal, html.shot .eq-late { animation: none; opacity: 1; }
 html.shot .dstrip { transition: none; }
-html.shot .letters .ch { transform: none; transition: none; }
+html.shot .letters .ch { opacity: 1; transform: none; filter: none; transition: none; }
 html.shot .drawline::before { transform: none; transition: none; }
 html.shot .drawline::after { display: none; }
 html.shot .sec-head h2 { clip-path: none; transform: none; transition: none; }

@@ -9,6 +9,8 @@
 /* 北京时间 2026-08-25 00:00 起，每小时一个点，到 09-02 10:00 */
 const MOCK_T0 = Date.parse('2026-08-25T00:00:00+08:00');
 const HOUR = 3600 * 1000;
+/* 看板上的「现在」：心跳倒计时、到时刻的盯盘从这一刻往后走 */
+const MOCK_NOW = Date.parse('2026-09-02T10:35:42+08:00');
 
 /* 净值锚点 [小时序号, 权益]，锚点之间插值再叠一点确定性噪声，形状：起步平、拉升、一次 6.8% 回撤、再创新高 */
 const EQ_ANCHORS = [
@@ -46,6 +48,7 @@ const MOCK = {
     model: 'claude-opus-5',
     interval: '1h',
     wakeWindow: '08:00–02:00',
+    beatsPerDay: 19,
     status: 'RUNNING',
     round: 2,
     seed: 10000,
@@ -55,12 +58,13 @@ const MOCK = {
     closed: 14,
     winRate: 57,
     maxDd: -6.8,
-    tokensToday: 312400
+    tokensRound: 6824300
   },
   curve: buildEquityCurve(),
 
+  /* 现价取首屏行情 MARKET 里的 ETH、BTC（看板上会小幅漂移）：持仓浮盈、挂单离成交多远、盯盘离触发多远都按它算 */
   positions: [
-    { symbol: 'ETHUSDT', side: 'SHORT', lev: 8, qty: 2.4, entry: 3142.50, mark: 3064.80, sl: 3208.00, tp: 2990.00, upnl: 186.48 }
+    { symbol: 'ETHUSDT', side: 'SHORT', lev: 8, qty: 2.4, entry: 3142.50, sl: 3120.00, tp: 2990.00 }
   ],
   orders: [
     { symbol: 'BTCUSDT', side: 'OPEN_LONG', lev: 5, qty: 0.06, limit: 78420.00 }
@@ -76,9 +80,29 @@ const MOCK = {
       invalidation: { zh: '1h 收盘站上 3208（前高 + 1.5×ATR），证明反弹不是反弹', en: '1h close above 3208 (prior high + 1.5×ATR) — the bounce is not a bounce' },
       entry: 3142.50, sl: 3260.00, tp: 2990.00,
       revisions: [
-        { time: '09/02 09:00', type: 'SL', change: '3260 → 3208', reason: { zh: '警报唤醒：振幅放大，止损收到失效位', en: 'alert wake: range expanded, stop tightened to the invalidation level' } }
+        { time: '09/02 09:00', type: 'SL', change: '3260 → 3208', reason: { zh: '警报唤醒：振幅放大，止损收到失效位', en: 'alert wake: range expanded, stop tightened to the invalidation level' } },
+        { time: '09/02 09:40', type: 'SL', change: '3208 → 3120', reason: { zh: '盯盘命中：15m 收盘跌破 3080，止损收到成本下方锁利润', en: 'watch hit: a 15m close under 3080, stop moved under cost to lock profit' } }
       ]
+    },
+    {
+      symbol: 'BTCUSDT', side: 'LONG', play: 'PULLBACK', setAt: '09/01 21:00',
+      basis: { zh: '4h 回踩通道下沿 78,4xx，结构未坏；不追现价，挂限价等回落。', en: 'a 4h retest of the channel floor at 78,4xx with the structure intact; no chasing, a limit waits for the dip.' },
+      invalidation: { zh: '4h 收盘跌破 77,800（通道下沿失守）', en: 'a 4h close under 77,800 (channel floor lost)' },
+      entry: 78420.00, sl: 77800.00, tp: 81200.00,
+      revisions: []
     }
+  ],
+
+  /* 它给自己布的盯盘条件；kind 同 ai_trader_watch */
+  watches: [
+    { symbol: 'ETHUSDT', kind: 'CLOSE_ABOVE', period: '15m', level: 3080.00, setAt: '09/02 09:40',
+      note: { zh: '站回 3080 说明跌破是假的，复查要不要提前离场', en: 'back above 3080 means the break was fake; review an early exit' } },
+    { symbol: 'ETHUSDT', kind: 'TOUCH_BELOW', level: 3010.00, setAt: '09/02 09:40',
+      note: { zh: '离目标 2990 不远，看要不要先止盈一部分', en: 'near the 2990 target; consider taking some off first' } },
+    { symbol: 'BTCUSDT', kind: 'CLOSE_BELOW', period: '4h', level: 77800.00, setAt: '09/02 10:00',
+      note: { zh: '通道下沿失守，撤掉限价单', en: 'channel floor lost; cancel the limit order' } },
+    { symbol: 'BTCUSDT', kind: 'AT_TIME', at: Date.parse('2026-09-02T20:25:00+08:00'), setAt: '09/02 10:00',
+      note: { zh: '数据公布前复查一次挂单', en: 'review the order before the data release' } }
   ],
 
   /* 经验账本 = 复盘后代码从 ai_trader_experience 渲染的文本，整份覆盖 ai_trader.memory */
@@ -87,19 +111,15 @@ const MOCK = {
     zh: `【经验账本】
 〔BREAKOUT〕
 #3 规律·执行型 ｜ 失效条件触发 → 当根收盘就平，不等确认根 ｜ 支持 3 反对 0
-#7 假设·限制型 ｜ 4h ADX > 30 → 不做逆势突破单 ｜ 支持 1 反对 0
 〔PULLBACK〕
 #5 规律·机会型 ｜ 资金费连续 3 期为负且反弹停在前高下方 → 做空反弹结束，不追跌 ｜ 支持 3 反对 1
-#12 假设·机会型 ｜ 回踩到通道下沿且 4h 结构未坏 → 挂限价不追现价 ｜ 支持 0 反对 0
 〔通用〕
 #9 执行缺口 ｜ 目标按 2×ATR 挂后不手动缩目标 ｜ 支持 1 反对 3 ｜ 待复审`,
     en: `[EXPERIENCE LEDGER]
 — BREAKOUT —
 #3 rule·execution | invalidation triggered → close on that candle's close, no confirmation candle | supported 3 opposed 0
-#7 hypothesis·restriction | 4h ADX > 30 → no counter-trend breakout trades | supported 1 opposed 0
 — PULLBACK —
 #5 rule·opportunity | funding negative 3 periods and the bounce stalls below the prior high → short the end of the bounce, never chase the drop | supported 3 opposed 1
-#12 hypothesis·opportunity | pullback to the channel floor with the 4h structure intact → bid with a limit, never chase | supported 0 opposed 0
 — general —
 #9 execution gap | targets set at 2×ATR are not trimmed by hand | supported 1 opposed 3 | under review`
   },
@@ -107,38 +127,70 @@ const MOCK = {
   /* 决策时间线，新在前 */
   decisions: [
     {
-      kind: 'DECISION', time: '09/02 10:00', equity: 11842.60, tokens: 41200, latency: 38.4, toolCalls: 3, modelCalls: 4,
+      kind: 'TRADE', time: '09/02 10:00', equity: 11842.60, tokens: 41200, latency: 38.4, toolCalls: 4, modelCalls: 4,
       looked: ['klines', 'indicators', 'snapshot'],
-      actions: [],
+      actions: [
+        { tool: 'set_watch', args: { zh: 'BTCUSDT · 2 条', en: 'BTCUSDT · 2 conditions' } }
+      ],
       reasoning: {
         zh: `[本轮结论]
-总评：ETH 空单按计划持有，BTC 限价多单继续挂着，本轮不动。
+总评：ETH 空单按计划持有，BTC 限价多单继续挂着，仓位不动；给 BTC 布了两条盯盘。
 [ETHUSDT]
-判断：1h 收 3064.8（低 3051、量 22,410/MA20 31,880≈0.70），距失效位 3208 约 4.7%、距目标 2990 还有 2.4%；4h ADX 33.1、−DI 29.4 > +DI 17.8 仍空；资金费 −0.011% 较上期收敛但仍为负。
-动作：HOLD
-等待：1h 收盘站上 3208 平仓；到 2990 止盈带走。
+判断：1h 收 3064.8（低 3051、量 22,410/MA20 31,880≈0.70），距目标 2990 还有 2.4%；止损 09:40 已收到 3120，在成本下方；4h ADX 33.1、−DI 29.4 > +DI 17.8 仍空；资金费 −0.011% 较上期收敛但仍为负。
+动作：HOLD，两条盯盘留着
+等待：到 2990 止盈带走；15m 收盘站回 3080、触及 3010 会叫醒我。
 [BTCUSDT]
-判断：限价 78,420 未成交，现价 79,105 高于挂单 0.9%；4h 回踩通道下沿的结构未变。
-动作：HOLD，挂单保留
+判断：限价 78,420 未成交，现价 78,912 高于挂单 0.6%；4h 回踩通道下沿的结构未变。
+动作：HOLD，挂单保留；布两条盯盘：4h 收盘跌破 77,800，20:25 数据公布前复查。
 等待：回落到 78,420 成交；4h 收盘跌破 77,800 撤单。
 [SOLUSDT]
 判断：1h 在 181–186 区间内来回，量能萎缩，没有新信号。
 动作：HOLD
 等待：放量站上 186.9 再看。`,
         en: `[Conclusion]
-Overview: ETH short held as planned, BTC limit long stays resting, no action this round.
+Overview: ETH short held as planned, BTC limit long stays resting, positions untouched; two watches set on BTC.
 [ETHUSDT]
-Judgement: 1h close 3064.8 (low 3051, volume 22,410 / MA20 31,880 ≈ 0.70), 4.7% below the invalidation at 3208 and 2.4% above the target 2990; 4h ADX 33.1, −DI 29.4 > +DI 17.8 still short; funding −0.011%, narrowing but negative.
-Action: HOLD
-Waiting for: a 1h close above 3208 to exit; 2990 for the take-profit.
+Judgement: 1h close 3064.8 (low 3051, volume 22,410 / MA20 31,880 ≈ 0.70), 2.4% above the target 2990; the stop moved to 3120 at 09:40, under cost; 4h ADX 33.1, −DI 29.4 > +DI 17.8 still short; funding −0.011%, narrowing but negative.
+Action: HOLD, both watches stay
+Waiting for: 2990 for the take-profit; a 15m close back above 3080 or a touch of 3010 wakes me.
 [BTCUSDT]
-Judgement: limit at 78,420 unfilled, mark 79,105 is 0.9% above it; the 4h retest of the channel floor is intact.
-Action: HOLD, order stays
+Judgement: limit at 78,420 unfilled, mark 78,912 is 0.6% above it; the 4h retest of the channel floor is intact.
+Action: HOLD, order stays; two watches set: a 4h close under 77,800, and a review at 20:25 before the data release.
 Waiting for: a fill at 78,420; a 4h close under 77,800 to cancel.
 [SOLUSDT]
 Judgement: 1h chopping inside 181–186 on shrinking volume, no new signal.
 Action: HOLD
 Waiting for: a high-volume close above 186.9.`
+      }
+    },
+    {
+      kind: 'WATCH', time: '09/02 09:40', equity: 11828.40, tokens: 24800, latency: 21.3, toolCalls: 4, modelCalls: 3,
+      looked: ['klines', 'depth'],
+      actions: [
+        { tool: 'set_stop_loss', args: { zh: '→3120.00 · 盯盘命中，止损收到成本下方锁利润', en: '→3120.00 · watch hit, stop moved under cost to lock profit' } },
+        { tool: 'set_watch', args: { zh: 'ETHUSDT · 2 条', en: 'ETHUSDT · 2 conditions' } }
+      ],
+      reasoning: {
+        zh: `[本轮结论]
+总评：盯盘命中，ETH 空单按备注把止损收到成本下方锁利润，盯盘换成两条。
+[ETHUSDT]
+判断：命中的是「15m 收盘跌破 3080」，备注写的是跌破就收紧止损锁利润；09:30 那根 15m 收在 3076、最低 3071，是实打实的收盘不是插针；盘口 25bp 内卖压 1.8×。
+动作：止损 3208 → 3120，在成本 3142.5 下方，这笔最差也是小赚。盯盘换成两条：15m 收盘站回 3080（跌破是假的，复查要不要提前离场）、触及 3010（离目标 2990 不远，看要不要先止盈一部分）。
+等待：到 2990 止盈带走；两条盯盘条件。
+[BTCUSDT]
+判断：限价 78,420 未成交，这次命中在 ETH 上。
+动作：HOLD
+等待：同上一轮。`,
+        en: `[Conclusion]
+Overview: watch hit; per its note the ETH short's stop moves under cost to lock profit, and the watches are replaced with two.
+[ETHUSDT]
+Judgement: the watch that fired is "15m close below 3080", whose note said to tighten the stop and lock profit; the 09:30 15m closed at 3076, low 3071 — a real close, not a wick; asks 1.8× bids within 25bp.
+Action: stop 3208 → 3120, under the 3142.5 cost, so the worst case is a small win. Watches replaced with two: a 15m close back above 3080 (the break was fake, review an early exit) and a touch of 3010 (near the 2990 target, consider taking some off).
+Waiting for: 2990 for the take-profit; the two watches.
+[BTCUSDT]
+Judgement: limit at 78,420 unfilled; this hit is on ETH.
+Action: HOLD
+Waiting for: unchanged.`
       }
     },
     {
@@ -228,12 +280,13 @@ ADD PULLBACK ENTRY OPPORTUNITY | pullback to the channel floor with the 4h struc
       }
     },
     {
-      kind: 'DECISION', time: '09/01 21:00', equity: 11781.40, tokens: 58700, latency: 66.9, toolCalls: 7, modelCalls: 7,
+      kind: 'TRADE', time: '09/01 21:00', equity: 11781.40, tokens: 58700, latency: 66.9, toolCalls: 8, modelCalls: 7,
       looked: ['klines', 'snapshot', 'funding', 'depth'],
       actions: [
         { tool: 'open_position', rejected: { zh: '杠杆 25x 超出主人设定区间 3–10x', en: 'leverage 25x outside the owner’s range 3–10x' }, args: { zh: 'ETHUSDT · 做空 · 2.4张 · 25x · 止损3260 · 止盈2990 · PULLBACK', en: 'ETHUSDT · short · 2.4 · 25x · SL 3260 · TP 2990 · PULLBACK' } },
         { tool: 'open_position', args: { zh: 'ETHUSDT · 做空 · 2.4张 · 8x · 止损3260 · 止盈2990 · PULLBACK', en: 'ETHUSDT · short · 2.4 · 8x · SL 3260 · TP 2990 · PULLBACK' } },
-        { tool: 'open_position', args: { zh: 'BTCUSDT · 做多 · 限价78420 · 0.06张 · 5x · 止损77800 · 止盈81200 · PULLBACK', en: 'BTCUSDT · long · limit 78420 · 0.06 · 5x · SL 77800 · TP 81200 · PULLBACK' } }
+        { tool: 'open_position', args: { zh: 'BTCUSDT · 做多 · 限价78420 · 0.06张 · 5x · 止损77800 · 止盈81200 · PULLBACK', en: 'BTCUSDT · long · limit 78420 · 0.06 · 5x · SL 77800 · TP 81200 · PULLBACK' } },
+        { tool: 'set_watch', args: { zh: 'ETHUSDT · 1 条 · 15m 收盘跌破 3080 就收紧止损锁利润', en: 'ETHUSDT · 1 condition · a 15m close under 3080 tightens the stop to lock profit' } }
       ],
       reasoning: {
         zh: `[本轮结论]
@@ -267,7 +320,7 @@ Waiting for: a high-volume break of the range.`
       }
     },
     {
-      kind: 'DECISION', time: '09/01 20:00', equity: 11720.60, tokens: 36300, latency: 31.8, toolCalls: 3, modelCalls: 4,
+      kind: 'TRADE', time: '09/01 20:00', equity: 11720.60, tokens: 36300, latency: 31.8, toolCalls: 3, modelCalls: 4,
       looked: ['klines', 'structure'],
       actions: [
         { tool: 'close_position', args: { zh: '仓位#1187 · 0.06张 · 1h 收盘跌破失效位 78,900', en: 'position #1187 · 0.06 · 1h close under the invalidation 78,900' } }
