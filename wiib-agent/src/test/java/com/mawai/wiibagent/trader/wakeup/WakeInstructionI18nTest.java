@@ -278,7 +278,8 @@ class WakeInstructionI18nTest {
     void 中文单段开场白逐字不变() {
         assertThat(runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.ZH))
                 .isEqualTo("新一根 1h K线已收盘（" + TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY)) + "）。"
-                        + "本轮：按主人的交易指令看每个可交易币有没有进场条件到位；每个币下一步等什么，用 set_watch 布下去，没什么可等的写明为什么。"
+                        + "本轮：按主人的交易指令看每个可交易币有没有进场条件到位；每个币下一步等什么，用 set_watch 布下去"
+                        + "（每个方向布最先要处理的一条，更远的写进等待行），没什么可等的写明为什么。"
                         + "先读上面的事实，判断用工具求证。"
                         + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
     }
@@ -294,7 +295,7 @@ class WakeInstructionI18nTest {
         assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
                         + "本段：按主人的交易指令看整盘——有没有新的进场条件到位；每个可交易币下一步等什么，用 set_watch 布下去"
-                        + "（一次整组替换该币全部条件，要留的旧条件一并带上），没什么可等的写明为什么。"
+                        + "（一次整组替换该币全部条件，要留的旧条件一并带上；每个方向布最先要处理的一条，更远的写进等待行），没什么可等的写明为什么。"
                         + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
         assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"

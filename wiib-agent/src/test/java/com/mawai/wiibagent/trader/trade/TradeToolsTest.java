@@ -23,7 +23,6 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.context.ApplicationEventPublisher;
 import java.util.Arrays;
-import java.util.Collections;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -112,11 +111,22 @@ class TradeToolsTest {
         return plan;
     }
 
-    /** 盯盘条件：护栏逐条拒（条数、kind、周期、已越过的价位、过去的时刻、白名单），通过的整组落库并进动作轨迹 */
+    /** 盯盘条件：护栏逐条拒（同一路超过一条、kind、周期、已越过的价位、过去的时刻、白名单），通过的整组落库并进动作轨迹 */
     @Test
     void setWatchGuardAndReplace() {
-        List<WatchSpec> seven = Collections.nCopies(7, new WatchSpec("TOUCH_ABOVE", 101000.0, null, null, "多"));
-        assertThat(tools.setWatch("BTCUSDT", seven)).startsWith("REJECTED").contains("最多 6 条");
+        // 触及和收盘算同一路，向上、向下、到时刻各最多一条
+        assertThat(tools.setWatch("BTCUSDT", List.of(
+                new WatchSpec("TOUCH_ABOVE", 101000.0, null, null, "多"),
+                new WatchSpec("CLOSE_ABOVE", 102000.0, "15m", null, "追"))))
+                .startsWith("REJECTED").contains("向上").contains("只能布一条");
+        assertThat(tools.setWatch("BTCUSDT", List.of(
+                new WatchSpec("TOUCH_BELOW", 99000.0, null, null, "回踩"),
+                new WatchSpec("CLOSE_BELOW", 98000.0, "1h", null, "破位"))))
+                .startsWith("REJECTED").contains("向下");
+        assertThat(tools.setWatch("BTCUSDT", List.of(
+                new WatchSpec("AT_TIME", null, null, "2099-01-01 00:00", "公布前"),
+                new WatchSpec("AT_TIME", null, null, "2099-01-01 01:00", "公布后"))))
+                .startsWith("REJECTED").contains("到时刻");
         assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("ABOVE", 101000.0, null, null, "")))).contains("kind 必须是");
         assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("CLOSE_ABOVE", 101000.0, "3h", null, "")))).contains("period");
         // 现价 100000：TOUCH_ABOVE 99000 已被越过，布下去立刻触发
@@ -128,16 +138,18 @@ class TradeToolsTest {
         verify(watchMapper, never()).insert(any(AiTraderWatch.class));
         verify(watchMapper, never()).update(any(), any());
 
+        // 向上、向下、到时刻各一条（心跳 1h 布 1h 收盘也行）
         String ok = tools.setWatch("BTCUSDT", List.of(
                 new WatchSpec("TOUCH_ABOVE", 101000.0, null, null, "突破看追多"),
-                new WatchSpec("CLOSE_BELOW", 98000.0, "1h", null, "区间失守")));
+                new WatchSpec("CLOSE_BELOW", 98000.0, "1h", null, "区间失守"),
+                new WatchSpec("AT_TIME", null, null, "2099-01-01 00:00", "数据公布后复查")));
 
-        assertThat(ok).contains("\"armed\":2");
-        verify(watchMapper, times(2)).insert(any(AiTraderWatch.class));
+        assertThat(ok).contains("\"armed\":3");
+        verify(watchMapper, times(3)).insert(any(AiTraderWatch.class));
         assertThat(tools.actions()).anySatisfy(a -> {
             assertThat(a.path("tool").asString(null)).isEqualTo("set_watch");
             assertThat(a.path("status").asString(null)).isEqualTo("ok");
-            assertThat(a.path("args").path("watches").size()).isEqualTo(2);
+            assertThat(a.path("args").path("watches").size()).isEqualTo(3);
         });
     }
 

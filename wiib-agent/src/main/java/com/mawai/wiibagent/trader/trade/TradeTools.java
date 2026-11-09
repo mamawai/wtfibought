@@ -632,12 +632,16 @@ public class TradeTools {
             Replace ALL your watch conditions on one symbol. The platform watches them between wake-ups and wakes
             you the moment one is met: a non-routine wake-up whose opening names the condition and your note.
             kind: TOUCH_ABOVE / TOUCH_BELOW (mark price touches level), CLOSE_ABOVE / CLOSE_BELOW (a candle of
-            period 5m/15m/1h/4h/1d closes above / below level), AT_TIME (at `at`, Beijing time yyyy-MM-dd HH:mm).
+            period 5m/15m/1h/4h/1d closes above / below level; a close of your heartbeat period or longer lands on the
+            routine wake-up at that moment and is read out there, not as a separate wake-up), AT_TIME (at `at`,
+            Beijing time yyyy-MM-dd HH:mm).
             The current Beijing time is nowBeijing in the [Account] block. note: one sentence to your next self about
-            what it means when this fires. Max 6 per symbol; the previous set on the symbol is replaced in full, an
-            empty array clears it. A condition fires once and is removed.""")
+            what it means when this fires. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward
+            (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm
+            then. The previous set on the symbol is replaced in full, an empty array clears it. A condition fires
+            once and is removed.""")
     public String setWatch(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
-                           @ToolParam(description = "The whole new list for this symbol (max 6); an empty array clears it") List<WatchSpec> watches) {
+                           @ToolParam(description = "The whole new list for this symbol (at most one upward, one downward, one AT_TIME); an empty array clears it") List<WatchSpec> watches) {
         ObjectNode args = MAPPER.createObjectNode().put("symbol", symbol);
         args.set("watches", MAPPER.valueToTree(watches));
         if (roundExpired()) {

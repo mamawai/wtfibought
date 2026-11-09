@@ -69,7 +69,7 @@ const PANELS = [
           { id: 'touch', t: { zh: '触及价位 · 到时刻', en: 'touch price · at time' } },
           { id: 'close', t: { zh: '周期收盘站上/跌破', en: 'close above/below' } }
         ],
-        detail: { zh: '模型自己用 set_watch 给每个币布的条件，命中就叫醒它：价格触及某个价位、某个周期的 K 线收盘站上或跌破某个价位、到了某个时刻。触及和到时刻看 markPrice tick，收盘类在 5m 收盘时按周期边界判；每币最多 6 条，命中一条摘一条。每条带一句备注，醒来时开场白原样带上——相当于给下一轮的自己留话。两次心跳之间什么时候再看盘，由它自己定。', en: 'Conditions the model arms per symbol with set_watch; a hit wakes it: price touching a level, a candle of some timeframe closing above or below a level, or a given time. Touch and time are checked on markPrice ticks, closes on the 5m close at each timeframe’s boundary; at most 6 per symbol, each one disarmed when it fires. Every condition carries a note the opening message brings back on waking — a message to its next self. Between heartbeats it decides when to look again.' } },
+        detail: { zh: '模型自己用 set_watch 给每个币布的条件，命中就叫醒它：价格触及某个价位、某个周期的 K 线收盘站上或跌破某个价位、到了某个时刻。触及和到时刻看 markPrice tick，收盘类在 5m 收盘时按周期边界判；每币向上、向下、到时刻各最多一条，命中一条摘一条。每条带一句备注，醒来时开场白原样带上——相当于给下一轮的自己留话。两次心跳之间什么时候再看盘，由它自己定。', en: 'Conditions the model arms per symbol with set_watch; a hit wakes it: price touching a level, a candle of some timeframe closing above or below a level, or a given time. Touch and time are checked on markPrice ticks, closes on the 5m close at each timeframe’s boundary; at most one upward, one downward and one timed per symbol, each one disarmed when it fires. Every condition carries a note the opening message brings back on waking — a message to its next self. Between heartbeats it decides when to look again.' } },
       { id: 'event', x: 16, y: 322, w: 170, h: 92, tag: 'EVENT', icon: 'bell',
         title: { zh: '持仓事件', en: 'Position events' },
         rows: [
@@ -126,7 +126,7 @@ const PANELS = [
           { id: 'spec', t: { zh: '杠杆/保证金/仓位/双开', en: 'lev/margin/slots/hedge' } },
           { id: 'veto', t: { zh: '止损止盈必填 · 越界即拒', en: 'SL+TP required · veto' } }
         ],
-        detail: { zh: '开仓入口一票否决：币种白名单、杠杆区间、保证金占比、同币杠杆一致、单仓模式、禁对冲都来自主人的设定；止损和止盈必填且方向要对，限价偏离现价不超过 5%。越界一律拒绝而不是悄悄截断——平台把数字改小模型不知道，后面的止损计算全是错的。拒因原样返回，还把能用的数量区间算好给它，模型改了就能重试；所有调用（含被拒的）都记入动作轨迹。盯盘条件也在这里过一道：每币最多 6 条、类型要认得、价格类要给正价位，触及类的价位已经被现价越过就拒（布下去会立刻触发）。', en: 'A veto at the open: symbol whitelist, leverage range, margin share, same-symbol leverage, single-position mode and no-hedge all come from the owner; stop-loss and take-profit are both required and must sit on the right side, and a limit price may not stray more than 5% from mark. Out-of-range orders are rejected, never silently clamped — a size the model didn’t choose poisons every stop calculation after it. The reason goes back verbatim with the allowed quantity range worked out, so the model can fix and retry; every call, rejected ones included, lands in the action trace. Watch conditions pass here too: at most 6 per symbol, a known kind, a positive level for price kinds, and a touch level the price has already crossed is refused (it would fire at once).' } },
+        detail: { zh: '开仓入口一票否决：币种白名单、杠杆区间、保证金占比、同币杠杆一致、单仓模式、禁对冲都来自主人的设定；止损和止盈必填且方向要对，限价偏离现价不超过 5%。越界一律拒绝而不是悄悄截断——平台把数字改小模型不知道，后面的止损计算全是错的。拒因原样返回，还把能用的数量区间算好给它，模型改了就能重试；所有调用（含被拒的）都记入动作轨迹。盯盘条件也在这里过一道：每币向上、向下、到时刻各最多一条，类型要认得、价格类要给正价位，触及类的价位已经被现价越过就拒（布下去会立刻触发）。', en: 'A veto at the open: symbol whitelist, leverage range, margin share, same-symbol leverage, single-position mode and no-hedge all come from the owner; stop-loss and take-profit are both required and must sit on the right side, and a limit price may not stray more than 5% from mark. Out-of-range orders are rejected, never silently clamped — a size the model didn’t choose poisons every stop calculation after it. The reason goes back verbatim with the allowed quantity range worked out, so the model can fix and retry; every call, rejected ones included, lands in the action trace. Watch conditions pass here too: at most one upward, one downward and one timed per symbol, a known kind, a positive level for price kinds, and a touch level the price has already crossed is refused (it would fire at once).' } },
       { id: 'trade', x: 888, y: 384, w: 180, h: 192, tag: 'TOOLS', icon: 'wrench',
         title: { zh: '交易工具 ×8', en: 'Trade tools ×8' },
         rows: [
@@ -1046,7 +1046,7 @@ async function traderScript(c, scene) {
     await c.sleep(400);
     c.count('agent', 5);
     await c.pulse('ag-guard'); c.on('guard');
-    c.log('GUARD', { zh: '盯盘条件校验 · 每币 ≤6 条 · 触及价位没被现价越过', en: 'watch check · ≤6 per symbol · touch levels not already crossed' }, 'good');
+    c.log('GUARD', { zh: '盯盘条件校验 · 每路 ≤1 条 · 触及价位没被现价越过', en: 'watch check · ≤1 per direction · touch levels not already crossed' }, 'good');
     c.done('guard');
     await c.pulse('guard-trade');
     c.row('trade', 'watch');
@@ -1094,7 +1094,7 @@ async function traderScript(c, scene) {
     await c.sleep(800);
     c.count('agent', 4);
     await c.pulse('ag-guard'); c.on('guard');
-    c.log('GUARD', { zh: '盯盘条件校验 · 每币 ≤6 条 · 触及价位没被现价越过', en: 'watch check · ≤6 per symbol · touch levels not already crossed' }, 'good');
+    c.log('GUARD', { zh: '盯盘条件校验 · 每路 ≤1 条 · 触及价位没被现价越过', en: 'watch check · ≤1 per direction · touch levels not already crossed' }, 'good');
     c.done('guard');
     await c.pulse('guard-trade'); c.on('trade');
     c.row('trade', 'watch');

@@ -602,7 +602,7 @@
       "set_take_profit": "<0>Away only</0>: long targets move up, short targets move down. To leave early, cite the invalidation and close instead.",
       "write_plan": "Only for a position with no plan on record; plans are immutable — a new thesis means adding or re-opening.",
       "cancel_order": "Cancel a pending limit order.",
-      "set_watch": "Watch conditions on one coin: price touches a level, a candle of some period closes above or below it, or a set time arrives. It is woken the moment one is met; up to 6 per coin, each fires once.",
+      "set_watch": "Watch conditions on one coin: price touches a level, a candle of some period closes above or below it, or a set time arrives. It is woken the moment one is met; at most one upward, one downward and one timed per coin, each fires once.",
       "get_account": "Balance / positions / pending orders. Already injected every round; normally only called to re-check after its own orders.",
       "klines": "192 raw OHLCV bars, last one still forming. For bar-by-bar pattern checks or its own swing rules.",
       "kline_structure": "Swings, segments, volume-by-price and key levels of the same bars; facts only, no calls.",

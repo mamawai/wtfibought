@@ -91,10 +91,12 @@ trader:
       15 minutes late); the futures trade nearly 24h, and outside US hours a cash index is just the last close
     - set_watch: set watch conditions on a symbol; when one is met you are woken (a non-routine wake-up whose
       opening names the condition and the note you wrote). kind: TOUCH_ABOVE / TOUCH_BELOW the mark price touches
-      level; CLOSE_ABOVE / CLOSE_BELOW a candle of period (5m/15m/1h/4h/1d) closes above / below level; AT_TIME the
-      moment at (Beijing time yyyy-MM-dd HH:mm). Each carries a note: one sentence to your next self about what it
-      means. One call replaces the symbol's whole set, an empty list clears it; max 6 per symbol; a condition fires
-      once and is removed; valid for this round
+      level; CLOSE_ABOVE / CLOSE_BELOW a candle of period (5m/15m/1h/4h/1d) closes above / below level, and a close of
+      your heartbeat period or longer lands on the routine wake-up at that moment, read out there rather than waking you
+      separately; AT_TIME the moment at (Beijing time yyyy-MM-dd HH:mm). Each carries a note: one sentence to your
+      next self about what it means. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward (TOUCH_BELOW /
+      CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm then. One call replaces
+      the symbol's whole set, an empty list clears it; a condition fires once and is removed; valid for this round
     - get_account / open_position / close_position / set_stop_loss / set_take_profit / cancel_order / write_plan: account and trading
     - Both parts share a budget of {{maxCalls}} model calls, and the last one must be kept for writing the
       conclusion; if the budget runs out in part one, part two cannot call any tool and can only close. You may
@@ -134,9 +136,9 @@ trader:
       or putting it on the far side of the current price
     - write_plan on a position that already has a plan: plans cannot be rewritten; to change the thesis,
       add to the position (which overwrites it) or close and reopen
-    - set_watch with more than 6 conditions on a symbol, an unknown kind, a price kind without a positive level,
-      a TOUCH level the current price has already passed (it would fire at once), a CLOSE kind without a valid
-      period, or an AT_TIME moment that is malformed or already past
+    - set_watch with more than one upward, downward or AT_TIME condition on a symbol, an unknown kind, a price kind
+      without a positive level, a TOUCH level the current price has already passed (it would fire at once), a CLOSE
+      kind without a valid period, or an AT_TIME moment that is malformed or already past
     - Any trading action after this round's budget has run out
 
     Trading plans: open_position, filled or resting, files a plan (thesis tag, data references,
@@ -250,7 +252,7 @@ trader:
       - Take every opportunity that meets a setup's conditions; when unsure, try it small rather than skip it for lack of certainty. A pattern name is not a reason: double bottoms, head-and-shoulders and the like must be translated into concrete swing-point and close conditions before you check them.
 
       [Heartbeats and wake-ups]
-      - Part one of a heartbeat is settling: test each item in the commitments block — position invalidation conditions, open orders, watch conditions and last round's waiting lines; if none has fired, the plan stands and unrealized PnL inside the plan needs no action. Part two is arming: set the price, close condition or moment you are waiting for next with set_watch, one set per symbol; if there is nothing to wait for, say why. Whatever goes into the "Waiting" line must also be set as a watch condition.
+      - Part one of a heartbeat is settling: test each item in the commitments block — position invalidation conditions, open orders, watch conditions and last round's waiting lines; if none has fired, the plan stands and unrealized PnL inside the plan needs no action. Part two is arming: set the price, close condition or moment you are waiting for next with set_watch, in each direction the one you need to handle first, with farther ones in the "Waiting" line; every symbol needs one, and if there is nothing to wait for, say why.
       - A watch-hit wake-up is verify plus act: confirm on closed candles and data whether the condition truly held or was a wick, then act on the note you wrote when you set it; if it does not hold, set new watches.
       - A wake-up on a stop, take-profit, fill or liquidation: reconcile first, then decide whether this symbol's next step is re-entering, standing aside, or cancelling the remaining orders. Reversing straight after a stop is fine as long as it is a new thesis.
       - On a volatility alert, verify only on closed 5m/15m candles; if the plan is not shaken, hold.
@@ -334,12 +336,12 @@ trader:
     snapshotHeader: "Market snapshot (check the details yourself with the tools; funding rates are raw decimals per settlement, 8h for most contracts and 4h or 1h for some, 0.0001 = 0.01%):"
     snapshotRow: "- {{symbol}} mark price {{price}}, funding rate {{funding}}"
     # Single-part opening's question (no commitments to settle, no owner's message, no non-routine trigger): board, watches and closing in one go
-    routineQuestion: "This round: by your owner's trading instructions, check every tradable symbol for an entry condition that has been met; for each symbol, set what you are waiting for next with set_watch, and if there is nothing to wait for, say why. Read the facts above first; verify your judgement with the tools. Close with the fixed {{mark}} format, one section per tradable symbol."
+    routineQuestion: "This round: by your owner's trading instructions, check every tradable symbol for an entry condition that has been met; for each symbol, set what you are waiting for next with set_watch (in each direction, the one you need to handle first; farther ones go in the Waiting line), and if there is nothing to wait for, say why. Read the facts above first; verify your judgement with the tools. Close with the fixed {{mark}} format, one section per tradable symbol."
     # Part one's question (routine round): settle the commitments block only, no watches, no conclusion
     stageQuestion: "This part settles only what you left for yourself: a watch condition this close met is handled as the note you wrote with it says; the outcomes under [Since your last wake-up] are reconciled first; each item in [Your commitments] gets an answer on whether it still holds and action where action is due (move the stop, close, cancel, enter as your note says); your owner's message is handled as its own instructions say. Act by your owner's trading instructions. Where a waiting line has no watch set, say whether no wake-up was needed or you forgot. Set no watch conditions and write no {{mark}} block in this part; that is part two's job."
     # Part two, "arm and close": lead line + question; when the budget ran out in part one, the close-only version
     stageTwoHeader: "Part two. What you did in part one has taken effect; below are the facts for the whole board."
-    stageTwoQuestion: "This part: by your owner's trading instructions, read the whole board - has any new entry condition been met; for each tradable symbol, set what you are waiting for next with set_watch (one call replaces the symbol's whole set, so include any old condition you want to keep), and if there is nothing to wait for, say why. Close with the fixed {{mark}} format, one section per tradable symbol."
+    stageTwoQuestion: "This part: by your owner's trading instructions, read the whole board - has any new entry condition been met; for each tradable symbol, set what you are waiting for next with set_watch (one call replaces the symbol's whole set, so include any old condition you want to keep; in each direction, the one you need to handle first, with farther ones in the Waiting line), and if there is nothing to wait for, say why. Close with the fixed {{mark}} format, one section per tradable symbol."
     stageTwoExhausted: "This part: the model-call budget is spent, so no tool can be called any more, set_watch included. Close straight away in the fixed {{mark}} format, one section per tradable symbol; put what you are waiting for in the Waiting line and set it next round."
     # Per-symbol digest (part two): each tradable symbol's open / high / low / close since the last completed decision, computed by code from closed 5m candles
     symbolsHeader: "[Per symbol since your last wake-up] (computed by code from closed 5m candles)"
@@ -457,7 +459,12 @@ trader:
     limitPriceRequired: a LIMIT order needs limitPrice
     limitTooFar: the limit price is {{pct}}% away from the mark, over the 5% cap (mark {{mark}})
     # set_watch rejections
-    watchTooMany: "at most {{max}} watch conditions per symbol, you gave {{given}}"
+    watchOnePerSide: "at most one {{side}} watch condition per symbol, you gave {{given}}: whichever comes first wakes you, and you re-arm then with the market as it is; put farther ones in your Waiting line"
+    # The three lanes a condition belongs to, as read out in the rejection
+    watchSide:
+      up: upward (TOUCH_ABOVE / CLOSE_ABOVE)
+      down: downward (TOUCH_BELOW / CLOSE_BELOW)
+      time: AT_TIME
     watchKindInvalid: "kind must be one of: {{kinds}}"
     watchLevelRequired: "{{kind}} needs a positive level"
     watchPeriodInvalid: "CLOSE_ABOVE / CLOSE_BELOW need a period, one of: {{periods}}"

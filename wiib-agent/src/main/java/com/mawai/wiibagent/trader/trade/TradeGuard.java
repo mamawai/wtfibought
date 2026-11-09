@@ -12,6 +12,7 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 开仓硬校验：AI 会幻觉出荒谬参数，入口一票否决。拒绝原因用中文原样返回给模型——
@@ -28,10 +29,8 @@ public final class TradeGuard {
     /** 限价偏离现价上限：防模型幻觉出离谱价格，与用户配置无关，不开放 */
     public static final BigDecimal MAX_LIMIT_DEVIATION = new BigDecimal("0.05");
 
-    /** 一个币最多布几条盯盘条件 */
-    public static final int MAX_WATCHES = 6;
     /** CLOSE_* 可盯的周期 */
-    public static final Set<String> WATCH_PERIODS = Set.of("5m", "15m", "1h", "4h", "1d");
+    public static final List<String> WATCH_PERIODS = List.of("5m", "15m", "1h", "4h", "1d");
 
     /**
      * 账户占位快照：已成交持仓 + 未成交挂单统一成这个形状。
@@ -218,19 +217,28 @@ public final class TradeGuard {
     }
 
     /**
-     * set_watch 的护栏：条数不超、kind 合法、价格类有正价位、TOUCH 的价位没被现价越过（布下去会立刻触发）、
-     * CLOSE 类有合法周期、AT_TIME 有能解析且还没到的时刻。整组一起校验，一条不对整组拒。通过返回 null。
-     * markPrice 只在有 TOUCH 条件时才需要，没有可传 null。
+     * set_watch 的护栏：kind 合法；向上（TOUCH_ABOVE / CLOSE_ABOVE）、向下（TOUCH_BELOW / CLOSE_BELOW）、到时刻各最多一条；
+     * 价格类有正价位、TOUCH 的价位没被现价越过（布下去会立刻触发）、CLOSE 类有合法周期；AT_TIME 有能解析且还没到的时刻。
+     * 整组一起校验，一条不对整组拒。通过返回 null。markPrice 只在有 TOUCH 条件时才需要，没有可传 null。
      */
     public static String validateWatch(List<WatchSpec> specs, BigDecimal markPrice, long now,
                                        PromptCatalog prompts, AgentLang lang) {
-        if (specs.size() > MAX_WATCHES) {
-            return prompts.get(lang, "trader.guard.watchTooMany", Map.of("max", MAX_WATCHES, "given", specs.size()));
-        }
         for (WatchSpec s : specs) {
             if (s.kind() == null || !AiTraderWatch.KINDS.contains(s.kind())) {
                 return prompts.get(lang, "trader.guard.watchKindInvalid", Map.of("kinds", AiTraderWatch.KINDS));
             }
+        }
+        // 向上、向下、到时刻各最多一条
+        Map<String, Long> perSide = specs.stream()
+                .collect(Collectors.groupingBy(s -> side(s.kind()), Collectors.counting()));
+        for (String side : List.of("up", "down", "time")) {
+            long given = perSide.getOrDefault(side, 0L);
+            if (given > 1) {
+                return prompts.get(lang, "trader.guard.watchOnePerSide", Map.of(
+                        "side", prompts.get(lang, "trader.guard.watchSide." + side), "given", given));
+            }
+        }
+        for (WatchSpec s : specs) {
             if (AiTraderWatch.AT_TIME.equals(s.kind())) {
                 Long at = parseWatchTime(s.at());
                 if (at == null) {
@@ -263,6 +271,15 @@ public final class TradeGuard {
             }
         }
         return null;
+    }
+
+    /** 条件走哪一路：向上 / 向下 / 到时刻 */
+    private static String side(String kind) {
+        return switch (kind) {
+            case AiTraderWatch.TOUCH_ABOVE, AiTraderWatch.CLOSE_ABOVE -> "up";
+            case AiTraderWatch.TOUCH_BELOW, AiTraderWatch.CLOSE_BELOW -> "down";
+            default -> "time";
+        };
     }
 
     /** AT_TIME 的 at（北京时间 yyyy-MM-dd HH:mm）→ epoch ms；没写或格式不对给 null */
