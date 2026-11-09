@@ -85,10 +85,10 @@ const PANELS = [
         rows: [
           { id: 'mutex', led: true, t: { zh: '每 trader 互斥 · 非例行排队', en: 'mutex · non-routine queued' } },
           { id: 'window', led: true, t: { zh: '唤醒时段过滤（北京时间）', en: 'wake window (Beijing time)' } },
-          { id: 'budget', led: true, t: { zh: '预算 ≤600s · 边界前 5s 截止', en: 'budget ≤600s · −5s deadline' } },
+          { id: 'budget', led: true, t: { zh: '预算 ≤900s · 边界前 5s 截止', en: 'budget ≤900s · −5s deadline' } },
           { id: 'hand', led: true, t: { zh: '日终交接窗口内一律拒', en: 'blocked during handover' } }
         ],
-        detail: { zh: '准入四件事：每 trader 互斥——上一轮没跑完时，例行心跳记 SKIPPED 不排队（要最新信号），波动警报、持仓事件、盯盘命中先排着，上一轮一结束合成一轮叫醒；唤醒时段过滤（时段外静默跳过）；预算计算——截止到下一边界前 5 秒、上限 600 秒，距边界不足 30 秒判「触发过晚」放弃且不算失败；日终交接的停工窗口里一切新唤醒一律拒，没叫的持仓事件和盯盘命中下一次唤醒开头照样报。不设全局并发上限，只按 trader 互斥。', en: 'Four checks: a per-trader mutex — while the last round is still running a heartbeat records SKIPPED instead of queueing (only the latest signal matters), but alerts, position events and watch hits wait in line and are merged into one wakeup the moment the round ends; the wake-window filter; and the budget — capped at 600s, ending 5s before the next boundary; under 30s left means “too late”, abandoned without counting as a failure. During the daily-handover blackout every new wakeup is refused; position events and watch hits that did not get to wake it are reported at the start of the next one. There is no global concurrency cap, only the per-trader mutex.' } },
+        detail: { zh: '准入四件事：每 trader 互斥——上一轮没跑完时，例行心跳记 SKIPPED 不排队（要最新信号），波动警报、持仓事件、盯盘命中先排着，上一轮一结束合成一轮叫醒；唤醒时段过滤（时段外静默跳过）；预算计算——截止到下一边界前 5 秒、上限 900 秒，距边界不足 30 秒判「触发过晚」放弃且不算失败；日终交接的停工窗口里一切新唤醒一律拒，没叫的持仓事件和盯盘命中下一次唤醒开头照样报。不设全局并发上限，只按 trader 互斥。', en: 'Four checks: a per-trader mutex — while the last round is still running a heartbeat records SKIPPED instead of queueing (only the latest signal matters), but alerts, position events and watch hits wait in line and are merged into one wakeup the moment the round ends; the wake-window filter; and the budget — capped at 900s, ending 5s before the next boundary; under 30s left means “too late”, abandoned without counting as a failure. During the daily-handover blackout every new wakeup is refused; position events and watch hits that did not get to wake it are reported at the start of the next one. There is no global concurrency cap, only the per-trader mutex.' } },
       // 前三个进系统提示词，后五个进开场白（user 消息）
       { id: 'asm', x: 442, y: 62, w: 196, h: 148, tag: 'PROMPT', icon: 'file-text',
         title: { zh: '系统提示词 + 开场白', en: 'System prompt + opening' },
@@ -108,7 +108,7 @@ const PANELS = [
         title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
         rows: [ { id: 'stateless', t: { zh: '无状态 · 不强制 tool_choice', en: 'stateless · tool_choice never forced' } } ],
-        detail: { zh: '一次唤醒 = 一个无状态 ReactLoop 会话（自写的 ReAct 循环），BYOK 模型（主人的 key，AES-GCM 加密存库）。不强制 tool_choice（Opus 5.5 这类模型不收 any / required）：「先读事实、用工具求证」写在开场白里。单轮模型调用上限 12 次——会并行的模型两三次就取完数，不并行的一轮一个，多币求证要这个余量；最后一次能执行工具时贴一句收尾提示，下一次直接给结论。连同 600 秒预算与连败 5 次暂停，停止条件都在模型之外。', en: 'One wakeup = one stateless ReactLoop session (a hand-written ReAct loop) on the owner’s BYOK model (key stored AES-GCM encrypted). tool_choice is never forced (models like Opus 5.5 reject any / required): “read the facts, verify with tools” lives in the opening message. Cap of 12 model calls per wake — parallel callers finish in two or three, serial ones need the headroom to check several symbols; the last tool-capable call gets a wrap-up hint so the next one concludes. With the 600s budget and pause-after-5-failures, every stop condition lives outside the model.' } },
+        detail: { zh: '一次唤醒 = 一个无状态 ReactLoop 会话（自写的 ReAct 循环），BYOK 模型（主人的 key，AES-GCM 加密存库）。不强制 tool_choice（Opus 5.5 这类模型不收 any / required）：「先读事实、用工具求证」写在开场白里。单轮模型调用上限 12 次——会并行的模型两三次就取完数，不并行的一轮一个，多币求证要这个余量；最后一次能执行工具时贴一句收尾提示，下一次直接给结论。连同 900 秒预算与连败 5 次暂停，停止条件都在模型之外。', en: 'One wakeup = one stateless ReactLoop session (a hand-written ReAct loop) on the owner’s BYOK model (key stored AES-GCM encrypted). tool_choice is never forced (models like Opus 5.5 reject any / required): “read the facts, verify with tools” lives in the opening message. Cap of 12 model calls per wake — parallel callers finish in two or three, serial ones need the headroom to check several symbols; the last tool-capable call gets a wrap-up hint so the next one concludes. With the 900s budget and pause-after-5-failures, every stop condition lives outside the model.' } },
       { id: 'data', x: 888, y: 16, w: 180, h: 240, tag: 'TOOLS', icon: 'database',
         title: { zh: '数据工具 ×11', en: 'Data tools ×11' },
         rows: [
@@ -921,7 +921,7 @@ async function trEnter(c, src) {
   }
   c.on('sched');
   for (const r of ['mutex', 'window', 'budget', 'hand']) { c.ledOk('sched', r); await c.sleep(280); }
-  c.log('SCHED', { zh: '互斥 ✓ 时段 ✓ 预算 600s ✓ 不在交接窗口 ✓', en: 'mutex ✓ window ✓ budget 600s ✓ no handover ✓' });
+  c.log('SCHED', { zh: '互斥 ✓ 时段 ✓ 预算 900s ✓ 不在交接窗口 ✓', en: 'mutex ✓ window ✓ budget 900s ✓ no handover ✓' });
   await c.sleep(400);
   c.done(src === 'alert' ? 'sentinel' : src === 'watch' ? 'watch' : 'clock');
   await c.pulse('sch-asm');

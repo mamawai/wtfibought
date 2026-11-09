@@ -92,7 +92,7 @@ public class TraderScheduler {
         List<WatchTrigger> hits = closeHits(event);
         if (handoverActive) {
             // 窗口内的K线事件直接丢弃不补跑：与"不做兜底补漏"同一条哲学——陈旧信号没有意义。
-            // 代价是 15m 档最多跳过 1 根K线（窗口上界＝唤醒600s＋复盘600s），每天只有一次，可接受。
+            // 代价是 15m 档最多跳过 1 根K线（窗口上界＝唤醒900s＋复盘600s），每天只有一次，可接受。
             // 刚落库的命中窗口内不叫，下一轮开场白补报
             log.info("[TraderSched] 日线交接中，丢弃K线事件 {} closeTime={}", event.symbol(), event.closeTime());
             return;
@@ -121,7 +121,7 @@ public class TraderScheduler {
     /**
      * 日线交接编排（本功能唯一的全局同步点）：
      * 阶段0 全体例行唤醒发出 → 【停工窗口开】→ 等交易跑完 → 阶段1 全体复盘并行 → 等全部复盘落库 → 【停工窗口关】。
-     * 窗口保证复盘读的是定格数据。各阶段单人超时都有硬顶（唤醒600s/复盘600s），join 不会永久卡住。
+     * 窗口保证复盘读的是定格数据。各阶段单人超时都有硬顶（唤醒900s/复盘600s），join 不会永久卡住。
      */
     private void startDailyHandover(long boundary) {
         // 原子抢占：日线边界的多 symbol 事件里只有一个赢家启动交接
@@ -159,7 +159,7 @@ public class TraderScheduler {
     /**
      * 交接的一个阶段：每 trader 一个虚拟线程（复用 inFlight 互斥），
      * 返回线程列表由调用方 join 成屏障。
-     * inFlight 抢不到＝上一边界的交易还没跑完（预算最长600s），该 trader 本阶段跳过——
+     * inFlight 抢不到＝上一边界的交易还没跑完（预算最长900s），该 trader 本阶段跳过——
      * 硬等会拖住全体，而复盘明天还有机会；这也是复盘不脏读的第二道闸：
      * 停工窗口挡住新唤醒，inFlight 挡住残留的旧唤醒。
      */
@@ -416,7 +416,7 @@ public class TraderScheduler {
      * 手动唤醒（动作面板的按钮扣扳机）：走与例行/警报同一套治理——
      * 预算预检 → 每 trader 互斥，然后虚拟线程上异步跑。
      * <p>
-     * <b>异步而不是同步等结果</b>：唤醒预算最长 600s，同步等于把调用方的连接压死几分钟；
+     * <b>异步而不是同步等结果</b>：唤醒预算最长 900s，同步等于把调用方的连接压死几分钟；
      * trader 本来就是"后台醒来做完事睡去"的回路，面板只负责扣扳机，结果去竞技场看。
      * <p>
      * <b>不占 firedBoundary</b>：那是例行调度的去重位，手动唤醒占了它会把本边界真正的

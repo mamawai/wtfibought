@@ -99,7 +99,7 @@ public class TraderWakeupRunner {
     /** 距下一边界不足此秒数=触发过晚（事件迟到），放弃本轮不算失败 */
     static final int MIN_WAKE_SECONDS = 30;
     /** 单轮预算上限：再慢的端点也不许无限吃时长 */
-    static final int MAX_WAKE_SECONDS = 600;
+    static final int MAX_WAKE_SECONDS = 900;
     /** 截止安全余量：唤醒决不占用下一根K线 */
     private static final long DEADLINE_SAFETY_MS = 5_000;
     /**
@@ -159,10 +159,15 @@ public class TraderWakeupRunner {
     /** 墙钟注入点：预算计算要可测（测试里把"现在"钉在边界附近） */
     LongSupplier nowMs = System::currentTimeMillis;
 
-    /** 唤醒预算(秒)：截止 = 下一边界前 5s——唤醒决不占用下一根K线；上限 600s。 */
+    /** 唤醒预算(秒)：截止 = 下一边界前 5s——唤醒决不占用下一根K线；上限 900s。 */
     static long wakeBudgetSeconds(long boundary, long intervalMs, long now) {
         long deadline = boundary + intervalMs - DEADLINE_SAFETY_MS;
         return Math.min((deadline - now) / 1000, MAX_WAKE_SECONDS);
+    }
+
+    /** 非例行唤醒预算(秒)：上限 900s，且不超过一根心跳减 5s，跑过边界最多跳过一次例行 */
+    static long triggeredBudgetSeconds(long intervalMs) {
+        return Math.min(MAX_WAKE_SECONDS, (intervalMs - DEADLINE_SAFETY_MS) / 1000);
     }
 
     public void wake(AiTrader trader, long boundaryTime) {
@@ -198,7 +203,7 @@ public class TraderWakeupRunner {
 
     /**
      * 非例行唤醒（波动警报 / 持仓事件）：wake_time=真正醒来的时刻（非K线边界；排过队的晚于触发时刻，
-     * 各条触发自己的时刻写在开场白里）。预算就是上限 600s，不按下一边界截：跑过边界时那根的例行轮跳过（调度器 SKIPPED 留痕）。
+     * 各条触发自己的时刻写在开场白里）。预算见 {@link #triggeredBudgetSeconds}，不按下一边界截：跑过边界时那根的例行轮跳过（调度器 SKIPPED 留痕）。
      */
     public void wakeTriggered(AiTrader trader, List<WakeTrigger> triggers) {
         long wakeTime = nowMs.getAsLong();
@@ -206,12 +211,15 @@ public class TraderWakeupRunner {
         // 一批里的 kind 按要紧程度取：持仓事件 > 盯盘命中 > 波动警报
         decision.setKind(TRIGGER_KIND_PRIORITY.stream()
                 .filter(k -> triggers.stream().anyMatch(t -> k.equals(t.kind()))).findFirst().orElseThrow());
-        doWake(trader, wakeTime, MAX_WAKE_SECONDS, decision, triggers, userLangResolver.of(trader.getUserId()));
+        doWake(trader, wakeTime, triggeredBudgetSeconds(TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode())),
+                decision, triggers, userLangResolver.of(trader.getUserId()));
     }
 
     private void doWake(AiTrader trader, long boundaryTime, long budgetSeconds,
                         AiTraderDecision decision, List<WakeTrigger> triggers, AgentLang lang) {
         long start = System.currentTimeMillis();
+        // 本轮截止时刻：备料、下单护栏、超时计时都在这一份预算里
+        long deadline = start + budgetSeconds * 1000;
         // begin 之前出的异常没有这一轮现场
         TraderLiveHub.Run run = null;
         try {
@@ -225,7 +233,7 @@ public class TraderWakeupRunner {
 
             List<FuturesOrderResponse> pendingOrders = simTradeClient.getPendingOrders(trader.getSimUserId(), null);
             run = hub.begin(trader, decision.getKind(), decision.getWakeTime(), budgetSeconds, equity, positions.size(), pendingOrders.size());
-            String reasoning = runAgentSession(trader, boundaryTime, budgetSeconds, positions, pendingOrders, equity, decision, triggers, lang, run);
+            String reasoning = runAgentSession(trader, boundaryTime, deadline, positions, pendingOrders, equity, decision, triggers, lang, run);
             decision.setStatus(AiTraderDecision.STATUS_OK);
             decision.setReasoning(reasoning);
             try {
@@ -310,14 +318,14 @@ public class TraderWakeupRunner {
      * ReactLoop 会话：备料（工具/计划/最近几轮/提示词）→ 建循环 → 开场白 → 限时执行，过程逐帧推给现场 {@code run}。
      * 返回模型最终文本；动作轨迹随 decision 一并写入。triggers 非空=非例行唤醒（只换开场白）。
      */
-    private String runAgentSession(AiTrader trader, long boundaryTime, long budgetSeconds,
+    private String runAgentSession(AiTrader trader, long boundaryTime, long deadline,
                                    List<FuturesPositionDTO> positions, List<FuturesOrderResponse> pendingOrders,
                                    BigDecimal equity, AiTraderDecision decision, List<WakeTrigger> triggers,
                                    AgentLang lang, TraderLiveHub.Run run) throws Exception {
         // 用量统计装饰器 每轮新建
         UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
         Set<String> whitelist = Arrays.stream(trader.getSymbols().split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
-        TradeTools tradeTools = tradeToolsFor(trader, whitelist, boundaryTime, budgetSeconds, lang);
+        TradeTools tradeTools = tradeToolsFor(trader, whitelist, boundaryTime, deadline, lang);
         // 计划对照 sim 持仓/挂单：了结的归档并报结局、限价成交的绑上仓位，存活的随持仓注入账户状态；已平仓位只在有事时才查
         TraderPlanStore.Reconcile reconcile = planStore.reconcile(trader.getId(), trader.getRoundNo(), positions, pendingOrders,
                 () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT), boundaryTime, lang);
@@ -415,7 +423,7 @@ public class TraderWakeupRunner {
         Thread.startVirtualThread(task);
         SessionOutcome outcome;
         try {
-            outcome = task.get(budgetSeconds, TimeUnit.SECONDS);
+            outcome = task.get(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
         } finally {
             cancel.complete(null);
             task.cancel(true);
@@ -460,7 +468,7 @@ public class TraderWakeupRunner {
     }
 
     /** 交易工具：绑定该 trader 的 sim 子账户、白名单与风险规格，每次唤醒 new 一个。权益按开仓时现查的持仓算 */
-    private TradeTools tradeToolsFor(AiTrader trader, Set<String> whitelist, long boundaryTime, long budgetSeconds, AgentLang lang) {
+    private TradeTools tradeToolsFor(AiTrader trader, Set<String> whitelist, long boundaryTime, long deadline, AgentLang lang) {
         return new TradeTools(
                 simTradeClient,
                 trader.getSimUserId(),
@@ -470,7 +478,7 @@ public class TraderWakeupRunner {
                 planStore,
                 watchStore,
                 new TradeTools.WakeCtx(trader.getId(), trader.getRoundNo(), trader.getIntervalCode(), boundaryTime,
-                        System.currentTimeMillis() + budgetSeconds * 1000, TraderRiskConfig.of(trader), lang),
+                        deadline, TraderRiskConfig.of(trader), lang),
                 prompts,
                 messages,
                 entryContext

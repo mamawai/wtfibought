@@ -90,7 +90,7 @@ const STRIP = [
 /* 首屏六步：一次唤醒的闭环；cap 进格子小字，trace 进底下一行 */
 const LOOP_STEPS = [
   { tag: 'CLOCK', zh: 'K 线收盘', en: 'Candle close', cap: { zh: '例行 · 对齐边界', en: 'routine · boundary' }, trace: { zh: '1h 边界到达 例行唤醒', en: '1h boundary hit · routine wakeup' } },
-  { tag: 'SCHED', zh: '四道准入', en: 'Four gates', cap: { zh: '互斥 · 预算', en: 'mutex · budget' }, trace: { zh: '互斥 时段 预算 600s 交接窗口 全过', en: 'mutex · window · budget 600s · handover · all clear' } },
+  { tag: 'SCHED', zh: '四道准入', en: 'Four gates', cap: { zh: '互斥 · 预算', en: 'mutex · budget' }, trace: { zh: '互斥 时段 预算 900s 交接窗口 全过', en: 'mutex · window · budget 900s · handover · all clear' } },
   { tag: 'PROMPT', zh: '拼提示词', en: 'Build prompt', cap: { zh: '现读 · 现拼', en: 'read · assembled fresh' }, trace: { zh: '现读现拼 账户状态 + 经验账本 + 财经日历', en: 'assembled fresh: account + ledger + econ calendar' } },
   { tag: 'REACT', zh: '模型决策', en: 'Model decides', cap: { zh: 'ReAct · 最多 12 次', en: 'ReAct · 12 calls max' }, trace: { zh: '模型调用 3/12 klines market_snapshot funding', en: 'model call 3/12 · klines market_snapshot funding' } },
   { tag: 'GUARD', zh: '校验下单', en: 'Check and order', cap: { zh: '越界 · 直接拒', en: 'veto · no clamp' }, trace: { zh: '25x 被拒 改 8x 通过 open_position ETHUSDT', en: '25x rejected · 8x passed · open_position ETHUSDT' } },

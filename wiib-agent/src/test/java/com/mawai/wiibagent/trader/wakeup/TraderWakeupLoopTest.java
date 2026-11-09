@@ -946,16 +946,21 @@ class TraderWakeupLoopTest {
         assertThat(cap.getValue().getClosedWakeTime()).isEqualTo(1785171600000L);
     }
 
-    /** 预算 = 距下一边界−5s，上限600s：唤醒决不占用下一根K线（超时级联跳过的根治）。 */
+    /** 预算 = 距下一边界−5s，上限900s：唤醒决不占用下一根K线（超时级联跳过的根治）。 */
     @Test
     void wakeBudgetAlignsToNextBoundary() {
         long b = 1785171600000L;
-        // 5m 正点触发：300−5=295s
-        assertThat(TraderWakeupRunner.wakeBudgetSeconds(b, 300_000, b)).isEqualTo(295);
-        // 5m 迟到213s（今天09:20实测场景）：只剩 82s
-        assertThat(TraderWakeupRunner.wakeBudgetSeconds(b, 300_000, b + 213_000)).isEqualTo(82);
-        // 1h 正点：3595s 被 600s 上限压住
-        assertThat(TraderWakeupRunner.wakeBudgetSeconds(b, 3_600_000, b)).isEqualTo(600);
+        // 15m 迟到 213s：截在下一边界前 5s，只剩 682s
+        assertThat(TraderWakeupRunner.wakeBudgetSeconds(b, 900_000, b + 213_000)).isEqualTo(682);
+        // 1h 正点：3595s 被 900s 上限压住
+        assertThat(TraderWakeupRunner.wakeBudgetSeconds(b, 3_600_000, b)).isEqualTo(900);
+    }
+
+    /** 非例行预算：上限 900s，且不超过一根心跳减 5s */
+    @Test
+    void triggeredBudgetCapsAtOneInterval() {
+        assertThat(TraderWakeupRunner.triggeredBudgetSeconds(900_000)).isEqualTo(895);
+        assertThat(TraderWakeupRunner.triggeredBudgetSeconds(3_600_000)).isEqualTo(900);
     }
 
     /** 事件迟到太多（距下一边界<30s）：放弃本轮记 SKIPPED，不调模型、不算失败。 */

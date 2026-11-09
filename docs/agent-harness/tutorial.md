@@ -355,7 +355,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
   →【停工窗口关，在 finally 里】 ← 关不上全体 trader 就永久停摆了
 ```
 
-**窗口为什么要在 join 之前开**：晚开的话，15m 档会在阶段 0 等待期间又撞上一次边界醒来、占住 inFlight，那个 trader 的复盘就被 `phase()` 跳过了。代价是窗口把阶段 0 的交易执行也圈了进去，上界从「复盘 600s」变成「唤醒 600s + 复盘 600s」。
+**窗口为什么要在 join 之前开**：晚开的话，15m 档会在阶段 0 等待期间又撞上一次边界醒来、占住 inFlight，那个 trader 的复盘就被 `phase()` 跳过了。代价是窗口把阶段 0 的交易执行也圈了进去，上界从「复盘 600s」变成「唤醒 900s + 复盘 600s」。
 
 `phase()` 里 inFlight 抢不到就跳过该 trader 本阶段：硬等会拖住全体，而复盘明天还有机会；这也是复盘不脏读的第二道闸（窗口挡新唤醒，inFlight 挡残留的旧唤醒）。
 
@@ -366,7 +366,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 | 常量 | 值 | 管什么 |
 |---|---|---|
 | `MIN_WAKE_SECONDS` | 30 | 距下一边界不足此数=事件迟到，放弃本轮**不算失败** |
-| `MAX_WAKE_SECONDS` | 600 | 单轮时长硬顶 |
+| `MAX_WAKE_SECONDS` | 900 | 单轮时长硬顶 |
 | `MAX_MODEL_CALLS` | 12 | ReAct 保险丝 |
 | `MAX_CONSECUTIVE_FAILURES` | 5 | 连败自动 PAUSED |
 | `BUST_OUT_FLOOR` | 100（BigDecimal） | 权益跌破初始 1% 判出局终局 |
@@ -381,7 +381,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 `BUST_OUT_FLOOR` 只是常量改了名（原 `LIQUIDATION_FLOOR`，类型也换成了 `BigDecimal`），**状态枚举仍是 `AiTrader.STATUS_LIQUIDATED`**、词表里仍写「爆仓」——别顺手一起改。
 
-唤醒预算 `wakeBudgetSeconds` = `min(下一边界 - 5s - now, 600s)`：**唤醒决不占用下一根 K 线**。
+唤醒预算 `wakeBudgetSeconds` = `min(下一边界 - 5s - now, 900s)`：**唤醒决不占用下一根 K 线**。
 
 ### 5.3 一次唤醒的生命周期
 

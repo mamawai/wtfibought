@@ -15,7 +15,7 @@ trader:
   # Deleting a trader: irreversible, name must match, refused mid-wake
   delete:
     nameMismatch: The name does not match - type this trader's name exactly
-    busy: It is waking up right now - delete once this round finishes (up to about 10 minutes)
+    busy: It is waking up right now - delete once this round finishes
 
   # Ignore mark (stale) on settled trades: curates the AI's own material, public record untouched
   plan:
