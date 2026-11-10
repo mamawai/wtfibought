@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +17,7 @@ import java.util.concurrent.*;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 市场数据采集：虚拟线程并行采集K线(7周期)、ticker、funding、盘口、OI、多空比、强平、期权面(DVOL/盘面)、FGI。
+ * 市场数据采集：虚拟线程并行采集K线(6周期)、ticker、funding、盘口、OI、多空比、强平、期权面(DVOL/盘面)、FGI。
  */
 @Slf4j
 public class CollectDataNode {
@@ -46,11 +47,9 @@ public class CollectDataNode {
         log.info("[Q1.0] collect_data开始 symbol={}", symbol);
 
         Map<String, Map<String, String>> klineMap = new HashMap<>();
-        Map<String, Map<String, String>> spotKlineMap = new HashMap<>();
         Map<String, String> tickerMap = new HashMap<>();
         Map<String, String> spotTickerMap = new HashMap<>();
         Map<String, String> fundingRateMap = new HashMap<>();
-        Map<String, String> fundingRateHistMap = new HashMap<>();
         Map<String, String> orderbookMap = new HashMap<>();
         Map<String, String> spotOrderbookMap = new HashMap<>();
         Map<String, String> openInterestHistMap = new HashMap<>();
@@ -71,11 +70,8 @@ public class CollectDataNode {
         // 谁都不能低于 30——BuildFeaturesBuilder 那里 <30 根整条周期直接跳过，还会连带打质量标记。
         String[] intervals = {"1m", "5m", "15m", "1h", "4h", "1d"};
         int[] limits = {120, 120, 120, 48, 40, 40};
-        // 现货只出基差与领先滞后两个特征，各自回看不超过 5 根。
-        // 只有合约的标的没现货盘，现货 K 线、ticker、盘口都不请求
+        // 只有合约的标的没现货盘，现货 ticker、盘口都不请求
         boolean hasSpot = !futuresOnlySymbols.contains(symbol);
-        String[] spotIntervals = hasSpot ? new String[]{"1m", "5m"} : new String[0];
-        int[] spotLimits = {40, 40};
 
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(COLLECT_TIMEOUT_SECONDS);
         // 不能用 try-with-resources：ExecutorService.close() 会等待任务结束，可能抵消整轮 deadline。
@@ -91,17 +87,9 @@ public class CollectDataNode {
                 klineFutures[i] = executor.submit(
                         () -> binanceRestClient.getFuturesKlines(symbol, intervals[idx], limits[idx], null));
             }
-            @SuppressWarnings("unchecked")
-            Future<String>[] spotKlineFutures = new Future[spotIntervals.length];
-            for (int i = 0; i < spotIntervals.length; i++) {
-                int idx = i;
-                spotKlineFutures[i] = executor.submit(
-                        () -> binanceRestClient.getKlines(symbol, spotIntervals[idx], spotLimits[idx], null));
-            }
             var tickerF = executor.submit(() -> binanceRestClient.getFutures24hTicker(symbol));
             Future<String> spotTickerF = hasSpot ? executor.submit(() -> binanceRestClient.get24hTicker(symbol)) : null;
             var fundingF = executor.submit(() -> binanceRestClient.getPremiumIndex(symbol));
-            var fundingHistF = executor.submit(() -> binanceRestClient.getFundingRateHistory(symbol, 48));
             var obF = executor.submit(() -> {
                 if (depthStreamCache != null) {
                     String wsDepth = depthStreamCache.getFreshDepth(symbol, 2000);
@@ -134,18 +122,10 @@ public class CollectDataNode {
             }
             klineMap.put(symbol, klines);
 
-            Map<String, String> spotKlines = new HashMap<>();
-            for (int i = 0; i < spotIntervals.length; i++) {
-                String data = safeGet(spotKlineFutures[i], "现货K线" + spotIntervals[i], deadlineNanos);
-                if (data != null) spotKlines.put(spotIntervals[i], data);
-            }
-            spotKlineMap.put(symbol, spotKlines);
-
             // 收集其他数据
             tickerMap.put(symbol, safeGet(tickerF, "ticker", deadlineNanos));
             putIfNotNull(spotTickerMap, symbol, spotTickerF != null ? safeGet(spotTickerF, "spotTicker", deadlineNanos) : null);
             putIfNotNull(fundingRateMap, symbol, safeGet(fundingF, "funding", deadlineNanos));
-            putIfNotNull(fundingRateHistMap, symbol, safeGet(fundingHistF, "fundingRateHist", deadlineNanos));
             putIfNotNull(orderbookMap, symbol, safeGet(obF, "orderbook", deadlineNanos));
             putIfNotNull(spotOrderbookMap, symbol, spotObF != null ? safeGet(spotObF, "spotOrderbook", deadlineNanos) : null);
             putIfNotNull(openInterestHistMap, symbol, safeGet(oiHistF, "openInterestHist", deadlineNanos));
@@ -176,12 +156,11 @@ public class CollectDataNode {
         String ticker = tickerMap.get(symbol);
         boolean klineOk = kline != null && kline.values().stream().anyMatch(v -> v != null && !v.isBlank());
         boolean dataAvailable = klineOk && ticker != null && !ticker.isBlank();
-        log.info("[Q1.1] collect_data完成 symbol={} futuresKlines={} spotKlines={} dataAvailable={} ticker={} spotTicker={} funding={} fundingHist={} ob={} spotOb={} oiHist={} lsr={} forceOrders={} topTrader={} takerLsr={} fearGreed={}chars 耗时{}ms",
+        log.info("[Q1.1] collect_data完成 symbol={} futuresKlines={} dataAvailable={} ticker={} spotTicker={} funding={} ob={} spotOb={} oiHist={} lsr={} forceOrders={} topTrader={} takerLsr={} fearGreed={}chars 耗时{}ms",
                 symbol, kline != null ? kline.size() : 0,
-                spotKlineMap.getOrDefault(symbol, Map.of()).size(),
                 dataAvailable,
                 ticker != null, spotTickerMap.containsKey(symbol),
-                fundingRateMap.containsKey(symbol), fundingRateHistMap.containsKey(symbol),
+                fundingRateMap.containsKey(symbol),
                 orderbookMap.containsKey(symbol), spotOrderbookMap.containsKey(symbol),
                 openInterestHistMap.containsKey(symbol), longShortRatioMap.containsKey(symbol),
                 forceOrdersMap.containsKey(symbol), topTraderPositionMap.containsKey(symbol),
@@ -190,11 +169,9 @@ public class CollectDataNode {
 
         Map<String, Object> result = new HashMap<>();
         result.put("kline_map", klineMap);
-        result.put("spot_kline_map", spotKlineMap);
         result.put("ticker_map", tickerMap);
         result.put("spot_ticker_map", spotTickerMap);
         result.put("funding_rate_map", fundingRateMap);
-        result.put("funding_rate_hist_map", fundingRateHistMap);
         result.put("orderbook_map", orderbookMap);
         result.put("spot_orderbook_map", spotOrderbookMap);
         result.put("oi_hist_map", openInterestHistMap);
@@ -244,11 +221,12 @@ public class CollectDataNode {
     private String buildForceOrdersJson(String symbol) {
         List<ForceOrder> orders = forceOrderService.getRecent(symbol, 30);
         if (orders == null || orders.isEmpty()) return null;
-        // 转成 BuildFeaturesNode.calcLiquidationPressure 期望的格式: [{side, price, origQty}]
+        // MarketReadings 读的格式: [{side, price, origQty, time(ms)}]
         List<Map<String, Object>> list = orders.stream().map(o -> Map.<String, Object>of(
                 "side", o.getSide(),
                 "price", o.getAvgPrice(),
-                "origQty", o.getQuantity()
+                "origQty", o.getQuantity(),
+                "time", o.getTradeTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         )).toList();
         return MAPPER.writeValueAsString(list);
     }

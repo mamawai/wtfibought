@@ -10,7 +10,7 @@ export const TRADE_TOOLS = [
 ] as const;
 export const DATA_TOOLS = [
   'klines', 'kline_structure', 'indicators', 'market_snapshot', 'funding_history', 'orderbook_depth', 'option_iv',
-  'derivatives_history', 'whale_positions', 'news_search', 'cross_asset_snapshot',
+  'derivatives_history', 'whale_positions', 'news_search', 'cross_asset_snapshot', 'web_search',
 ] as const;
 
 /** 工具 id → 词表 key（存 key 不存文案：模块级常量只算一次，切语言不会失效） */
@@ -21,7 +21,7 @@ const TOOL_KEY: Record<string, string> = {
   indicators: 'tool.indicators', market_snapshot: 'tool.marketSnapshot', funding_history: 'tool.fundingHistory',
   orderbook_depth: 'tool.orderbookDepth', option_iv: 'tool.optionIv', news_search: 'tool.newsSearch',
   derivatives_history: 'tool.derivativesHistory', whale_positions: 'tool.whalePositions',
-  cross_asset_snapshot: 'tool.crossAssetSnapshot',
+  cross_asset_snapshot: 'tool.crossAssetSnapshot', web_search: 'tool.webSearch',
 };
 
 /** 工具的展示名；表里没有的（后端加了新工具）原样显示 id */
@@ -117,6 +117,9 @@ export function dataArgsSummary(tool: string, args: Record<string, unknown>): st
     case 'whale_positions':
       return g('symbol');
     case 'news_search':
+      return [g('keyword'), g('hours') && `${g('hours')}h`].filter(Boolean).join(' · ');
+    case 'web_search':
+      return g('query');
     case 'cross_asset_snapshot':
       return '';
     default:

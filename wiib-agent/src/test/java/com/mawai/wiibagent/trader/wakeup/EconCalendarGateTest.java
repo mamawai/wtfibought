@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -37,7 +38,7 @@ class EconCalendarGateTest {
 
     @Test
     void 无待公布_立即放行不拉取() {
-        when(mapper.countPendingActual(anyLong(), anyLong())).thenReturn(0);
+        when(mapper.countPendingActual(anyString(), anyLong(), anyLong())).thenReturn(0);
 
         assertThat(gate().released(B)).isDone();
         verify(collector, never()).sync(anyLong(), anyLong());
@@ -45,8 +46,8 @@ class EconCalendarGateTest {
 
     @Test
     void 有待公布_拉到实际值即放行() throws Exception {
-        // 开闸时 1 条待公布，拉一轮后清零
-        when(mapper.countPendingActual(B - EconCalendarGate.LOOKBACK_MS, B)).thenReturn(1, 0);
+        // 开闸时 1 条美国的待公布，拉一轮后清零
+        when(mapper.countPendingActual("US", B - EconCalendarGate.LOOKBACK_MS, B)).thenReturn(1, 0);
 
         gate().released(B).get(2, TimeUnit.SECONDS);
 
@@ -55,7 +56,7 @@ class EconCalendarGateTest {
 
     @Test
     void 等满仍没拿到_超时放行() throws Exception {
-        when(mapper.countPendingActual(anyLong(), anyLong())).thenReturn(1);
+        when(mapper.countPendingActual(anyString(), anyLong(), anyLong())).thenReturn(1);
 
         gate().released(B).get(2, TimeUnit.SECONDS);
 
@@ -64,7 +65,7 @@ class EconCalendarGateTest {
 
     @Test
     void 同一边界只开一把闸() throws Exception {
-        when(mapper.countPendingActual(anyLong(), anyLong())).thenReturn(1, 0);
+        when(mapper.countPendingActual(anyString(), anyLong(), anyLong())).thenReturn(1, 0);
         EconCalendarGate g = gate();
 
         CompletableFuture<Void> first = g.released(B);
@@ -76,7 +77,7 @@ class EconCalendarGateTest {
 
     @Test
     void 查库异常_直接放行() {
-        when(mapper.countPendingActual(anyLong(), anyLong())).thenThrow(new RuntimeException("db down"));
+        when(mapper.countPendingActual(anyString(), anyLong(), anyLong())).thenThrow(new RuntimeException("db down"));
 
         assertThat(gate().released(B)).isDone();
         verify(collector, never()).sync(anyLong(), anyLong());

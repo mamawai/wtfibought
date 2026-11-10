@@ -7,6 +7,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +28,10 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class NewsFlashLocalizer {
+
+    /** 存档里的发布时刻成文：北京时间，和实时快讯的 createTime 同一个写法 */
+    private static final DateTimeFormatter ARCHIVE_TIME =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.of("Asia/Shanghai"));
 
     private final NewsEventMapper newsEventMapper;
 
@@ -59,6 +66,17 @@ public class NewsFlashLocalizer {
             return new LocalizedFlash(f.id(), pick(titleEn, f.title()),
                     pick(contentEn, f.plainContent()), f.url(), f.createTime(),
                     has(titleEn) || has(contentEn));
+        }).toList();
+    }
+
+    /** 查存档：fromMs 之后标题或正文含关键字的快讯（keyword 为 null 不筛），按语言取一份，新的在前 */
+    public List<LocalizedFlash> search(String keyword, long fromMs, int limit, AgentLang lang) {
+        return newsEventMapper.search(keyword, fromMs, limit).stream().map(e -> {
+            boolean en = lang == AgentLang.EN;
+            return new LocalizedFlash(e.getId(), en ? pick(e.getTitleEn(), e.getTitle()) : e.getTitle(),
+                    en ? pick(e.getContentEn(), e.getContent()) : e.getContent(), e.getUrl(),
+                    ARCHIVE_TIME.format(Instant.ofEpochMilli(e.getPublishedAt())),
+                    en && (has(e.getTitleEn()) || has(e.getContentEn())));
         }).toList();
     }
 

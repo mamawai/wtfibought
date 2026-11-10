@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -31,17 +30,15 @@ class OrderFlowAggregatorTest {
         OrderFlowAggregator agg = new OrderFlowAggregator(redisTemplate);
 
         long now = System.currentTimeMillis();
-        // 1 笔买 100usdt(bm=0) + 1 笔卖 200usdt(bm=1) → total=300, tradeDelta=(100-200)/300=-1/3
+        // 1 笔买 100usdt(bm=0) + 1 笔卖 200usdt(bm=1) + 1 笔卖 60000usdt（过大单门槛）
         MapRecord<String, Object, Object> buy = mapRecord("BTCUSDT", now, 100, 1, "0");
         MapRecord<String, Object, Object> sell = mapRecord("BTCUSDT", now, 100, 2, "1");
+        MapRecord<String, Object, Object> bigSell = mapRecord("BTCUSDT", now, 100, 600, "1");
         when(streamOps.range(eq("market:orderflow:BTCUSDT"), any(Range.class)))
-                .thenReturn(List.of(buy, sell));
+                .thenReturn(List.of(buy, sell, bigSell));
 
         OrderFlowAggregator.Metrics m = agg.getMetrics("BTCUSDT", 180);
-        assertThat(m).isNotNull();
-        assertThat(m.totalVolumeUsdt()).isEqualTo(300.0);
-        assertThat(m.tradeCount()).isEqualTo(2);
-        assertThat(m.tradeDelta()).isCloseTo(-1.0 / 3, within(1e-9));
+        assertThat(m).isEqualTo(new OrderFlowAggregator.Metrics(100.0, 60200.0, 0.0, 60000.0, 3));
     }
 
     @Test
@@ -60,9 +57,9 @@ class OrderFlowAggregatorTest {
                 .thenReturn(List.of(stale, fresh));
 
         OrderFlowAggregator.Metrics m = agg.getMetrics("BTCUSDT", 60);
-        assertThat(m).isNotNull();
         assertThat(m.tradeCount()).isEqualTo(1);
-        assertThat(m.totalVolumeUsdt()).isEqualTo(100.0);
+        assertThat(m.buyUsdt()).isEqualTo(100.0);
+        assertThat(m.sellUsdt()).isZero();
     }
 
     /** 窗口裁剪必须发生在 Redis 服务端：起点是 cutoff 往前 5s，终点开放，否则又变成全量拉取 */

@@ -3,6 +3,7 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -83,6 +84,50 @@ class TraderWakeupRunnerAccountStateTest {
 
         assertThat(json).contains("\"leverage\":10").contains("\"markPrice\":64000")
                 .contains("\"liquidationPrice\":58000").contains("\"equity\":15833.00");
+    }
+
+    /**
+     * 风险事实：浮盈几 R 按计划原始止损算；离止损多远按标记价；止损打掉亏权益百分之几按当前止损单，
+     * 止损挪过成本的是负数；合计一行在顶层
+     */
+    @Test
+    void positionRowCarriesRiskFacts() {
+        FuturesPositionDTO longPos = riskPosition(349L, "BTCUSDT", "LONG", "100", "104", "98", "10");
+        FuturesPositionDTO shortPos = riskPosition(350L, "ETHUSDT", "SHORT", "50", "48", "49", "4");
+        AiTraderPlan plan = new AiTraderPlan();
+        plan.setSymbol("BTCUSDT");
+        plan.setSide("LONG");
+        plan.setStopLossPrice(new BigDecimal("96"));
+        plan.setOpenedWakeTime(BOUNDARY - 3600_000L);
+
+        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("10000"),
+                List.of(longPos, shortPos), List.of(), List.of(plan), BOUNDARY, Map.of()));
+
+        JsonNode btc = out.get("positions").get(0);
+        assertThat(btc.get("unrealizedR").decimalValue()).isEqualByComparingTo("1.00");
+        assertThat(btc.get("stopDistancePct").decimalValue()).isEqualByComparingTo("5.77");
+        assertThat(btc.get("lossAtStopPctOfEquity").decimalValue()).isEqualByComparingTo("0.20");
+        JsonNode eth = out.get("positions").get(1);
+        assertThat(eth.has("unrealizedR")).as("没有计划的仓位不带 R").isFalse();
+        assertThat(eth.get("lossAtStopPctOfEquity").decimalValue()).isEqualByComparingTo("-0.04");
+        assertThat(out.get("lossAtAllStopsPctOfEquity").decimalValue()).isEqualByComparingTo("0.16");
+    }
+
+    private static FuturesPositionDTO riskPosition(long id, String symbol, String side, String entry, String mark,
+                                                   String stop, String qty) {
+        FuturesStopLoss sl = new FuturesStopLoss();
+        sl.setPrice(new BigDecimal(stop));
+        sl.setQuantity(new BigDecimal(qty));
+        FuturesPositionDTO p = new FuturesPositionDTO();
+        p.setId(id);
+        p.setSymbol(symbol);
+        p.setSide(side);
+        p.setQuantity(new BigDecimal(qty));
+        p.setEntryPrice(new BigDecimal(entry));
+        p.setMarkPrice(new BigDecimal(mark));
+        p.setStopLosses(List.of(sl));
+        p.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(BOUNDARY - 3600_000L), ZoneId.systemDefault()));
+        return p;
     }
 
     /** 持仓的开仓时刻和持有时长按 sim 仓位的 createdAt，不按计划的 openedWakeTime（限价挂出到成交隔着时间） */

@@ -57,14 +57,15 @@ public interface EconCalendarMapper {
     int deleteWindowExcept(@Param("fromMs") long fromMs, @Param("toMs") long toMs,
                            @Param("keepIds") List<String> keepIds);
 
-    /** 到点了实际值还没落库的数字型事件数（讲话/会议类无预测无前值，不算）；唤醒前的等待闸看它 */
+    /** 一个国家到点了实际值还没落库的数字型事件数（讲话/会议类无预测无前值，不算）；唤醒前的等待闸看它 */
     @Select("""
             SELECT COUNT(*) FROM econ_calendar_event
-             WHERE event_time BETWEEN #{fromMs} AND #{toMs}
+             WHERE country = #{country}
+               AND event_time BETWEEN #{fromMs} AND #{toMs}
                AND actual IS NULL
                AND (forecast IS NOT NULL OR previous IS NOT NULL)
             """)
-    int countPendingActual(@Param("fromMs") long fromMs, @Param("toMs") long toMs);
+    int countPendingActual(@Param("country") String country, @Param("fromMs") long fromMs, @Param("toMs") long toMs);
 
     @Select("""
             SELECT source_id AS sourceId, event_time AS eventTime, country, currency, title, actual, forecast, previous

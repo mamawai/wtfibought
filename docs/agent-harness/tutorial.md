@@ -400,7 +400,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
   → 计划对账（TraderPlanStore.reconcile：逐份 LIVE 计划对 sim 持仓/挂单，出 Reconcile(live, events)；已平仓位懒取）
   → 组装系统提示词（promptAssembler.assemble）、第一段观察包（WakeObservation.assemble：事件 / 账户 / 上一轮结论 / 承诺）
   → 两段还是一段：非例行唤醒、有留言、有承诺要处置就分两段（stageOneInstruction，ReactLoop.stages 追加 stageTwoInstruction），否则 routineInstruction 一段
-  → LlmClient（系统提示 + 19 工具；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
+  → LlmClient（系统提示 + 19 工具，端点开了联网搜索的多挂一个 web_search；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
      + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
   → FutureTask 限时执行
   → finally：动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
@@ -429,17 +429,18 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | 块 | 来源 | 要点 |
 |---|---|---|
 | 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席 |
-| 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。持仓另带 `sinceLastWake`（`PositionPath` 算窗口，极值复用 `CaseFileBuilder.market`）：自本局最近一条 OK 决策行以来本地 5m 的首根开盘、最高最低各在何时、末根收盘、涨跌，from / to 是实际覆盖的起止；还没有 OK 行或仓位是那之后才开的，从开仓所在那根算；窗口里没收盘根就不带。一次给足，工具预算才能留给行情求证；盯盘条件不在这块，在承诺块里 |
+| 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。风险事实代码算好：每个持仓浮盈几 R（`unrealizedR`，R 按计划原始止损）、离最近一档止损百分之几（`stopDistancePct`）、止损打掉亏权益百分之几（`lossAtStopPctOfEquity`，止损挪过成本的是负数），顶层一行全部止损同时打掉的合计（`lossAtAllStopsPctOfEquity`）。持仓另带 `sinceLastWake`（`PositionPath` 算窗口，极值复用 `CaseFileBuilder.market`）：自本局最近一条 OK 决策行以来本地 5m 的首根开盘、最高最低各在何时、末根收盘、涨跌，from / to 是实际覆盖的起止；还没有 OK 行或仓位是那之后才开的，从开仓所在那根算；窗口里没收盘根就不带。一次给足，工具预算才能留给行情求证；盯盘条件不在这块，在承诺块里 |
 | 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL/EVENT，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
-| 承诺块 + 各币摘要 | `WakeObservation.commitments` / `symbolsSummary` | 承诺块进第一段：持仓与挂单各一行（失效条件原文 + `PositionPath.lastClosedBar` 合成的刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（价格类按标记价算"在价位上方 / 下方 X%"，AT_TIME 算还有几分钟）、上一轮每个币的等待行（按结论块自己那门语言的 `mark.wait` / `waitLong` 认，写"无"的不算；那个币一条条件都没布就注明）。只列事实不下判断——失效条件是自由文本，代码判不了触发没触发。各币摘要进第二段：每个可交易币自上次 OK 轮以来的开高低收（`PositionPath.symbol`）。承诺块非空、有事件或收盘命中就是"忙"（`Pack.busy`），运行器据此分两段 |
-| 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
-| 财经日历 | `EconCalendarAssembler` | 三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
+| 承诺块 + 各币摘要 | `WakeObservation.commitments` / `symbolsSummary` | 承诺块进第一段：持仓与挂单各一行（失效条件原文 + `PositionPath.lastClosedBar` 合成的刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（价格类按标记价算"在价位上方 / 下方 X%"，AT_TIME 算还有几分钟）、上一轮每个币的等待行（按结论块自己那门语言的 `mark.wait` / `waitLong` 认，写"无"的不算；那个币一条条件都没布就注明）。只列事实不下判断——失效条件是自由文本，代码判不了触发没触发。各币摘要进第二段：每个可交易币和 BTCUSDT（不可交易也给一行，标成大盘参考）自上次 OK 轮以来的开高低收（`PositionPath.symbol`）。承诺块非空、有事件或收盘命中就是"忙"（`Pack.busy`），运行器据此分两段 |
+| 行情快照 | `WakeObservation.snapshot` | 进第二段：每个可交易币和 BTCUSDT 的标记价、1h / 4h / 24h 涨跌（`CaseFileBuilder.changes` 按已收盘 5m 算，本地缺 K 线的那格写"—"）、资金费率；后面跟美股参考（纳指期货、标普期货、VIX 的现价与较昨收涨跌，取 `CrossAssetService` 的缓存，取不到整块不带） |
+| 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后**；样本够了带重放汇总（止损原样与放宽各档的结局、管理动作相对拿着不动的差） |
+| 财经日历 | `EconCalendarAssembler` | 只留美国的 High 级事件。三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
 | 经验账本 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本） | 只注入规律与执行缺口，假设升成规律才注入；账本首行带用法说明，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
 | 休眠提示 | `sleepNotice` | 时段内末次唤醒才有。明说休眠本身不是任何方向动作的理由——"13 小时看不见"既诱导睡前减仓，也诱导赶在休眠前多开一笔 |
 
 ### 5.5 动手面
 
-`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 19 个。
+`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`；平台在采的币都能布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 19 个；行情类的可查任意 Binance USDT 永续。`market_snapshot` 只给各数据源的原始读数（`MarketReadings`），不打分、不贴行情标签；`news_search` 带关键词或小时数时查库里的历史快讯。端点开了联网搜索的 trader 另挂一个 `web_search`（`WebSearchTool`，单独发一次带搜索的请求，用量记在同一轮账上）。
 
 三个设计点：
 
@@ -487,7 +488,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 |---|---|
 | `ReviewMaterialAssembler.hasNewMaterial` | 窗口内有了结仓位、或有过 `open_position` 动作（被拒的也算）才复盘；都没有**静默跳过不烧钱**，窗口并入下次 |
 | `ReviewMaterialAssembler.assemble` | 纯代码算六块素材：战绩表 / 本局论点战绩（含按入场方式分桶、开仓后不动的重放汇总）/ 案例事实表（末尾附本期重放汇总、没成交就撤掉的限价单之后到没到过限价位和原目标）/ 本期行情 / 盯盘布防（期间布的条件、命中、得知命中那轮的动作与该币结论段）/ 经验账本。素材窗口 =（上次成功 REVIEW 的 wake_time, 本日线边界]。案例按单子类型分组，两笔以上的组在前、再按净额绝对值，只展开前两组（★），其余一行带过 |
-| `CaseFileBuilder.path` | 一笔交易在 5m K 线上的路径指标：最大浮盈 / 最大逆向（占计划目标 / 止损距离的比例）、到目标 25%·50% 用时、首次收回入场价、出场后 4h·24h 最有利价。配上 `EntryContext` 在开仓那一刻存下的 regime / ATR / 事件距离 / 时段 / 资金费，模型才答得出"赢单和亏单差在哪" |
+| `CaseFileBuilder.path` | 一笔交易在 5m K 线上的路径指标：最大浮盈 / 最大逆向（占计划目标 / 止损距离的比例）、到目标 25%·50% 用时、首次收回入场价、出场后 4h·24h 最有利价。配上 `EntryContext` 在开仓那一刻存下的 1h ADX / 布林带宽 / ATR / 离最近美国数据多久 / 时段 / 资金费，模型才答得出"赢单和亏单差在哪" |
 | `CaseFileBuilder.replay` | 开仓后不动的重放，单位 R = 入场价到原始止损的距离：从开仓后第一根 5m 逐根走到开仓后 72 小时，同一根里止损和目标都碰到按止损算。给出实际几 R（净盈亏 ÷ 开仓总数量 × R，开仓总数量由 sim 从订单流水聚合）、开仓后 24 小时的最大顺向 / 最大逆向 / 拿满的位置、止损原样与放宽到 1.5 / 2 / 3 倍各自先到目标还是先到止损。`summarize` 把一批合计成一行，trader 每轮的论点战绩块和复盘素材共用 |
 | `ReviewRunner.review` | 一次调用进去出来，无工具无循环；有待复审条目再调一次 `audit`；旧自由文本 memory 第一次跑时 `needsMigration` / `migrate` 压成账本行。迁移 / 复盘 / 复审三次调用共用 600 秒总预算 |
 | `ExperienceOpParser` | 两段固定格式：【本期复盘】→ REVIEW 决策行公开上时间线；【经验更新】→ 逐行翻成账本操作（`#id 支持/反对/未测试/守/破`、`新增 …`、`发现 …`、`删除 #id`），认不出的行丢掉。**一行都解析不出时 REVIEW 行照存、账本不动**——一次格式失守不污染记忆 |

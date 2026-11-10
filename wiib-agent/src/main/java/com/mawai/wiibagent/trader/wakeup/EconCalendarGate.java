@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.trader.wakeup;
 
+import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
 import com.mawai.wiibquant.task.EconCalendarCollector;
 import lombok.RequiredArgsConstructor;
@@ -9,7 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 唤醒前的财经日历等待闸：K 线边界撞上 High 级数据公布时刻，先等实际值落库再发本轮 trader，
+ * 唤醒前的财经日历等待闸：K 线边界撞上美国 High 级数据公布时刻，先等实际值落库再发本轮 trader，
  * 让 trader 醒来就读到刚公布的数字，而不是隔一根 K 线才看见。
  * <p>
  * 5s 一轮窄窗口拉 TradingView（实测公布后约 4s 就有值），最多等 30s 放行——5m 档预算最坏 294s→264s，
@@ -46,7 +47,7 @@ public class EconCalendarGate {
     /** 回看窗口内到点了实际值还没到的数字型事件；查库炸了按"没有"算，放行 */
     private boolean pending(long boundary) {
         try {
-            return mapper.countPendingActual(boundary - LOOKBACK_MS, boundary) > 0;
+            return mapper.countPendingActual(EconCalendarToolkit.COUNTRY, boundary - LOOKBACK_MS, boundary) > 0;
         } catch (Exception e) {
             log.warn("[EconGate] 查待公布事件失败，直接放行: {}", e.toString());
             return false;

@@ -565,7 +565,7 @@ class PromptI18nTest {
         plan.setStopLossPrice(new BigDecimal("99000"));
         plan.setTakeProfitPrice(new BigDecimal("104000"));
         plan.setRevisionsJson("[{\"time\":\"x\",\"type\":\"stop_loss\",\"change\":\"99000->99500\",\"reason\":\"lock\"}]");
-        plan.setEntryCtxJson("{\"regime\":\"TREND_UP\",\"atr1h\":300,\"stopAtr\":3.3,\"stopPct\":1.0,\"hourBj\":9,"
+        plan.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":300,\"stopAtr\":3.3,\"stopPct\":1.0,\"hourBj\":9,"
                 + "\"orderType\":\"MARKET\",\"leverage\":10}");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(

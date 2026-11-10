@@ -7,8 +7,11 @@ tool:
   # News tool: the language is baked into the instance at graph-build time; this entry is the
   # description only — which language the bodies come in is not the model's choice.
   news_search: |-
-    Get the recent important news flashes (title + full body + source + time). A flash is already
-    the complete text — there is no such thing as deep-reading a single one.
+    Important news flashes (title + full body + source + time). A flash is already the complete
+    text — there is no such thing as deep-reading a single one.
+    With no arguments: the latest batch. With keyword (matched in title or body, Chinese and English
+    both searched) or hours (how far back to look, 1-168; 24 when only a keyword is given): search the
+    local archive, newest first, at most 30 flashes.
 
   # Web search as a local tool (only on Gemini endpoints backed by Antigravity): each call sends a
   # separate search-only request, see WebSearchTool
@@ -45,28 +48,31 @@ tool:
   # ---- Market/indicator data tools (shared by the chat main agent and trader wake-ups) ----
   # English entries are the annotation text verbatim; the annotation stays as the last-resort fallback.
   market_snapshot: |-
-    Get a real-time cross-section of a crypto perpetual symbol (short-timeframe view, not candles).
-    Fields and sign conventions:
+    Get a real-time cross-section of a crypto perpetual symbol: the latest raw reading from each data
+    source, with no scoring. A section that is absent means that source was not available this time.
+    Times are UTC+8.
+    - asOf: when this snapshot was collected (it is cached for up to a minute)
     - lastPrice; atr is the 5m atr14 — for stop distances use the atr14 of your own timeframe from `indicators`
     - price_change: {5m,15m,30m,1h,4h,24h} percent change per window
-    - regime: a rule-based label on 15m indicators — TREND_UP/TREND_DOWN (adx>25, direction by DI),
-      SQUEEZE (adx<15 and Bollinger bandwidth<1.5), SHOCK (recent 5m ATR > 2x its longer average),
-      RANGE (everything else); a rule, not a judgement
-    - fundingDeviation: (current rate - 0.01%) / 0.03%; positive = longs paying up (crowded long), negative = crowded short
-    - oiChangeRate: open-interest change over the last 4h as a raw ratio (0.03 = +3%); positive = money entering, negative = leaving
-    - lsrExtreme: percentile of the retail long/short account ratio within the last 24h mapped to [-1,1];
-      near +1 = long accounts crowded to an extreme, -1 = short extreme
-    - topTraderBias: change in the top traders' position long/short ratio, second half of the last 2h vs the first; positive = adding longs
-    - takerPressure: change in the taker buy/sell ratio over the last 2h, positive = buying strengthening;
-      tradeDelta: taker-buy share of recent trades mapped to [-1,1], positive = buyers dominate;
-      largeTradeBias: direction of large trades, positive = mostly buys
-    - liquidationPressure: share of long liquidations among recent liquidations mapped to [-1,1];
-      positive = longs being liquidated (selling force), negative = shorts; liquidationVolumeUsdt is the total
-    - bidAskImbalance / spotBidAskImbalance: top-5 levels (bid qty - ask qty) / total for futures / spot; positive = thicker bids
+    - accountLongShort: Binance long/short account ratio, latest 5m point: ratio, longAccount and shortAccount
+      (shares of accounts), plus low24h / high24h = the lowest and highest ratio over the last 24h
+    - openInterest: latest 5m point in coins and usd, the same one hour earlier (coins1hAgo / usd1hAgo) and
+      at the earliest point fetched, about 4h back (coinsEarliest / usdEarliest, earliestTime)
+    - topTraderPositionLongShort: top traders' position long/short ratio, latest 5m point, and the earliest
+      point fetched, about 2h back (ratioEarliest, earliestTime)
+    - takerVolume5m: taker buy and sell volume (in coins) and their ratio over the latest 5m
+    - funding: current rate as a raw decimal per settlement (0.0001 = 0.01%), nextFundingTime, markPrice, indexPrice
+    - liquidations: last5m and last30m, each with longUsd (longs liquidated), shortUsd (shorts liquidated) and
+      count. Binance only; its liquidation stream is sampled, not complete, so the amounts are a lower
+      bound and fall further short the faster the market moves
+    - futuresBookTop5 / spotBookTop5: total bid quantity and ask quantity (coins) over the top 5 levels
+    - trades3m: taker buy and taker sell notional (USDT) over the last 3 minutes, how much of each came from
+      single trades above largeThresholdUsd (the same threshold for every coin), and the trade count;
+      only for coins the platform streams trades for
     - spotPerpBasisBps: perp premium over spot in basis points; positive = perp trading rich
     - fearGreed: "value(label)", 0 = extreme fear, 100 = extreme greed
-    - qualityFlags: each NO_* means that input is missing and its score is 0 — that 0 is "no data", not "neutral"
-    Apart from price_change / oiChangeRate / spotPerpBasisBps / atr, scores live in [-1,1]; larger magnitude = more extreme.
+    - qualityFlags: each NO_* names an input that is missing
+    To see how open interest and the ratios moved over time, use derivatives_history.
 
   option_iv: |-
     Get option implied-volatility context for a crypto symbol from Deribit.
@@ -339,8 +345,10 @@ tool:
   cancel_order: Cancel a pending limit order by orderId (from the [Account] block's pendingOrders in your opening message, or get_account).
 
   set_watch: |-
-    Replace ALL your watch conditions on one symbol. The platform watches them between wake-ups and wakes
-    you the moment one is met: a non-routine wake-up whose opening names the condition and your note.
+    Replace ALL your watch conditions on one symbol. The symbol may be any coin the platform tracks, not
+    only your tradable ones (e.g. BTCUSDT as the market benchmark). The platform watches them between
+    wake-ups and wakes you the moment one is met: a non-routine wake-up whose opening names the condition
+    and your note.
     kind: TOUCH_ABOVE / TOUCH_BELOW (mark price touches level), CLOSE_ABOVE / CLOSE_BELOW (a candle of
     period 5m/15m/1h/4h/1d closes above / below level; a close of your heartbeat period or longer lands on the
     routine wake-up at that moment and is read out there, not as a separate wake-up), AT_TIME (at `at`,

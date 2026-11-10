@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.trader;
 
+import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
@@ -53,6 +54,12 @@ public class TraderModelFactory {
     /** trader 实际用的端点（可能为 null）；模型名展示、决策日志记 model 都从这里取，不再有 ai_trader.model 列 */
     public UserLlmEndpoint endpointFor(AiTrader trader) {
         return endpointService.resolve(trader.getUserId(), UserLlmBinding.TRADER);
+    }
+
+    /** 这个 trader 的端点能不能联网搜索：协议支持且用户勾了 */
+    public boolean webSearchEnabled(AiTrader trader) {
+        UserLlmEndpoint endpoint = endpointFor(trader);
+        return AiProtocols.supportsServerSearch(endpoint.getApiProtocol()) && Boolean.TRUE.equals(endpoint.getWebSearch());
     }
 
     public void evict(long traderId) {

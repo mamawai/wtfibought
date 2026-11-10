@@ -5,12 +5,15 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.learning.CaseFileBuilder;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
@@ -32,6 +35,7 @@ import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
+import com.mawai.wiibquant.market.service.CrossAssetService;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibquant.market.service.NewsCache;
@@ -40,13 +44,17 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import tools.jackson.databind.JsonNode;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -72,9 +80,11 @@ class WakeInstructionI18nTest {
     /** 观察包成文走真实词表；取数侧（决策行/战绩）给 mock，走空数据路径 */
     private final TraderWatchStore watchStore = new TraderWatchStore(mock(AiTraderWatchMapper.class),
             mock(org.springframework.context.ApplicationEventPublisher.class));
+    private final PositionPath positionPath = mock(PositionPath.class);
+    private final CrossAssetService crossAssets = mock(CrossAssetService.class);
     private final WakeObservation wakeObservation = new WakeObservation(
             mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts,
-            mock(PositionPath.class), watchStore);
+            positionPath, crossAssets);
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             mock(TraderModelFactory.class), new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class)),
@@ -91,7 +101,7 @@ class WakeInstructionI18nTest {
             new LocalizedToolCallbacks(prompts),
             wakeObservation,
             mock(EconCalendarAssembler.class), new TraderLiveHub(), mock(EntryContext.class),
-            mock(DecisionText.class), mock(ExperienceLedger.class));
+            mock(DecisionText.class), mock(ExperienceLedger.class), mock(BinanceProperties.class));
 
     {
         runner.nowMs = () -> BOUNDARY + 1_000L;
@@ -202,7 +212,7 @@ class WakeInstructionI18nTest {
     /** 财经日历块只在事实区：单段在问题之前；警报第一段在"尚未收盘"提醒之前；第二段在它的问题之前。null 时一个字不加 */
     @Test
     void 财经日历块排在问题之前() {
-        String calendar = "【财经日历】全球 High 级宏观事件\n- 09-04 20:30 US/USD Non Farm Payrolls 实际:206K 预测:205K 前值:207K\n";
+        String calendar = "【财经日历】美国 High 级宏观事件\n- 09-04 20:30 Non Farm Payrolls 实际:206K 预测:205K 前值:207K\n";
         String single = runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", calendar, AgentLang.ZH);
         String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", calendar, "", AgentLang.ZH);
         String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", calendar, AgentLang.ZH, false);
@@ -217,7 +227,7 @@ class WakeInstructionI18nTest {
     @Test
     void 观察包中英文案无中文() {
         WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), Map.of());
+                nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(), Map.of());
         PromptI18nAssertions.assertNoCjk("英文观察包", en.text());
         PromptI18nAssertions.assertNoCjk("英文第一段（带观察包）",
                 runner.stageOneInstruction(trader(), null, BOUNDARY, null, en.text(), null, "", AgentLang.EN));
@@ -227,7 +237,7 @@ class WakeInstructionI18nTest {
         assertThat(en.busy()).isFalse();
 
         WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), Map.of());
+                nothing(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(), Map.of());
         assertThat(zh.text()).contains("【当前账户】").contains("\"equity\":10000.00")
                 .contains("【上一轮结论】本局还没有上一轮结论");
     }
@@ -235,28 +245,67 @@ class WakeInstructionI18nTest {
     /** 承诺块：在盯的价格条件带"离现价多远"，中英各自成文；布了条件就算忙 */
     @Test
     void 承诺块列出在盯的条件与离现价多远() {
-        TraderWatchStore store = mock(TraderWatchStore.class);
         AiTraderWatch w = new AiTraderWatch();
         w.setSymbol("BTCUSDT");
         w.setKind("TOUCH_ABOVE");
         w.setLevel(new BigDecimal("65000"));
         w.setNote("breakout, chase long"); // 备注是模型自己写的，英文 trader 写英文，不算平台文案
         w.setCreatedWakeTime(BOUNDARY - 3_600_000L);
-        when(store.armed(7L, 1)).thenReturn(List.of(w));
-        WakeObservation obs = new WakeObservation(mock(AiTraderDecisionMapper.class), mock(DecisionText.class),
-                mock(PlayStatsAssembler.class), prompts, mock(PositionPath.class), store);
         Map<String, BigDecimal> marks = Map.of("BTCUSDT", new BigDecimal("64000"));
 
-        WakeObservation.Pack zh = obs.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), marks);
+        WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+                nothing(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(w), marks);
         assertThat(zh.text()).contains("【你的承诺】")
                 .contains("- BTCUSDT 触及 65000 以上（备注：breakout, chase long）：未命中；现价 64000，在 65000 下方 1.54%");
         assertThat(zh.busy()).isTrue();
 
-        WakeObservation.Pack en = obs.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), marks);
+        WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+                nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(w), marks);
         PromptI18nAssertions.assertNoCjk("英文承诺块", en.text());
         assertThat(en.text()).contains("[Your commitments]").contains("1.54% below 65000");
+    }
+
+    /**
+     * 行情快照：大盘参考不在可交易币里也排第一行并标出来，涨跌缺的那格写"—"；
+     * 美股参考只留纳指期货、标普期货、VIX；英文侧零中文
+     */
+    @Test
+    void 行情快照带大盘参考和美股参考() {
+        when(positionPath.changes("BTCUSDT", BOUNDARY))
+                .thenReturn(Arrays.asList(new BigDecimal("0.42"), new BigDecimal("-1.30"), null));
+        when(positionPath.changes("ZECUSDT", BOUNDARY))
+                .thenReturn(List.of(new BigDecimal("-2.10"), new BigDecimal("3.05"), new BigDecimal("12.80")));
+        when(crossAssets.snapshot()).thenReturn(List.of(
+                new CrossAssetService.Quote("NQ=F", "Nasdaq 100 futures", new BigDecimal("25000.50"),
+                        new BigDecimal("-0.85"), new BigDecimal("1.20"), BOUNDARY),
+                new CrossAssetService.Quote("GC=F", "Gold futures (USD/oz)", new BigDecimal("4100.00"),
+                        new BigDecimal("0.30"), new BigDecimal("2.00"), BOUNDARY)));
+        Map<String, JsonNode> quotes = Map.of(
+                "BTCUSDT", MAPPER.readTree("{\"markPrice\":\"100000.00\",\"lastFundingRate\":\"0.0001\"}"),
+                "ZECUSDT", MAPPER.readTree("{\"markPrice\":\"512.30\",\"lastFundingRate\":\"-0.0002\"}"));
+
+        assertThat(wakeObservation.snapshot(quotes, List.of("ZECUSDT"), BOUNDARY, AgentLang.ZH)).isEqualTo(
+                "- BTCUSDT（大盘参考，不可交易） 标记价 100000，1h / 4h / 24h 涨跌 +0.42% / -1.30% / —，资金费率 0.0001\n"
+                        + "- ZECUSDT 标记价 512.3，1h / 4h / 24h 涨跌 -2.10% / +3.05% / +12.80%，资金费率 -0.0002\n"
+                        + prompts.get(AgentLang.ZH, "trader.wake.equitiesHeader") + "\n"
+                        + "- 纳指期货 25000.5，较昨收 -0.85%（" + BeijingTime.format(BOUNDARY) + "）\n");
+        PromptI18nAssertions.assertNoCjk("英文行情快照",
+                wakeObservation.snapshot(quotes, List.of("ZECUSDT"), BOUNDARY, AgentLang.EN));
+    }
+
+    /** 各币摘要：大盘参考不在可交易币里也给一行并标出来 */
+    @Test
+    void 各币摘要带大盘参考() {
+        when(positionPath.symbol("BTCUSDT", null, BOUNDARY, 3_600_000L)).thenReturn(new CaseFileBuilder.MarketWindow(
+                "BTCUSDT", BOUNDARY - 3_600_000L, BOUNDARY, new BigDecimal("100000"), new BigDecimal("100900"),
+                BOUNDARY - 1_800_000L, new BigDecimal("99800"), BOUNDARY - 600_000L, new BigDecimal("100500")));
+        AiTrader t = trader();
+        t.setSymbols("ZECUSDT");
+
+        assertThat(wakeObservation.symbolsSummary(t, List.of("ZECUSDT"), null, BOUNDARY, AgentLang.ZH))
+                .contains("- BTCUSDT（大盘参考，不可交易） ").doesNotContain("ZECUSDT");
+        PromptI18nAssertions.assertNoCjk("英文各币摘要",
+                wakeObservation.symbolsSummary(t, List.of("ZECUSDT"), null, BOUNDARY, AgentLang.EN));
     }
 
     /** 观察包紧跟头部事实：单段在快照之前；警报第一段在"上次唤醒"之后、"尚未收盘"提醒之前 */

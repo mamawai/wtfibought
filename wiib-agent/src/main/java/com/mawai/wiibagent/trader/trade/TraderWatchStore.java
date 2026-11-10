@@ -122,15 +122,6 @@ public class TraderWatchStore {
                 .set(AiTraderWatch::getUpdatedAt, LocalDateTime.now())) == 1;
     }
 
-    /** 主人改了币种：不在新名单里的币，还在盯的作废 */
-    public void retireSymbolsNotIn(long traderId, int roundNo, Collection<String> symbols) {
-        retire(new LambdaUpdateWrapper<AiTraderWatch>()
-                .eq(AiTraderWatch::getTraderId, traderId)
-                .eq(AiTraderWatch::getRoundNo, roundNo)
-                .notIn(AiTraderWatch::getSymbol, symbols));
-        events.publishEvent(new WatchesChanged(traderId));
-    }
-
     /** 重置开新局：本局还在盯的全部作废 */
     public void archiveRound(long traderId, int roundNo) {
         retire(new LambdaUpdateWrapper<AiTraderWatch>()

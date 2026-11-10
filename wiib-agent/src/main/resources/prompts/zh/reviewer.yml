@@ -175,7 +175,7 @@ reviewer:
     casePlan: "  计划：论点 {{signals}} ｜ 失效 {{invalidation}} ｜ 修订 {{revisions}}"
     caseNoPlan: "  计划：（无计划记录）"
     caseRevision: "{{type}} {{change}}（{{reason}}）"
-    caseCtx: "  入场上下文：regime {{regime}} ｜ 1h ATR {{atr}} ｜ 止损 {{stopAtr}} 个 ATR（{{stopPct}}%）｜ 距最近 High 事件 {{eventMin}} 分 {{eventTitle}} ｜ 北京时间 {{hour}} 时 ｜ 资金费 {{funding}} ｜ {{orderType}} {{leverage}}x{{pending}}"
+    caseCtx: "  入场上下文：1h ADX {{adx}} ｜ 1h 布林带宽 {{bollBw}} ｜ 1h ATR {{atr}} ｜ 止损 {{stopAtr}} 个 ATR（{{stopPct}}%）｜ 距最近的美国 High 事件 {{eventMin}} 分 {{eventTitle}} ｜ 北京时间 {{hour}} 时 ｜ 资金费 {{funding}} ｜ {{orderType}} {{leverage}}x{{pending}}"
     casePending: （挂了 {{held}} 才成交）
     none: —
 

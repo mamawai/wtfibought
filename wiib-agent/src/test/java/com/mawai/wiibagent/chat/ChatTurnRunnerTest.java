@@ -227,12 +227,12 @@ class ChatTurnRunnerTest {
     /** 新闻是主 agent 的工具不是预取：语言烤在叶子里，模型没法挑新闻用哪门语言 */
     @Test
     void news工具挂在主agent上且按叶子语言取快讯() {
-        when(newsToolkit.newsSearch(AgentLang.ZH)).thenReturn("BlockBeats 快讯原文若干");
+        when(newsToolkit.newsSearch(AgentLang.ZH, null, null)).thenReturn("BlockBeats 快讯原文若干");
         mainCallsThenAnswers("news_search", "{}", "这是答案");
 
         turn("最近有什么新闻");
 
-        verify(newsToolkit).newsSearch(AgentLang.ZH);
+        verify(newsToolkit).newsSearch(AgentLang.ZH, null, null);
         assertThat(toolResponses()).singleElement().asString().contains("BlockBeats 快讯原文若干");
         assertThat(answer.toString()).isEqualTo("这是答案");
     }
@@ -325,7 +325,7 @@ class ChatTurnRunnerTest {
      */
     @Test
     void 中断时循环里排进的报告也落库() {
-        when(newsToolkit.newsSearch(AgentLang.ZH)).thenReturn("快讯");
+        when(newsToolkit.newsSearch(AgentLang.ZH, null, null)).thenReturn("快讯");
         CompletableFuture<Void> cancel = new CompletableFuture<>();
         AtomicInteger calls = new AtomicInteger();
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> {

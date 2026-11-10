@@ -12,7 +12,9 @@ import tools.jackson.databind.JsonNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -232,6 +234,27 @@ public class CaseFileBuilder {
         KlineBar lo = bars.stream().min(Comparator.comparing(KlineBar::low)).orElseThrow();
         return new MarketWindow(symbol, bars.getFirst().openTime(), bars.getLast().openTime() + BAR_MS,
                 bars.getFirst().open(), hi.high(), hi.openTime(), lo.low(), lo.openTime(), bars.getLast().close());
+    }
+
+    /**
+     * 截至 toMs 最近一根收盘的 5m，相对若干时长之前那一刻的涨跌 %，按 lookbacksMs 的顺序；
+     * 哪一头的 K 线本地没有，那一格为 null
+     */
+    public List<BigDecimal> changes(String symbol, long toMs, long... lookbacksMs) {
+        long toBar = toMs - Math.floorMod(toMs, BAR_MS);
+        long longest = Arrays.stream(lookbacksMs).max().orElse(0);
+        Map<Long, BigDecimal> closes = new HashMap<>();
+        for (KlineBar b : historyStore.load(symbol, KlineHistoryStore.DEFAULT_INTERVAL, toBar - longest - BAR_MS, toBar)) {
+            closes.put(b.openTime(), b.close());
+        }
+        BigDecimal last = closes.get(toBar - BAR_MS);
+        List<BigDecimal> out = new ArrayList<>();
+        for (long lookback : lookbacksMs) {
+            BigDecimal ref = closes.get(toBar - lookback - BAR_MS);
+            out.add(last == null || ref == null ? null
+                    : last.subtract(ref).multiply(BigDecimal.valueOf(100)).divide(ref, 2, RoundingMode.HALF_UP));
+        }
+        return out;
     }
 
     private static Replay replay(FuturesPositionDTO pos, AiTraderPlan plan, List<KlineBar> bars, long openBar) {

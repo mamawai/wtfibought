@@ -189,7 +189,7 @@ reviewer:
     casePlan: "  Plan: thesis {{signals}} | invalidation {{invalidation}} | revisions {{revisions}}"
     caseNoPlan: "  Plan: (no plan record)"
     caseRevision: "{{type}} {{change}} ({{reason}})"
-    caseCtx: "  Entry context: regime {{regime}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest High event {{eventMin}} min {{eventTitle}} | Beijing hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x{{pending}}"
+    caseCtx: "  Entry context: 1h ADX {{adx}} | 1h Bollinger bandwidth {{bollBw}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest US High event {{eventMin}} min {{eventTitle}} | Beijing hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x{{pending}}"
     casePending: " (rested {{held}} before filling)"
     none: —
 

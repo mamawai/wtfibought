@@ -43,6 +43,10 @@ trader:
     - [Account]: equity, positions (liquidation price, current stop / take-profit, the plan with its
       revision history, holding time), open orders (plan, time pending). nowBeijing is the current Beijing time
       with the year; write set_watch's AT_TIME against it. It is complete — no need to re-check with get_account.
+      A position also carries three code-computed numbers: unrealizedR, the open PnL in R (R = distance from entry to the
+      plan's original stop); stopDistancePct, how far the mark price is from the nearest stop in %; lossAtStopPctOfEquity,
+      the loss vs entry as a % of equity if every current stop fires (negative = profit already locked in).
+      lossAtAllStopsPctOfEquity is the same summed over all positions. Fees are ignored in all of them
       A position's sinceLastWake is what it has been through since the last round in which you completed a decision:
       computed by code from closed 5m candles — first open, high and low with their times, last close, open-to-close
       change, from / to being the span actually covered; a position opened after that round counts from the 5m candle
@@ -55,12 +59,15 @@ trader:
     - Your owner's message (if any, at the very end of part one, with its own instructions attached)
     - Part one's question: settle the commitments one by one, act where action is due; set no watches, write no conclusion
     Part two, "arm and close", is appended once you have answered part one; everything from part one stays in context:
-    - [Per symbol since your last wake-up]: each tradable symbol's open / high / low / close since the last round in
+    - [Per symbol since your last wake-up]: each tradable symbol's and BTCUSDT's (the market benchmark) open / high / low / close since the last round in
       which you completed a decision (computed by code from closed 5m candles)
     - [Recent wake-ups]: time, status, equity and tools used over the last few rounds; thesis record: this round's settled
       trades tallied by thesis tag and entry type plus a replay of leaving each trade untouched, computed by code;
       quote only, never recompute
-    - Market snapshot: mark price and funding rate per symbol; [Economic calendar]: high-impact macro events (on a
+    - Market snapshot: per symbol the mark price, the change over the last 1h / 4h / 24h and the funding rate, with a
+      BTCUSDT row as the market benchmark even when you cannot trade it; then a US equities reference: Nasdaq 100 futures,
+      S&P 500 futures and VIX with price and change vs the previous close (Yahoo, up to 15 minutes late);
+      [Economic calendar]: US high-impact macro events (on a
       non-routine wake-up it sits in part one, where attribution needs it)
     - Sleep notice (only on the last wake-up inside the wake window): when the next routine wake-up is, and that only stop-loss and take-profit orders stand guard in between
     - Part two's question: read the whole board for new trades worth taking, set watches where you want the system to wake you, close in the fixed format
@@ -80,18 +87,31 @@ trader:
         and leave the forming one out
       · all three take an optional endTime ("yyyy-MM-dd HH:mm", UTC+8) that ends the window there instead of now
       When you want both, pass includeBars=false to kline_structure so you do not pay for the same bars twice
-    - market_snapshot / funding_history / orderbook_depth / option_iv: funding, open interest, long/short ratio, liquidations, order book, IV
+    - market_snapshot / funding_history / orderbook_depth / option_iv: funding, open interest, long/short ratio, liquidations, order book, IV.
+      market_snapshot gives the latest raw reading from each data source, not scores
     - derivatives_history: the last 30 points of open interest, account long/short ratio, top-trader position
       long/short ratio and taker buy/sell ratio, period 1h/4h/1d; market_snapshot gives only the latest reading,
       this shows how they moved
     - whale_positions: Hyperliquid whale leveraged positions in the symbol: per side the address count, notional,
       weighted entry, unrealized PnL, plus entry-price and liquidation-price buckets; BTC / ETH / SOL / XRP / DOGE only
-    - news_search: the recent news flashes in full (no parameters, no keyword search)
+    - news_search: important news flashes. No arguments gives the latest batch; keyword or hours searches the local
+      archive (up to 168 hours back, 30 flashes)
     - cross_asset_snapshot: S&P 500 and Nasdaq cash indices and futures, the US Dollar Index, the 10-year Treasury
       yield, VIX, gold and crude, each with its price and change vs the previous close / 5 sessions ago (Yahoo, up to
       15 minutes late); the futures trade nearly 24h, and outside US hours a cash index is just the last close
+    - web_search: only present when your owner's model endpoint has web search on. One web search; what comes back is a
+      summary written from the results with source links, never the raw pages. Each search is one more model request and
+      takes from a few seconds to tens of seconds. It can find facts and causes: why a coin or the whole market suddenly
+      moved, why US index futures jumped or dropped, what is scheduled for a coin (unlocks, upgrades, listings and
+      delistings, lawsuits, governance votes) and incidents that just happened, the actual reading of a US data release
+      and how the market took it, the day's backdrop (risk appetite, ETF flows, regulation). For prices, funding and open
+      interest the data tools are the reference; price predictions and other people's technical analysis found on the web
+      are opinions, not facts
+    - The market data tools above (candles, structure, indicators, snapshot, funding, order book, derivatives history)
+      work on any Binance USDT perpetual, not only your tradable symbols
     - set_watch: set watch conditions on a symbol; when one is met you are woken (a non-routine wake-up whose
-      opening names the condition and the note you wrote). kind: TOUCH_ABOVE / TOUCH_BELOW the mark price touches
+      opening names the condition and the note you wrote). Any coin the platform tracks can be watched, not only
+      your tradable ones (BTCUSDT as the market benchmark, for example). kind: TOUCH_ABOVE / TOUCH_BELOW the mark price touches
       level; CLOSE_ABOVE / CLOSE_BELOW a candle of period (5m/15m/1h/4h/1d) closes above / below level, and a close of
       your heartbeat period or longer lands on the routine wake-up at that moment, read out there rather than waking you
       separately; AT_TIME the moment at (Beijing time yyyy-MM-dd HH:mm). Each carries a note: one sentence to your
@@ -319,7 +339,7 @@ trader:
   # Economic-calendar block (EconCalendarAssembler): facts only; how to use them is the owner's instructions' call.
   # "Just released" holds the actuals the pre-wake gate just fetched.
   calendar:
-    header: "[Economic calendar] Global high-impact macro events (Beijing time, UTC+8). The 'Just released' section holds actual readings that landed since your last wake-up; how the actual compares with forecast and previous is this round's new fact."
+    header: "[Economic calendar] US high-impact macro events (Beijing time, UTC+8). The 'Just released' section holds actual readings that landed since your last wake-up; how the actual compares with forecast and previous is this round's new fact."
     justPublished: "Just released (new this round - read first):"
     published: "Released (last 3 days):"
     upcoming: "Upcoming (rest of today):"
@@ -333,8 +353,18 @@ trader:
   # system prompt uses.
   wake:
     routineHeader: A new {{interval}} candle has closed ({{time}}).
-    snapshotHeader: "Market snapshot (check the details yourself with the tools; funding rates are raw decimals per settlement, 8h for most contracts and 4h or 1h for some, 0.0001 = 0.01%):"
-    snapshotRow: "- {{symbol}} mark price {{price}}, funding rate {{funding}}"
+    snapshotHeader: "Market snapshot (check the details yourself with the tools; changes are computed from closed 5m candles; funding rates are raw decimals per settlement, 8h for most contracts and 4h or 1h for some, 0.0001 = 0.01%):"
+    snapshotRow: "- {{symbol}}{{tag}} mark price {{price}}, change over 1h / 4h / 24h {{changes}}, funding rate {{funding}}"
+    # Marks the row that is a reference only and cannot be traded
+    referenceTag: " (market benchmark, not tradable)"
+    noData: "-"
+    # US equities reference: Nasdaq 100 futures, S&P 500 futures and VIX from the CrossAssetService cache
+    equitiesHeader: "US equities reference (Yahoo, up to 15 minutes late; the futures trade nearly 24h; the bracket is the quote time, Beijing time):"
+    equityRow: "- {{name}} {{price}}, {{change}}% vs previous close ({{time}})"
+    equity:
+      nq: Nasdaq 100 futures
+      es: S&P 500 futures
+      vix: VIX
     # Single-part opening's question (no commitments to settle, no owner's message, no non-routine trigger): board, watches and closing in one go
     routineQuestion: "This round: read the whole board - is there a trade worth taking on any tradable symbol right now. Read the facts above first; verify your judgement with the tools. Where you want the system to wake you at a price, a candle close or a moment, set it with set_watch (each direction holds only one, so set the one you need to handle first; farther ones go in the Waiting line); a symbol that needs no wake-up needs no watch. Close with the fixed {{mark}} format, one section per tradable symbol."
     # Part one's question (routine round): settle the commitments block only, no watches, no conclusion
@@ -345,7 +375,7 @@ trader:
     stageTwoExhausted: "This part: the model-call budget is spent, so no tool can be called any more, set_watch included. Close straight away in the fixed {{mark}} format, one section per tradable symbol; put what you are waiting for in the Waiting line and set it next round."
     # Per-symbol digest (part two): each tradable symbol's open / high / low / close since the last completed decision, computed by code from closed 5m candles
     symbolsHeader: "[Per symbol since your last wake-up] (computed by code from closed 5m candles)"
-    symbolsRow: "- {{symbol}} {{from}} to {{to}}: open {{open}}, high {{high}} ({{highAt}}), low {{low}} ({{lowAt}}), close {{close}}, {{changePct}}%"
+    symbolsRow: "- {{symbol}}{{tag}} {{from}} to {{to}}: open {{open}}, high {{high}} ({{highAt}}), low {{low}} ({{lowAt}}), close {{close}}, {{changePct}}%"
     # Commitments block (part one): positions / open orders / armed watches / last round's waiting lines, one per line, facts only
     commitHeader: "[Your commitments] (listed by code from your positions, open orders, watch conditions and last round's waiting lines; facts only)"
     commitPosition: "- {{symbol}} {{side}} position, invalidation \"{{invalidation}}\"{{bar}}"
@@ -459,6 +489,7 @@ trader:
     limitPriceRequired: a LIMIT order needs limitPrice
     limitTooFar: the limit price is {{pct}}% away from the mark, over the 5% cap (mark {{mark}})
     # set_watch rejections
+    watchSymbolInvalid: "the platform does not track this symbol, so no watch condition can be set on it. Watchable: {{symbols}}"
     watchOnePerSide: "at most one {{side}} watch condition per symbol, you gave {{given}}: whichever comes first wakes you, and you re-arm then with the market as it is; put farther ones in your Waiting line"
     # The three lanes a condition belongs to, as read out in the rejection
     watchSide:

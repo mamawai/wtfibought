@@ -813,7 +813,7 @@ COMMENT ON COLUMN ai_trader_plan.status IS 'LIVE=仓位/挂单存活 CLOSED=已�
 COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：唤醒开头对账发现仓位已了结的边界/重置时刻，与opened_wake_time围出计划生命期';
 COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜照常。仅CLOSED可标,可随时取消';
 COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒开头对账补绑;一行计划对应一个仓位生命期,同论点下一笔另起一行;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
-COMMENT ON COLUMN ai_trader_plan.entry_ctx_json IS '开仓那一刻的上下文快照JSON：orderType/leverage/hourBj/stopPct/regime/atr1h/stopAtr/eventMin/eventTitle/funding（EntryContext）；复盘按维度对照用，取不到的字段缺席';
+COMMENT ON COLUMN ai_trader_plan.entry_ctx_json IS '开仓那一刻的上下文快照JSON：orderType/leverage/placedAt/hourBj/stopPct/atr1h/stopAtr/adx1h/bollBw1h/eventMin/eventTitle/funding（EntryContext）；复盘按维度对照用，取不到的字段缺席';
 
 CREATE TABLE IF NOT EXISTS ai_trader_watch (
     id              BIGSERIAL PRIMARY KEY,
@@ -926,7 +926,7 @@ CREATE INDEX IF NOT EXISTS idx_user_llm_endpoint_user ON user_llm_endpoint(user_
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_llm_endpoint_default ON user_llm_endpoint(user_id) WHERE is_default;
 COMMENT ON TABLE  user_llm_endpoint IS '用户 BYOK 端点库：一条=协议+URL+key+模型(+思考档位)，一人多条；对话/交易员/复盘教练从中选';
 COMMENT ON COLUMN user_llm_endpoint.reasoning_effort IS '思考档位，任意上游认的值（none/low/medium/high/xhigh…），NULL=不传走模型默认；模型支不支持查不到，由用户自选';
-COMMENT ON COLUMN user_llm_endpoint.web_search IS '服务端联网搜索：请求里声明该协议的服务端搜索工具才搜(opt-in)，勾了的保存前会探测、上游不支持不让存；responses/anthropic/gemini协议可勾(openai归一false)；当前只有对话主agent与researcher worker用';
+COMMENT ON COLUMN user_llm_endpoint.web_search IS '服务端联网搜索：请求里声明该协议的服务端搜索工具才搜(opt-in)，勾了的保存前会探测、上游不支持不让存；responses/anthropic/gemini协议可勾(openai归一false)；对话主agent、researcher worker、trader的web_search工具用';
 COMMENT ON COLUMN user_llm_endpoint.antigravity IS 'Gemini 来源是 Antigravity(如经 CPA 反代)：只在 gemini 协议且勾了联网搜索时为TRUE，其余归一FALSE；这种来源不收服务端搜索和本地工具在同一请求里，搜索改成本地工具 web_search，调用时单独发一次只带搜索的请求';
 COMMENT ON COLUMN user_llm_endpoint.context_window IS '上下文窗口(token)：对话主模型的上下文用量达到它的90%时，下一轮开始前整理上下文；128000~1000000，默认256000，用户按模型实际窗口填';
 COMMENT ON COLUMN user_llm_endpoint.api_key_enc IS 'AES-256-GCM 密文，密钥来自 WIIB_TRADER_KEY_SECRET';

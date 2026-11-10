@@ -16,11 +16,12 @@ import java.util.Map;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 联网搜索包成的本地工具 web_search，给不收"服务端搜索 + 函数工具"同一请求的上游用（Antigravity 来源的 Gemini）。
+ * 联网搜索包成的本地工具 web_search。chat 侧给不收"服务端搜索 + 函数工具"同一请求的上游用（Antigravity 来源的 Gemini），
+ * trader 一律走它。
  * 模型调它时，用同一个模型单独发一次只带服务端搜索、不带函数工具的请求，把据搜索结果写的答复和来源交回给模型。
  * 那次请求走阻塞路径，来源从 generation metadata 上取（见 {@link SseChatModel} 的帧合并）。
  * <p>
- * 挂了它就是"调用方授权"那一半，只给 chat 主 agent 与 researcher worker 挂（见 ChatAgentFactory）；
+ * 挂了它就是"调用方授权"那一半，给 chat 主 agent、researcher worker（见 ChatAgentFactory）和 trader（见 TraderWakeupRunner）挂；
  * 那次请求里的服务端搜索还要过端点那道闸（{@link SseChatModel#WEB_SEARCH_KEY}）。
  */
 public class WebSearchTool {

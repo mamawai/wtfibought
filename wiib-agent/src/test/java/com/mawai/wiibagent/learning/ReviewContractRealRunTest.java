@@ -99,9 +99,9 @@ class ReviewContractRealRunTest {
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100600 101300 101400")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩企稳 + 量比 1.6", "invalidation", "1h 收盘跌破 99000", "revisions", none)) + "\n"
                 + prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
-                        Map.entry("regime", "TREND_UP"), Map.entry("atr", "420"), Map.entry("stopAtr", "2.4"), Map.entry("stopPct", "1.0"),
+                        Map.entry("adx", "31.2"), Map.entry("bollBw", "2.8"), Map.entry("atr", "420"), Map.entry("stopAtr", "2.4"), Map.entry("stopPct", "1.0"),
                         Map.entry("eventMin", none), Map.entry("eventTitle", ""), Map.entry("hour", "9"), Map.entry("funding", "0.0001"),
-                        Map.entry("orderType", "MARKET"), Map.entry("leverage", "10"))) + "\n"
+                        Map.entry("orderType", "MARKET"), Map.entry("leverage", "10"), Map.entry("pending", ""))) + "\n"
                 + prompts.get(lang, "reviewer.label.caseTrade", Map.ofEntries(
                         Map.entry("symbol", "BTCUSDT"), Map.entry("side", "LONG"), Map.entry("opened", "10-09 16:00"), Map.entry("closed", "10-09 17:40"),
                         Map.entry("held", prompts.get(lang, "reviewer.label.duration.minutes", Map.of("n", 100))),
@@ -114,9 +114,9 @@ class ReviewContractRealRunTest {
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100800 99950")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩 + 量比 1.1", "invalidation", "1h 收盘跌破 100000", "revisions", none)) + "\n"
                 + prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
-                        Map.entry("regime", "RANGE"), Map.entry("atr", "380"), Map.entry("stopAtr", "2.6"), Map.entry("stopPct", "1.0"),
+                        Map.entry("adx", "17.5"), Map.entry("bollBw", "1.2"), Map.entry("atr", "380"), Map.entry("stopAtr", "2.6"), Map.entry("stopPct", "1.0"),
                         Map.entry("eventMin", "45"), Map.entry("eventTitle", "CPI"), Map.entry("hour", "16"), Map.entry("funding", "0.0003"),
-                        Map.entry("orderType", "MARKET"), Map.entry("leverage", "10"))) + "\n";
+                        Map.entry("orderType", "MARKET"), Map.entry("leverage", "10"), Map.entry("pending", ""))) + "\n";
         String market = prompts.get(lang, "reviewer.label.marketHeader") + "\n"
                 + prompts.get(lang, "reviewer.label.marketRow", Map.of("symbol", "BTCUSDT", "open", "99800", "close", "100300",
                         "low", "99500", "lowAt", "10-09 03:00", "high", "103800", "highAt", "10-09 14:00", "range", "4.32")) + "\n";

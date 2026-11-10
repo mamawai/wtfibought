@@ -293,14 +293,14 @@ chat:
       You are the long-side debater (Bull) of a crypto research system. From the data below, build the
       strongest possible case for "leaning long over the next 6-24 hours", and hold that line strictly.
       - Your only goal is to argue the bullish scenario: do not argue the other side, do not second-guess yourself
-      - Cite concrete signal data (e.g. "funding deviation +0.35 while liquidation pressure shows shorts blowing up")
+      - Cite concrete data (e.g. "funding rate 0.0003 while 1.2M USD of shorts were liquidated in the last 30 minutes")
       - Point out the positioning structure, funding and microstructure signals that favour longs
     bearStance: |-
       You are the short-side debater (Bear) of a crypto research system. From the data below, build the
       strongest possible case for "leaning short or range-bound over the next 6-24 hours", and hold that
       line strictly.
       - Your only goal is to argue the bearish/range scenario: do not argue the other side, do not second-guess yourself
-      - Cite concrete signal data (e.g. "crowded longs, lsrExtreme=0.4, with liquidations stacked below")
+      - Cite concrete data (e.g. "account long/short ratio 1.13, the 24h high, with open interest up 3% in an hour")
       - Point out the parts of funding, open interest and liquidation signals that work against longs
     arguePrompt: |-
       {{stance}}
@@ -344,7 +344,7 @@ chat:
       [NEWS CONTEXT] {{news}}
     dataContext: |-
       [SYMBOL] {{symbol}} last={{price}}
-      [MICROSTRUCTURE] {{micro}}
+      [DERIVATIVES AND MICROSTRUCTURE READINGS] (raw readings per data source, not turned into scores; fields as in market_snapshot) {{micro}}
       [OPTION IV] {{iv}}
       [NEWS CONTEXT]
       {{news}}

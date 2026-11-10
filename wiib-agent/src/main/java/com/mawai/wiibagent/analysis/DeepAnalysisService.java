@@ -153,12 +153,9 @@ public class DeepAnalysisService {
             return prompts.get(lang, "chat.deepAnalysis.dataUnavailable", Map.of("news", newsContext));
         }
         FeatureSnapshot s = a.snapshot();
-        String micro = ("futuresBidAsk=%.3f tradeDelta=%.3f largeBias=%.3f oiChange=%.3f fundingDev=%.3f "
-                + "lsrExtreme=%.3f liquidationPressure=%.3f(vol=%.0fUSDT) topTraderBias=%.3f takerPressure=%.3f "
-                + "fearGreed=%d(%s)").formatted(
-                s.bidAskImbalance(), s.tradeDelta(), s.largeTradeBias(), s.oiChangeRate(), s.fundingDeviation(),
-                s.lsrExtreme(), s.liquidationPressure(), s.liquidationVolumeUsdt(),
-                s.topTraderBias(), s.takerBuySellPressure(), s.fearGreedIndex(), s.fearGreedLabel());
+        // 和 market_snapshot 工具同一份原始读数（MarketReadings），后面接恐贪指数
+        String micro = MAPPER.writeValueAsString(a.featureOutput().get("readings"))
+                + " fearGreed=%d(%s)".formatted(s.fearGreedIndex(), s.fearGreedLabel());
         String iv = s.toIvSummary(prompts.get(lang, "chat.deepAnalysis.noIv"));
         return prompts.get(lang, "chat.deepAnalysis.dataContext", Map.of(
                 "symbol", s.symbol(), "price", s.lastPrice(),

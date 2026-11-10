@@ -373,7 +373,8 @@ public class ReviewMaterialAssembler {
                 : "";
         return prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
                 Map.entry("pending", pending),
-                Map.entry("regime", text(ctx, "regime", none)),
+                Map.entry("adx", text(ctx, "adx1h", none)),
+                Map.entry("bollBw", text(ctx, "bollBw1h", none)),
                 Map.entry("atr", text(ctx, "atr1h", none)),
                 Map.entry("stopAtr", text(ctx, "stopAtr", none)),
                 Map.entry("stopPct", text(ctx, "stopPct", none)),

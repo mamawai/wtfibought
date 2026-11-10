@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.trader.wakeup;
 
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -78,11 +79,11 @@ class TraderToolI18nTest {
             new LocalizedToolCallbacks(prompts),
             mock(WakeObservation.class),
             mock(EconCalendarAssembler.class), new TraderLiveHub(), mock(EntryContext.class),
-            mock(DecisionText.class), mock(ExperienceLedger.class));
+            mock(DecisionText.class), mock(ExperienceLedger.class), mock(BinanceProperties.class));
 
     /** 只做反射扫描的壳：工具方法一个都不会被调起来，依赖给 null 即可 */
     private final TradeTools tradeTools = new TradeTools(
-            mock(SimTradeClient.class), 1L, Set.of("BTCUSDT"), positions -> BigDecimal.TEN,
+            mock(SimTradeClient.class), 1L, Set.of("BTCUSDT"), Set.of("BTCUSDT"), positions -> BigDecimal.TEN,
             sym -> BigDecimal.ONE,
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
@@ -90,7 +91,7 @@ class TraderToolI18nTest {
             mock(EntryContext.class));
 
     private Map<String, String> descriptions(AgentLang lang) {
-        return runner.wakeTools(lang, tradeTools).stream().collect(Collectors.toMap(
+        return runner.wakeTools(lang, tradeTools, null).stream().collect(Collectors.toMap(
                 cb -> cb.getToolDefinition().name(), cb -> cb.getToolDefinition().description()));
     }
 
@@ -154,7 +155,7 @@ class TraderToolI18nTest {
     /** 换描述不能把自动推导的 inputSchema 弄丢：参数没了模型就调不动工具 */
     @Test
     void 参数与schema照旧由注解推导() {
-        ToolCallback open = runner.wakeTools(AgentLang.EN, tradeTools).stream()
+        ToolCallback open = runner.wakeTools(AgentLang.EN, tradeTools, null).stream()
                 .filter(cb -> "open_position".equals(cb.getToolDefinition().name()))
                 .findFirst().orElseThrow();
         assertThat(open.getToolDefinition().inputSchema())

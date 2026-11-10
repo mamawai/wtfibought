@@ -142,7 +142,8 @@
     "klineStructure": "Structure",
     "derivativesHistory": "Derivatives history",
     "whalePositions": "Whale positions",
-    "crossAssetSnapshot": "Cross-asset snapshot"
+    "crossAssetSnapshot": "Cross-asset snapshot",
+    "webSearch": "Web search"
   },
   "args": {
     "long": "Long",
@@ -602,19 +603,20 @@
       "set_take_profit": "<0>Away only</0>: long targets move up, short targets move down. To leave early, cite the invalidation and close instead.",
       "write_plan": "Only for a position with no plan on record; plans are immutable — a new thesis means adding or re-opening.",
       "cancel_order": "Cancel a pending limit order.",
-      "set_watch": "Watch conditions on one coin: price touches a level, a candle of some period closes above or below it, or a set time arrives. It is woken the moment one is met; at most one upward, one downward and one timed per coin, each fires once.",
+      "set_watch": "Watch conditions on one coin: price touches a level, a candle of some period closes above or below it, or a set time arrives. It is woken the moment one is met; at most one upward, one downward and one timed per coin, each fires once. Any coin the platform tracks can be watched, not only the tradable ones.",
       "get_account": "Balance / positions / pending orders. Already injected every round; normally only called to re-check after its own orders.",
       "klines": "192 raw OHLCV bars, last one still forming. For bar-by-bar pattern checks or its own swing rules.",
       "kline_structure": "Swings, segments, volume-by-price and key levels of the same bars; facts only, no calls.",
       "indicators": "MA/EMA · RSI · MACD · BOLL · ATR · KDJ · ADX · OBV · volume ratio, as of the last closed bar.",
-      "market_snapshot": "Price change, funding deviation, OI change, long/short ratios, top-trader bias, taker and liquidation pressure, book imbalance, fear & greed.",
+      "market_snapshot": "The latest raw reading from each data source: price change, funding rate, open interest, account and top-trader long/short ratios, taker volume, liquidations over the last 5 / 30 minutes, top-5 book depth, recent trades, fear & greed. No scoring.",
       "funding_history": "Last 30 settlements plus next funding time and mark price.",
       "orderbook_depth": "Top 10 bid/ask levels — where the walls sit.",
       "option_iv": "Deribit DVOL and ATM implied volatility.",
       "derivatives_history": "How Binance perp open interest, account long/short ratio, top-trader positioning and taker buy/sell ratio moved over the last 30 points.",
       "whale_positions": "Hyperliquid on-chain whale positions, entries and liquidation levels, refreshed every 10 minutes; BTC / ETH / SOL / XRP / DOGE only.",
-      "news_search": "Recent market news flashes, full text.",
-      "cross_asset_snapshot": "Latest quotes and moves of US indices and index futures, the dollar index, the 10Y yield, VIX, gold and crude."
+      "news_search": "Recent market news flashes, full text; it can also search the local archive by keyword and time window (up to 7 days back).",
+      "cross_asset_snapshot": "Latest quotes and moves of US indices and index futures, the dollar index, the 10Y yield, VIX, gold and crude.",
+      "web_search": "One web search, returning a summary written from the results with source links. Only there when the model endpoint has web search on; each search costs one more model request."
     }
   },
   "chat": {

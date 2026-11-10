@@ -223,7 +223,7 @@ class ReviewMaterialAssemblerTest {
         plan.setStopLossPrice(new BigDecimal("95500"));
         plan.setTakeProfitPrice(new BigDecimal("110000"));
         plan.setRevisionsJson("[{\"time\":\"x\",\"type\":\"stop_loss\",\"change\":\"95500→96000\",\"reason\":\"锁利\"}]");
-        plan.setEntryCtxJson("{\"regime\":\"TREND_UP\",\"atr1h\":350.5,\"stopAtr\":12.8,\"stopPct\":4.5,\"hourBj\":9,"
+        plan.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":350.5,\"stopAtr\":12.8,\"stopPct\":4.5,\"hourBj\":9,"
                 + "\"orderType\":\"MARKET\",\"leverage\":10,\"eventMin\":-90,\"eventTitle\":\"CPI\",\"funding\":0.0001}");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
 
@@ -254,7 +254,7 @@ class ReviewMaterialAssemblerTest {
                 .contains("管理动作 1笔：实际合计-1.11R，开仓后不动合计-1R");
         assertThat(cases).contains("  1h 收盘：102000 99700 95200");
         assertThat(cases).contains("  计划：论点 突破前高+量比1.8 ｜ 失效 1h收盘跌回98000下方 ｜ 修订 stop_loss 95500→96000（锁利）");
-        assertThat(cases).contains("  入场上下文：regime TREND_UP ｜ 1h ATR 350.5 ｜ 止损 12.8 个 ATR（4.5%）｜ 距最近 High 事件 -90 分 CPI"
+        assertThat(cases).contains("  入场上下文：1h ADX 31.2 ｜ 1h 布林带宽 2.8 ｜ 1h ATR 350.5 ｜ 止损 12.8 个 ATR（4.5%）｜ 距最近的美国 High 事件 -90 分 CPI"
                 + " ｜ 北京时间 9 时 ｜ 资金费 0.0001 ｜ MARKET 10x");
     }
 
@@ -582,7 +582,7 @@ class ReviewMaterialAssemblerTest {
         plan42.setPositionId(42L);
         plan42.setStopLossPrice(new BigDecimal("99000"));
         plan42.setTakeProfitPrice(new BigDecimal("102000"));
-        plan42.setEntryCtxJson("{\"regime\":\"TREND_UP\",\"atr1h\":420,\"stopAtr\":2.4,\"stopPct\":1.0,\"hourBj\":9,\"orderType\":\"MARKET\",\"leverage\":10}");
+        plan42.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":420,\"stopAtr\":2.4,\"stopPct\":1.0,\"hourBj\":9,\"orderType\":\"MARKET\",\"leverage\":10}");
         when(planMapper.selectList(any())).thenReturn(List.of(plan42));
 
         String block = assembler.auditBlock(trader(), e, AgentLang.ZH, Map.of(42L, p42, 43L, p43));
@@ -591,7 +591,7 @@ class ReviewMaterialAssemblerTest {
         assertThat(block).contains("- 支持 ｜ 09-21 BTC 平在目标位\n- 反对 ｜ 出场后 4h 再走 1.1%\n- 反对 ｜ 出场后 4h 再走 0.8%\n");
         assertThat(block).contains("【支持的单子】（1 笔）\n- BTCUSDT LONG ")
                 .contains("入场 100000 止损 99000 目标 102000 出场 101400，主动平仓 ｜ 净 +280")
-                .contains("  入场上下文：regime TREND_UP ｜ 1h ATR 420 ｜ 止损 2.4 个 ATR（1%）");
+                .contains("  入场上下文：1h ADX 31.2 ｜ 1h 布林带宽 2.8 ｜ 1h ATR 420 ｜ 止损 2.4 个 ATR（1%）");
         assertThat(block).contains("【反对的单子】（2 笔）\n- BTCUSDT SHORT ")
                 .contains("入场 100000 止损 — 目标 — 出场 100900")
                 .contains("- 仓位 #44（已不在最近记录里，只剩编号）");

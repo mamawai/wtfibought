@@ -171,8 +171,6 @@ public class TraderService {
                 .set(AiTrader::getLearnedRestrictionHold, probe.getLearnedRestrictionHold())
                 .set(AiTrader::getWakeWindow, probe.getWakeWindow())
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
-        // 换掉的币上还在盯的条件作废：那个币已经不能交易，命中叫醒了也没法处置
-        watchStore.retireSymbolsNotIn(t.getId(), t.getRoundNo(), parseSymbols(req.symbols()));
         endpointService.bind(userId, UserLlmBinding.TRADER, req.llmEndpointId());
         if (modelChanged) {
             modelFactory.evict(t.getId());

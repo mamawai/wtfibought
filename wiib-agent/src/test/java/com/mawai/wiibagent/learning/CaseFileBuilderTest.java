@@ -283,6 +283,18 @@ class CaseFileBuilderTest {
         assertThat(w.lowToHighPct()).isEqualByComparingTo("10.20");
     }
 
+    /** 涨跌拿最近一根收盘的 5m 比若干时长之前那一根；边界落在根中间向下对齐，本地缺那根的一格为 null */
+    @Test
+    void changesCompareLastClosedBarWithEarlierOnes() {
+        long hour = 12 * M5;
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 - hour - M5, new double[]{99, 101, 98, 100}),
+                bar(T0 - M5, new double[]{108, 111, 107, 110})));
+
+        assertThat(builder.changes("BTCUSDT", T0 + 120_000L, hour, 4 * hour))
+                .containsExactly(new BigDecimal("10.00"), null);
+    }
+
     private static KlineBar bar(long openTime, double[] ohlc) {
         return new KlineBar(openTime, openTime + M5 - 1, BigDecimal.valueOf(ohlc[0]), BigDecimal.valueOf(ohlc[1]),
                 BigDecimal.valueOf(ohlc[2]), BigDecimal.valueOf(ohlc[3]), BigDecimal.TEN);

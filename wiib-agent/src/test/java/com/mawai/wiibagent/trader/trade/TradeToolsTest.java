@@ -74,7 +74,7 @@ class TradeToolsTest {
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
     private final AiTraderWatchMapper watchMapper = mock(AiTraderWatchMapper.class);
     private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper, mock(ApplicationEventPublisher.class));
-    private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+    private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
             positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
             new TraderPlanStore(planMapper, PROMPTS), watchStore,
             new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
@@ -132,7 +132,8 @@ class TradeToolsTest {
         // 现价 100000：TOUCH_ABOVE 99000 已被越过，布下去立刻触发
         assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("TOUCH_ABOVE", 99000.0, null, null, "")))).contains("已被现价");
         assertThat(tools.setWatch("BTCUSDT", List.of(new WatchSpec("AT_TIME", null, null, "2020-01-01 00:00", "")))).contains("已过去");
-        assertThat(tools.setWatch("ETHUSDT", List.of())).contains("白名单");
+        // 平台没在采的币布不了；不可交易但平台在采的（ETHUSDT）可以，见下面
+        assertThat(tools.setWatch("PEPEUSDT", List.of())).startsWith("REJECTED").contains("平台没在采").contains("BTCUSDT, ETHUSDT");
         // 漏传 watches 不是清空，是拒
         assertThat(tools.setWatch("BTCUSDT", null)).startsWith("REJECTED").contains("watches 必填");
         verify(watchMapper, never()).insert(any(AiTraderWatch.class));
@@ -151,6 +152,8 @@ class TradeToolsTest {
             assertThat(a.path("status").asString(null)).isEqualTo("ok");
             assertThat(a.path("args").path("watches").size()).isEqualTo(3);
         });
+        assertThat(tools.setWatch("ETHUSDT", List.of(new WatchSpec("CLOSE_BELOW", 2000.0, "1h", null, "大盘破位"))))
+                .contains("\"armed\":1");
     }
 
     /** 模型传进来的是 JSON：框架要能把 watches 数组落成 WatchSpec 列表，schema 里也得有字段名 */
@@ -411,7 +414,7 @@ class TradeToolsTest {
     void openReceiptCarriesFacts() {
         EntryContext entryContext = mock(EntryContext.class);
         when(entryContext.atr14(eq("BTCUSDT"), eq("1h"), anyLong())).thenReturn(new BigDecimal("2000"));
-        TradeTools withAtr = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+        TradeTools withAtr = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
@@ -467,7 +470,7 @@ class TradeToolsTest {
             inv.<AiTraderPlan>getArgument(0).setId(43L);
             return 1;
         });
-        TradeTools withCtx = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+        TradeTools withCtx = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
@@ -571,7 +574,7 @@ class TradeToolsTest {
      */
     @Test
     void expiredRoundRejectsAllWriteTools() {
-        TradeTools late = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+        TradeTools late = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, System.currentTimeMillis() - 1,
@@ -593,7 +596,7 @@ class TradeToolsTest {
      */
     @Test
     void blankSymbolRejectedBeforeMarketFetch() {
-        TradeTools strict = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+        TradeTools strict = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"),
                 sym -> { throw new IllegalStateException("不该发起行情查询"); },
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
@@ -723,7 +726,7 @@ class TradeToolsTest {
      */
     @Test
     void marginCapUsesEquityAtOpenTime() {
-        TradeTools poorer = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+        TradeTools poorer = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("5000"), sym -> new BigDecimal("100000"),
                 new TraderPlanStore(planMapper, PROMPTS), watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,

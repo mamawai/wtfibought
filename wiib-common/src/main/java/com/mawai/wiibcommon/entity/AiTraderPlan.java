@@ -87,7 +87,7 @@ public class AiTraderPlan {
     private Long positionId;
 
     /**
-     * 开仓那一刻的上下文快照 JSON：orderType / leverage / placedAt / hourBj / stopPct / regime / atr1h / stopAtr /
+     * 开仓那一刻的上下文快照 JSON：orderType / leverage / placedAt / hourBj / stopPct / atr1h / stopAtr / adx1h / bollBw1h /
      * eventMin / eventTitle / funding（见 EntryContext）。复盘按维度对照用；取不到的字段缺席，整体可为 null
      */
     private String entryCtxJson;

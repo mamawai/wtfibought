@@ -31,28 +31,31 @@ public class MarketToolkit {
     private final MarketDataService dataService;
 
     @Tool(name = "market_snapshot", description = """
-            Get a real-time cross-section of a crypto perpetual symbol (short-timeframe view, not candles).
-            Fields and sign conventions:
+            Get a real-time cross-section of a crypto perpetual symbol: the latest raw reading from each data
+            source, with no scoring. A section that is absent means that source was not available this time.
+            Times are UTC+8.
+            - asOf: when this snapshot was collected (it is cached for up to a minute)
             - lastPrice; atr is the 5m atr14 — for stop distances use the atr14 of your own timeframe from `indicators`
             - price_change: {5m,15m,30m,1h,4h,24h} percent change per window
-            - regime: a rule-based label on 15m indicators — TREND_UP/TREND_DOWN (adx>25, direction by DI),
-              SQUEEZE (adx<15 and Bollinger bandwidth<1.5), SHOCK (recent 5m ATR > 2x its longer average),
-              RANGE (everything else); a rule, not a judgement
-            - fundingDeviation: (current rate - 0.01%) / 0.03%; positive = longs paying up (crowded long), negative = crowded short
-            - oiChangeRate: open-interest change over the last 4h as a raw ratio (0.03 = +3%); positive = money entering, negative = leaving
-            - lsrExtreme: percentile of the retail long/short account ratio within the last 24h mapped to [-1,1];
-              near +1 = long accounts crowded to an extreme, -1 = short extreme
-            - topTraderBias: change in the top traders' position long/short ratio, second half of the last 2h vs the first; positive = adding longs
-            - takerPressure: change in the taker buy/sell ratio over the last 2h, positive = buying strengthening;
-              tradeDelta: taker-buy share of recent trades mapped to [-1,1], positive = buyers dominate;
-              largeTradeBias: direction of large trades, positive = mostly buys
-            - liquidationPressure: share of long liquidations among recent liquidations mapped to [-1,1];
-              positive = longs being liquidated (selling force), negative = shorts; liquidationVolumeUsdt is the total
-            - bidAskImbalance / spotBidAskImbalance: top-5 levels (bid qty - ask qty) / total for futures / spot; positive = thicker bids
+            - accountLongShort: Binance long/short account ratio, latest 5m point: ratio, longAccount and shortAccount
+              (shares of accounts), plus low24h / high24h = the lowest and highest ratio over the last 24h
+            - openInterest: latest 5m point in coins and usd, the same one hour earlier (coins1hAgo / usd1hAgo) and
+              at the earliest point fetched, about 4h back (coinsEarliest / usdEarliest, earliestTime)
+            - topTraderPositionLongShort: top traders' position long/short ratio, latest 5m point, and the earliest
+              point fetched, about 2h back (ratioEarliest, earliestTime)
+            - takerVolume5m: taker buy and sell volume (in coins) and their ratio over the latest 5m
+            - funding: current rate as a raw decimal per settlement (0.0001 = 0.01%), nextFundingTime, markPrice, indexPrice
+            - liquidations: last5m and last30m, each with longUsd (longs liquidated), shortUsd (shorts liquidated) and
+              count. Binance only; its liquidation stream is sampled, not complete, so the amounts are a lower
+              bound and fall further short the faster the market moves
+            - futuresBookTop5 / spotBookTop5: total bid quantity and ask quantity (coins) over the top 5 levels
+            - trades3m: taker buy and taker sell notional (USDT) over the last 3 minutes, how much of each came from
+              single trades above largeThresholdUsd (the same threshold for every coin), and the trade count;
+              only for coins the platform streams trades for
             - spotPerpBasisBps: perp premium over spot in basis points; positive = perp trading rich
             - fearGreed: "value(label)", 0 = extreme fear, 100 = extreme greed
-            - qualityFlags: each NO_* means that input is missing and its score is 0 — that 0 is "no data", not "neutral"
-            Apart from price_change / oiChangeRate / spotPerpBasisBps / atr, scores live in [-1,1]; larger magnitude = more extreme.""")
+            - qualityFlags: each NO_* names an input that is missing
+            To see how open interest and the ratios moved over time, use derivatives_history.""")
     public String marketSnapshot(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         MarketAssembly a = dataService.assemble(symbol);
         if (!a.available()) {
@@ -62,21 +65,11 @@ public class MarketToolkit {
         ObjectNode out = MAPPER.createObjectNode();
         out.put("available", true);
         out.put("symbol", s.symbol());
+        out.put("asOf", BeijingTime.format(a.assembledAt().toEpochMilli()));
         out.put("lastPrice", s.lastPrice());
         out.put("atr", s.atr());
-        out.put("regime", s.regime().name());
         out.set("price_change", MAPPER.valueToTree(a.featureOutput().get("price_change_map")));
-        out.put("fundingDeviation", s.fundingDeviation());
-        out.put("oiChangeRate", s.oiChangeRate());
-        out.put("lsrExtreme", s.lsrExtreme());
-        out.put("topTraderBias", s.topTraderBias());
-        out.put("takerPressure", s.takerBuySellPressure());
-        out.put("liquidationPressure", s.liquidationPressure());
-        out.put("liquidationVolumeUsdt", s.liquidationVolumeUsdt());
-        out.put("bidAskImbalance", s.bidAskImbalance());
-        out.put("spotBidAskImbalance", s.spotBidAskImbalance());
-        out.put("tradeDelta", s.tradeDelta());
-        out.put("largeTradeBias", s.largeTradeBias());
+        out.setAll((ObjectNode) a.featureOutput().get("readings"));
         out.put("spotPerpBasisBps", s.spotPerpBasisBps());
         out.put("fearGreed", s.fearGreedIndex() + "(" + s.fearGreedLabel() + ")");
         if (!s.qualityFlags().isEmpty()) {

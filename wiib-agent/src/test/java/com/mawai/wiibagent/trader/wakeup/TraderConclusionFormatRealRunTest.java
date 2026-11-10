@@ -72,9 +72,9 @@ class TraderConclusionFormatRealRunTest {
             String observation = "\n" + prompts.get(lang, "trader.wake.accountHeader") + "\n"
                     + accountState(lang, boundary) + "\n";
             String snapshot = prompts.get(lang, "trader.wake.snapshotRow", Map.of(
-                    "symbol", "BTCUSDT", "price", "100000", "funding", "0.0001")) + "\n"
+                    "symbol", "BTCUSDT", "tag", "", "price", "100000", "changes", "+0.20% / -0.50% / +1.10%", "funding", "0.0001")) + "\n"
                     + prompts.get(lang, "trader.wake.snapshotRow", Map.of(
-                    "symbol", "ETHUSDT", "price", "3000", "funding", "0.0001")) + "\n";
+                    "symbol", "ETHUSDT", "tag", "", "price", "3000", "changes", "+0.10% / -0.80% / +0.60%", "funding", "0.0001")) + "\n";
             // 无工具的单次调用：真实提示词会让模型先调工具求证，这里明说工具不可用、直接收束——
             // 验收对象只是收尾格式的服从，不是 ReAct 回路本身
             String instruction = runner.routineInstruction(trader, boundary, observation, "", "", snapshot, null, lang)

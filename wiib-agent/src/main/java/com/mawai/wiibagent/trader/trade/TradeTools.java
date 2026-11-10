@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -60,6 +61,8 @@ public class TradeTools {
     private final SimTradeClient simTradeClient;
     private final long simUserId;
     private final Set<String> symbolWhitelist;
+    /** 能布盯盘条件的币：平台在采的全部币，不限可交易的那几个 */
+    private final Set<String> watchSymbols;
     /** 按现查持仓算权益：同一轮先平后开，护栏要按平完之后的权益算占比 */
     private final Function<List<FuturesPositionDTO>, BigDecimal> equityOf;
     /** 现价查询（symbol → mark price）；由唤醒回路注入，取 Binance 实时标记价 */
@@ -77,13 +80,14 @@ public class TradeTools {
     /** 本次唤醒的动作轨迹，唤醒回路收走序列化进 ai_trader_decision.actions_json */
     private final List<ObjectNode> actions = new ArrayList<>();
 
-    public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist,
+    public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist, Set<String> watchSymbols,
                       Function<List<FuturesPositionDTO>, BigDecimal> equityOf, Function<String, BigDecimal> markPrice,
                       TraderPlanStore planStore, TraderWatchStore watchStore, WakeCtx ctx,
                       PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext) {
         this.simTradeClient = simTradeClient;
         this.simUserId = simUserId;
         this.symbolWhitelist = symbolWhitelist;
+        this.watchSymbols = watchSymbols;
         this.equityOf = equityOf;
         this.markPrice = markPrice;
         this.planStore = planStore;
@@ -629,8 +633,10 @@ public class TradeTools {
     }
 
     @Tool(name = "set_watch", description = """
-            Replace ALL your watch conditions on one symbol. The platform watches them between wake-ups and wakes
-            you the moment one is met: a non-routine wake-up whose opening names the condition and your note.
+            Replace ALL your watch conditions on one symbol. The symbol may be any coin the platform tracks, not
+            only your tradable ones (e.g. BTCUSDT as the market benchmark). The platform watches them between
+            wake-ups and wakes you the moment one is met: a non-routine wake-up whose opening names the condition
+            and your note.
             kind: TOUCH_ABOVE / TOUCH_BELOW (mark price touches level), CLOSE_ABOVE / CLOSE_BELOW (a candle of
             period 5m/15m/1h/4h/1d closes above / below level; a close of your heartbeat period or longer lands on the
             routine wake-up at that moment and is read out there, not as a separate wake-up), AT_TIME (at `at`,
@@ -647,9 +653,9 @@ public class TradeTools {
         if (roundExpired()) {
             return expired("set_watch", args);
         }
-        if (symbol == null || !symbolWhitelist.contains(symbol)) {
-            return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.symbolNotWhitelisted",
-                    Map.of("whitelist", symbolWhitelist)));
+        if (symbol == null || !watchSymbols.contains(symbol)) {
+            return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.watchSymbolInvalid",
+                    Map.of("symbols", new TreeSet<>(watchSymbols))));
         }
         if (watches == null) {
             return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.watchListRequired"));

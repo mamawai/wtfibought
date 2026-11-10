@@ -4,7 +4,9 @@
 tool:
   # 快讯工具：语言在建叶子时烤进实例，这条只管描述——正文取哪门语言不归模型选
   news_search: |-
-    获取最近的重要快讯列表（标题+正文+来源+时间）。快讯已是完整内容，没有单篇精读这回事。
+    重要快讯（标题+正文+来源+时间）。快讯已是完整内容，没有单篇精读这回事。
+    不带参数：最新的一批。带 keyword（标题或正文含它，中英文都搜）或 hours（往回看多少小时，1~168，只给 keyword 时按 24）：
+    查本地存档，新的在前，最多 30 条。
 
   # 联网搜索包成的本地工具（只有 Antigravity 来源的 Gemini 端点才挂）：每次调用单独发一次只带搜索的请求，见 WebSearchTool
   web_search: |-
@@ -40,24 +42,26 @@ tool:
 
   # ---- 行情/指标数据工具（chat 主 agent 与 trader 唤醒共用）----
   market_snapshot: |-
-    获取加密永续合约标的的实时行情横截面（短周期视角，不是 K 线）。字段与符号约定：
+    获取加密永续合约标的的实时横截面：各数据源最新的原始读数，不打分。哪一段没出现，就是那个数据源这次没取到。时刻都是北京时间。
+    - asOf：这份快照的取数时刻（最多缓存一分钟）
     - lastPrice 现价；atr 是 5m 周期的 atr14，止损距离请用 indicators 里你分析的那个周期的 atr14
     - price_change：{5m,15m,30m,1h,4h,24h} 各窗口涨跌幅（%）
-    - regime：按 15m 指标用固定规则打的标签——TREND_UP/TREND_DOWN（adx>25，方向看 DI 大小）、
-      SQUEEZE（adx<15 且布林带宽<1.5）、SHOCK（5m ATR 近期>2 倍长期均值，刚有冲击）、RANGE（其余）；是规则不是判断
-    - fundingDeviation：(当前费率−0.01%)÷0.03%，正=多头付费偏贵（多头拥挤），负=空头拥挤
-    - oiChangeRate：最近 4 小时持仓量变化率，原始比例（0.03=+3%），正=资金进场，负=离场
-    - lsrExtreme：散户账户多空比在最近 24 小时内的百分位映射到 [-1,1]，接近 +1=多头人数拥挤到极端，−1=空头极端
-    - topTraderBias：最近 2 小时大户持仓多空比后半段相对前半段的变化，正=大户在加多，负=在加空
-    - takerPressure：最近 2 小时主动买卖比的变化，正=主动买入在增强；tradeDelta：最近成交的主动买占比映射到 [-1,1]，
-      正=主动买主导；largeTradeBias：大单方向，正=大单买入为主
-    - liquidationPressure：近期爆仓中多头爆仓占比映射到 [-1,1]，正=多头被爆得多（下跌中的空头力量），负=空头被爆得多；
-      liquidationVolumeUsdt 是爆仓总额
-    - bidAskImbalance / spotBidAskImbalance：合约/现货盘口前 5 档 (买量−卖量)÷总量，正=买盘厚
+    - accountLongShort：Binance 账户多空比，最新一个 5m 点的 ratio、longAccount / shortAccount（多空账户各占多少），
+      low24h / high24h 是最近 24 小时里这个比值的最低和最高
+    - openInterest：持仓量，最新一个 5m 点的币数 coins 和美元值 usd，1 小时前的 coins1hAgo / usd1hAgo，
+      以及取到的最早那个点（约 4 小时前）的 coinsEarliest / usdEarliest、earliestTime
+    - topTraderPositionLongShort：大户持仓多空比，最新一个 5m 点的 ratio，和取到的最早那个点（约 2 小时前）的 ratioEarliest、earliestTime
+    - takerVolume5m：最新 5 分钟的主动买量 buy、主动卖量 sell（币数）和两者之比
+    - funding：当期资金费率 rate（原始小数、按每期计，0.0001＝0.01%）、下次结算时刻 nextFundingTime、标记价、指数价
+    - liquidations：last5m、last30m 两个窗口各自的 longUsd（多头被爆的金额）、shortUsd（空头被爆的金额）和 count（笔数）。
+      只有 Binance 一家，而且它的强平推送是抽样的、不是全量，所以金额是下限，行情越急少得越多
+    - futuresBookTop5 / spotBookTop5：合约、现货盘口前 5 档的买量合计 bidQty、卖量合计 askQty（币数）
+    - trades3m：最近 3 分钟的主动买入额 takerBuyUsd、主动卖出额 takerSellUsd（USDT），其中单笔超过 largeThresholdUsd 的各多少
+      （所有币同一个门槛），以及成交笔数；只有平台在采逐笔成交的币有这一段
     - spotPerpBasisBps：合约相对现货的基差（基点），正=合约升水
     - fearGreed："数值(标签)"，0=极度恐惧，100=极度贪婪
-    - qualityFlags：列出的 NO_* 表示该项数据缺失，对应分值会是 0——那个 0 是"没数据"，不是"中性"
-    除 price_change/oiChangeRate/spotPerpBasisBps/atr 外，分值都在 [-1,1]，绝对值越大越极端。
+    - qualityFlags：列出的 NO_* 表示该项数据缺失
+    要看持仓量和几个多空比是怎么变过来的，用 derivatives_history。
 
   option_iv: |-
     获取标的在 Deribit 的期权隐含波动率上下文。
@@ -267,6 +271,7 @@ tool:
 
   set_watch: |-
     给一个币整组替换盯盘条件：两次唤醒之间系统盯着它们，命中就把你叫醒（非例行唤醒，开场白写明命中了哪条和你当时的 note）。
+    平台在采的币都可以布，不限你可交易的那几个（比如拿 BTCUSDT 盯大盘）。
     kind：TOUCH_ABOVE / TOUCH_BELOW 标记价触及 level；CLOSE_ABOVE / CLOSE_BELOW 某周期（period 5m/15m/1h/4h/1d）收盘站上 / 跌破 level，
     心跳及更长周期的收盘命中正赶上同一刻的例行唤醒，在那轮开场白里念给你，不另外叫醒；
     AT_TIME 到 at 时刻（北京时间 yyyy-MM-dd HH:mm，当前北京时间在【当前账户】的 nowBeijing）。

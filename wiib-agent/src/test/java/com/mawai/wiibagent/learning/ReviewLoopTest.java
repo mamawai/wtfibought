@@ -150,7 +150,7 @@ class ReviewLoopTest {
         plan.setInvalidationCondition("1h收盘跌回99500下方");
         plan.setStopLossPrice(new BigDecimal("99000"));
         plan.setTakeProfitPrice(new BigDecimal("102000"));
-        plan.setEntryCtxJson("{\"regime\":\"TREND_UP\",\"atr1h\":320,\"stopAtr\":3.1,\"stopPct\":1.0,\"hourBj\":9,\"orderType\":\"MARKET\",\"leverage\":20}");
+        plan.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":320,\"stopAtr\":3.1,\"stopPct\":1.0,\"hourBj\":9,\"orderType\":\"MARKET\",\"leverage\":20}");
         plan.setStatus(AiTraderPlan.STATUS_CLOSED);
         plan.setOpenedWakeTime(openMs);
         plan.setClosedWakeTime(closeMs + 300_000L);
@@ -244,7 +244,7 @@ class ReviewLoopTest {
         assertThat(all).contains("最大浮盈 100900").contains("目标的 45%")                        // 路径
                 .contains("最大逆向 98850").contains("止损的 115%")
                 .contains("出场后 4h / 24h 最有利 — / —，出场后数据不足");
-        assertThat(all).contains("regime TREND_UP").contains("止损 3.1 个 ATR");                  // 入场上下文
+        assertThat(all).contains("1h ADX 31.2 ｜ 1h 布林带宽 2.8").contains("止损 3.1 个 ATR");   // 入场上下文
         assertThat(all).contains("论点 突破前高100200").contains("失效 1h收盘跌回99500下方");       // 计划
         assertThat(all).contains("【本期行情】").contains("- BTCUSDT 100000 → 99300");             // 行情
         assertThat(all).contains("#5 假设 失败判定 执行型 BREAKOUT ｜ 突破单两根 1h 收不出新高即判失败 ｜ 支持 1 反对 0 未测试 0");

@@ -7,6 +7,9 @@ import com.mawai.wiibagent.trader.TradePairing;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.util.List;
+
 /**
  * 自上次完成决策那轮以来走过的路：这里只算窗口，取数和极值交给 {@link CaseFileBuilder#market}。
  * 持仓的（{@link #build}）本局还没有 OK 轮次、或仓位是那之后才开的，从开仓所在那根 5m 算起；
@@ -39,6 +42,11 @@ public class PositionPath {
         long from = lastOkWakeMs == null ? toBar - intervalMs : lastOkWakeMs;
         long fromBar = from - Math.floorMod(from, BAR_MS);
         return caseFiles.market(symbol, fromBar, toBar);
+    }
+
+    /** 一个币截至 now 最近 1h / 4h / 24h 的涨跌 %，本地缺 K 线的那格为 null */
+    public List<BigDecimal> changes(String symbol, long now) {
+        return caseFiles.changes(symbol, now, 3_600_000L, 4 * 3_600_000L, 24 * 3_600_000L);
     }
 
     /** 刚收盘的那根心跳周期 K 线（5m 合成）：边界对齐到周期，边界所在那根还没收盘不算 */

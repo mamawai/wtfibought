@@ -14,7 +14,7 @@ import java.util.Map;
 import static com.mawai.wiibcommon.market.MarketStreamChannels.*;
 
 /**
- * 合约逐笔成交的订单流指标：按需从成交 Stream 现算。
+ * 合约逐笔成交的订单流：按需从成交 Stream 现算窗口内的主动买卖成交额。
  *
  * <p>Stream（每 symbol 一条，key 和字段见 {@link MarketStreamChannels#FUTURES_TRADES_PREFIX}）由 feed 写，
  * agent 进程 {@link #getMetrics} 读算，天然跨进程。窗口聚合放读侧按交易所 ts 现算——feed 只转发，orderflow 由读侧自己重算。</p>
@@ -25,7 +25,8 @@ import static com.mawai.wiibcommon.market.MarketStreamChannels.*;
 public class OrderFlowAggregator {
 
     private static final String KEY_PREFIX = MarketStreamChannels.FUTURES_TRADES_PREFIX;
-    private static final double LARGE_TRADE_USDT = 50_000; // BTC 大单阈值
+    /** 单笔成交额超过它算大单，所有币同一个门槛 */
+    public static final double LARGE_TRADE_USDT = 50_000;
     /** 服务端粗筛的时钟余量，见 {@link #getMetrics} 注释 */
     private static final long CLOCK_SKEW_MS = 5_000L;
 
@@ -82,14 +83,7 @@ public class OrderFlowAggregator {
                 count++;
             }
 
-            double total = buyVol + sellVol;
-            if (total < 1) return new Metrics(0, 0, 0, 0, 0);
-
-            double tradeDelta = (buyVol - sellVol) / total;
-            double intensity = (double) count / Math.max(1, windowSeconds);
-            double largeTotal = largeBuyVol + largeSellVol;
-            double largeBias = largeTotal > 0 ? (largeBuyVol - largeSellVol) / largeTotal : 0;
-            return new Metrics(tradeDelta, intensity, largeBias, total, count);
+            return new Metrics(buyVol, sellVol, largeBuyVol, largeSellVol, count);
         } catch (Exception e) {
             return null;
         }
@@ -111,11 +105,6 @@ public class OrderFlowAggregator {
         }
     }
 
-    public record Metrics(
-            double tradeDelta,      // [-1,1] 主动买卖差
-            double tradeIntensity,  // 笔/秒
-            double largeTradeBias,  // [-1,1] 大单方向偏差
-            double totalVolumeUsdt, // 窗口总成交额
-            int tradeCount          // 窗口成交笔数
-    ) {}
+    /** 窗口内的成交额（USDT）：主动买、主动卖，以及其中单笔超过 {@link #LARGE_TRADE_USDT} 的各多少；外加成交笔数 */
+    public record Metrics(double buyUsdt, double sellUsdt, double largeBuyUsdt, double largeSellUsdt, int tradeCount) {}
 }

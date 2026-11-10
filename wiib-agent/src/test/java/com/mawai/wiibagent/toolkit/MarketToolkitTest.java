@@ -24,14 +24,17 @@ class MarketToolkitTest {
         return TestAssemblies.available();
     }
 
+    /** 原始读数原样并进输出，带取数时刻；打分字段和 regime 标签不再出现 */
     @Test
-    void marketSnapshotOutputsKeyFields() {
+    void marketSnapshotOutputsRawReadings() {
         when(dataService.assemble("BTCUSDT")).thenReturn(assemblyWithSnapshot());
 
         String json = toolkit.marketSnapshot("BTCUSDT");
 
-        assertThat(json).contains("65000").contains("fundingDeviation").contains("fearGreed")
-                .contains("price_change").contains("RANGE");
+        assertThat(json).contains("65000").contains("\"asOf\":\"").contains("fearGreed").contains("price_change")
+                .contains("\"accountLongShort\":{\"ratio\":1.13}")
+                .contains("\"liquidations\":{\"last30m\":{\"longUsd\":562,\"shortUsd\":99,\"count\":4}}")
+                .doesNotContain("lsrExtreme").doesNotContain("liquidationPressure").doesNotContain("regime");
     }
 
     @Test

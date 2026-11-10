@@ -20,6 +20,7 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +54,10 @@ final class WakeAccountState {
         out.put("equity", equity.setScale(2, RoundingMode.HALF_UP));
         // 当前北京时间，带年份：set_watch 的 AT_TIME 按这个写法填
         out.put("nowBeijing", BeijingTime.format(boundaryTime));
-        out.set("positions", positionsJson(prompts, lang, positions, planByKey, boundaryTime, paths));
+        // 全部持仓的止损同时被打掉，合计亏权益的百分之几
+        out.put("lossAtAllStopsPctOfEquity", pctOfEquity(
+                positions.stream().map(WakeAccountState::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
+        out.set("positions", positionsJson(prompts, lang, equity, positions, planByKey, boundaryTime, paths));
         // 挂单同样给足：开仓挂单占坑且带着计划（成交后计划全文随持仓回注，这里给轻量版）。
         // 挂出时刻与已挂时长必须在：限价单挂了多久只有代码知道，模型据此执行自己写的作废条件
         if (pendingOrders != null && !pendingOrders.isEmpty()) {
@@ -62,8 +66,26 @@ final class WakeAccountState {
         return MAPPER.writeValueAsString(out);
     }
 
-    /** 持仓行：仓位事实 + 当前止损止盈 + 自上次完成决策以来的波动（paths 按 positionId，没有就不带）+ 所属计划（含修订历史）。 */
-    private static ArrayNode positionsJson(PromptCatalog prompts, AgentLang lang,
+    /** 这个仓位当前的止损单全被打掉，相对开仓价亏多少（止损已经挪过成本的是负数，即锁住的利润）；不计手续费，没挂止损的仓位算 0 */
+    private static BigDecimal lossAtStops(FuturesPositionDTO p) {
+        BigDecimal loss = BigDecimal.ZERO;
+        for (FuturesStopLoss sl : p.getStopLosses() == null ? List.<FuturesStopLoss>of() : p.getStopLosses()) {
+            BigDecimal perUnit = "LONG".equals(p.getSide())
+                    ? p.getEntryPrice().subtract(sl.getPrice()) : sl.getPrice().subtract(p.getEntryPrice());
+            loss = loss.add(perUnit.multiply(sl.getQuantity()));
+        }
+        return loss;
+    }
+
+    private static BigDecimal pctOfEquity(BigDecimal amount, BigDecimal equity) {
+        return amount.multiply(BigDecimal.valueOf(100)).divide(equity, 2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 持仓行：仓位事实 + 当前止损止盈 + 风险事实（浮盈是几 R、离止损多远、止损打掉亏权益百分之几）
+     * + 自上次完成决策以来的波动（paths 按 positionId，没有就不带）+ 所属计划（含修订历史）。
+     */
+    private static ArrayNode positionsJson(PromptCatalog prompts, AgentLang lang, BigDecimal equity,
                                            List<FuturesPositionDTO> positions,
                                            Map<String, AiTraderPlan> planByKey, long boundaryTime,
                                            Map<Long, CaseFileBuilder.MarketWindow> paths) {
@@ -81,6 +103,12 @@ final class WakeAccountState {
                     .put("unrealizedPnl", p.getUnrealizedPnl());
             if (p.getStopLosses() != null && !p.getStopLosses().isEmpty()) {
                 row.set("currentStopLoss", MAPPER.valueToTree(p.getStopLosses().stream().map(FuturesStopLoss::getPrice).toList()));
+                // 离最近那档止损还有百分之几（相对标记价）
+                BigDecimal nearest = p.getStopLosses().stream().map(FuturesStopLoss::getPrice)
+                        .min(Comparator.comparing(price -> price.subtract(p.getMarkPrice()).abs())).orElseThrow();
+                row.put("stopDistancePct", nearest.subtract(p.getMarkPrice()).abs().multiply(BigDecimal.valueOf(100))
+                        .divide(p.getMarkPrice(), 2, RoundingMode.HALF_UP));
+                row.put("lossAtStopPctOfEquity", pctOfEquity(lossAtStops(p), equity));
             }
             if (p.getTakeProfits() != null && !p.getTakeProfits().isEmpty()) {
                 row.set("currentTakeProfit", MAPPER.valueToTree(p.getTakeProfits().stream().map(FuturesTakeProfit::getPrice).toList()));
@@ -100,6 +128,14 @@ final class WakeAccountState {
             }
             AiTraderPlan plan = planByKey.get(TraderPlanStore.key(p.getSymbol(), p.getSide()));
             if (plan != null) {
+                // 浮盈是几 R：R = 开仓价到计划原始止损的距离；补立的计划可能没有原始止损
+                BigDecimal oneR = plan.getStopLossPrice() == null ? BigDecimal.ZERO
+                        : p.getEntryPrice().subtract(plan.getStopLossPrice()).abs();
+                if (oneR.signum() > 0) {
+                    BigDecimal move = "LONG".equals(p.getSide())
+                            ? p.getMarkPrice().subtract(p.getEntryPrice()) : p.getEntryPrice().subtract(p.getMarkPrice());
+                    row.put("unrealizedR", move.divide(oneR, 2, RoundingMode.HALF_UP));
+                }
                 // 开仓时刻按 sim 仓位自己的，不按计划的
                 long opened = TradePairing.msOf(p.getCreatedAt());
                 ObjectNode planJson = MAPPER.createObjectNode()

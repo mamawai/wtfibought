@@ -45,19 +45,20 @@ class EconCalendarAssemblerTest {
     }
 
     @Test
-    void 三段_刚公布置顶_行带国家货币与实际值() {
+    void 三段_刚公布置顶_只留美国的事件() {
         when(mapper.selectWindow(anyLong(), anyLong())).thenReturn(List.of(
-                row(NOW - 5 * HOUR, "GB", "GBP", "GDP m/m", "0.4%", "0%", "0.3%"),
+                row(NOW - 5 * HOUR, "US", "USD", "GDP q/q", "0.4%", "0%", "0.3%"),
+                row(NOW - 4 * HOUR, "CN", "CNY", "CPI y/y", "0.2%", "0.1%", "0%"),
                 row(NOW - 30 * 60_000L, "US", "USD", "CPI m/m", "0.4%", "0.3%", "0.2%"),
                 row(NOW + 10 * 60_000L, "US", "USD", "Michigan Consumer Sentiment Prel", null, "51", "55.2")));
 
         String block = assembler.assemble(NOW, SINCE, AgentLang.ZH);
 
-        assertThat(block).contains("US/USD CPI m/m 实际:0.4% 预测:0.3% 前值:0.2%");
+        assertThat(block).contains(" CPI m/m 实际:0.4% 预测:0.3% 前值:0.2%").doesNotContain("CPI y/y").doesNotContain("USD");
         // 三段顺序：刚公布 → 已公布 → 即将公布
         assertThat(block.indexOf("刚公布")).isLessThan(block.indexOf("已公布"));
         assertThat(block.indexOf("已公布")).isLessThan(block.indexOf("即将公布"));
-        assertThat(block.indexOf("CPI m/m")).isLessThan(block.indexOf("GDP m/m"));
+        assertThat(block.indexOf("CPI m/m")).isLessThan(block.indexOf("GDP q/q"));
         // 窗口钉死：过去 72h 到北京时间当天 24:00
         verify(mapper).selectWindow(NOW - 72 * HOUR, END_OF_DAY);
     }

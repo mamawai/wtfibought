@@ -55,7 +55,7 @@ const PANELS = [
       { id: 'clock', x: 16, y: 16, w: 170, h: 76, tag: 'CLOCK', icon: 'clock',
         title: { zh: 'K 线收盘事件', en: 'Candle close' },
         sub: { zh: '心跳 · 对齐 15m/1h/4h 边界', en: 'heartbeat · 15m/1h/4h boundary' },
-        detail: { zh: 'TraderScheduler 以 5m K 线收盘事件为时钟，对齐到各 trader 选定的心跳档位（15m/1h/4h）边界，每根收盘醒一次，复查持仓、挂单和盯盘条件；同一边界多币多次触发按边界去重。边界撞上 High 级数据公布时刻，先过财经日历等待闸，最多等 30 秒拿到实际值再发。丢失的 K 线不补跑——陈旧信号没有意义。两次心跳之间，由盯盘条件命中、持仓事件和波动警报叫醒它。', en: 'TraderScheduler uses 5m candle-close events as its clock, aligned to each trader’s heartbeat (15m/1h/4h): one wakeup per close to re-check positions, orders and watch conditions. Duplicate fires on one boundary are deduped. When a boundary lands on a High-impact data release, the econ-calendar gate waits up to 30s for the actual value first. Lost candles are never replayed — stale signals are worthless. Between heartbeats, watch hits, position events and volatility alerts wake it.' } },
+        detail: { zh: 'TraderScheduler 以 5m K 线收盘事件为时钟，对齐到各 trader 选定的心跳档位（15m/1h/4h）边界，每根收盘醒一次，复查持仓、挂单和盯盘条件；同一边界多币多次触发按边界去重。边界撞上美国 High 级数据公布时刻，先过财经日历等待闸，最多等 30 秒拿到实际值再发。丢失的 K 线不补跑——陈旧信号没有意义。两次心跳之间，由盯盘条件命中、持仓事件和波动警报叫醒它。', en: 'TraderScheduler uses 5m candle-close events as its clock, aligned to each trader’s heartbeat (15m/1h/4h): one wakeup per close to re-check positions, orders and watch conditions. Duplicate fires on one boundary are deduped. When a boundary lands on a US High-impact data release, the econ-calendar gate waits up to 30s for the actual value first. Lost candles are never replayed — stale signals are worthless. Between heartbeats, watch hits, position events and volatility alerts wake it.' } },
       { id: 'sentinel', x: 16, y: 106, w: 170, h: 96, tag: 'SENTRY', icon: 'activity',
         title: { zh: '波动哨兵', en: 'Volatility sentinel' },
         rows: [
@@ -103,7 +103,7 @@ const PANELS = [
           { id: 'c8', t: { zh: '财经日历', en: 'econ calendar' } },
           { id: 'c9', t: { zh: '主人留言', en: 'owner note' } }
         ],
-        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、经验账本里的规律和执行缺口、主人的交易指令——目标、边界、偏好来自主人，打法由模型自己定，平台不带交易观点。状态进开场白：上次醒来后的事件、账户（持仓附自上次决策以来的波动）、在盯的盯盘条件、上一轮结论、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the rules and execution gaps from the experience ledger, and the owner’s instructions — goal, limits and preferences come from the owner, and how to trade is the model’s own call. State goes into the opening message: events since the last wake, the account (each position with what it went through since the last decision), the watch conditions still armed, the last conclusion, play stats, the econ calendar, with the owner’s note last.' } },
+        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、经验账本里的规律和执行缺口、主人的交易指令——目标、边界、偏好来自主人，打法由模型自己定，平台不带交易观点。状态进开场白：上次醒来后的事件、账户（持仓附自上次决策以来的波动、浮盈几 R、止损打掉亏权益多少）、在盯的盯盘条件、上一轮结论、行情快照（各币和 BTC 的涨跌、美股参考）、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the rules and execution gaps from the experience ledger, and the owner’s instructions — goal, limits and preferences come from the owner, and how to trade is the model’s own call. State goes into the opening message: events since the last wake, the account (each position with what it went through since the last decision, its open profit in R and what its stop would cost in equity), the watch conditions still armed, the last conclusion, the market snapshot (changes for each symbol and BTC, plus a US equities reference), play stats, the econ calendar, with the owner’s note last.' } },
       { id: 'agent', x: 668, y: 84, w: 180, h: 104, tag: 'REACT', icon: 'cpu',
         title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
@@ -119,7 +119,7 @@ const PANELS = [
           { id: 'whale', t: 'whale_positions' }, { id: 'cross', t: 'cross_asset_snapshot' },
           { id: 'news', t: 'news_search' }
         ],
-        detail: { zh: 'K 线 / 结构 / 指标 / 行情快照（资金费偏离、持仓量变化、多空比、清算压力、恐贪等归一化信号）/ 期权 IV / 资金费历史 / 盘口深度 / 衍生品序列（持仓量、多空比、主动买卖）/ Hyperliquid 大户持仓 / 跨资产快照（美股指数、美元、美债收益率、VIX、黄金、原油）/ BlockBeats 快讯。中性事实，不带平台观点。', en: 'Candles / structure / indicators / market snapshot (normalized signals: funding deviation, OI change, long-short ratios, liquidation pressure, fear&greed) / option IV / funding history / orderbook depth / derivatives series (open interest, long-short ratios, taker flow) / Hyperliquid whale positions / cross-asset snapshot (US indices, the dollar, Treasury yields, VIX, gold, crude) / BlockBeats news. Neutral facts, no platform opinions.' } },
+        detail: { zh: 'K 线 / 结构 / 指标 / 行情快照（多空比、持仓量、主动买卖、资金费、清算、盘口、逐笔成交的原始读数，不打分）/ 期权 IV / 资金费历史 / 盘口深度 / 衍生品序列（持仓量、多空比、主动买卖）/ Hyperliquid 大户持仓 / 跨资产快照（美股指数、美元、美债收益率、VIX、黄金、原油）/ BlockBeats 快讯（可按关键词查历史）。行情数据工具能查任意 Binance USDT 永续，不限于可交易的那几个；端点开了联网搜索的另挂一个 web_search。中性事实，不带平台观点。', en: 'Candles / structure / indicators / market snapshot (raw readings, no scoring: long-short ratios, open interest, taker flow, funding, liquidations, book, trades) / option IV / funding history / orderbook depth / derivatives series (open interest, long-short ratios, taker flow) / Hyperliquid whale positions / cross-asset snapshot (US indices, the dollar, Treasury yields, VIX, gold, crude) / BlockBeats news (history searchable by keyword). The market data tools cover any Binance USDT perpetual, not only the tradable symbols; an endpoint with web search enabled also gets web_search. Neutral facts, no platform opinions.' } },
       { id: 'guard', x: 888, y: 272, w: 180, h: 96, tag: 'GUARD', icon: 'shield-check',
         title: { zh: 'TradeGuard 硬校验', en: 'TradeGuard' },
         rows: [
@@ -986,7 +986,7 @@ async function traderScript(c, scene) {
     c.log('REACT', { zh: '模型调用 1/12 · 先对照开场白里的上一轮结论', en: 'model call 1/12 · check the last conclusion from the opening first' });
     await c.sleep(900);
     await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 1h ×200', en: 'klines ETHUSDT 1h ×200' });
-    await trData(c, 'snap', 3, { zh: 'market_snapshot · 资金费偏离 −0.018%', en: 'market_snapshot · funding deviation −0.018%' });
+    await trData(c, 'snap', 3, { zh: 'market_snapshot · 资金费率 −0.018%', en: 'market_snapshot · funding rate −0.018%' });
     await trData(c, 'fund', 4, { zh: 'funding_history · 连续 3 期为负', en: 'funding_history · negative 3 periods straight' });
     c.done('data');
     await c.sleep(500);

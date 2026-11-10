@@ -11,6 +11,7 @@ import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -20,6 +21,7 @@ import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
 import com.mawai.wiibagent.toolkit.DerivativesToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.WhaleToolkit;
+import com.mawai.wiibquant.market.service.CrossAssetService;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
@@ -136,7 +138,8 @@ class TraderWakeupLoopTest {
 
     /** 与 runner 共用同一份 decisionMapper 和 playStats：selectList 打桩、insert 断言都还落在原处 */
     private final WakeObservation wakeObservation =
-            new WakeObservation(decisionMapper, decisionText, playStats, prompts, mock(PositionPath.class), watchStore);
+            new WakeObservation(decisionMapper, decisionText, playStats, prompts, mock(PositionPath.class),
+                    mock(CrossAssetService.class));
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             modelFactory, new TraderPromptAssembler(traderMapper, prompts, ledger),
@@ -149,7 +152,8 @@ class TraderWakeupLoopTest {
             traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), watchStore, langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
             wakeObservation,
-            mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger);
+            mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger,
+            mock(BinanceProperties.class));
 
     {
         // 测试边界是固定历史时刻，墙钟钉在边界后 1s——预算充足，各用例不受真实时间影响

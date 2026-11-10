@@ -1,8 +1,7 @@
 package com.mawai.wiibquant.research.forecast;
 
 /**
- * 市场状态。研究底座自包含——不复用 live 的 {@code market.domain.MarketRegime}（5 类，且耦合 IV），
- * 这么分为了避免研究包反向依赖 live。研究侧取 4 类，regime 分类法是开放参数（不够再扩）。
+ * 市场状态。研究底座自包含，不依赖 live 那边。研究侧取 4 类，regime 分类法是开放参数（不够再扩）。
  */
 public enum MarketRegime {
     /** 趋势上行。 */

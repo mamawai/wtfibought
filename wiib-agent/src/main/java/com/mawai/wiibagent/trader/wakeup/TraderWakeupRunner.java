@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.TradeEvent;
@@ -21,6 +22,7 @@ import com.mawai.wiibagent.llm.ModelCallLimiter;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.ToolCallTraceHook;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
+import com.mawai.wiibagent.llm.WebSearchTool;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.toolkit.CrossAssetToolkit;
@@ -63,9 +65,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -155,6 +157,8 @@ public class TraderWakeupRunner {
     private final DecisionText decisionText;
     /** 经验账本：结论里引用的 #编号计一次引用 */
     private final ExperienceLedger ledger;
+    /** 平台在采的全部币：盯盘条件可以布在这些币上 */
+    private final BinanceProperties binanceProperties;
 
     /** 墙钟注入点：预算计算要可测（测试里把"现在"钉在边界附近） */
     LongSupplier nowMs = System::currentTimeMillis;
@@ -343,13 +347,16 @@ public class TraderWakeupRunner {
                 .filter(w -> w.getFiredAt() == boundaryTime).toList();
         List<AiTraderWatch> quiet = unreported.stream()
                 .filter(w -> !triggerWatchIds.contains(w.getId()) && !hitsNow.contains(w)).toList();
-        // 各币标记价与资金费率只拉一次：快照行和承诺块的"离价位多远"共用
-        Map<String, JsonNode> quotes = quotes(whitelist);
+        List<AiTraderWatch> armed = watchStore.armed(trader.getId(), trader.getRoundNo());
+        // 各币标记价与资金费率只拉一次：快照行和承诺块的"离价位多远"共用。可交易币、大盘参考、布了盯盘条件的币都要
+        Set<String> quoted = new LinkedHashSet<>(WakeObservation.board(whitelist));
+        armed.forEach(w -> quoted.add(w.getSymbol()));
+        Map<String, JsonNode> quotes = quotes(quoted);
         Map<String, BigDecimal> marks = new HashMap<>();
         quotes.forEach((symbol, q) -> marks.put(symbol, q.path("markPrice").asDecimal(null)));
         // 第一段的观察包：上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 承诺
         WakeObservation.Pack pack = wakeObservation.assemble(trader, whitelist, equity, positions, pendingOrders, reconcile, recent,
-                boundaryTime, lang, hitsNow, quiet, marks);
+                boundaryTime, lang, hitsNow, quiet, armed, marks);
         // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报/事件轮在 K 线中间，主人留的话多半是按收盘说的
         String ownerNote = triggers != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
         // 两段还是一段：非例行唤醒、有留言、有承诺要处置就分两段，否则并成一段
@@ -365,13 +372,16 @@ public class TraderWakeupRunner {
                         triggers == null ? null : calendar, ownerNote, lang)
                 : routineInstruction(trader, boundaryTime, pack.text(),
                         wakeObservation.symbolsSummary(trader, whitelist, pack.lastOkWakeMs(), boundaryTime, lang),
-                        wakeObservation.history(trader, recent, lang), snapshotRows(quotes, lang), calendar, lang);
+                        wakeObservation.history(trader, recent, lang),
+                        wakeObservation.snapshot(quotes, whitelist, nowMs.getAsLong(), lang), calendar, lang);
 
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
         // 不强制 tool_choice："先读事实、用工具求证"写在开场白的问题里
+        // 端点开了联网搜索的多挂一个 web_search：搜索单独发一次请求，用量记在同一轮账上
         LlmClient client = LlmClient.builder().model(model).systemPrompt(prompt)
-                .tools(wakeTools(lang, tradeTools)).build();
+                .tools(wakeTools(lang, tradeTools, modelFactory.webSearchEnabled(trader) ? new WebSearchTool(model) : null))
+                .build();
         ReactLoop loop = ReactLoop.builder().client(client)
                 .streaming(true)      // 模型文本逐字推给现场
                 .limiter(new ModelCallLimiter(MAX_MODEL_CALLS, prompts.get(lang, "llm.callLimit.notExecuted"),
@@ -473,6 +483,7 @@ public class TraderWakeupRunner {
                 simTradeClient,
                 trader.getSimUserId(),
                 whitelist,
+                Set.copyOf(binanceProperties.getAllCryptoSymbols()),
                 positions -> computeEquity(trader.getSimUserId(), positions),
                 sym -> MAPPER.readTree(binanceRestClient.getPremiumIndex(sym)).path("markPrice").asDecimal(null),
                 planStore,
@@ -491,10 +502,16 @@ public class TraderWakeupRunner {
      * 包私有：单测直接调它，验的才是建循环时真正挂上去的那批工具，而不是测试里另抄一份清单。
      * <p>
      * 快讯工具的语言在这里烤进实例（英文取译文，缺译文回落中文原文）——取哪门语言的新闻不是模型的选择。
+     *
+     * @param webSearch 联网搜索工具，端点没开搜索时为 null，不挂
      */
-    List<ToolCallback> wakeTools(AgentLang lang, TradeTools tradeTools) {
-        return localizedTools.of(lang, tradeTools, indicatorToolkit, marketToolkit, derivativesToolkit, whaleToolkit,
-                crossAssetToolkit, newsToolkit.boundTo(lang));
+    List<ToolCallback> wakeTools(AgentLang lang, TradeTools tradeTools, WebSearchTool webSearch) {
+        List<Object> toolkits = new ArrayList<>(List.of(tradeTools, indicatorToolkit, marketToolkit, derivativesToolkit,
+                whaleToolkit, crossAssetToolkit, newsToolkit.boundTo(lang)));
+        if (webSearch != null) {
+            toolkits.add(webSearch);
+        }
+        return localizedTools.of(lang, toolkits.toArray());
     }
 
     /**
@@ -599,7 +616,7 @@ public class TraderWakeupRunner {
             }
             String symbols = wakeObservation.symbolsSummary(trader, whitelist, lastOkWakeMs, wakeTime, lang);
             String history = wakeObservation.history(trader, recent, lang);
-            String snapshot = snapshotRows(quotes(whitelist), lang);
+            String snapshot = wakeObservation.snapshot(quotes(WakeObservation.board(whitelist)), whitelist, nowMs.getAsLong(), lang);
             return Optional.of(new UserMessage(stageTwoInstruction(trader, wakeTime, symbols, history, snapshot, calendar, lang, exhausted)));
         };
     }
@@ -728,10 +745,10 @@ public class TraderWakeupRunner {
         return prompts.get(lang, "trader.wake.alertLastWake", Map.of("lastWake", lastWake, "minutes", toNextMin));
     }
 
-    /** 各币的 premiumIndex 回包（标记价 + 资金费率），一币拉一次、按币码排好；单币拉取失败就没有它，不挡唤醒 */
-    private Map<String, JsonNode> quotes(Set<String> whitelist) {
-        Map<String, JsonNode> out = new LinkedHashMap<>();
-        for (String sym : whitelist.stream().sorted().toList()) {
+    /** 各币的 premiumIndex 回包（标记价 + 资金费率），一币拉一次；单币拉取失败就没有它，不挡唤醒 */
+    private Map<String, JsonNode> quotes(Collection<String> symbols) {
+        Map<String, JsonNode> out = new HashMap<>();
+        for (String sym : symbols) {
             try {
                 JsonNode p = MAPPER.readTree(binanceRestClient.getPremiumIndex(sym));
                 if (p.path("markPrice").asDecimal(null) != null) {
@@ -742,19 +759,6 @@ public class TraderWakeupRunner {
             }
         }
         return out;
-    }
-
-    /**
-     * 开场行情快照：各币标记价+资金费率，一行一个——把价格水平先钉进模型的世界，
-     * 省下"查户口"的工具轮次；细节与多周期确认仍由模型自己用工具求证。
-     */
-    private String snapshotRows(Map<String, JsonNode> quotes, AgentLang lang) {
-        StringBuilder snap = new StringBuilder();
-        quotes.forEach((sym, p) -> snap.append(prompts.get(lang, "trader.wake.snapshotRow", Map.of(
-                "symbol", sym,
-                "price", p.path("markPrice").asDecimal(null).stripTrailingZeros().toPlainString(),
-                "funding", p.path("lastFundingRate").asString(null)))).append('\n'));
-        return snap.toString();
     }
 
     /**

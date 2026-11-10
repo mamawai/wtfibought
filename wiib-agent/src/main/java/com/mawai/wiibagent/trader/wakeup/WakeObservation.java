@@ -16,9 +16,10 @@ import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
-import com.mawai.wiibagent.trader.trade.TraderWatchStore;
+import com.mawai.wiibquant.market.service.CrossAssetService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -39,7 +40,8 @@ import java.util.stream.Collectors;
 /**
  * 开场白里的观察包。第一段「处置」用 {@link #assemble}：收盘命中 + 上次醒来后的事件 + 账户状态（持仓带自上次完成决策以来的波动）
  * + 上一轮结论 + 承诺块（持仓与挂单的失效条件、布的每条盯盘条件离现价多远 / 还有多久、上一轮写的等待行，只列事实）。
- * 第二段「布防与收尾」用 {@link #history}（最近轨迹 + 论点战绩）和 {@link #symbolsSummary}（各币自上次唤醒以来的开高低收）。
+ * 第二段「布防与收尾」用 {@link #history}（最近轨迹 + 论点战绩）、{@link #symbolsSummary}（各币自上次唤醒以来的开高低收）
+ * 和 {@link #snapshot}（各币标记价与涨跌、美股参考）。
  * 只读不写，取数和成文都在这里。
  */
 @Component
@@ -58,8 +60,13 @@ public class WakeObservation {
     private final PromptCatalog prompts;
     /** 持仓与各币自上次完成决策以来的波动 */
     private final PositionPath positionPath;
-    /** 模型布的盯盘条件，进承诺块 */
-    private final TraderWatchStore watchStore;
+    /** 美股期货与 VIX，进行情快照 */
+    private final CrossAssetService crossAssets;
+
+    /** 大盘参考：不在可交易币里也给一行 */
+    static final String BENCHMARK = "BTCUSDT";
+    /** 进开场白的美股参考：Yahoo 代码 → 词表里的名字 */
+    private static final Map<String, String> EQUITY_NAMES = Map.of("NQ=F", "nq", "ES=F", "es", "^VIX", "vix");
 
     /**
      * 回注给下一轮看的一轮唤醒：决策行里只留提示词用得到的几列。
@@ -105,12 +112,14 @@ public class WakeObservation {
      * @param symbols      可交易币（运行器算好的白名单），承诺块只念这些币的等待行
      * @param hitsNow      这根收盘刚命中的收盘类盯盘条件（只有例行轮有），单起一块念
      * @param firedQuietly 命中了还没哪轮告诉过它的盯盘条件，进"自上次唤醒以来"补报
+     * @param armed        还在盯的盯盘条件，进承诺块
      * @param marks        各币标记价，承诺块算"离价位多远"用；没有的币不带距离
      */
     Pack assemble(AiTrader trader, Collection<String> symbols, BigDecimal equity, List<FuturesPositionDTO> positions,
                   List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Reconcile reconcile,
                   List<RecentWake> recent, long boundaryTime, AgentLang lang,
-                  List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly, Map<String, BigDecimal> marks) {
+                  List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly, List<AiTraderWatch> armed,
+                  Map<String, BigDecimal> marks) {
         StringBuilder sb = new StringBuilder();
         if (!hitsNow.isEmpty()) {
             sb.append('\n').append(prompts.get(lang, "trader.wake.watchHitsHeader")).append('\n');
@@ -135,7 +144,7 @@ public class WakeObservation {
         RecentWake concluded = latestConcluded(recent);
         sb.append('\n').append(lastConclusion(concluded, lang));
         String commitments = commitments(trader, symbols, positions, pendingOrders, reconcile.live(),
-                watchStore.armed(trader.getId(), trader.getRoundNo()), concluded, marks, boundaryTime, lang);
+                armed, concluded, marks, boundaryTime, lang);
         sb.append(commitments);
         boolean busy = !hitsNow.isEmpty() || !firedQuietly.isEmpty() || !reconcile.events().isEmpty() || !commitments.isEmpty();
         return new Pack(sb.toString(), busy, lastOk);
@@ -155,16 +164,75 @@ public class WakeObservation {
         return sb.toString();
     }
 
-    /** 第二段的各币摘要：每个可交易币自上次完成决策以来的开高低收（代码按已收盘 5m 算）；一个币都算不出返回空串 */
+    /** 可交易币按币码排好；大盘参考不在里面的排在最前 */
+    static List<String> board(Collection<String> tradable) {
+        List<String> out = new ArrayList<>();
+        if (!tradable.contains(BENCHMARK)) {
+            out.add(BENCHMARK);
+        }
+        out.addAll(tradable.stream().sorted().toList());
+        return out;
+    }
+
+    /** 不可交易的那一行后面的标注；可交易的币不带 */
+    private String referenceTag(String symbol, Collection<String> tradable, AgentLang lang) {
+        return tradable.contains(symbol) ? "" : prompts.get(lang, "trader.wake.referenceTag");
+    }
+
+    /**
+     * 行情快照：各币标记价、1h / 4h / 24h 涨跌、资金费率，大盘参考不可交易也带一行；
+     * 后面跟美股参考（纳指期货、标普期货、VIX 的现价与相对昨收的涨跌，取不到整块不带）。
+     *
+     * @param quotes 各币的 premiumIndex 回包，没拉到的币没有它那行
+     */
+    String snapshot(Map<String, JsonNode> quotes, Collection<String> tradable, long now, AgentLang lang) {
+        StringBuilder sb = new StringBuilder();
+        for (String symbol : board(tradable)) {
+            JsonNode q = quotes.get(symbol);
+            if (q == null) {
+                continue;
+            }
+            sb.append(prompts.get(lang, "trader.wake.snapshotRow", Map.of(
+                    "symbol", symbol,
+                    "price", WatchText.num(q.path("markPrice").asDecimal(null)),
+                    "changes", positionPath.changes(symbol, now).stream()
+                            .map(c -> c == null ? prompts.get(lang, "trader.wake.noData") : signed(c) + "%")
+                            .collect(Collectors.joining(" / ")),
+                    "funding", q.path("lastFundingRate").asString(null),
+                    "tag", referenceTag(symbol, tradable, lang)))).append('\n');
+        }
+        List<CrossAssetService.Quote> equities = crossAssets.snapshot().stream()
+                .filter(e -> EQUITY_NAMES.containsKey(e.symbol())).toList();
+        if (!equities.isEmpty()) {
+            sb.append(prompts.get(lang, "trader.wake.equitiesHeader")).append('\n');
+            for (CrossAssetService.Quote e : equities) {
+                sb.append(prompts.get(lang, "trader.wake.equityRow", Map.of(
+                        "name", prompts.get(lang, "trader.wake.equity." + EQUITY_NAMES.get(e.symbol())),
+                        "price", WatchText.num(e.price()),
+                        "change", signed(e.changePct1d()),
+                        "time", BeijingTime.format(e.timeMs())))).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String signed(BigDecimal v) {
+        return v.signum() >= 0 ? "+" + v.toPlainString() : v.toPlainString();
+    }
+
+    /**
+     * 第二段的各币摘要：每个可交易币和大盘参考自上次完成决策以来的开高低收（代码按已收盘 5m 算）；一个币都算不出返回空串
+     */
     String symbolsSummary(AiTrader trader, Collection<String> symbols, Long lastOkWakeMs, long boundaryTime, AgentLang lang) {
         long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         StringBuilder rows = new StringBuilder();
-        for (String symbol : symbols.stream().sorted().toList()) {
+        for (String symbol : board(symbols)) {
             CaseFileBuilder.MarketWindow w = positionPath.symbol(symbol, lastOkWakeMs, boundaryTime, intervalMs);
             if (w == null) {
                 continue;
             }
             rows.append(prompts.get(lang, "trader.wake.symbolsRow", Map.ofEntries(
+                    Map.entry("tag", referenceTag(symbol, symbols, lang)),
                     Map.entry("symbol", symbol),
                     Map.entry("from", TIME_FMT.format(Instant.ofEpochMilli(w.from()))),
                     Map.entry("to", TIME_FMT.format(Instant.ofEpochMilli(w.to()))),
