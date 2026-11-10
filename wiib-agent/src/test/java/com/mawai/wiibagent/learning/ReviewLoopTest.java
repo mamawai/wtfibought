@@ -84,7 +84,8 @@ class ReviewLoopTest {
 
     private final ReviewRunner runner = new ReviewRunner(
             new ReviewMaterialAssembler(decisionMapper, planMapper, simTradeClient, prompts,
-                    new CaseFileBuilder(historyStore), ledger, new PlayStatsAssembler(simTradeClient, planMapper, prompts),
+                    new CaseFileBuilder(historyStore), ledger,
+                    new PlayStatsAssembler(simTradeClient, planMapper, prompts, new CaseFileBuilder(historyStore)),
                     mock(TraderWatchStore.class), new DecisionText(prompts)),
             modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), simTradeClient);
 

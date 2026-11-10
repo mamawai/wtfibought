@@ -916,6 +916,17 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         return map;
     }
 
+    /** 每个仓位开仓和加仓成交的数量合计 */
+    private Map<Long, BigDecimal> openedQuantityByPosition(List<FuturesPosition> positions) {
+        if (positions.isEmpty()) return Map.of();
+        Long[] ids = positions.stream().map(FuturesPosition::getId).toArray(Long[]::new);
+        Map<Long, BigDecimal> map = new HashMap<>();
+        for (Map<String, Object> row : orderMapper.sumOpenedQuantityByPositionIds(ids)) {
+            map.put(((Number) row.get("position_id")).longValue(), (BigDecimal) row.get("amount"));
+        }
+        return map;
+    }
+
     /** 了结每个仓位的那张平仓单的状态 */
     private Map<Long, String> closedByPosition(List<FuturesPosition> positions) {
         if (positions.isEmpty()) return Map.of();
@@ -941,6 +952,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         // 净盈亏按订单流水聚合
         Map<Long, BigDecimal> realizedMap = sumRealizedByPosition(rows);
         Map<Long, String> closedByMap = closedByPosition(rows);
+        Map<Long, BigDecimal> openedMap = openedQuantityByPosition(rows);
         // 已平仓只出静态字段，不走 buildPositionDTO 的实时价计算
         return rows.stream().map(pos -> {
             FuturesPositionDTO dto = new FuturesPositionDTO();
@@ -951,6 +963,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             dto.setMarginMode(pos.getMarginMode());
             dto.setLeverage(pos.getLeverage());
             dto.setQuantity(pos.getQuantity());
+            dto.setOpenedQuantity(openedMap.get(pos.getId()));
             dto.setEntryPrice(pos.getEntryPrice());
             dto.setMargin(pos.getMargin());
             dto.setFundingFeeTotal(pos.getFundingFeeTotal());

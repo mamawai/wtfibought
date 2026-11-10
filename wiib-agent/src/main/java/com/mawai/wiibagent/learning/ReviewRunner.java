@@ -289,7 +289,7 @@ public class ReviewRunner {
         StringBuilder sb = new StringBuilder();
         sb.append(prompts.get(lang, "reviewer.label.window", Map.of(
                 "from", from, "to", TIME_FMT.format(Instant.ofEpochMilli(toMs))))).append("\n\n");
-        // 主人的交易指令是评判尺子，排在硬事实之前；主人亲笔原样注入不翻译
+        // 主人的交易指令是目标与边界，排在硬事实之前；主人亲笔原样注入不翻译
         sb.append(prompts.get(lang, "reviewer.label.ownerInstructions")).append('\n');
         sb.append(trader.getCustomPrompt() == null || trader.getCustomPrompt().isBlank()
                 ? prompts.get(lang, "reviewer.label.ownerInstructionsEmpty") : trader.getCustomPrompt()).append("\n\n");

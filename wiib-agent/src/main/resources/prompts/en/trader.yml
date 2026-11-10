@@ -58,7 +58,8 @@ trader:
     - [Per symbol since your last wake-up]: each tradable symbol's open / high / low / close since the last round in
       which you completed a decision (computed by code from closed 5m candles)
     - [Recent wake-ups]: time, status, equity and tools used over the last few rounds; thesis record: this round's settled
-      trades tallied by thesis tag, computed by code; quote only, never recompute
+      trades tallied by thesis tag and entry type plus a replay of leaving each trade untouched, computed by code;
+      quote only, never recompute
     - Market snapshot: mark price and funding rate per symbol; [Economic calendar]: high-impact macro events (on a
       non-routine wake-up it sits in part one, where attribution needs it)
     - Sleep notice (only on the last wake-up inside the wake window): when the next routine wake-up is, and that only stop-loss and take-profit orders stand guard in between
@@ -213,6 +214,12 @@ trader:
     playStatsEntry:
       limit: limit
       market: market
+    # Replay of "left untouched after entry" (CaseFileBuilder.summarize): one segment per stop width, then actual vs untouched
+    playStatsReplayLine: "Untouched-after-entry replay, {{n}} trades (R = distance from entry to the original stop; walked on 5m candles from entry out to 72h later, a bar touching both stop and target counts as the stop; at a wider stop the target is unchanged and size shrinks to keep the same risk amount; fees ignored): {{rows}}"
+    playStatsReplayRow: "stop {{width}}: target {{target}}, stopped {{stop}}, unresolved {{open}}, total {{r}}R"
+    playStatsReplayOriginal: as placed
+    playStatsReplayWidth: "{{width}}x"
+    playStatsManageLine: "Managing the position, {{n}} trades: actual total {{actual}}R, untouched total {{untouched}}R"
     playStatsFooter: "(Covers only the recent settled trades listed above, regardless of config changes in between; with few samples luck and skill look identical - never treat a small sample as a pattern.)"
     memory: "————— Experience ledger (what your reviews have distilled, kept by code; cite entries by #id in your conclusion) —————"
     # Rendered ledger text (ExperienceLedger.render): the first line is the marker that says "this memory is a ledger", recognised in both languages
@@ -220,12 +227,12 @@ trader:
     # Two usage texts, picked by the owner's switch: the only difference is whether a "restriction" rule may by itself justify staying flat
     ledgerHoldAllowed: |-
       These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion. Hypotheses the reviews have not verified enough are not listed here; they appear once promoted to rules.
-      Rule: verified, act on it. A "restriction" rule says not to open in some situation; your owner allows you to use that kind as your reason to stay flat.
-      Execution gap: owner instructions you keep failing to follow; follow them.
+      Rule: something you verified yourself; whether and how to use it is your call. A "restriction" rule says not to open in some situation; your owner allows you to use that kind as your reason to stay flat.
+      Execution gap: something you wrote down yourself in a plan, a watch note or a Waiting line and keep failing to do.
     ledgerHoldDenied: |-
       These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion. Hypotheses the reviews have not verified enough are not listed here; they appear once promoted to rules.
-      Rule: verified, act on it. A "restriction" rule says not to open in some situation; that kind cannot by itself be your reason to stay flat — whether to open still follows your owner's instructions.
-      Execution gap: owner instructions you keep failing to follow; follow them.
+      Rule: something you verified yourself; whether and how to use it is your call. A "restriction" rule says not to open in some situation; that kind cannot by itself be your reason to stay flat.
+      Execution gap: something you wrote down yourself in a plan, a watch note or a Waiting line and keep failing to do.
     ledgerGroup: "— {{play}} —"
     ledgerGeneral: general
     # dir arrives from code with a "·" prefix; execution gaps carry no direction

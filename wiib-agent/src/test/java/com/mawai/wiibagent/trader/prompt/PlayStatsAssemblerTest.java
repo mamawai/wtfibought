@@ -7,6 +7,9 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.learning.CaseFileBuilder;
+import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -23,6 +26,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -43,8 +47,10 @@ class PlayStatsAssemblerTest {
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
 
+    private final KlineHistoryStore historyStore = mock(KlineHistoryStore.class);
+
     private final PlayStatsAssembler assembler =
-            new PlayStatsAssembler(simTradeClient, planMapper, new PromptCatalog());
+            new PlayStatsAssembler(simTradeClient, planMapper, new PromptCatalog(), new CaseFileBuilder(historyStore));
 
     private static AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -142,6 +148,40 @@ class PlayStatsAssemblerTest {
 
         assertThat(out).contains("PULLBACK：8笔 4胜4负 盈亏合计+72.00 USDT");
         assertThat(out).contains("按入场方式：限价 5笔 3胜2负 合计+105.00 USDT ｜ 市价 2笔（样本不足）；另 1 笔未记录入场方式");
+    }
+
+    /**
+     * 重放汇总：5 笔多单入场 100、止损 98（R=2）、目标 106，开仓后那根 5m 最低 97.5、最高 100.5。
+     * 止损原样被打（-1R），放宽到 1.5 倍以上没碰到；每笔净 -10、开仓数量 5，实际 = -10 ÷ (5×2) = -1R。
+     */
+    @Test
+    void replaySummaryCountsOutcomesPerStopWidth() {
+        List<FuturesPositionDTO> positions = new ArrayList<>();
+        List<AiTraderPlan> plans = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            long open = T0 + i * 7200_000L;
+            FuturesPositionDTO p = pos("-10", open);
+            p.setEntryPrice(new BigDecimal("100"));
+            p.setOpenedQuantity(new BigDecimal("5"));
+            positions.add(p);
+            AiTraderPlan pl = plan("PULLBACK", open, false);
+            pl.setStopLossPrice(new BigDecimal("98"));
+            pl.setTakeProfitPrice(new BigDecimal("106"));
+            plans.add(pl);
+            when(historyStore.load(eq("BTCUSDT"), eq("5m"), eq(open), anyLong())).thenReturn(List.of(
+                    new KlineBar(open + 300_000L, open + 599_999L, new BigDecimal("100"), new BigDecimal("100.5"),
+                            new BigDecimal("97.5"), new BigDecimal("98"), BigDecimal.ONE)));
+        }
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(positions);
+        when(planMapper.selectList(any())).thenReturn(plans);
+
+        String out = assembler.assemble(trader(), AgentLang.ZH);
+
+        assertThat(out).contains("开仓后不动重放 5笔（")
+                .contains("：止损原样 到目标0 止损5 未决0 合计-5R ｜ 止损1.5倍 到目标0 止损0 未决5 合计+0R ｜ "
+                        + "止损2倍 到目标0 止损0 未决5 合计+0R ｜ 止损3倍 到目标0 止损0 未决5 合计+0R\n")
+                .contains("管理动作 5笔：实际合计-5.00R，开仓后不动合计-5R\n");
+        assertThat(out.indexOf("管理动作")).isLessThan(out.indexOf("样本少时"));
     }
 
     /**

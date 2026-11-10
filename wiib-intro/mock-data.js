@@ -239,16 +239,16 @@ Waiting for: unchanged.`
 战绩：本局已了结 14 笔，胜 8 负 6，净 +1,804.9，盈亏比 1.6
 案例一：BREAKOUT（1 笔，净 −212.4）
 路径：BTC 多单 09/01 14:00 进 79,340，最大浮盈 79,910（目标的 35%），16:00 收 78,870 跌破失效位 78,900，17:00 才平在 78,640。
-为什么没走成：突破后量没跟上，1h 收盘回到箱体内。
-失败怎么界定：1h 收盘低于 78,900。
-失败后怎么处理：触发那根收盘即市价平，不等下一根；本笔多拿一根多亏 0.3%。
+方向错了还是被洗掉：入场后 24h 最大顺向 +0.6R、最大逆向 -2.1R，止损放宽到 3 倍还是止损，方向错了。
+问题出在哪：不在止损宽度；失效位触发后多拿了一根，实际 -1.3R，止损原样是 -1R。
+失败怎么界定与处理：1h 收盘低于 78,900，触发那根收盘即市价平，不等下一根。
 下次改什么：失效条件写了就当根执行，不再加"确认根"。
 案例二：PULLBACK（2 笔，净 +486.1）
 路径：ETH 空单 09/01 21:00 进 3,142，反弹停在 3,160 下方，出场 3,055，出场后 4h 最有利价 3,021，没到目标 2,990。
 赢在判断还是运气：出场后继续顺向走 1.1%，是判断对。
 少赚了多少：出场 3,055 对最有利 3,021，少赚 1.1%。
+管理动作加分还是减分：实际 +1.9R，止损原样那一档到目标是 +3.4R，提前手动平是减分。
 可复制条件：资金费连续 3 期为负、4h ADX 31、反弹未过前高；同类亏单 08/29 那笔是追跌进的。
-合规吗：杠杆 8x 在主人区间内，止损按指令挂了；目标 2,990 提前手动平，不合规。
 机会：SOL 09/01 10:00 到 18:00 从 181 走到 189.6，PULLBACK 本该抓到；回踩只到 183.2 没碰通道下沿，是条件没出现。
 
 【经验更新】
@@ -260,16 +260,16 @@ Waiting for: unchanged.`
 Scorecard: 14 closed this round, 8 won 6 lost, net +1,804.9, payoff ratio 1.6
 Case 1: BREAKOUT (1 trade, net −212.4)
 Path: BTC long entered 09/01 14:00 at 79,340, best 79,910 (35% of the way to target), 16:00 closed 78,870 below the 78,900 invalidation, closed only at 17:00 at 78,640.
-Why it did not work: no volume behind the breakout, the 1h close fell back inside the box.
-How failure is defined: a 1h close below 78,900.
-What to do after failure: market close on the candle that triggers it, not the next one; holding one extra candle cost 0.3%.
+Wrong direction or shaken out: within 24h of entry max favourable +0.6R, max adverse -2.1R, still stopped at a 3x stop, so the direction was wrong.
+Where the problem lay: not the stop width; one extra candle held after the invalidation fired, actual -1.3R against -1R at the original stop.
+How failure is defined and handled: a 1h close below 78,900, market close on the candle that triggers it, not the next one.
 What to change next time: a written invalidation executes on its own candle, no more "confirmation candle".
 Case 2: PULLBACK (2 trades, net +486.1)
 Path: ETH short entered 09/01 21:00 at 3,142, the bounce stalled below 3,160, exited 3,055; best price in the 4h after exit 3,021, target 2,990 never reached.
 Judgement or luck: price kept going 1.1% after the exit, so judgement.
 Left on the table: exit 3,055 against best 3,021, 1.1% left.
+Did managing add or cost: actual +1.9R against +3.4R for reaching the target at the original stop, so closing early by hand cost.
 Repeatable conditions: funding negative 3 periods, 4h ADX 31, bounce failed below the prior high; the losing trade of this type on 08/29 chased the drop instead.
-Compliant: 8x inside the owner's range, stop set per instructions; closing by hand at 3,055 ahead of the 2,990 target was not.
 Opportunity: SOL ran 181 → 189.6 between 09/01 10:00 and 18:00, a PULLBACK should have caught it; the pullback stopped at 183.2 without touching the channel floor, so the condition never appeared.
 
 [LEDGER UPDATES]

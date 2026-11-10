@@ -17,6 +17,7 @@ public class FuturesPositionDTO {
     private String marginMode; // ISOLATED/CROSS
     private Integer leverage;
     private BigDecimal quantity;
+    private BigDecimal openedQuantity; // 已平仓位才有：开仓单与加仓单成交数量合计，订单流水聚合（quantity 被分批平仓改写过）
     private BigDecimal entryPrice;
     private BigDecimal margin;
     private BigDecimal fundingFeeTotal;

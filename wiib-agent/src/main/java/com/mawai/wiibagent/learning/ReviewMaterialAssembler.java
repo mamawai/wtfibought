@@ -137,11 +137,17 @@ public class ReviewMaterialAssembler {
                 idsByPlay.computeIfAbsent(Objects.toString(c.playType(), ""), k -> new ArrayList<>()).add(c.pos().getId());
             }
         }
+        // 没绑过仓位就归档的计划 = 没成交就撤掉的限价单（没存仓位 id 的旧计划靠时间配上了仓位，不算）
+        List<CaseFileBuilder.CancelledLimit> cancelled = plans.stream()
+                .filter(p -> AiTraderPlan.STATUS_CLOSED.equals(p.getStatus()) && p.getPositionId() == null && !isStale(p))
+                .filter(p -> !planByPos.containsValue(p))
+                .filter(p -> p.getClosedWakeTime() > fromMs && p.getClosedWakeTime() <= toMs)
+                .map(caseFiles::cancelledLimit).filter(Objects::nonNull).toList();
         String stats = playStats.assemble(trader, lang);
         return new ReviewMaterial(
                 statsBlock(trader, fromMs, toMs, visible, maybeTruncated, lang),
                 stats == null ? "" : stats,
-                casesBlock(CaseFileBuilder.groups(cases), lang),
+                casesBlock(cases, cancelled, lang),
                 marketBlock(trader, fromMs, toMs, lang),
                 watchBlock(trader, fromMs, toMs, lang),
                 ledgerBlock(trader, lang),
@@ -225,11 +231,13 @@ public class ReviewMaterialAssembler {
 
     // ==================== 案例素材 ====================
 
-    private String casesBlock(List<CaseFileBuilder.SetupGroup> groups, AgentLang lang) {
+    private String casesBlock(List<CaseFileBuilder.TradeCase> cases, List<CaseFileBuilder.CancelledLimit> cancelled,
+                              AgentLang lang) {
         StringBuilder sb = new StringBuilder(prompts.get(lang, "reviewer.label.casesHeader")).append('\n');
-        if (groups.isEmpty()) {
-            return sb.append(prompts.get(lang, "reviewer.label.casesNone")).append('\n').toString();
+        if (cases.isEmpty()) {
+            sb.append(prompts.get(lang, "reviewer.label.casesNone")).append('\n');
         }
+        List<CaseFileBuilder.SetupGroup> groups = CaseFileBuilder.groups(cases);
         List<CaseFileBuilder.SetupGroup> selected = CaseFileBuilder.select(groups);
         for (CaseFileBuilder.SetupGroup g : groups) {
             boolean detailed = selected.contains(g);
@@ -241,6 +249,26 @@ public class ReviewMaterialAssembler {
             }
             for (CaseFileBuilder.TradeCase c : g.trades()) {
                 sb.append(caseLines(c, lang));
+            }
+        }
+        List<CaseFileBuilder.Replay> replays = cases.stream()
+                .map(CaseFileBuilder.TradeCase::replay).filter(Objects::nonNull).toList();
+        if (!replays.isEmpty()) {
+            sb.append(prompts.get(lang, "reviewer.label.caseReplaySummary")).append('\n')
+                    .append(playStats.replayLines(replays, lang));
+        }
+        if (!cancelled.isEmpty()) {
+            sb.append(prompts.get(lang, "reviewer.label.cancelledHeader")).append('\n');
+            for (CaseFileBuilder.CancelledLimit c : cancelled) {
+                AiTraderPlan plan = c.plan();
+                sb.append(prompts.get(lang, "reviewer.label.cancelledRow", Map.of(
+                        "symbol", plan.getSymbol(), "side", plan.getSide(),
+                        "limit", plain(plan.getEntryPrice()),
+                        "stop", plain(plan.getStopLossPrice()),
+                        "target", plain(plan.getTakeProfitPrice()),
+                        "closed", TIME_FMT.format(Instant.ofEpochMilli(plan.getClosedWakeTime())),
+                        "touched", prompts.get(lang, c.touchedLimit() ? "reviewer.label.reached" : "reviewer.label.notReached"),
+                        "reached", prompts.get(lang, c.reachedTarget() ? "reviewer.label.reached" : "reviewer.label.notReached")))).append('\n');
             }
         }
         return sb.toString();
@@ -264,6 +292,9 @@ public class ReviewMaterialAssembler {
                 Map.entry("best24", or(p.bestAfter24h(), none)),
                 Map.entry("targetAfter", prompts.get(lang, p.targetAfter24h() == null ? "reviewer.label.caseAfterShort"
                         : p.targetAfter24h() ? "reviewer.label.caseTargetHit" : "reviewer.label.caseTargetMiss"))))).append('\n');
+        if (c.replay() != null) {
+            sb.append(replayLine(c.replay(), lang)).append('\n');
+        }
         if (!p.hourly().isEmpty()) {
             List<KlineBar> hourly = p.hourly().size() > MAX_HOURLY
                     ? p.hourly().subList(p.hourly().size() - MAX_HOURLY, p.hourly().size()) : p.hourly();
@@ -285,9 +316,34 @@ public class ReviewMaterialAssembler {
                     "revisions", revisions(plan.getRevisionsJson(), lang, none)))).append('\n');
         }
         if (c.entryCtx() != null) {
-            sb.append(ctxLine(c.entryCtx(), lang)).append('\n');
+            sb.append(ctxLine(c.entryCtx(), c.pos(), lang)).append('\n');
         }
         return sb.toString();
+    }
+
+    /** 一笔的重放行：实际几 R、开仓后 24 小时的顺向逆向与拿满的位置、每档止损宽度的结局 */
+    private String replayLine(CaseFileBuilder.Replay r, AgentLang lang) {
+        List<String> widths = new ArrayList<>();
+        for (CaseFileBuilder.WidthOutcome w : r.widths()) {
+            String outcome = switch (w.outcome()) {
+                case TARGET -> prompts.get(lang, "reviewer.label.replayTarget", Map.of("r", signedR(w.r())));
+                case STOP -> prompts.get(lang, "reviewer.label.replayStop", Map.of("r", signedR(w.r())));
+                case OPEN -> prompts.get(lang, "reviewer.label.replayOpen");
+            };
+            widths.add(w.width().compareTo(BigDecimal.ONE) == 0
+                    ? prompts.get(lang, "reviewer.label.replayOriginal", Map.of("outcome", outcome))
+                    : prompts.get(lang, "reviewer.label.replayWidth", Map.of("width", w.width().toPlainString(), "outcome", outcome)));
+        }
+        return prompts.get(lang, "reviewer.label.caseReplay", Map.of(
+                "actual", r.actualR() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.actualR()),
+                "fav", signedR(r.fav24R()),
+                "adv", signedR(r.adv24R()),
+                "hold", r.hold24R() == null ? prompts.get(lang, "reviewer.label.replayHoldShort") : signedR(r.hold24R()),
+                "widths", String.join(prompts.get(lang, "reviewer.label.replaySep"), widths)));
+    }
+
+    private static String signedR(BigDecimal r) {
+        return signed(r) + "R";
     }
 
     /** 一笔的交易行：币 / 方向 / 开平时刻 / 持有 / 入场 止损 目标 出场 / 了结方式 / 净额 / 资金费 */
@@ -308,10 +364,15 @@ public class ReviewMaterialAssembler {
                 Map.entry("funding", pos.getFundingFeeTotal() == null ? none : signed(pos.getFundingFeeTotal()))));
     }
 
-    /** 入场上下文一行 */
-    private String ctxLine(JsonNode ctx, AgentLang lang) {
+    /** 入场上下文一行；限价单记了下单时刻的，带上挂了多久才成交 */
+    private String ctxLine(JsonNode ctx, FuturesPositionDTO pos, AgentLang lang) {
         String none = prompts.get(lang, "reviewer.label.none");
+        String pending = "LIMIT".equals(ctx.path("orderType").asString(null)) && ctx.has("placedAt")
+                ? prompts.get(lang, "reviewer.label.casePending", Map.of("held", humanize(prompts,
+                        TradePairing.msOf(pos.getCreatedAt()) - ctx.path("placedAt").asLong(), lang)))
+                : "";
         return prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
+                Map.entry("pending", pending),
                 Map.entry("regime", text(ctx, "regime", none)),
                 Map.entry("atr", text(ctx, "atr1h", none)),
                 Map.entry("stopAtr", text(ctx, "stopAtr", none)),
@@ -559,7 +620,7 @@ public class ReviewMaterialAssembler {
             sb.append(tradeLine(pos, plan, lang)).append('\n');
             JsonNode ctx = CaseFileBuilder.entryCtx(plan);
             if (ctx != null) {
-                sb.append(ctxLine(ctx, lang)).append('\n');
+                sb.append(ctxLine(ctx, pos, lang)).append('\n');
             }
         }
     }

@@ -74,9 +74,11 @@ class ReviewMaterialAssemblerTest {
     private final ExperienceLedger ledger = mock(ExperienceLedger.class);
     private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
 
+    private final CaseFileBuilder caseFiles = new CaseFileBuilder(historyStore);
+
     private final ReviewMaterialAssembler assembler = new ReviewMaterialAssembler(
-            decisionMapper, planMapper, simTradeClient, prompts, new CaseFileBuilder(historyStore), ledger,
-            new PlayStatsAssembler(simTradeClient, planMapper, prompts), watchStore, new DecisionText(prompts));
+            decisionMapper, planMapper, simTradeClient, prompts, caseFiles, ledger,
+            new PlayStatsAssembler(simTradeClient, planMapper, prompts, caseFiles), watchStore, new DecisionText(prompts));
 
     private AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -209,6 +211,7 @@ class ReviewMaterialAssemblerTest {
         long closeMs = FROM + 6 * H;
         FuturesPositionDTO pos = closedPos("LONG", "100000", "95000", "-50", openMs, closeMs);
         pos.setId(42L);
+        pos.setOpenedQuantity(new BigDecimal("0.01"));
         pos.setStopLosses(List.of(new FuturesStopLoss("s1", new BigDecimal("95500"), new BigDecimal("0.01"))));
         pos.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
@@ -243,6 +246,12 @@ class ReviewMaterialAssemblerTest {
         assertThat(cases).contains("  路径：最大浮盈 102500（" + HM.format(Instant.ofEpochMilli(openMs + M5))
                 + "，目标的 25%）｜ 最大逆向 95000（止损的 111%）｜ 到目标 25% / 50% 用时 5 / — 分 ｜ 首次收回入场价 "
                 + HM.format(Instant.ofEpochMilli(FROM + 2 * H)) + " ｜ 出场后 4h / 24h 最有利 97000 / 99000，之后没到原目标");
+        // R = 4500：净 -50 ÷（0.01 × 4500）；24h 内最高 102500、最低 95000、第 20 小时那根收 98000；止损原样在 95000 那根被打，放宽后都没碰到
+        assertThat(cases).contains("  重放：实际 -1.11R ｜ 入场后 24h 内最大顺向 +0.56R、最大逆向 -1.11R，不设止损拿满 24h -0.44R"
+                + " ｜ 止损原样 止损（-1R）、1.5 倍 未决、2 倍 未决、3 倍 未决");
+        assertThat(cases).contains("本期重放汇总：\n开仓后不动重放 1笔（")
+                .contains("：止损原样 到目标0 止损1 未决0 合计-1R ｜ 止损1.5倍 到目标0 止损0 未决1 合计+0R ｜ ")
+                .contains("管理动作 1笔：实际合计-1.11R，开仓后不动合计-1R");
         assertThat(cases).contains("  1h 收盘：102000 99700 95200");
         assertThat(cases).contains("  计划：论点 突破前高+量比1.8 ｜ 失效 1h收盘跌回98000下方 ｜ 修订 stop_loss 95500→96000（锁利）");
         assertThat(cases).contains("  入场上下文：regime TREND_UP ｜ 1h ATR 350.5 ｜ 止损 12.8 个 ATR（4.5%）｜ 距最近 High 事件 -90 分 CPI"
@@ -286,6 +295,43 @@ class ReviewMaterialAssemblerTest {
         assertThat(cases).doesNotContain("1h 收盘");
         assertThat(cases).contains("  计划：（无计划记录）");
         assertThat(cases).doesNotContain("入场上下文");
+    }
+
+    /** 限价单记了下单时刻：入场上下文行带上挂了多久才成交 */
+    @Test
+    void limitEntryShowsHowLongItRested() {
+        long openMs = FROM + 2 * H;
+        FuturesPositionDTO pos = closedPos("LONG", "100000", "101000", "10", openMs, openMs + H);
+        pos.setId(44L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
+        AiTraderPlan plan = planOf("BTCUSDT", "PULLBACK", FROM + H, false);
+        plan.setPositionId(44L);
+        plan.setEntryCtxJson("{\"orderType\":\"LIMIT\",\"leverage\":10,\"placedAt\":" + (openMs - 35 * 60_000L) + "}");
+        when(planMapper.selectList(any())).thenReturn(List.of(plan));
+
+        String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
+
+        assertThat(cases).contains("｜ LIMIT 10x（挂了 35分钟 才成交）");
+    }
+
+    /** 没绑过仓位就归档的计划单列一块：归档后价格到没到过限价位和原目标 */
+    @Test
+    void cancelledLimitOrdersListedWithWhatPriceDidNext() {
+        AiTraderPlan plan = planOf("BTCUSDT", "PULLBACK", FROM + H, false);
+        plan.setEntryPrice(new BigDecimal("99000"));
+        plan.setStopLossPrice(new BigDecimal("98000"));
+        plan.setTakeProfitPrice(new BigDecimal("102000"));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        // 归档后最低 99200 没回到限价位，最高 102300 到了目标
+        when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(List.of(
+                bar5m(FROM + 2 * H, "100000", "100500", "99200", "100400"),
+                bar5m(FROM + 2 * H + M5, "100400", "102300", "100300", "102000")));
+
+        String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
+
+        assertThat(cases).contains("窗口内无已了结交易");
+        assertThat(cases).contains("没成交就撤掉的限价单（归档后 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000，"
+                + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 归档 ｜ 之后价格没到过限价位，到过原目标");
     }
 
     // ==================== 案例素材：分组与选案 ====================

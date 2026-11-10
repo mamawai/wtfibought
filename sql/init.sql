@@ -723,7 +723,7 @@ UPDATE ai_trader SET interval_code = '15m' WHERE interval_code = '5m';
 ALTER TABLE ai_trader DROP COLUMN IF EXISTS margin_pct_min;
 -- 保证金占比上限最高 50%：存量超过的压到 50（幂等）
 UPDATE ai_trader SET margin_pct_max = 50 WHERE margin_pct_max > 50;
-COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：目标/边界/偏好，没写到的模型自己定（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
+COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：目标/边界/偏好，没写到的模型自己定（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当目标与边界；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';
@@ -873,7 +873,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_experience (
 CREATE INDEX IF NOT EXISTS idx_ate_trader_round_status ON ai_trader_experience (trader_id, round_no, status);
 COMMENT ON TABLE ai_trader_experience IS 'AI Trader经验账本：复盘写入的执行缺口/假设/规律/发现，一条一行；代码记支持反对次数、升级、举旗，退役不删；渲染文本写回ai_trader.memory注入trader';
 COMMENT ON COLUMN ai_trader_experience.play_type IS '所属单子类型（TradeGuard.PLAY_TYPES），NULL=通用';
-COMMENT ON COLUMN ai_trader_experience.kind IS 'GAP=执行缺口（主人指令要求了却反复没做到） HYPOTHESIS=假设 RULE=规律（假设被支持够多次升级） FINDING=发现（指令本身在花钱，只给主人看不注入）';
+COMMENT ON COLUMN ai_trader_experience.kind IS 'GAP=执行缺口（自己在计划、盯盘备注或等待行里写下要做却反复没照做） HYPOTHESIS=假设 RULE=规律（假设被支持够多次升级） FINDING=发现（指令本身在花钱，只给主人看不注入）';
 COMMENT ON COLUMN ai_trader_experience.slot IS '格子：ENTRY入场条件/FAIL_DEF失败判定/FAIL_HANDLE失败处理/PROFIT_HANDLE盈利处理/RISK风险限制/EXEC执行缺口';
 COMMENT ON COLUMN ai_trader_experience.direction IS 'OPPORTUNITY机会型(某条件下该做)/RESTRICTION限制型(某条件下不做)/EXECUTION执行型(怎么做)；限制型全账户≤2条，能否作观望理由看ai_trader.learned_restriction_hold';
 COMMENT ON COLUMN ai_trader_experience.status IS 'ACTIVE现役（注入trader） RETIRED退役（不注入，复盘可见退役名单，主人可复活）';

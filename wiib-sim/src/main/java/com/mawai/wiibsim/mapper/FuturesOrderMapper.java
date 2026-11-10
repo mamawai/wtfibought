@@ -58,6 +58,17 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             """)
     List<Map<String, Object>> sumRealizedPnlByPositionIds(@Param("positionIds") Long[] positionIds);
 
+    /** 每个仓位开仓单和加仓单成交的数量合计 */
+    @Select("""
+            SELECT position_id, SUM(quantity) AS amount
+            FROM futures_order
+            WHERE order_side NOT LIKE 'CLOSE%'
+              AND status = 'FILLED'
+              AND position_id = ANY(#{positionIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+            GROUP BY position_id
+            """)
+    List<Map<String, Object>> sumOpenedQuantityByPositionIds(@Param("positionIds") Long[] positionIds);
+
     /** 每个仓位最后成交的那张平仓单的状态，已平仓位就是了结它的那张；成交时刻看 updated_at（限价单是触发成交那一刻） */
     @Select("""
             SELECT DISTINCT ON (position_id) position_id, status

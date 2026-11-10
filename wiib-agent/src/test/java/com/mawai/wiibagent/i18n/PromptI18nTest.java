@@ -599,8 +599,9 @@ class PromptI18nTest {
 
         AiTrader t = enTrader();
         t.setSymbols("BTCUSDT");
-        return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, prompts, new CaseFileBuilder(store),
-                ledger, new PlayStatsAssembler(sim, planMapper, prompts), mock(TraderWatchStore.class), new DecisionText(prompts))
+        CaseFileBuilder caseFiles = new CaseFileBuilder(store);
+        return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, prompts, caseFiles,
+                ledger, new PlayStatsAssembler(sim, planMapper, prompts, caseFiles), mock(TraderWatchStore.class), new DecisionText(prompts))
                 .assemble(t, FROM, TO, AgentLang.EN);
     }
 

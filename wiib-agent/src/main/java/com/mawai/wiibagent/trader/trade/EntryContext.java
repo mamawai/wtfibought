@@ -25,7 +25,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 开仓那一刻的上下文快照，写进计划的 entry_ctx_json，复盘按维度对照用。
- * 字段：orderType / leverage / hourBj / stopPct 必有；regime / atr1h / stopAtr / eventMin / eventTitle / funding
+ * 字段：orderType / leverage / placedAt（下单时刻 ms）/ hourBj / stopPct 必有；regime / atr1h / stopAtr / eventMin / eventTitle / funding
  * 取不到就缺席（ATR 固定按 1h，各档 trader 的复盘才能横向比）。任何外部数据失败只记 warn，不挡下单。
  * 开仓回执里按心跳周期算的 ATR 也从这里取（{@link #atr14}）。
  */
@@ -50,6 +50,7 @@ public class EntryContext {
         ObjectNode out = MAPPER.createObjectNode();
         out.put("orderType", orderType);
         out.put("leverage", leverage);
+        out.put("placedAt", nowMs);
         out.put("hourBj", Instant.ofEpochMilli(nowMs).atZone(WakeWindow.ZONE).getHour());
         BigDecimal stopDist = entryRef.subtract(stopPrice).abs();
         out.put("stopPct", stopDist.multiply(BigDecimal.valueOf(100)).divide(entryRef, 3, RoundingMode.HALF_UP));

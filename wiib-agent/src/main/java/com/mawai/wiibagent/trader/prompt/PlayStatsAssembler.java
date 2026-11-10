@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -25,7 +26,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 本局论点战绩统计（纯代码，可单测）：sim 已平仓位 ⟵配对⟶ 本局计划，按论点标签聚合成
- * 每次唤醒注入的统计块。配对复用 {@link TradePairing#pairAll}——复盘/竞技场/统计
+ * 每次唤醒注入的统计块，另按入场方式分桶、附开仓后不动的重放汇总。配对复用 {@link TradePairing#pairAll}——复盘/竞技场/统计
  * 三处必须同一套算法。事实裁定归代码，模型只许引用不许自算，与复盘战绩表同一条纪律。
  * <p>
  * stale 过滤在<b>配对之后</b>：被忽略的计划仍参与配对占位，先滤后配会让它的仓位
@@ -48,6 +49,7 @@ public class PlayStatsAssembler {
     private final SimTradeClient simTradeClient;
     private final AiTraderPlanMapper planMapper;
     private final PromptCatalog prompts;
+    private final CaseFileBuilder caseFiles;
 
     /** 统计块文本；本局无可统计交易或任何失败 → null（不注入） */
     public String assemble(AiTrader t, AgentLang lang) {
@@ -65,6 +67,7 @@ public class PlayStatsAssembler {
             // 同一批了结再按入场方式（限价 / 市价）分一次桶；入场上下文里没记的另计笔数
             Map<String, List<BigDecimal>> byEntry = new LinkedHashMap<>();
             int unknownEntry = 0;
+            List<CaseFileBuilder.Replay> replays = new ArrayList<>();
             int taken = 0;
             for (FuturesPositionDTO pos : closed) {
                 AiTraderPlan plan = planByPos.get(pos);
@@ -81,6 +84,10 @@ public class PlayStatsAssembler {
                 } else {
                     byEntry.computeIfAbsent(entry, k -> new ArrayList<>()).add(pos.getClosedPnl());
                 }
+                CaseFileBuilder.Replay replay = caseFiles.replay(pos, plan);
+                if (replay != null) {
+                    replays.add(replay);
+                }
                 if (++taken >= MAX_TRADES) {
                     break;
                 }
@@ -95,6 +102,9 @@ public class PlayStatsAssembler {
                     .forEach(e -> sb.append(row(e.getKey(), e.getValue(), lang)).append('\n'));
             if (!byEntry.isEmpty()) {
                 sb.append(entryLine(byEntry, unknownEntry, lang)).append('\n');
+            }
+            if (replays.size() >= MIN_SAMPLE) {
+                sb.append(replayLines(replays, lang));
             }
             sb.append(prompts.get(lang, "trader.label.playStatsFooter")).append('\n');
             return sb.toString();
@@ -145,8 +155,37 @@ public class PlayStatsAssembler {
                 "unknown", unknown == 0 ? "" : prompts.get(lang, "trader.label.playStatsEntryUnknown", Map.of("n", unknown))));
     }
 
+    /**
+     * 重放汇总：一行按止损宽度列到目标 / 止损 / 未决各几笔与折算盈亏合计；
+     * "实际"和"开仓后不动"两边都有数的笔够了再加一行管理动作。复盘素材的本期汇总也用它。
+     */
+    public String replayLines(List<CaseFileBuilder.Replay> replays, AgentLang lang) {
+        CaseFileBuilder.ReplaySummary s = CaseFileBuilder.summarize(replays);
+        StringBuilder rows = new StringBuilder();
+        for (CaseFileBuilder.WidthTally w : s.widths()) {
+            if (!rows.isEmpty()) {
+                rows.append(prompts.get(lang, "trader.label.playStatsEntrySep"));
+            }
+            rows.append(prompts.get(lang, "trader.label.playStatsReplayRow", Map.of(
+                    "width", w.width().compareTo(BigDecimal.ONE) == 0
+                            ? prompts.get(lang, "trader.label.playStatsReplayOriginal")
+                            : prompts.get(lang, "trader.label.playStatsReplayWidth", Map.of("width", w.width().toPlainString())),
+                    "target", w.target(), "stop", w.stop(), "open", w.open(), "r", signed(w.r()))));
+        }
+        StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.label.playStatsReplayLine",
+                Map.of("n", s.trades(), "rows", rows.toString()))).append('\n');
+        if (s.managed() > 0) {
+            sb.append(prompts.get(lang, "trader.label.playStatsManageLine", Map.of(
+                    "n", s.managed(), "actual", signed(s.actualR()), "untouched", signed(s.untouchedR())))).append('\n');
+        }
+        return sb.toString();
+    }
+
     private static String signedSum(List<BigDecimal> pnls) {
-        BigDecimal sum = pnls.stream().reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
-        return sum.signum() >= 0 ? "+" + sum.toPlainString() : sum.toPlainString();
+        return signed(pnls.stream().reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP));
+    }
+
+    private static String signed(BigDecimal v) {
+        return v.signum() >= 0 ? "+" + v.toPlainString() : v.toPlainString();
     }
 }

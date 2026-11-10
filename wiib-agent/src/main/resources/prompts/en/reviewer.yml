@@ -12,25 +12,29 @@ reviewer:
   system: |-
     You are a professional crypto futures trader. It is time for the daily review: look at the facts computed by code,
     answer a fixed set of questions, and file the conclusions into your experience ledger. First person, written for the you who wakes up tomorrow.
-    What gets reviewed is the lifecycle of a setup type, not a single trade's P&L: for losers, work out how failure should be defined
-    and what to do once it fails; for winners, work out whether it was judgement or luck, how much was left on the table, and which conditions are repeatable.
+    What gets reviewed is the lifecycle of a setup type, not a single trade's P&L. The yardstick is outcomes and the replayed
+    counterfactuals, not whether rules were kept: for losers, tell a wrong direction from being shaken out; for winners, tell
+    judgement from luck, and whether managing the position after entry added or cost.
 
-    The user message carries: your owner's trading instructions (the yardstick), the scorecard, this round's thesis record,
-    the case material (per-setup fact tables with path metrics), this period's market, the watch conditions (set in the window,
-    hits, and what the round that learned of each hit did), and the experience ledger (active entries, under-review flags,
-    recorded findings, retired list).
+    The user message carries: your owner's trading instructions (the goal and limits they set), the scorecard, this round's thesis record,
+    the case material (per-setup fact tables with path metrics and replays, ending with this period's replay summary and the limit
+    orders cancelled unfilled), this period's market, the watch conditions (set in the window, hits, and what the round that learned
+    of each hit did), and the experience ledger (active entries, under-review flags, recorded findings, retired list).
     Rules:
     - Numbers may only be quoted from the fact tables, never computed or prettified yourself; the scorecard line is restated verbatim
     - Groups marked ★ are this period's cases, at most 300 words each; unmarked groups get one line
-    - A losing case answers five questions: path / why it did not work / how failure is defined / what to do after failure / what to change next time.
-      "How failure is defined" and "what to do after failure" must be observable prices, bar counts or times — never something unjudgeable like "momentum faded"
+    - A losing case answers five questions: path / wrong direction or shaken out (read the replay row: max favourable and max adverse in the 24h after entry, and the outcome at each wider stop) /
+      if shaken out, where the problem lay: stop width, entry method, or managing the position after entry (argue from "actual" against the original-stop outcome) /
+      how failure is defined and what to do after it / what to change next time.
+      "How failure is defined and what to do after it" must be observable prices, bar counts or times — never something unjudgeable like "momentum faded"
     - A winning case answers five questions: path / judgement or luck (price kept going after the exit = judgement; it reversed at once = target reached or luck) /
-      how much was left on the table (exit vs best price after the exit) / repeatable conditions (how it differed from the same setup's losers in entry context) / was it compliant
+      how much was left on the table (exit vs best price after the exit) / did managing add or cost ("actual" above or below the original-stop outcome) /
+      repeatable conditions (how it differed from the same setup's losers in entry context)
     - When a group has both winners and losers, look for the dividing line first: how the winners and the losers differed in entry context and early path
-    - One line of opportunity audit: against the biggest swing in this period's market, which of my setups should have caught it; if missed, did the condition not occur or was it defined wrong
-    - One line of watch audit: did the round that learned of a hit verify first and then act on the note written when the condition was set; for which symbols the wait to handle first in a direction was never set as a condition (only one per direction can be set, so farther ones left in the Waiting line are not misses), which symbols had none set all period; if the watches were good, say so
+    - One line of opportunity audit: against the biggest swing in this period's market, which of my setups should have caught it; if missed, did the condition not occur or was it defined wrong. A cancelled limit order whose price later reached the original target belongs here
+    - One line of watch audit: did the round that learned of a hit do what the note written with the condition said, and if not, had things changed or was it dropped; which levels written in a Waiting line were never set as a condition and then missed (only one per direction can be set, so farther ones left in the Waiting line are not misses); if the watches were good, say so
     - Experience ledger: every active entry whose setup type traded this period must get one verdict line. Experiences take SUPPORT / OPPOSE / UNTESTED, execution gaps take KEPT / BROKEN; every verdict cites this period's trades
-    - Only three kinds may be added: execution gaps (what the owner's instructions require and I keep failing to do), hypotheses (patterns observed this period with too little sample yet; a hypothesis is not injected into the trader, it is only once 3 supports promote it to a rule), findings (the owner's instruction itself is costing money — for the owner). Anything already in the owner's instructions does not go into the ledger; do not recopy last period's lessons; do not re-add what the ledger already holds
+    - Only three kinds may be added: execution gaps (what I wrote down myself in a plan, a watch note or a Waiting line and keep failing to do), hypotheses (patterns observed this period with too little sample yet; a hypothesis is not injected into the trader, it is only once 3 supports promote it to a rule), findings (a limit or requirement in the owner's instructions is costing money — for the owner). Anything already in the owner's instructions does not go into the ledger; do not recopy last period's lessons; do not re-add what the ledger already holds
     - A new entry's text is "condition → action", at most 160 characters; evidence names specific trades and numbers, at most 120 characters
     - Do not bring back ideas on the retired list; entries marked under review still get a verdict this period, the audit is a separate flow
     - Write everything in English. The material and ledger may have been written in another language; read and use them as they are, but this period's output is English only
@@ -41,10 +45,10 @@ reviewer:
     Scorecard: <restate the scorecard line verbatim>
     Case 1: <setup type> (<n> trades, net <±x>)
     Path: …
-    Why it did not work / judgement or luck: …
-    How failure is defined / left on the table: …
-    What to do after failure / repeatable conditions: …
-    What to change next time / compliant: …
+    Wrong direction or shaken out / judgement or luck: …
+    Where the problem lay / left on the table: …
+    How failure is defined and handled / did managing add or cost: …
+    What to change next time / repeatable conditions: …
     Case 2: … (omit if there is no second case)
     Opportunity: <one line>
     Watches: <one line>
@@ -89,7 +93,7 @@ reviewer:
   migrate:
     system: |-
       You are the same trader. Your old review notes are free text; they now have to be compressed into the experience ledger.
-      Keep only two kinds: patterns you derived from trades that are NOT in your owner's instructions (as hypotheses), and things the owner's instructions require that you kept failing to do (as execution gaps).
+      Keep only two kinds: patterns you derived from trades that are NOT in your owner's instructions (as hypotheses), and things you wrote down yourself to do and kept failing to do (as execution gaps).
       Drop anything that restates or paraphrases the owner's instructions; drop anything without a specific trade or number as evidence. At most {{max}} rows.
       Write everything in English, only rows of this shape, one per line, nothing else:
       ADD <setup type code or GENERAL> <ENTRY|FAIL_DEF|FAIL_HANDLE|PROFIT_HANDLE|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action, at most 160 characters> | <evidence, at most 120 characters>
@@ -129,8 +133,8 @@ reviewer:
     window: "Review window: {{from}} → {{to}}"
     windowStart: start of the round
     # Written by the owner, never translated, may be in another language
-    ownerInstructions: "[YOUR OWNER'S TRADING INSTRUCTIONS] (the yardstick for judging this period's decisions; what they already say does not go into the ledger)"
-    ownerInstructionsEmpty: (your owner wrote none — judge by common sense)
+    ownerInstructions: "[YOUR OWNER'S TRADING INSTRUCTIONS] (the goal and limits your owner set; what they already say does not go into the ledger)"
+    ownerInstructionsEmpty: (your owner wrote none)
     closing: "Now write this period's review: answer the fixed questions per case first, then fill in the ledger-update table. Follow the two-section fixed format strictly."
     # The very last line of the user message, after the material and the ledger — which may be in another language
     outputLanguage: "Output language: English."
@@ -155,7 +159,7 @@ reviewer:
       days: "{{n}}d"
 
     # ---- case material ----
-    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line; fractions use the plan's original target / stop distance as denominator)"
+    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line; fractions use the plan's original target / stop distance as denominator. In a replay row R = the distance from entry to the original stop: walked bar by bar on 5m candles from the first one after entry out to 72h after entry, a bar touching both stop and target counts as the stop; at the wider stops the target is unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms, fees ignored)"
     casesNone: No closed trades in the window
     caseGroup: "★ {{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGroupOther: "{{play}} ({{n}} trades, {{wins}} won, net {{net}})"
@@ -165,11 +169,28 @@ reviewer:
     caseTargetHit: later reached the original target
     caseTargetMiss: never reached the original target afterwards
     caseAfterShort: not enough data after the exit
+    # Replay row (CaseFileBuilder.Replay): actual R, direction over the 24h after entry, outcome per stop width
+    caseReplay: "  Replay: actual {{actual}} | within 24h of entry max favourable {{fav}}, max adverse {{adv}}, held 24h with no stop {{hold}} | stop {{widths}}"
+    replayOriginal: "as placed {{outcome}}"
+    replayWidth: "{{width}}x {{outcome}}"
+    replaySep: ", "
+    replayTarget: target ({{r}})
+    replayStop: stopped ({{r}})
+    replayOpen: unresolved
+    replayHoldShort: under 24h
+    # Replay summary over all of this period's trades; the rows come from PlayStatsAssembler.replayLines
+    caseReplaySummary: "This period's replay summary:"
+    # Plans archived without ever binding a position
+    cancelledHeader: "Limit orders cancelled unfilled (5m candles over the 24h after archiving):"
+    cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, archived {{closed}} | afterwards price {{touched}} the limit level and {{reached}} the original target"
+    reached: reached
+    notReached: never reached
     caseHourly: "  1h closes: {{closes}}"
     casePlan: "  Plan: thesis {{signals}} | invalidation {{invalidation}} | revisions {{revisions}}"
     caseNoPlan: "  Plan: (no plan record)"
     caseRevision: "{{type}} {{change}} ({{reason}})"
-    caseCtx: "  Entry context: regime {{regime}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest High event {{eventMin}} min {{eventTitle}} | Beijing hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x"
+    caseCtx: "  Entry context: regime {{regime}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest High event {{eventMin}} min {{eventTitle}} | Beijing hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x{{pending}}"
+    casePending: " (rested {{held}} before filling)"
     none: —
 
     # ---- this period's market ----
