@@ -11,8 +11,9 @@ import java.util.List;
  * 每次唤醒落一行，只增不改：这轮想了什么（reasoning）、调了什么工具做了什么（actionsJson）、
  * 当时权益多少。wake_time 就是那次唤醒的K线边界。
  * <p>
- * kind 两类：TRADE/ALERT/MANUAL/EVENT/WATCH 是唤醒（例行K线/波动警报/主人手动叫醒/持仓事件/盯盘条件命中），有权益；
- * REVIEW 是复盘，reasoning 装的是复盘全文，没权益。
+ * kind 三类：TRADE/ALERT/MANUAL/EVENT/WATCH 是唤醒（例行K线/波动警报/主人手动叫醒/持仓事件/盯盘条件命中），有权益；
+ * REVIEW 是复盘，reasoning 装的是复盘全文，没权益；
+ * PRESET 是预案命中后代码执行的那一下，没跑模型，reasoning 是条件和执行结果，没权益。
  * status：OK 正常、ERROR 失败、SKIPPED 上轮没跑完或信号迟到——跳过也照写，时间线上不藏。
  * <p>
  * 三处在用：竞技场的时间线与净值曲线；下一轮唤醒回注最近几行轨迹和上一轮结论；每日复盘拼素材。
@@ -32,7 +33,8 @@ public class AiTraderDecision {
     public static final String KIND_EVENT = "EVENT";
     public static final String KIND_WATCH = "WATCH";
     public static final String KIND_REVIEW = "REVIEW";
-    /** 五种唤醒行（有权益、有动作）；复盘行不在内 */
+    public static final String KIND_PRESET = "PRESET";
+    /** 五种唤醒行（有权益、有动作）；复盘行和预案行不在内 */
     public static final List<String> WAKE_KINDS = List.of(KIND_TRADE, KIND_ALERT, KIND_MANUAL, KIND_EVENT, KIND_WATCH);
 
     @TableId(type = IdType.AUTO)
@@ -50,7 +52,7 @@ public class AiTraderDecision {
     /**
      * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader，回路与例行相同）
      * EVENT=持仓事件唤醒（sim 的止损/止盈/强平/限价成交当场叫醒） WATCH=模型自己布的盯盘条件命中
-     * REVIEW=reviewer复盘（reasoning=复盘全文，无equity）
+     * REVIEW=reviewer复盘（reasoning=复盘全文，无equity） PRESET=预案命中后代码执行动作（没跑模型，无equity）
      */
     private String kind;
 

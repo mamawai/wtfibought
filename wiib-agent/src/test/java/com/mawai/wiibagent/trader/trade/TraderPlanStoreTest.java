@@ -64,7 +64,7 @@ class TraderPlanStoreTest {
         p.setSignalsUsed("突破前高");
         p.setInvalidationCondition("1h收盘跌回98000下方");
         p.setStopLossPrice(new BigDecimal("95000"));
-        p.setTakeProfitPrice(new BigDecimal("110000"));
+        p.setTakeProfitsJson("[{\"price\":110000,\"percent\":100}]");
         p.setStatus(AiTraderPlan.STATUS_LIVE);
         p.setOpenedWakeTime(FILED);
         p.setCreatedAt(at(FILED));

@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderTrail;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -43,6 +44,7 @@ import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
+import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -141,6 +143,7 @@ public class TraderWakeupRunner {
     private final AiTraderDecisionMapper decisionMapper;
     private final TraderPlanStore planStore;
     private final TraderWatchStore watchStore;
+    private final TraderTrailStore trailStore;
     private final UserLangResolver userLangResolver;
     private final PromptCatalog prompts;
     /** sim 拒因按错误码成文（见 SimTradeClient.describe），同样跟 trader 主人的语言 */
@@ -333,6 +336,8 @@ public class TraderWakeupRunner {
         // 计划对照 sim 持仓/挂单：了结的归档并报结局、限价成交的绑上仓位，存活的随持仓注入账户状态；已平仓位只在有事时才查
         TraderPlanStore.Reconcile reconcile = planStore.reconcile(trader.getId(), trader.getRoundNo(), positions, pendingOrders,
                 () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT), boundaryTime, lang);
+        // 跟踪止损的规则也对一遍：限价成交的绑上仓位，仓位没了的结束；还在的随持仓和挂单注入账户状态
+        Map<String, AiTraderTrail> trails = trailStore.reconcile(trader.getId(), trader.getRoundNo(), positions, pendingOrders, lang);
         // 本局全部计划（含归档）：最近轮的 stale 过滤要按计划生命期判段落归属
         List<AiTraderPlan> plans = planStore.listAll(trader.getId(), trader.getRoundNo());
         // 获取最近的唤醒轮，并过滤掉stale内容
@@ -355,7 +360,7 @@ public class TraderWakeupRunner {
         Map<String, BigDecimal> marks = new HashMap<>();
         quotes.forEach((symbol, q) -> marks.put(symbol, q.path("markPrice").asDecimal(null)));
         // 第一段的观察包：上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 承诺
-        WakeObservation.Pack pack = wakeObservation.assemble(trader, whitelist, equity, positions, pendingOrders, reconcile, recent,
+        WakeObservation.Pack pack = wakeObservation.assemble(trader, whitelist, equity, positions, pendingOrders, reconcile, trails, recent,
                 boundaryTime, lang, hitsNow, quiet, armed, marks);
         // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报/事件轮在 K 线中间，主人留的话多半是按收盘说的
         String ownerNote = triggers != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
@@ -488,6 +493,7 @@ public class TraderWakeupRunner {
                 sym -> MAPPER.readTree(binanceRestClient.getPremiumIndex(sym)).path("markPrice").asDecimal(null),
                 planStore,
                 watchStore,
+                trailStore,
                 new TradeTools.WakeCtx(trader.getId(), trader.getRoundNo(), trader.getIntervalCode(), boundaryTime,
                         deadline, TraderRiskConfig.of(trader), lang),
                 prompts,
@@ -701,7 +707,7 @@ public class TraderWakeupRunner {
             case WatchTrigger w -> prompts.get(lang, "trader.wake.watchHeader", Map.of(
                     "time", BeijingTime.format(w.triggeredAt()),
                     "detail", WatchText.detail(w.watch(), w.price(), prompts, lang),
-                    "note", w.watch().getNote()));
+                    "note", WatchText.note(w.watch(), prompts, lang)));
         };
     }
 

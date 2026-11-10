@@ -7,6 +7,7 @@ import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
+import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
@@ -265,13 +266,29 @@ public class ReviewMaterialAssembler {
                         "symbol", plan.getSymbol(), "side", plan.getSide(),
                         "limit", plain(plan.getEntryPrice()),
                         "stop", plain(plan.getStopLossPrice()),
-                        "target", plain(plan.getTakeProfitPrice()),
+                        "target", targets(plan, lang),
                         "closed", TIME_FMT.format(Instant.ofEpochMilli(plan.getClosedWakeTime())),
                         "touched", prompts.get(lang, c.touchedLimit() ? "reviewer.label.reached" : "reviewer.label.notReached"),
-                        "reached", prompts.get(lang, c.reachedTarget() ? "reviewer.label.reached" : "reviewer.label.notReached")))).append('\n');
+                        "targetsAfter", targetsAfter(plan, c.reachedTargets(), lang)))).append('\n');
             }
         }
         return sb.toString();
+    }
+
+    /** 计划里的止盈档写法；没计划或没设止盈写"无" */
+    private String targets(AiTraderPlan plan, AgentLang lang) {
+        List<TargetRung> rungs = TargetRung.of(plan);
+        return rungs.isEmpty() ? prompts.get(lang, "reviewer.label.none") : TargetRung.text(rungs);
+    }
+
+    /** "之后到过原目标 1/2 档"；没设止盈、数据不够各有一句。reached 为 null＝出场后数据不够 24 小时 */
+    private String targetsAfter(AiTraderPlan plan, Integer reached, AgentLang lang) {
+        int total = TargetRung.of(plan).size();
+        if (total == 0) {
+            return prompts.get(lang, "reviewer.label.caseNoTarget");
+        }
+        return reached == null ? prompts.get(lang, "reviewer.label.caseAfterShort")
+                : prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", reached, "total", total));
     }
 
     private String caseLines(CaseFileBuilder.TradeCase c, AgentLang lang) {
@@ -282,16 +299,15 @@ public class ReviewMaterialAssembler {
         sb.append(prompts.get(lang, "reviewer.label.casePath", Map.ofEntries(
                 Map.entry("mfe", or(p.mfePrice(), none)),
                 Map.entry("mfeAt", p.mfeAt() == null ? none : HM_FMT.format(Instant.ofEpochMilli(p.mfeAt()))),
-                Map.entry("mfeFrac", pct(p.mfeFrac(), none)),
+                Map.entry("mfeR", p.mfeR() == null ? none : signedR(p.mfeR())),
                 Map.entry("mae", or(p.maePrice(), none)),
-                Map.entry("maeFrac", pct(p.maeFrac(), none)),
-                Map.entry("t25", p.minTo25() == null ? none : String.valueOf(p.minTo25())),
-                Map.entry("t50", p.minTo50() == null ? none : String.valueOf(p.minTo50())),
+                Map.entry("maeR", p.maeR() == null ? none : signedR(p.maeR().negate())),
+                Map.entry("tHalf", p.minToHalfR() == null ? none : String.valueOf(p.minToHalfR())),
+                Map.entry("t1", p.minTo1R() == null ? none : String.valueOf(p.minTo1R())),
                 Map.entry("firstBack", p.firstBackAt() == null ? none : HM_FMT.format(Instant.ofEpochMilli(p.firstBackAt()))),
                 Map.entry("best4", or(p.bestAfter4h(), none)),
                 Map.entry("best24", or(p.bestAfter24h(), none)),
-                Map.entry("targetAfter", prompts.get(lang, p.targetAfter24h() == null ? "reviewer.label.caseAfterShort"
-                        : p.targetAfter24h() ? "reviewer.label.caseTargetHit" : "reviewer.label.caseTargetMiss"))))).append('\n');
+                Map.entry("targetsAfter", targetsAfter(plan, p.targetsAfter24h(), lang))))).append('\n');
         if (c.replay() != null) {
             sb.append(replayLine(c.replay(), lang)).append('\n');
         }
@@ -357,7 +373,7 @@ public class ReviewMaterialAssembler {
                 Map.entry("held", humanize(prompts, TradePairing.msOf(pos.getUpdatedAt()) - TradePairing.msOf(pos.getCreatedAt()), lang)),
                 Map.entry("entry", plain(pos.getEntryPrice())),
                 Map.entry("stop", plan == null ? none : plain(plan.getStopLossPrice())),
-                Map.entry("target", plan == null ? none : plain(plan.getTakeProfitPrice())),
+                Map.entry("target", targets(plan, lang)),
                 Map.entry("exit", plain(pos.getClosedPrice())),
                 Map.entry("manner", TradePairing.closeManner(prompts, pos, lang)),
                 Map.entry("pnl", signed(pos.getClosedPnl())),
@@ -458,7 +474,7 @@ public class ReviewMaterialAssembler {
             sb.append(prompts.get(lang, "reviewer.label.watchHit", Map.of(
                     "firedAt", TIME_FMT.format(Instant.ofEpochMilli(w.getFiredAt())),
                     "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
-                    "note", w.getNote(),
+                    "note", WatchText.note(w, prompts, lang),
                     "followUp", followUp(t, w, lang)))).append('\n');
         }
         return sb.toString();
@@ -684,11 +700,6 @@ public class ReviewMaterialAssembler {
 
     private static String or(BigDecimal v, String none) {
         return v == null ? none : plain(v);
-    }
-
-    /** 0.56 → 56% */
-    private static String pct(BigDecimal frac, String none) {
-        return frac == null ? none : frac.multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP).toPlainString() + "%";
     }
 
     /** 数字按原样十进制给（0.0001 不写成 1.0E-4） */

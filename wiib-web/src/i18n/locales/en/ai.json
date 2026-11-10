@@ -126,8 +126,9 @@
   "tool": {
     "openPosition": "Open position",
     "closePosition": "Close position",
-    "setStopLoss": "Tighten stop",
-    "setTakeProfit": "Move target out",
+    "setStopLoss": "Change stop",
+    "setTakeProfit": "Change take-profit",
+    "preset": "Standing order",
     "cancelOrder": "Cancel order",
     "writePlan": "Write plan",
     "setWatch": "Watch conditions",
@@ -151,6 +152,11 @@
     "qty": "{{n}} contracts",
     "sl": "SL {{p}}",
     "tp": "TP {{p}}",
+    "tpNone": "take-profit removed",
+    "trail": "trailing stop {{pct}}%",
+    "trailFrom": "trailing stop {{pct}}% from {{p}}",
+    "presetMoveStop": "stop moved to {{p}}",
+    "presetClose": "closed {{pct}}% at market",
     "position": "Position #{{id}}",
     "order": "Order #{{id}}",
     "invalidation": "Invalidation: {{c}}",
@@ -220,11 +226,11 @@
     },
     "interval": {
       "title": "How often it checks in",
-      "body": "On every close of a candle at this interval the AI wakes up for a routine check-in: read the market, reset its levels, verify its plans.\nBetween heartbeats it is not staring at the screen: stop-loss and take-profit orders fire on their own; the watch conditions it set itself with set_watch (a price touched, a candle close, a moment in time) wake it when hit; so do a stop being taken out or a limit order filling.\n\n1h is the default. 15m means about 96 heartbeats a day, each burning your key."
+      "body": "On every close of a candle at this interval the AI wakes up for a routine check-in: read the market, reset its levels, verify its plans.\nBetween heartbeats it is not staring at the screen: stop-loss and take-profit orders fire on their own, and the platform carries out the trailing stop and standing orders it set; the watch conditions it set itself with set_watch (a price touched, a candle close, a moment in time) wake it when hit; so do a stop being taken out or a limit order filling.\n\n1h is the default. 15m means about 96 heartbeats a day, each burning your key."
     },
     "wakeWindow": {
       "title": "When it wakes up",
-      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window scheduled wake-ups, volatility alerts, watch hits and position events all stop; positions rely on stop-loss and take-profit orders. Manual wake-ups are never blocked.\nDaily review ignores the window and still runs at 08:00."
+      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window scheduled wake-ups, volatility alerts, watch hits and position events all stop; positions rely on the stop-loss and take-profit orders, trailing stop and standing orders it left. Manual wake-ups are never blocked.\nDaily review ignores the window and still runs at 08:00."
     },
     "symbols": {
       "title": "Which coins it may trade",
@@ -434,7 +440,7 @@
       "readAll": "Around the clock: every {{iv}} close, {{n}} times a day.",
       "readSame": "Start and end can't be the same; turn the hours off for all day.",
       "readNone": "Not a single {{iv}} beat falls in these hours, so saving will be refused: widen them or change the heartbeat.",
-      "read": "Only wakes {{from}}–{{to}}{{cross}}, about {{n}} times a day; outside these hours no routine wakes, alerts, watch hits or position events — positions rely on stop and target orders. Your manual wakes still work.",
+      "read": "Only wakes {{from}}–{{to}}{{cross}}, about {{n}} times a day; outside these hours no routine wakes, alerts, watch hits or position events — positions rely on the stop and target orders, trailing stop and standing orders it left. Your manual wakes still work.",
       "cross": " (into the next day)"
     },
     "spec": {
@@ -525,6 +531,7 @@
       "TRADE": "Routine · {{iv}}",
       "TRADE_PLAIN": "Routine",
       "WATCH": "Watch hit",
+      "PRESET": "Standing order",
       "EVENT": "Position changed",
       "ALERT": "Sharp move",
       "MANUAL": "Woken by owner",
@@ -568,6 +575,9 @@
       "qtyLimit": "{{qty}} {{coin}} · resting at {{price}}",
       "fillIn": "Now {{now}}; fills after {{move}}.",
       "afterFill": "Then stop {{sl}}, target {{tp}}.",
+      "afterFillSl": "Then stop {{sl}}, no target.",
+      "trailing": "trailing · {{pct}}% callback",
+      "trailingFrom": "trailing · {{pct}}% callback from {{price}}",
       "why": "Why",
       "inval": "Wrong if",
       "revised_one": "Revised once",
@@ -576,7 +586,12 @@
     "watch": {
       "title": "Its watches",
       "sum": "{{n}} · nearest first",
-      "desc": "Conditions it set for itself: a price, a candle closing past a level, or a set time wakes it. It first checks the condition is real, then acts on the note it left.",
+      "desc": "Conditions it set for itself: a price, a candle closing past a level, or a set time wakes it. It first checks the condition is real, then acts on the note it left. When a condition carrying a standing order fires, the platform carries the action out first (move a stop, close, or cancel an order).",
+      "preset": {
+        "moveStop": "Standing order: when it fires, the stop of {{target}} moves to {{price}} without waking it",
+        "close": "Standing order: when it fires, {{pct}}% of {{target}} is closed at market, then it is woken",
+        "cancelOrder": "Standing order: when it fires, the pending {{target}} order is cancelled without waking it"
+      },
       "none": "No watch conditions now",
       "soon": "close",
       "note": "Note: {{v}}",
@@ -597,13 +612,13 @@
     "dataHint": "Read-only; candle interval 5m / 15m / 1h / 4h / 1d",
     "foot": "Account, trade plans and the ledger are handed to it on every wake, so it never spends steps fetching them; on the workbench timeline every wake lists what it read and what it did.",
     "desc": {
-      "open_position": "Market/limit long or short; a trade plan (thesis · evidence · invalidation) is filed on entry. <0>Stop-loss required</0>; leverage inside your range, new-position margin under your cap; limit price within 5% of mark. The receipt carries the round-trip fee, stop distance, reward-to-risk after fees and risk as % of equity.",
+      "open_position": "Market/limit long or short; a trade plan (thesis · evidence · invalidation) is filed on entry. <0>Stop-loss required</0>; take-profit is optional and may be split into up to 3 rungs, each closing part of the position; the stop can also trail the price. Leverage inside your range, new-position margin under your cap; limit price within 5% of mark. The receipt carries the round-trip fee, stop distance and risk as % of equity, plus reward-to-risk after fees when a take-profit is set.",
       "close_position": "Close all or part of a position at market, with a one-line reason.",
-      "set_stop_loss": "<0>Tighten only</0>: long stops move up, short stops move down. Reason required; goes into the public plan revision history.",
-      "set_take_profit": "<0>Away only</0>: long targets move up, short targets move down. To leave early, cite the invalidation and close instead.",
+      "set_stop_loss": "<0>Tighten only</0>: long stops move up, short stops move down. Reason required; goes into the public plan revision history. It can also start a trailing stop: given a callback percent, the platform follows the price and keeps moving the stop in the favourable direction only, without waking it.",
+      "set_take_profit": "Replaces the whole set of take-profit orders: up to 3 rungs, each a price plus the percent of the position it closes; they may move nearer, farther, or be removed. <0>Every rung must stay on the profit side of the current price</0>; to leave right now it has to close.",
       "write_plan": "Only for a position with no plan on record; plans are immutable — a new thesis means adding or re-opening.",
       "cancel_order": "Cancel a pending limit order.",
-      "set_watch": "Watch conditions on one coin: price touches a level, a candle of some period closes above or below it, or a set time arrives. It is woken the moment one is met; at most one upward, one downward and one timed per coin, each fires once. Any coin the platform tracks can be watched, not only the tradable ones.",
+      "set_watch": "Watch conditions on one coin: price touches a level, a candle of some period closes above or below it, or a set time arrives. It is woken the moment one is met; at most one upward, one downward and one timed per coin, each fires once. Any coin the platform tracks can be watched, not only the tradable ones. A condition may also carry a standing order: when it fires the platform itself moves a stop, closes part or all of a position, or cancels a pending order — <0>risk-reducing only, never an entry</0>.",
       "get_account": "Balance / positions / pending orders. Already injected every round; normally only called to re-check after its own orders.",
       "klines": "192 raw OHLCV bars, last one still forming. For bar-by-bar pattern checks or its own swing rules.",
       "kline_structure": "Swings, segments, volume-by-price and key levels of the same bars; facts only, no calls.",

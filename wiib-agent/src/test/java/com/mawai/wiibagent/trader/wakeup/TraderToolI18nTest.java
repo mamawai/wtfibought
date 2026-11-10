@@ -20,6 +20,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
+import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
@@ -74,6 +75,7 @@ class TraderToolI18nTest {
             mock(AiTraderMapper.class), mock(AiTraderDecisionMapper.class),
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
+            mock(TraderTrailStore.class),
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
@@ -87,6 +89,7 @@ class TraderToolI18nTest {
             sym -> BigDecimal.ONE,
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
+            mock(TraderTrailStore.class),
             new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
             mock(EntryContext.class));
 

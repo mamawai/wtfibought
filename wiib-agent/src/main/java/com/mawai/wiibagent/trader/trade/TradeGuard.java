@@ -43,9 +43,22 @@ public final class TradeGuard {
     public record PosSnap(String symbol, String side, Integer leverage, boolean filled) {
     }
 
-    /** 开仓请求（工具参数的结构化镜像）。变体构造归测试侧（TradeGuardTest 的 with* 助手）。 */
+    /** 止盈最多分几档 */
+    public static final int MAX_TARGET_RUNGS = 3;
+
+    /** sim 一个仓位最多挂几档止盈（止损同）；加仓带的档位是追加上去的 */
+    public static final int SIM_SPLIT_LIMIT = 4;
+
+    /** 跟踪止损回调幅度（%）的上下限：再小每个 tick 都在挪止损，再大等于没有止损 */
+    public static final BigDecimal TRAIL_CALLBACK_MIN = new BigDecimal("0.1");
+    public static final BigDecimal TRAIL_CALLBACK_MAX = new BigDecimal("50");
+
+    /**
+     * 开仓请求（工具参数的结构化镜像）。takeProfits 是止盈分档，空表＝不设止盈。
+     * 变体构造归测试侧（TradeGuardTest 的 with* 助手）。
+     */
     public record OpenReq(String symbol, String side, String orderType, BigDecimal quantity, Integer leverage,
-                          BigDecimal limitPrice, BigDecimal stopLossPrice, BigDecimal takeProfitPrice,
+                          BigDecimal limitPrice, BigDecimal stopLossPrice, List<TargetRung> takeProfits,
                           String playType, String signalsUsed, String invalidationCondition) {
     }
 
@@ -53,9 +66,8 @@ public final class TradeGuard {
     }
 
     /**
-     * 多单取最高价/空单取最低价。作判定基准时含义随场景不同：对止损是"最紧那一档"、对止盈是
-     * "最远那一档"——sim 整组替换语义下按最保守档做基线，替换后才不会比原来任何一档更松/更近。
-     * 批准加仓给新增部分补挂保护单时也照抄这一档（本版 sl/tp 都是全仓单，正常只有一档）。
+     * 多单取最高价/空单取最低价：几档止损里最紧的那一档。sim 是整组替换，"只许收紧"按最紧档做基线，
+     * 替换后才不会比原来任何一档更松。
      */
     public static BigDecimal extremePrice(List<BigDecimal> prices, boolean isLong) {
         return prices.stream().filter(java.util.Objects::nonNull)
@@ -199,26 +211,60 @@ public final class TradeGuard {
                     "rule", prompts.get(lang, isLong ? "trader.guard.stopLossRuleLong" : "trader.guard.stopLossRuleShort"),
                     "entry", entryRef.stripTrailingZeros().toPlainString()));
         }
-        // 止盈必填：它就是计划的目标位，盈亏比与"到目标位落袋"都按它算；想让利润奔跑开仓后往远移即可
-        if (req.takeProfitPrice() == null) {
-            return prompts.get(lang, "trader.guard.takeProfitRequired");
+        // 止盈可以不设；设了的每档都要在入场价有利一侧
+        String targets = validateTargets(req.takeProfits(), prompts, lang);
+        if (targets != null) {
+            return targets;
         }
-        // 同止损：SHORT 的「0 <= 入场价」为真会放行一张止盈价为 0 的单
-        if (req.takeProfitPrice().signum() <= 0) {
-            return prompts.get(lang, "trader.guard.takeProfitPositive", Map.of(
-                    "given", req.takeProfitPrice().stripTrailingZeros().toPlainString()));
+        for (TargetRung rung : req.takeProfits()) {
+            if (isLong ? rung.price().compareTo(entryRef) <= 0 : rung.price().compareTo(entryRef) >= 0) {
+                return prompts.get(lang, "trader.guard.takeProfitDirection", Map.of("rule",
+                        prompts.get(lang, isLong ? "trader.guard.takeProfitRuleLong" : "trader.guard.takeProfitRuleShort")));
+            }
         }
-        if (isLong ? req.takeProfitPrice().compareTo(entryRef) <= 0
-                : req.takeProfitPrice().compareTo(entryRef) >= 0) {
-            return prompts.get(lang, "trader.guard.takeProfitDirection", Map.of("rule",
-                    prompts.get(lang, isLong ? "trader.guard.takeProfitRuleLong" : "trader.guard.takeProfitRuleShort")));
+        return targetQuantities(req.takeProfits(), req.quantity(), req.symbol(), prompts, lang);
+    }
+
+    /** 止盈分档的形状：最多 {@link #MAX_TARGET_RUNGS} 档，每档有正的价位和占比，占比合计不超过 100。通过返回 null */
+    public static String validateTargets(List<TargetRung> rungs, PromptCatalog prompts, AgentLang lang) {
+        boolean shaped = rungs.size() <= MAX_TARGET_RUNGS && rungs.stream().allMatch(r ->
+                r.price() != null && r.price().signum() > 0 && r.percent() != null && r.percent().signum() > 0);
+        if (!shaped || rungs.stream().map(TargetRung::percent).reduce(BigDecimal.ZERO, BigDecimal::add)
+                .compareTo(BigDecimal.valueOf(100)) > 0) {
+            return prompts.get(lang, "trader.guard.targetRungsInvalid", Map.of("max", MAX_TARGET_RUNGS));
+        }
+        return null;
+    }
+
+    /** 每档按占比折成数量后都得够一个步长。通过返回 null */
+    public static String targetQuantities(List<TargetRung> rungs, BigDecimal positionQty, String symbol,
+                                          PromptCatalog prompts, AgentLang lang) {
+        List<BigDecimal> quantities = TargetRung.quantities(rungs, positionQty, symbol);
+        for (int i = 0; i < quantities.size(); i++) {
+            if (quantities.get(i).signum() <= 0) {
+                return prompts.get(lang, "trader.guard.targetRungTooSmall", Map.of(
+                        "n", i + 1, "symbol", symbol, "quantity", plain(positionQty)));
+            }
+        }
+        return null;
+    }
+
+    /** 跟踪止损的两个参数：回调幅度必须给且在上下限内，启动价（可不给）为正。通过返回 null */
+    public static String validateTrail(BigDecimal callbackPct, BigDecimal activationPrice,
+                                       PromptCatalog prompts, AgentLang lang) {
+        if (callbackPct == null
+                || callbackPct.compareTo(TRAIL_CALLBACK_MIN) < 0 || callbackPct.compareTo(TRAIL_CALLBACK_MAX) > 0
+                || activationPrice != null && activationPrice.signum() <= 0) {
+            return prompts.get(lang, "trader.guard.trailInvalid", Map.of(
+                    "min", plain(TRAIL_CALLBACK_MIN), "max", plain(TRAIL_CALLBACK_MAX)));
         }
         return null;
     }
 
     /**
      * set_watch 的护栏：kind 合法；向上（TOUCH_ABOVE / CLOSE_ABOVE）、向下（TOUCH_BELOW / CLOSE_BELOW）、到时刻各最多一条；
-     * 价格类有正价位、TOUCH 的价位没被现价越过（布下去会立刻触发）、CLOSE 类有合法周期；AT_TIME 有能解析且还没到的时刻。
+     * 价格类有正价位、TOUCH 的价位没被现价越过（布下去会立刻触发）、CLOSE 类有合法周期；AT_TIME 有能解析且还没到的时刻；
+     * 带预案动作的，动作类型合法、参数齐全。
      * 整组一起校验，一条不对整组拒。通过返回 null。markPrice 只在有 TOUCH 条件时才需要，没有可传 null。
      */
     public static String validateWatch(List<WatchSpec> specs, BigDecimal markPrice, long now,
@@ -268,6 +314,24 @@ public final class TradeGuard {
         for (WatchSpec s : specs) {
             if (s.note() == null || s.note().isBlank()) {
                 return prompts.get(lang, "trader.guard.watchNoteRequired", Map.of("kind", s.kind()));
+            }
+        }
+        // 预案动作的形状：类型合法，该类型要的参数齐全。仓位 / 挂单在不在由 TradeTools 对着账户查
+        for (WatchSpec s : specs) {
+            WatchAction a = s.action();
+            if (a == null) {
+                continue;
+            }
+            boolean shaped = switch (String.valueOf(a.type())) {
+                case AiTraderWatch.ACTION_MOVE_STOP -> a.positionId() != null
+                        && a.stopLossPrice() != null && a.stopLossPrice().signum() > 0;
+                case AiTraderWatch.ACTION_CLOSE -> a.positionId() != null && a.closePercent() != null
+                        && a.closePercent().signum() > 0 && a.closePercent().compareTo(BigDecimal.valueOf(100)) <= 0;
+                case AiTraderWatch.ACTION_CANCEL_ORDER -> a.orderId() != null;
+                default -> false;
+            };
+            if (!shaped) {
+                return prompts.get(lang, "trader.guard.watchActionInvalid");
             }
         }
         return null;

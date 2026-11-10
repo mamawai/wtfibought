@@ -145,15 +145,15 @@ reviewer:
       days: "{{n}}天"
 
     # ---- 案例素材 ----
-    casesHeader: 【案例素材】（代码算的事实。标 ★ 的组是本期案例，其余组一行带过；占比以计划的原始目标 / 止损距离为分母。重放行的 R＝入场价到原始止损的距离：从开仓后第一根 5m K线逐根走到开仓后 72 小时，同一根里止损和目标都碰到按止损算；放宽止损的几档目标不变、仓位按同样的风险金额缩小，括号里是折算后的盈亏，不计手续费）
+    casesHeader: 【案例素材】（代码算的事实。标 ★ 的组是本期案例，其余组一行带过；R＝入场价到计划原始止损的距离，路径行和重放行都以它为单位。目标写成「价位(平掉仓位的百分之几)」，分批止盈的有几档，没设止盈的写无。重放：从开仓后第一根 5m K线逐根走到开仓后 72 小时，同一根里止损和止盈档都碰到按止损算；碰到一档就按它的占比了结那部分，剩下的仓位接着走，整仓了结才算已决——「到目标」是到过止盈档并且整仓了结（剩下的后来被止损的也算在盈亏里），没设止盈的单子只会是止损或未决；放宽止损的几档止盈不变、仓位按同样的风险金额缩小，括号里是折算后的盈亏，不计手续费）
     casesNone: 窗口内无已了结交易
     caseGroup: "★ {{play}}（{{n}} 笔，{{wins}} 胜，净 {{net}}）"
     caseGroupOther: "{{play}}（{{n}} 笔，{{wins}} 胜，净 {{net}}）"
     caseGeneral: 未标类型
     caseTrade: "- {{symbol}} {{side}} {{opened}} → {{closed}}（持有 {{held}}）｜ 入场 {{entry}} 止损 {{stop}} 目标 {{target}} 出场 {{exit}}，{{manner}} ｜ 净 {{pnl}}，资金费 {{funding}}"
-    casePath: "  路径：最大浮盈 {{mfe}}（{{mfeAt}}，目标的 {{mfeFrac}}）｜ 最大逆向 {{mae}}（止损的 {{maeFrac}}）｜ 到目标 25% / 50% 用时 {{t25}} / {{t50}} 分 ｜ 首次收回入场价 {{firstBack}} ｜ 出场后 4h / 24h 最有利 {{best4}} / {{best24}}，{{targetAfter}}"
-    caseTargetHit: 之后到过原目标
-    caseTargetMiss: 之后没到原目标
+    casePath: "  路径：最大浮盈 {{mfe}}（{{mfeAt}}，{{mfeR}}）｜ 最大逆向 {{mae}}（{{maeR}}）｜ 到 +0.5R / +1R 用时 {{tHalf}} / {{t1}} 分 ｜ 首次收回入场价 {{firstBack}} ｜ 出场后 4h / 24h 最有利 {{best4}} / {{best24}}，{{targetsAfter}}"
+    caseTargetsAfter: 到过原目标 {{hit}}/{{total}} 档
+    caseNoTarget: 没设止盈
     caseAfterShort: 出场后数据不足
     # 重放行（CaseFileBuilder.Replay）：实际几 R、开仓后 24 小时的方向、每档止损宽度的结局
     caseReplay: "  重放：实际 {{actual}} ｜ 入场后 24h 内最大顺向 {{fav}}、最大逆向 {{adv}}，不设止损拿满 24h {{hold}} ｜ 止损{{widths}}"
@@ -168,7 +168,7 @@ reviewer:
     caseReplaySummary: 本期重放汇总：
     # 没绑过仓位就归档的计划
     cancelledHeader: 没成交就撤掉的限价单（归档后 24 小时内的 5m K线）：
-    cancelledRow: "- {{symbol}} {{side}} 限价 {{limit}} 止损 {{stop}} 目标 {{target}}，{{closed}} 归档 ｜ 之后价格{{touched}}限价位，{{reached}}原目标"
+    cancelledRow: "- {{symbol}} {{side}} 限价 {{limit}} 止损 {{stop}} 目标 {{target}}，{{closed}} 归档 ｜ 之后价格{{touched}}限价位，{{targetsAfter}}"
     reached: 到过
     notReached: 没到过
     caseHourly: "  1h 收盘：{{closes}}"

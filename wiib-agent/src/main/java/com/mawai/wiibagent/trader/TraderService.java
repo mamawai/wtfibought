@@ -19,6 +19,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
+import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
@@ -65,6 +66,7 @@ public class TraderService {
     private final BinanceProperties binanceProperties;
     private final TraderPlanStore planStore;
     private final TraderWatchStore watchStore;
+    private final TraderTrailStore trailStore;
     /** 删除时拦在途唤醒、清进程内那两份按 traderId 的记账 */
     private final TraderScheduler scheduler;
     private final TraderLiveHub hub;
@@ -252,6 +254,7 @@ public class TraderService {
         // 本局存活计划随重置归档（不删）：论点/失效条件/修订史是公开凭证，也是reviewer的复盘原料
         planStore.archiveRound(t.getId(), t.getRoundNo(), System.currentTimeMillis());
         watchStore.archiveRound(t.getId(), t.getRoundNo());
+        trailStore.purgeAll(t.getId());
         LambdaUpdateWrapper<AiTrader> upd = new LambdaUpdateWrapper<AiTrader>()
                 .eq(AiTrader::getId, t.getId())
                 .set(AiTrader::getRoundNo, newRound)
@@ -297,6 +300,7 @@ public class TraderService {
                 .eq(AiTraderDecision::getTraderId, t.getId()));
         planStore.purgeAll(t.getId());
         watchStore.purgeAll(t.getId());
+        trailStore.purgeAll(t.getId());
         ledger.purgeAll(t.getId());
         traderMapper.deleteById(t.getId());
         endpointService.bind(userId, UserLlmBinding.TRADER, null);

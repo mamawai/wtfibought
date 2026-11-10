@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
+import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.config.BinanceProperties;
@@ -149,7 +150,8 @@ class TraderWakeupLoopTest {
             mock(DerivativesToolkit.class), mock(WhaleToolkit.class),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             mock(CrossAssetToolkit.class),
-            traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), watchStore, langResolver,
+            traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), watchStore,
+            mock(TraderTrailStore.class), langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
             wakeObservation,
             mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger,
@@ -247,7 +249,7 @@ class TraderWakeupLoopTest {
         // 先建好再 stub：thenReturn 参数里嵌套 when() 是 UnfinishedStubbing
         ChatModel model = modelOpeningThenSummary("""
                 {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfitPrice":110000,
+                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                  "invalidationCondition":"1h收盘跌回前高98000下方"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
@@ -314,7 +316,7 @@ class TraderWakeupLoopTest {
         AssistantMessage openCall = AssistantMessage.builder().content("")
                 .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "open_position", """
                         {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                         "limitPrice":null,"stopLossPrice":95000,"takeProfitPrice":110000,
+                         "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                          "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                          "invalidationCondition":"1h收盘跌回前高98000下方"}""")))
                 .build();
@@ -495,7 +497,7 @@ class TraderWakeupLoopTest {
         // 杠杆50违规 → TradeGuard 拒绝 → 模型收到拒绝原因后给总结
         ChatModel model = modelOpeningThenSummary("""
                 {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":50,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfitPrice":null,
+                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[],
                  "playType":"BREAKOUT","signalsUsed":"x","invalidationCondition":"跌回箱体"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
@@ -595,7 +597,7 @@ class TraderWakeupLoopTest {
         when(planMapper.selectList(any())).thenReturn(List.of());
         ChatModel model = modelOpeningThenSummary("""
                 {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfitPrice":110000,
+                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高",
                  "invalidationCondition":"1h收盘跌回98000下方"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
@@ -668,7 +670,7 @@ class TraderWakeupLoopTest {
         stubHealthyAccount();
         ChatModel model = modelOpeningThenSummary("""
                 {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfitPrice":110000,
+                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                  "invalidationCondition":"1h收盘跌回前高98000下方"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);

@@ -35,12 +35,12 @@ export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, id
     return () => clearInterval(timer);
   }, []);
 
-  // 最近几行里找第一条真醒来的：最近一行可能是 08:00 的复盘，也可能是跳过的
+  // 最近几行里找第一条真醒来的：最近一行可能是 08:00 的复盘、平台代它执行的预案，也可能是跳过的
   const [last, setLast] = useState<AiTraderDecisionView | null>(null);
   useEffect(() => {
     let stale = false;
     traderApi.decisions(traderId, 5)
-      .then(v => { if (!stale) setLast(v.find(d => d.kind !== 'REVIEW' && d.status !== 'SKIPPED') ?? null); })
+      .then(v => { if (!stale) setLast(v.find(d => d.kind !== 'REVIEW' && d.kind !== 'PRESET' && d.status !== 'SKIPPED') ?? null); })
       .catch(() => {});
     return () => { stale = true; };
   }, [traderId, refreshKey]);

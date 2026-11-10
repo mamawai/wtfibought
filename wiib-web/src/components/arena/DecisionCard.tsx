@@ -49,8 +49,8 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
     // token 为 null＝上游端点没报 usage，显示「—」而不是 0：0 会被读成"这轮没花钱"
     d.modelCalls != null && `${d.totalTokens == null ? '—' : fmtTokens(d.totalTokens)} tok`,
     d.latencyMs != null && `${(d.latencyMs / 1000).toFixed(1)}s`,
-    // 复盘无工具（单次调用）不显示"0次工具"占位
-    !isReview && t('detail.toolCalls', { count: d.toolCalls }),
+    // 复盘无工具（单次调用）不显示"0次工具"占位；预案那一行不是模型调的工具，也不显示
+    !isReview && d.kind !== 'PRESET' && t('detail.toolCalls', { count: d.toolCalls }),
     d.modelCalls != null && t('detail.modelCalls', { count: d.modelCalls }),
   ].filter(Boolean).join(' · ');
 

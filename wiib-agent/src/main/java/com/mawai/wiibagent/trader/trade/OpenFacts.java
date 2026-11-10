@@ -5,12 +5,14 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 开仓回执里这笔单子的事实：往返手续费估算、止损距离（% 与心跳周期 ATR 倍数）、扣费后盈亏比、
- * 止损打掉亏权益的百分比。只报数不评价。入场参考价：市价单按标记价、限价单按限价。
+ * 开仓回执里这笔单子的事实：往返手续费估算、止损距离（% 与心跳周期 ATR 倍数）、止损打掉亏权益的百分比；
+ * 设了止盈的再给各档全部成交的盈利和扣费后盈亏比，没设就没有这两项。只报数不评价。
+ * 入场参考价：市价单按标记价、限价单按限价。
  */
 final class OpenFacts {
 
@@ -24,18 +26,28 @@ final class OpenFacts {
         BigDecimal openRate = "LIMIT".equals(req.orderType()) ? FuturesFeeRates.MAKER : FuturesFeeRates.TAKER;
         BigDecimal fee = notional.multiply(openRate.add(FuturesFeeRates.TAKER));
         BigDecimal stopDist = stopDistance(req, entryRef);
-        BigDecimal targetDist = req.takeProfitPrice().subtract(entryRef).abs();
         BigDecimal lossAtStop = stopDist.multiply(req.quantity()).add(fee);
-        BigDecimal gainAtTarget = targetDist.multiply(req.quantity()).subtract(fee);
         ObjectNode f = MAPPER.createObjectNode();
         f.put("entryRef", entryRef);
         f.put("notional", usdt(notional));
         f.put("feeRoundTrip", usdt(fee));
         f.put("stopDistancePct", pct(stopDist, entryRef));
         f.put("lossAtStop", usdt(lossAtStop));
-        f.put("gainAtTarget", usdt(gainAtTarget));
-        f.put("rewardRiskAfterFees", gainAtTarget.divide(lossAtStop, 2, RoundingMode.HALF_UP));
         f.put("riskPctOfEquity", pct(lossAtStop, equity));
+        if (!req.takeProfits().isEmpty()) {
+            // 各档都成交的盈利；占比合计不到 100 的，剩下那部分仓位不算
+            List<BigDecimal> quantities = TargetRung.quantities(req.takeProfits(), req.quantity(), req.symbol());
+            BigDecimal gain = fee.negate();
+            BigDecimal covered = BigDecimal.ZERO;
+            for (int i = 0; i < quantities.size(); i++) {
+                TargetRung rung = req.takeProfits().get(i);
+                gain = gain.add(rung.price().subtract(entryRef).abs().multiply(quantities.get(i)));
+                covered = covered.add(rung.percent());
+            }
+            f.put("gainAtTargets", usdt(gain));
+            f.put("rewardRiskAfterFees", gain.divide(lossAtStop, 2, RoundingMode.HALF_UP));
+            f.put("targetsCoverPct", covered);
+        }
         return f;
     }
 

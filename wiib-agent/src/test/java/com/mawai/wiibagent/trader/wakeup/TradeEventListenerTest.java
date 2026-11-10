@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.market.TradeEvent;
 import org.junit.jupiter.api.Test;
@@ -29,8 +30,9 @@ class TradeEventListenerTest {
 
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final TraderScheduler scheduler = mock(TraderScheduler.class);
+    private final TraderTrailStore trailStore = mock(TraderTrailStore.class);
     private final TradeEventListener listener =
-            new TradeEventListener(mock(RedisMessageListenerContainer.class), traderMapper, scheduler);
+            new TradeEventListener(mock(RedisMessageListenerContainer.class), traderMapper, scheduler, trailStore);
 
     private static TradeEvent event() {
         return new TradeEvent(TradeEvent.LIMIT_FILLED, 42L, 9L, 100L, "BTCUSDT", "LONG",
@@ -40,11 +42,12 @@ class TradeEventListenerTest {
     private static AiTrader trader() {
         AiTrader t = new AiTrader();
         t.setId(7L);
+        t.setRoundNo(1);
         t.setSimUserId(42L);
         return t;
     }
 
-    /** 事件里的 sim 用户是某个 RUNNING trader 的子账户 → 以 EventTrigger 交给调度器 */
+    /** 事件里的 sim 用户是某个 RUNNING trader 的子账户 → 以 EventTrigger 交给调度器；限价成交的顺手把挂单带的跟踪止损绑上仓位 */
     @Test
     void wakesTraderOwningTheSimAccount() {
         AiTrader t = trader();
@@ -52,6 +55,7 @@ class TradeEventListenerTest {
 
         listener.onEvent(event());
 
+        verify(trailStore).bind(7L, 1, "BTCUSDT", "LONG", 9L);
         verify(scheduler).tryTriggerWake(eq(7L),
                 argThat((WakeTrigger tr) -> tr instanceof EventTrigger e && e.event().equals(event())));
     }

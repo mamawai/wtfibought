@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 
 /**
  * 盯盘条件存取。一个币一组，set_watch 整组替换：旧的 ARMED 标 REPLACED，新的插成 ARMED；哨兵命中标 FIRED；
+ * 带预案动作的，执行结果记在 action_ok / action_result；
  * 哪轮唤醒把这次命中告诉了模型，记在 woke_at。归档不删：时间线和复盘要看它当时布了什么。
  * 在盯的名单一变就广播 {@link WatchesChanged}，哨兵重载。单 trader 唤醒串行（调度层互斥），select-then-write 无并发问题。
  */
@@ -87,14 +88,19 @@ public class TraderWatchStore {
                 .stream().map(AiTraderWatch::getId).collect(Collectors.toSet());
     }
 
-    /** 整组替换一个币的条件（已过 TradeGuard.validateWatch）；空列表就是清掉。一个事务：旧的作废和新的落库同进退 */
+    /**
+     * 整组替换一个币的条件（已过 TradeGuard.validateWatch）；空列表就是清掉。一个事务：旧的作废和新的落库同进退
+     *
+     * @param actions 和 specs 一一对应的预案动作 JSON，没带动作的那条为 null
+     */
     @Transactional
-    public void replace(long traderId, int roundNo, String symbol, List<WatchSpec> specs, long wakeTime) {
+    public void replace(long traderId, int roundNo, String symbol, List<WatchSpec> specs, List<String> actions, long wakeTime) {
         retire(new LambdaUpdateWrapper<AiTraderWatch>()
                 .eq(AiTraderWatch::getTraderId, traderId)
                 .eq(AiTraderWatch::getRoundNo, roundNo)
                 .eq(AiTraderWatch::getSymbol, symbol));
-        for (WatchSpec s : specs) {
+        for (int i = 0; i < specs.size(); i++) {
+            WatchSpec s = specs.get(i);
             AiTraderWatch w = new AiTraderWatch();
             w.setTraderId(traderId);
             w.setRoundNo(roundNo);
@@ -104,6 +110,7 @@ public class TraderWatchStore {
             w.setPeriod(s.kind().startsWith("CLOSE_") ? s.period() : null);
             w.setAtTime(AiTraderWatch.AT_TIME.equals(s.kind()) ? TradeGuard.parseWatchTime(s.at()) : null);
             w.setNote(s.note());
+            w.setActionJson(actions.get(i));
             w.setStatus(AiTraderWatch.STATUS_ARMED);
             w.setCreatedWakeTime(wakeTime);
             mapper.insert(w);
@@ -120,6 +127,15 @@ public class TraderWatchStore {
                 .set(AiTraderWatch::getFiredAt, at)
                 .set(AiTraderWatch::getFiredPrice, price)
                 .set(AiTraderWatch::getUpdatedAt, LocalDateTime.now())) == 1;
+    }
+
+    /** 预案执行完：结果记到这条条件上 */
+    public void recordAction(long id, boolean ok, String result) {
+        mapper.update(null, new LambdaUpdateWrapper<AiTraderWatch>()
+                .eq(AiTraderWatch::getId, id)
+                .set(AiTraderWatch::getActionOk, ok)
+                .set(AiTraderWatch::getActionResult, result)
+                .set(AiTraderWatch::getUpdatedAt, LocalDateTime.now()));
     }
 
     /** 重置开新局：本局还在盯的全部作废 */

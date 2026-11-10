@@ -1,12 +1,12 @@
 import { useTranslation } from 'react-i18next';
 
-/** 各种叫醒原因的徽章配色：例行墨色、盯盘触发橙、持仓有变化和剧烈波动黄、手动灰 */
+/** 各种叫醒原因的徽章配色：例行墨色、盯盘触发和预案执行橙、持仓有变化和剧烈波动黄、手动灰 */
 export const KIND_CHIP: Record<string, string> = {
-  TRADE: '', WATCH: 'border-primary text-primary', EVENT: 'wn', ALERT: 'wn', MANUAL: 'mute',
+  TRADE: '', WATCH: 'border-primary text-primary', PRESET: 'border-primary text-primary', EVENT: 'wn', ALERT: 'wn', MANUAL: 'mute',
 };
 
 /**
- * 叫醒它的原因说人话：例行 · 1h / 盯盘触发 / 持仓有变化 / 剧烈波动 / 你叫醒的。
+ * 叫醒它的原因说人话：例行 · 1h / 盯盘触发 / 持仓有变化 / 剧烈波动 / 你叫醒的；预案执行那一行没叫醒它，是平台代它动的手。
  * mine=看的是自己的 trader：手动唤醒说「你叫醒的」，别人看是「主人叫醒的」
  */
 export function useKindLabel() {

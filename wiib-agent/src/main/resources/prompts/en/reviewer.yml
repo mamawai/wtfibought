@@ -159,15 +159,15 @@ reviewer:
       days: "{{n}}d"
 
     # ---- case material ----
-    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line; fractions use the plan's original target / stop distance as denominator. In a replay row R = the distance from entry to the original stop: walked bar by bar on 5m candles from the first one after entry out to 72h after entry, a bar touching both stop and target counts as the stop; at the wider stops the target is unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms, fees ignored)"
+    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line; R = the distance from entry to the plan's original stop, the unit of both the path row and the replay row. A target is written as price(percent of the position it closes), several rungs for a laddered take-profit, none when no take-profit was set. Replay: walked bar by bar on 5m candles from the first one after entry out to 72h after entry, a bar touching both the stop and a take-profit rung counts as the stop; each rung reached settles its share and the rest of the position walks on, and the trade is decided only once the whole position is settled — target means a rung was reached and the whole position settled (a remainder stopped out later is in the P&L), and a trade with no take-profit can only end as stop or undecided; at the wider stops the rungs are unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms, fees ignored)"
     casesNone: No closed trades in the window
     caseGroup: "★ {{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGroupOther: "{{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGeneral: untyped
     caseTrade: "- {{symbol}} {{side}} {{opened}} → {{closed}} (held {{held}}) | entry {{entry}} stop {{stop}} target {{target}} exit {{exit}}, {{manner}} | net {{pnl}}, funding {{funding}}"
-    casePath: "  Path: max favourable {{mfe}} ({{mfeAt}}, {{mfeFrac}} of target) | max adverse {{mae}} ({{maeFrac}} of stop) | minutes to 25% / 50% of target {{t25}} / {{t50}} | first close back through entry {{firstBack}} | best price 4h / 24h after exit {{best4}} / {{best24}}, {{targetAfter}}"
-    caseTargetHit: later reached the original target
-    caseTargetMiss: never reached the original target afterwards
+    casePath: "  Path: max favourable {{mfe}} ({{mfeAt}}, {{mfeR}}) | max adverse {{mae}} ({{maeR}}) | minutes to +0.5R / +1R {{tHalf}} / {{t1}} | first close back through entry {{firstBack}} | best price 4h / 24h after exit {{best4}} / {{best24}}, {{targetsAfter}}"
+    caseTargetsAfter: reached {{hit}}/{{total}} of the original targets
+    caseNoTarget: no take-profit was set
     caseAfterShort: not enough data after the exit
     # Replay row (CaseFileBuilder.Replay): actual R, direction over the 24h after entry, outcome per stop width
     caseReplay: "  Replay: actual {{actual}} | within 24h of entry max favourable {{fav}}, max adverse {{adv}}, held 24h with no stop {{hold}} | stop {{widths}}"
@@ -182,7 +182,7 @@ reviewer:
     caseReplaySummary: "This period's replay summary:"
     # Plans archived without ever binding a position
     cancelledHeader: "Limit orders cancelled unfilled (5m candles over the 24h after archiving):"
-    cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, archived {{closed}} | afterwards price {{touched}} the limit level and {{reached}} the original target"
+    cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, archived {{closed}} | afterwards price {{touched}} the limit level; {{targetsAfter}}"
     reached: reached
     notReached: never reached
     caseHourly: "  1h closes: {{closes}}"

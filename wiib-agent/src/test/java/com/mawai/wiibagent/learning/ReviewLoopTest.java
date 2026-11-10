@@ -149,7 +149,7 @@ class ReviewLoopTest {
         plan.setSignalsUsed("突破前高100200");
         plan.setInvalidationCondition("1h收盘跌回99500下方");
         plan.setStopLossPrice(new BigDecimal("99000"));
-        plan.setTakeProfitPrice(new BigDecimal("102000"));
+        plan.setTakeProfitsJson("[{\"price\":102000,\"percent\":100}]");
         plan.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":320,\"stopAtr\":3.1,\"stopPct\":1.0,\"hourBj\":9,\"orderType\":\"MARKET\",\"leverage\":20}");
         plan.setStatus(AiTraderPlan.STATUS_CLOSED);
         plan.setOpenedWakeTime(openMs);
@@ -241,8 +241,8 @@ class ReviewLoopTest {
         String all = prompt.getValue().getInstructions().stream().map(Message::getText).reduce("", String::concat);
         assertThat(all).contains("起始权益 10000.00").contains("-0.11%");                       // 战绩表
         assertThat(all).contains("★ BREAKOUT（1 笔，0 胜，净 -11）");                             // 案例组
-        assertThat(all).contains("最大浮盈 100900").contains("目标的 45%")                        // 路径
-                .contains("最大逆向 98850").contains("止损的 115%")
+        assertThat(all).contains("最大浮盈 100900").contains("+0.90R")                            // 路径
+                .contains("最大逆向 98850（-1.15R）")
                 .contains("出场后 4h / 24h 最有利 — / —，出场后数据不足");
         assertThat(all).contains("1h ADX 31.2 ｜ 1h 布林带宽 2.8").contains("止损 3.1 个 ATR");   // 入场上下文
         assertThat(all).contains("论点 突破前高100200").contains("失效 1h收盘跌回99500下方");       // 计划

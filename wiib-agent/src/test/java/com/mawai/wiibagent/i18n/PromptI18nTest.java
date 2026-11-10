@@ -563,7 +563,7 @@ class PromptI18nTest {
                 closedPos("300", FROM + 3600_000, FROM + 7200_000)));
         AiTraderPlan plan = plan(AiTraderPlan.STATUS_CLOSED);
         plan.setStopLossPrice(new BigDecimal("99000"));
-        plan.setTakeProfitPrice(new BigDecimal("104000"));
+        plan.setTakeProfitsJson("[{\"price\":104000,\"percent\":100}]");
         plan.setRevisionsJson("[{\"time\":\"x\",\"type\":\"stop_loss\",\"change\":\"99000->99500\",\"reason\":\"lock\"}]");
         plan.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":300,\"stopAtr\":3.3,\"stopPct\":1.0,\"hourBj\":9,"
                 + "\"orderType\":\"MARKET\",\"leverage\":10}");

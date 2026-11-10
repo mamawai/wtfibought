@@ -73,18 +73,19 @@ class CaseFileBuilderTest {
         CaseFileBuilder.Path p = c.path();
         assertThat(p.mfePrice()).isEqualByComparingTo("105.6");
         assertThat(p.mfeAt()).isEqualTo(T0 + 2 * M5);
-        assertThat(p.mfeFrac()).isEqualByComparingTo("0.56");
+        // R = 100 − 95 = 5：最大浮盈 5.6 是 1.12R，最大逆向 4.8 是 0.96R
+        assertThat(p.mfeR()).isEqualByComparingTo("1.12");
         assertThat(p.maePrice()).isEqualByComparingTo("95.2");
-        assertThat(p.maeFrac()).isEqualByComparingTo("0.96");
-        assertThat(p.minTo25()).isEqualTo(5);
-        assertThat(p.minTo50()).isEqualTo(10);
+        assertThat(p.maeR()).isEqualByComparingTo("0.96");
+        assertThat(p.minToHalfR()).isEqualTo(5);
+        assertThat(p.minTo1R()).isEqualTo(10);
         assertThat(p.firstBackAt()).isEqualTo(T0 + 5 * M5);
         assertThat(p.hourly()).hasSize(1);
         assertThat(p.hourly().getFirst().high()).isEqualByComparingTo("105.6");
         assertThat(p.hourly().getFirst().close()).isEqualByComparingTo("95");
         assertThat(p.bestAfter4h()).isEqualByComparingTo("111");
         assertThat(p.bestAfter24h()).isEqualByComparingTo("112");
-        assertThat(p.targetAfter24h()).isTrue();
+        assertThat(p.targetsAfter24h()).isEqualTo(1);
     }
 
     @Test
@@ -109,15 +110,15 @@ class CaseFileBuilderTest {
         CaseFileBuilder.Path p = builder.build(pos, plan("105", "90", null)).path();
 
         assertThat(p.mfePrice()).isEqualByComparingTo("94");
-        assertThat(p.mfeFrac()).isEqualByComparingTo("0.60");
+        assertThat(p.mfeR()).isEqualByComparingTo("1.20");
         assertThat(p.maePrice()).isEqualByComparingTo("104.9");
-        assertThat(p.maeFrac()).isEqualByComparingTo("0.98");
-        assertThat(p.minTo25()).isEqualTo(5);
-        assertThat(p.minTo50()).isEqualTo(10);
+        assertThat(p.maeR()).isEqualByComparingTo("0.98");
+        assertThat(p.minToHalfR()).isEqualTo(5);
+        assertThat(p.minTo1R()).isEqualTo(10);
         assertThat(p.firstBackAt()).isEqualTo(T0 + 4 * M5);
         assertThat(p.bestAfter4h()).isEqualByComparingTo("89");
         assertThat(p.bestAfter24h()).isNull();
-        assertThat(p.targetAfter24h()).isNull();
+        assertThat(p.targetsAfter24h()).isNull();
     }
 
     /** 出场后一根都覆盖不到 4h：三个出场后指标全空 */
@@ -132,7 +133,7 @@ class CaseFileBuilderTest {
         assertThat(p.mfePrice()).isEqualByComparingTo("101");
         assertThat(p.bestAfter4h()).isNull();
         assertThat(p.bestAfter24h()).isNull();
-        assertThat(p.targetAfter24h()).isNull();
+        assertThat(p.targetsAfter24h()).isNull();
     }
 
     @Test
@@ -142,10 +143,10 @@ class CaseFileBuilderTest {
         CaseFileBuilder.Path p = builder.build(position("LONG", "100", "95", T0, T0 + M5), null).path();
 
         assertThat(p.mfePrice()).isNull();
-        assertThat(p.mfeFrac()).isNull();
-        assertThat(p.minTo25()).isNull();
+        assertThat(p.mfeR()).isNull();
+        assertThat(p.minToHalfR()).isNull();
         assertThat(p.hourly()).isEmpty();
-        assertThat(p.targetAfter24h()).isNull();
+        assertThat(p.targetsAfter24h()).isNull();
     }
 
     /**
@@ -177,6 +178,54 @@ class CaseFileBuilderTest {
         assertThat(r.widths().get(2).r()).isEqualByComparingTo("1.5");
         assertThat(r.widths().get(3).r()).isEqualByComparingTo("1");
         assertThat(r.untouched().r()).isEqualByComparingTo("-1");
+    }
+
+    /**
+     * 分批止盈和没设止盈的重放，K 线同上：多单入场 100、止损 98（R=2）。
+     * 两档 102(50%) / 106(50%)：第一根到 103 先了结一半（+0.5×2）；止损原样时下一根 97.6 打掉剩下一半（−0.5×2），合计 0R；
+     * 1.5 倍（97）在同根两头都碰的那根被止损，(1 − 0.5×3)÷3 = −0.17；2 倍、3 倍第二档也到了，(1 + 0.5×6)÷4 = 1、÷6 = 0.67。
+     * 没设止盈：止损原样和 1.5 倍被打，2 倍、3 倍没碰到止损就是未决。
+     */
+    @Test
+    void replaySettlesLadderRungByRungAndNeverReachesTargetWithoutOne() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 110, 90, 100}),
+                bar(T0 + M5, new double[]{100, 103, 99.5, 102}),
+                bar(T0 + 2 * M5, new double[]{102, 102.5, 97.6, 98.5}),
+                bar(T0 + 3 * M5, new double[]{98.5, 106.5, 96.5, 105}),
+                bar(T0 + 287 * M5, new double[]{105, 105.5, 104, 104.5})));
+        FuturesPositionDTO pos = position("LONG", "100", "98", T0 + 60_000L, T0 + 12 * 60_000L);
+        AiTraderPlan ladder = plan("98", null, null);
+        ladder.setTakeProfitsJson("[{\"price\":106,\"percent\":50},{\"price\":102,\"percent\":50}]");
+
+        List<CaseFileBuilder.WidthOutcome> laddered = builder.replay(pos, ladder).widths();
+        List<CaseFileBuilder.WidthOutcome> noTarget = builder.replay(pos, plan("98", null, null)).widths();
+
+        assertThat(laddered).allMatch(w -> w.outcome() == CaseFileBuilder.Outcome.TARGET);
+        assertThat(laddered).extracting(w -> w.r().toPlainString()).containsExactly("0.00", "-0.17", "1.00", "0.67");
+        assertThat(noTarget).extracting(CaseFileBuilder.WidthOutcome::outcome).containsExactly(
+                CaseFileBuilder.Outcome.STOP, CaseFileBuilder.Outcome.STOP,
+                CaseFileBuilder.Outcome.OPEN, CaseFileBuilder.Outcome.OPEN);
+    }
+
+    /** 撤掉的限价单：归档后价格到没到过限价位、到过几档止盈 */
+    @Test
+    void cancelledLimitCountsTargetsReachedAfterwards() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 103, 99.5, 102}),
+                bar(T0 + M5, new double[]{102, 104.5, 101, 104})));
+        AiTraderPlan plan = plan("96", null, null);
+        plan.setSymbol("BTCUSDT");
+        plan.setSide("LONG");
+        plan.setEntryPrice(new BigDecimal("99"));
+        plan.setClosedWakeTime(T0);
+        plan.setTakeProfitsJson("[{\"price\":104,\"percent\":50},{\"price\":108,\"percent\":50}]");
+
+        CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(plan);
+
+        // 最低 99.5 没回到限价 99；最高 104.5 到过第一档
+        assertThat(c.touchedLimit()).isFalse();
+        assertThat(c.reachedTargets()).isEqualTo(1);
     }
 
     /** K 线没覆盖到开仓后 24 小时：拿满 24 小时的位置留空，两头都没碰到的记未决 */
@@ -321,7 +370,8 @@ class CaseFileBuilderTest {
         AiTraderPlan plan = new AiTraderPlan();
         plan.setPlayType("PULLBACK");
         plan.setStopLossPrice(new BigDecimal(stop));
-        plan.setTakeProfitPrice(new BigDecimal(target));
+        // 一档 100% 的止盈；target 传 null 就是没设止盈
+        plan.setTakeProfitsJson(target == null ? null : "[{\"price\":" + target + ",\"percent\":100}]");
         plan.setEntryCtxJson(ctx);
         return plan;
     }

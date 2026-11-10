@@ -166,7 +166,7 @@ class PlayStatsAssemblerTest {
             positions.add(p);
             AiTraderPlan pl = plan("PULLBACK", open, false);
             pl.setStopLossPrice(new BigDecimal("98"));
-            pl.setTakeProfitPrice(new BigDecimal("106"));
+            pl.setTakeProfitsJson("[{\"price\":106,\"percent\":100}]");
             plans.add(pl);
             when(historyStore.load(eq("BTCUSDT"), eq("5m"), eq(open), anyLong())).thenReturn(List.of(
                     new KlineBar(open + 300_000L, open + 599_999L, new BigDecimal("100"), new BigDecimal("100.5"),

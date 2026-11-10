@@ -5,10 +5,10 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
-import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import lombok.RequiredArgsConstructor;
@@ -52,7 +52,8 @@ public class TraderChatService {
     static final int DEFAULT_TRADES = 10;
     private static final int RECENT_CLOSED_PLANS = 5;
     private static final List<String> ALL_KINDS =
-            Stream.concat(AiTraderDecision.WAKE_KINDS.stream(), Stream.of(AiTraderDecision.KIND_REVIEW)).toList();
+            Stream.concat(AiTraderDecision.WAKE_KINDS.stream(),
+                    Stream.of(AiTraderDecision.KIND_REVIEW, AiTraderDecision.KIND_PRESET)).toList();
 
     private final TraderService traderService;
     private final TraderModelFactory modelFactory;
@@ -134,7 +135,10 @@ public class TraderChatService {
                 row.set("currentStopLoss", MAPPER.valueToTree(p.getStopLosses().stream().map(FuturesStopLoss::getPrice).toList()));
             }
             if (p.getTakeProfits() != null && !p.getTakeProfits().isEmpty()) {
-                row.set("currentTakeProfit", MAPPER.valueToTree(p.getTakeProfits().stream().map(FuturesTakeProfit::getPrice).toList()));
+                ArrayNode tps = MAPPER.createArrayNode();
+                p.getTakeProfits().forEach(tp -> tps.add(MAPPER.createObjectNode()
+                        .put("price", tp.getPrice()).put("quantity", tp.getQuantity())));
+                row.set("currentTakeProfit", tps);
             }
             arr.add(row);
         }
@@ -251,7 +255,7 @@ public class TraderChatService {
                         .put("signalsUsed", r.plan().getSignalsUsed())
                         .put("invalidationCondition", r.plan().getInvalidationCondition())
                         .put("originalStop", r.plan().getStopLossPrice())
-                        .put("target", r.plan().getTakeProfitPrice());
+                        .set("targets", MAPPER.valueToTree(TargetRung.of(r.plan())));
             }
             if (r.openDecision() != null) {
                 row.put("openDecisionAt", time(r.openDecision().wakeTime()));
@@ -294,8 +298,8 @@ public class TraderChatService {
                 .put("invalidationCondition", p.getInvalidationCondition())
                 .put("entryPrice", p.getEntryPrice())
                 .put("originalStop", p.getStopLossPrice())
-                .put("target", p.getTakeProfitPrice())
                 .put("openedAt", time(p.getOpenedWakeTime()));
+        row.set("targets", MAPPER.valueToTree(TargetRung.of(p)));
         if (p.getClosedWakeTime() != null) {
             row.put("closedAt", time(p.getClosedWakeTime()));
         }

@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderTrail;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -114,10 +115,11 @@ public class WakeObservation {
      * @param firedQuietly 命中了还没哪轮告诉过它的盯盘条件，进"自上次唤醒以来"补报
      * @param armed        还在盯的盯盘条件，进承诺块
      * @param marks        各币标记价，承诺块算"离价位多远"用；没有的币不带距离
+     * @param trails       在跟的跟踪止损规则（按 symbol|side），进账户块的持仓行和挂单行
      */
     Pack assemble(AiTrader trader, Collection<String> symbols, BigDecimal equity, List<FuturesPositionDTO> positions,
                   List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Reconcile reconcile,
-                  List<RecentWake> recent, long boundaryTime, AgentLang lang,
+                  Map<String, AiTraderTrail> trails, List<RecentWake> recent, long boundaryTime, AgentLang lang,
                   List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly, List<AiTraderWatch> armed,
                   Map<String, BigDecimal> marks) {
         StringBuilder sb = new StringBuilder();
@@ -126,7 +128,7 @@ public class WakeObservation {
             for (AiTraderWatch w : hitsNow) {
                 sb.append(prompts.get(lang, "trader.wake.watchHitLine", Map.of(
                         "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
-                        "note", w.getNote()))).append('\n');
+                        "note", WatchText.note(w, prompts, lang)))).append('\n');
             }
         }
         sb.append(events(reconcile.events(), firedQuietly, lang));
@@ -140,7 +142,7 @@ public class WakeObservation {
         }
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
                 .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(),
-                        boundaryTime, paths)).append('\n');
+                        trails, boundaryTime, paths)).append('\n');
         RecentWake concluded = latestConcluded(recent);
         sb.append('\n').append(lastConclusion(concluded, lang));
         String commitments = commitments(trader, symbols, positions, pendingOrders, reconcile.live(),
@@ -273,7 +275,7 @@ public class WakeObservation {
             sb.append(prompts.get(lang, "trader.wake.eventWatchFired", Map.of(
                     "time", BeijingTime.format(w.getFiredAt()),
                     "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
-                    "note", w.getNote()))).append('\n');
+                    "note", WatchText.note(w, prompts, lang)))).append('\n');
         }
         for (TraderPlanStore.Event e : events) {
             AiTraderPlan p = e.plan();
@@ -328,7 +330,7 @@ public class WakeObservation {
     // ==================== 承诺块 ====================
 
     /**
-     * 承诺块：持仓与挂单各一行（失效条件 + 刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（离现价多远 / 还有多久）、
+     * 承诺块：持仓与挂单各一行（失效条件 + 刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（离现价多远 / 还有多久，带预案的跟上命中后平台会做什么）、
      * 上一轮每个币的等待行一行（那个币一条条件都没布就说一句）。只列事实，判断留给模型。一条都没有返回空串
      */
     private String commitments(AiTrader trader, Collection<String> symbols, List<FuturesPositionDTO> positions,
@@ -364,11 +366,13 @@ public class WakeObservation {
             if (AiTraderWatch.AT_TIME.equals(w.getKind())) {
                 lines.add(prompts.get(lang, "trader.wake.commitWatchTime", Map.of(
                         "symbol", w.getSymbol(), "at", BeijingTime.format(w.getAtTime()), "note", w.getNote(),
-                        "minutes", Math.max(0, (w.getAtTime() - boundaryTime + 59_999) / 60_000))));
+                        "minutes", Math.max(0, (w.getAtTime() - boundaryTime + 59_999) / 60_000)))
+                        + WatchText.action(w, prompts, lang));
             } else {
                 lines.add(prompts.get(lang, "trader.wake.commitWatchPrice", Map.of(
                         "symbol", w.getSymbol(), "condition", WatchText.armed(w, prompts, lang), "note", w.getNote(),
-                        "distance", distance(w.getLevel(), marks.get(w.getSymbol()), lang))));
+                        "distance", distance(w.getLevel(), marks.get(w.getSymbol()), lang)))
+                        + WatchText.action(w, prompts, lang));
             }
         }
         Set<String> armedSymbols = armed.stream().map(AiTraderWatch::getSymbol).collect(Collectors.toSet());

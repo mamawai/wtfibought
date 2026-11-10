@@ -15,6 +15,7 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
 import java.time.ZonedDateTime;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,10 +41,12 @@ class TraderWatchStoreTest {
 
     @Test
     void replaceRetiresOldAndInsertsNew() {
+        String action = "{\"type\":\"CLOSE\",\"positionId\":5,\"closePercent\":50,\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"}";
         store.replace(7L, 1, "BTCUSDT", List.of(
-                new WatchSpec("TOUCH_ABOVE", 65000.0, null, null, "突破前高看追多"),
-                new WatchSpec("CLOSE_BELOW", 62000.0, "1h", null, "区间失守"),
-                new WatchSpec("AT_TIME", null, null, "2026-07-27 20:20", "CPI 前看一眼")), 1785171600000L);
+                new WatchSpec("TOUCH_ABOVE", 65000.0, null, null, "突破前高看追多", null),
+                new WatchSpec("CLOSE_BELOW", 62000.0, "1h", null, "区间失守", null),
+                new WatchSpec("AT_TIME", null, null, "2026-07-27 20:20", "CPI 前看一眼", null)),
+                Arrays.asList(null, action, null), 1785171600000L);
 
         verify(mapper).update(isNull(), any(LambdaUpdateWrapper.class));
         ArgumentCaptor<AiTraderWatch> rows = ArgumentCaptor.forClass(AiTraderWatch.class);
@@ -53,6 +56,9 @@ class TraderWatchStoreTest {
         assertThat(touch.getLevel()).isEqualByComparingTo("65000");
         assertThat(touch.getPeriod()).isNull();
         assertThat(touch.getAtTime()).isNull();
+        // 预案动作跟着对应的那条条件落库
+        assertThat(touch.getActionJson()).isNull();
+        assertThat(rows.getAllValues().get(1).getActionJson()).isEqualTo(action);
         assertThat(touch.getStatus()).isEqualTo(AiTraderWatch.STATUS_ARMED);
         assertThat(touch.getCreatedWakeTime()).isEqualTo(1785171600000L);
         assertThat(touch.getNote()).isEqualTo("突破前高看追多");
@@ -86,7 +92,7 @@ class TraderWatchStoreTest {
     /** 传空只清掉，不插任何行 */
     @Test
     void emptyListOnlyClears() {
-        store.replace(7L, 1, "BTCUSDT", List.of(), 1785171600000L);
+        store.replace(7L, 1, "BTCUSDT", List.of(), List.of(), 1785171600000L);
 
         verify(mapper).update(isNull(), any(LambdaUpdateWrapper.class));
         verify(mapper, never()).insert(any(AiTraderWatch.class));

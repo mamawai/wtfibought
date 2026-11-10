@@ -162,7 +162,7 @@ class TraderPromptAssemblerTest {
                 .contains("不引数字的反对视为没有反对")
                 .contains("主人留言：已执行")
                 .as("收尾标记与系统提示词同源").contains("[本轮结论]")
-                .as("开仓类留言：硬性字段自己补齐，不是拒绝理由").contains("止损、止盈、失效条件、论点标签由你自己补齐")
+                .as("开仓类留言：硬性字段自己补齐，不是拒绝理由").contains("止损、失效条件、论点标签由你自己补齐")
                 .as("反重放跟正文同位置").contains("一次性动作做过不要再做")
                 .doesNotContain("尽量考虑履行").doesNotContain("观点不成立").doesNotContain("不是常驻规则");
 
@@ -280,16 +280,16 @@ class TraderPromptAssemblerTest {
                 .doesNotContain("2:1");
     }
 
-    /** 模板必须交代护栏会拒的动作：放宽止损、拉近止盈、给已有计划的仓再写计划 */
+    /** 模板必须交代护栏会拒的动作：放宽止损、把止盈放到现价另一侧、给已有计划的仓再写计划；跟踪止损的幅度上下限按代码里的常量渲染 */
     @Test
     void templateMentionsGuardRejections() {
         String prompt = assembler.assemble(trader(), AgentLang.ZH);
 
         assertThat(prompt)
-                .contains("set_take_profit")
                 .contains("write_plan")
                 .contains("放宽止损")
-                .contains("拉近止盈")
+                .contains("set_take_profit 把任一档放到现价另一侧")
+                .contains("回调幅度不在 0.1%~50% 之间")
                 .contains("计划不可改写");
     }
 

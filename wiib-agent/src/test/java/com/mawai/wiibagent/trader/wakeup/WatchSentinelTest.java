@@ -15,15 +15,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * 盯盘哨兵：触及 / 到时刻看 tick，命中广播 WatchTrigger；周期收盘由调度器来问 closeHits，只认自己周期的边界。
- * 命中是库里 CAS 赢了才算，赢了就从名单摘掉
+ * 命中是库里 CAS 赢了才算，赢了就从名单摘掉；带动作的先交给执行器，它说要叫醒才叫
  */
 class WatchSentinelTest {
 
@@ -32,7 +34,8 @@ class WatchSentinelTest {
 
     private final TraderWatchStore store = mock(TraderWatchStore.class);
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
-    private final WatchSentinel sentinel = new WatchSentinel(mock(RedisMessageListenerContainer.class), store, events);
+    private final PresetExecutor presets = mock(PresetExecutor.class);
+    private final WatchSentinel sentinel = new WatchSentinel(mock(RedisMessageListenerContainer.class), store, events, presets);
 
     private static AiTraderWatch watch(long id, String kind, String level, String period, Long at) {
         AiTraderWatch w = new AiTraderWatch();
@@ -120,6 +123,38 @@ class WatchSentinelTest {
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("63000"), 1_786_200_000_000L);
         verify(events).publishEvent(argThat((Object o) -> o instanceof WatchTrigger w
                 && w.watch().getId() == 3L && w.price().compareTo(new BigDecimal("63000")) == 0));
+    }
+
+    /** 带动作的条件命中：先交给执行器做掉；它说不用叫醒（移止损、撤单做成了）就不广播，说要叫醒才广播 */
+    @Test
+    void presetRunsFirstAndWakesOnlyWhenExecutorSaysSo() {
+        AiTraderWatch quiet = watch(5L, AiTraderWatch.TOUCH_ABOVE, "63000", null, null);
+        quiet.setActionJson("{\"type\":\"MOVE_STOP\"}");
+        AiTraderWatch waking = watch(6L, AiTraderWatch.TOUCH_BELOW, "61000", null, null);
+        waking.setActionJson("{\"type\":\"CLOSE\"}");
+        armed(quiet, waking);
+        when(presets.execute(waking, new BigDecimal("60990"), 1_786_200_001_000L)).thenReturn(true);
+
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("63010"), 1_786_200_000_000L);
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("60990"), 1_786_200_001_000L);
+
+        verify(presets, timeout(2_000)).execute(quiet, new BigDecimal("63010"), 1_786_200_000_000L);
+        verify(events, timeout(2_000)).publishEvent(argThat((Object o) -> o instanceof WatchTrigger w && w.watch().getId() == 6L));
+        verify(events, after(300).times(1)).publishEvent(any(Object.class));
+    }
+
+    /** 收盘类的预案在 closeHits 里当场做完：不用叫醒的不进返回的名单 */
+    @Test
+    void closePresetExecutesInlineAndQuietOnesAreNotReturned() {
+        AiTraderWatch quiet = watch(7L, AiTraderWatch.CLOSE_BELOW, "62000", "1h", null);
+        quiet.setActionJson("{\"type\":\"CANCEL_ORDER\"}");
+        AiTraderWatch plain = watch(8L, AiTraderWatch.CLOSE_BELOW, "62500", "1h", null);
+        armed(quiet, plain);
+
+        List<WatchTrigger> hits = sentinel.closeHits("BTCUSDT", H1_CLOSE, bar(H1_CLOSE, "61900"));
+
+        verify(presets).execute(quiet, new BigDecimal("61900"), H1_CLOSE + 1);
+        assertThat(hits).extracting(t -> t.watch().getId()).containsExactly(8L);
     }
 
     /** 条件一变（set_watch / 重置）整份重载：新布的下一个 tick 就在盯 */

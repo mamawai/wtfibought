@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.learning;
 
 import com.mawai.wiibagent.trader.TradePairing;
+import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.market.KlineBar;
@@ -23,7 +24,7 @@ import java.util.Objects;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 复盘的事实表：一笔已了结交易在 5m K 线上走出的路径（最大浮盈、最大逆向、到目标 25%/50% 用时、
+ * 复盘的事实表：一笔已了结交易在 5m K 线上走出的路径（最大浮盈、最大逆向各几 R、到 +0.5R / +1R 用时、
  * 第一次收回入场价、出场后 4h/24h 最有利价）、开仓后不动的重放，加计划与入场上下文，按单子类型分组给模型做案例。
  * 纯代码，数字全来自本地 kline_history。
  */
@@ -62,36 +63,37 @@ public class CaseFileBuilder {
     }
 
     /**
-     * 路径指标。浮盈/逆向按方向取 K 线高低；占比以计划的原始目标/止损距离为分母，没计划就没占比。
-     * minTo25/minTo50 是开仓后多少分钟第一次走到目标距离的 25%/50%；firstBackAt 是入场根之后第一根收盘穿回入场价的时刻。
-     * 出场后数据覆盖不到 4h 时 bestAfter4h 为 null，覆盖不到 24h 时 bestAfter24h 与 targetAfter24h 为 null。
+     * 路径指标。浮盈/逆向按方向取 K 线高低；mfeR / maeR 是它们相当于几 R（R = 入场价到计划原始止损的距离），没计划止损就没有。
+     * minToHalfR / minTo1R 是开仓后多少分钟第一次走到 +0.5R / +1R；firstBackAt 是入场根之后第一根收盘穿回入场价的时刻。
+     * 出场后数据覆盖不到 4h 时 bestAfter4h 为 null，覆盖不到 24h 时 bestAfter24h 为 null。
+     * targetsAfter24h 是出场后 24 小时内到过计划里的几档止盈，没设止盈或覆盖不到 24h 为 null。
      * 窗口内没有 K 线时全部为 null、hourly 为空。
      */
-    public record Path(BigDecimal mfePrice, Long mfeAt, BigDecimal mfeFrac,
-                       BigDecimal maePrice, BigDecimal maeFrac,
-                       Long minTo25, Long minTo50, Long firstBackAt,
+    public record Path(BigDecimal mfePrice, Long mfeAt, BigDecimal mfeR,
+                       BigDecimal maePrice, BigDecimal maeR,
+                       Long minToHalfR, Long minTo1R, Long firstBackAt,
                        List<KlineBar> hourly,
-                       BigDecimal bestAfter4h, BigDecimal bestAfter24h, Boolean targetAfter24h) {
+                       BigDecimal bestAfter4h, BigDecimal bestAfter24h, Integer targetsAfter24h) {
         static final Path EMPTY = new Path(null, null, null, null, null, null, null, null,
                 List.of(), null, null, null);
     }
 
-    /** 重放的结局：先到目标、先到止损、走完都没碰到 */
+    /** 重放的结局：到过止盈档并且整仓了结、没到过止盈档就被止损、走完仓位还没了结 */
     public enum Outcome { TARGET, STOP, OPEN }
 
     /**
-     * 一档止损宽度的重放结局。r 按同样的风险金额折算、不计手续费：止损 = −1，
-     * 到目标 = 目标距离 ÷ 这一档的止损距离，未决为 null。
+     * 一档止损宽度的重放结局。r 按同样的风险金额折算、不计手续费：没到过止盈档就被止损 = −1；
+     * 到过止盈档的，各档按占比 × 目标距离 ÷ 这一档的止损距离，剩下的仓位后来被止损的按占比 × −1 一起算；未决为 null。
      */
     public record WidthOutcome(BigDecimal width, Outcome outcome, BigDecimal r) {
     }
 
     /**
      * 开仓后不动的重放，单位 R = 入场价到原始止损的距离。从开仓那根之后的第一根 5m 逐根走，最远到开仓后 72 小时；
-     * 同一根里止损和目标都碰到按止损算。
+     * 同一根里止损和止盈档都碰到按止损算。没设止盈的单子只会是止损或未决。
      * actualR 是这笔的净盈亏 ÷（开仓总数量 × R），sim 没给开仓总数量或净盈亏时为 null；
      * fav24R / adv24R 是开仓后 24 小时内的最大顺向与最大逆向；hold24R 是不设止损拿满 24 小时的收盘位置，
-     * K 线没覆盖到 24 小时为 null；widths 按 {@link #STOP_WIDTHS} 的顺序，目标不变、止损放到几倍 R 处。
+     * K 线没覆盖到 24 小时为 null；widths 按 {@link #STOP_WIDTHS} 的顺序，止盈档不变、止损放到几倍 R 处。
      */
     public record Replay(BigDecimal actualR, BigDecimal fav24R, BigDecimal adv24R, BigDecimal hold24R,
                          List<WidthOutcome> widths) {
@@ -113,8 +115,8 @@ public class CaseFileBuilder {
                                 BigDecimal actualR, BigDecimal untouchedR) {
     }
 
-    /** 没成交就撤掉的限价单：计划归档后 24 小时内价格到没到过限价位、到没到过原目标 */
-    public record CancelledLimit(AiTraderPlan plan, boolean touchedLimit, boolean reachedTarget) {
+    /** 没成交就撤掉的限价单：计划归档后 24 小时内价格到没到过限价位、到过计划里的几档止盈 */
+    public record CancelledLimit(AiTraderPlan plan, boolean touchedLimit, int reachedTargets) {
     }
 
     /** 同一类单子的一组，赢亏同台 */
@@ -162,10 +164,16 @@ public class CaseFileBuilder {
         }
         boolean isLong = "LONG".equals(plan.getSide());
         BigDecimal limit = plan.getEntryPrice();
-        BigDecimal target = plan.getTakeProfitPrice();
         boolean touched = bars.stream().anyMatch(b -> isLong ? b.low().compareTo(limit) <= 0 : b.high().compareTo(limit) >= 0);
-        boolean reached = bars.stream().anyMatch(b -> isLong ? b.high().compareTo(target) >= 0 : b.low().compareTo(target) <= 0);
-        return new CancelledLimit(plan, touched, reached);
+        BigDecimal best = bars.stream().map(isLong ? KlineBar::high : KlineBar::low)
+                .reduce((a, b) -> better(a, b, isLong)).orElseThrow();
+        return new CancelledLimit(plan, touched, reached(TargetRung.of(plan), best, isLong));
+    }
+
+    /** 最有利价到过几档止盈 */
+    private static int reached(List<TargetRung> rungs, BigDecimal best, boolean isLong) {
+        return (int) rungs.stream()
+                .filter(r -> isLong ? best.compareTo(r.price()) >= 0 : best.compareTo(r.price()) <= 0).count();
     }
 
     /** 一批重放合计成每档止损宽度一行，加"实际"对"开仓后不动" */
@@ -278,25 +286,42 @@ public class CaseFileBuilder {
             hold = isLong ? b.close().subtract(entry) : entry.subtract(b.close());
         }
         boolean covers24h = after.getLast().openTime() + BAR_MS >= openBar + DIRECTION_MS;
-        BigDecimal targetDist = dist(entry, plan.getTakeProfitPrice());
+        // 止盈档由近到远排好，重放时一档一档碰
+        List<TargetRung> rungs = TargetRung.of(plan).stream()
+                .sorted(Comparator.comparing(t -> t.price().subtract(entry).abs())).toList();
         List<WidthOutcome> widths = STOP_WIDTHS.stream()
-                .map(w -> walk(after, isLong, entry, r.multiply(w), targetDist, w)).toList();
+                .map(w -> walk(after, isLong, entry, r.multiply(w), rungs, w)).toList();
         BigDecimal actualR = pos.getClosedPnl() == null || pos.getOpenedQuantity() == null ? null
                 : pos.getClosedPnl().divide(pos.getOpenedQuantity().multiply(r), 2, RoundingMode.HALF_UP);
         return new Replay(actualR, frac(fav, r), frac(adv, r).negate(), covers24h ? frac(hold, r) : null, widths);
     }
 
-    /** 逐根走：先看止损再看目标，同一根里两个都碰到算止损 */
+    /**
+     * 逐根走：先看止损再看止盈档，同一根里都碰到算止损。碰到一档就按它的占比了结那部分，剩下的仓位接着走；
+     * 整个仓位了结才算已决。
+     */
     private static WidthOutcome walk(List<KlineBar> bars, boolean isLong, BigDecimal entry,
-                                     BigDecimal stopDist, BigDecimal targetDist, BigDecimal width) {
+                                     BigDecimal stopDist, List<TargetRung> rungs, BigDecimal width) {
+        // left 是还没了结的仓位比例，gain 是已了结各档的占比 × 目标距离
+        BigDecimal left = BigDecimal.ONE;
+        BigDecimal gain = BigDecimal.ZERO;
+        int next = 0;
         for (KlineBar b : bars) {
             BigDecimal advExc = isLong ? entry.subtract(b.low()) : b.high().subtract(entry);
             if (advExc.compareTo(stopDist) >= 0) {
-                return new WidthOutcome(width, Outcome.STOP, BigDecimal.ONE.negate());
+                return next == 0 ? new WidthOutcome(width, Outcome.STOP, BigDecimal.ONE.negate())
+                        : new WidthOutcome(width, Outcome.TARGET, gain.subtract(left.multiply(stopDist))
+                                .divide(stopDist, 2, RoundingMode.HALF_UP));
             }
             BigDecimal favExc = isLong ? b.high().subtract(entry) : entry.subtract(b.low());
-            if (targetDist != null && favExc.compareTo(targetDist) >= 0) {
-                return new WidthOutcome(width, Outcome.TARGET, targetDist.divide(stopDist, 2, RoundingMode.HALF_UP));
+            while (next < rungs.size() && favExc.compareTo(rungs.get(next).price().subtract(entry).abs()) >= 0) {
+                BigDecimal share = rungs.get(next).percent().movePointLeft(2);
+                gain = gain.add(share.multiply(rungs.get(next).price().subtract(entry).abs()));
+                left = left.subtract(share);
+                next++;
+            }
+            if (left.signum() <= 0) {
+                return new WidthOutcome(width, Outcome.TARGET, gain.divide(stopDist, 2, RoundingMode.HALF_UP));
             }
         }
         return new WidthOutcome(width, Outcome.OPEN, null);
@@ -309,7 +334,6 @@ public class CaseFileBuilder {
         }
         boolean isLong = "LONG".equals(pos.getSide());
         BigDecimal entry = pos.getEntryPrice();
-        BigDecimal targetDist = dist(entry, plan == null ? null : plan.getTakeProfitPrice());
         BigDecimal stopDist = dist(entry, plan == null ? null : plan.getStopLossPrice());
 
         List<KlineBar> inTrade = new ArrayList<>();
@@ -317,8 +341,8 @@ public class CaseFileBuilder {
         BigDecimal mfeExc = null;
         Long mfeAt = null;
         BigDecimal maeExc = null;
-        Long minTo25 = null;
-        Long minTo50 = null;
+        Long minToHalfR = null;
+        Long minTo1R = null;
         Long firstBackAt = null;
         BigDecimal best4h = null;
         BigDecimal best24h = null;
@@ -334,13 +358,13 @@ public class CaseFileBuilder {
                 if (maeExc == null || advExc.compareTo(maeExc) > 0) {
                     maeExc = advExc;
                 }
-                if (targetDist != null) {
+                if (stopDist != null) {
                     long minutes = Math.max(0, (b.openTime() - openMs) / 60_000);
-                    if (minTo25 == null && favExc.compareTo(targetDist.multiply(new BigDecimal("0.25"))) >= 0) {
-                        minTo25 = minutes;
+                    if (minToHalfR == null && favExc.compareTo(stopDist.multiply(new BigDecimal("0.5"))) >= 0) {
+                        minToHalfR = minutes;
                     }
-                    if (minTo50 == null && favExc.compareTo(targetDist.multiply(new BigDecimal("0.5"))) >= 0) {
-                        minTo50 = minutes;
+                    if (minTo1R == null && favExc.compareTo(stopDist) >= 0) {
+                        minTo1R = minutes;
                     }
                 }
                 if (firstBackAt == null && b.openTime() > openBar
@@ -359,15 +383,14 @@ public class CaseFileBuilder {
         long coveredTo = bars.getLast().openTime() + BAR_MS;
         boolean has4h = coveredTo >= closeBar + AFTER_SHORT_MS;
         boolean has24h = coveredTo >= closeBar + AFTER_LONG_MS;
-        BigDecimal tp = plan == null ? null : plan.getTakeProfitPrice();
-        Boolean targetAfter = !has24h ? null
-                : tp != null && (isLong ? best24h.compareTo(tp) >= 0 : best24h.compareTo(tp) <= 0);
+        List<TargetRung> rungs = TargetRung.of(plan);
+        Integer targetsAfter = !has24h || rungs.isEmpty() ? null : reached(rungs, best24h, isLong);
         BigDecimal mfe = mfeExc == null ? null : isLong ? entry.add(mfeExc) : entry.subtract(mfeExc);
         BigDecimal mae = maeExc == null ? null : isLong ? entry.subtract(maeExc) : entry.add(maeExc);
-        return new Path(mfe, mfeAt, frac(mfeExc == null ? null : mfeExc.abs(), targetDist),
+        return new Path(mfe, mfeAt, frac(mfeExc == null ? null : mfeExc.abs(), stopDist),
                 mae, frac(maeExc == null ? null : maeExc.abs(), stopDist),
-                minTo25, minTo50, firstBackAt, hourlyBars(inTrade),
-                has4h ? best4h : null, has24h ? best24h : null, targetAfter);
+                minToHalfR, minTo1R, firstBackAt, hourlyBars(inTrade),
+                has4h ? best4h : null, has24h ? best24h : null, targetsAfter);
     }
 
     private static BigDecimal better(BigDecimal cur, BigDecimal candidate, boolean isLong) {

@@ -35,53 +35,57 @@ class TradeGuardTest {
         return new TraderRiskConfig(5, 20, new BigDecimal("20"), multi, hedge);
     }
 
-    /** 基准单：0.1×100000/10 = 保证金1000 = 权益10%，落在 5~20% 区间内；止损止盈都带（两者都是硬规则） */
+    /** 基准单：0.1×100000/10 = 保证金1000 = 权益10%，落在 5~20% 区间内；带止损和一档 100% 的止盈 */
     private TradeGuard.OpenReq base() {
         return new TradeGuard.OpenReq("BTCUSDT", "LONG", "MARKET", new BigDecimal("0.1"), 10,
-                null, new BigDecimal("95000"), new BigDecimal("110000"), "BREAKOUT", "突破前高", "1h收盘跌回98000下方");
+                null, new BigDecimal("95000"), List.of(rung("110000", "100")), "BREAKOUT", "突破前高", "1h收盘跌回98000下方");
     }
 
     /** 空单基准：止损在入场价上方、止盈在下方 */
     private TradeGuard.OpenReq baseShort() {
         return new TradeGuard.OpenReq("BTCUSDT", "SHORT", "MARKET", new BigDecimal("0.1"), 10,
-                null, new BigDecimal("105000"), new BigDecimal("90000"), "BREAKOUT", "跌破前低", "1h收盘站回102000上方");
+                null, new BigDecimal("105000"), List.of(rung("90000", "100")), "BREAKOUT", "跌破前低", "1h收盘站回102000上方");
+    }
+
+    private static TargetRung rung(String price, String percent) {
+        return new TargetRung(new BigDecimal(price), new BigDecimal(percent));
     }
 
     // ---------- 造数变体：生产 OpenReq 不带 wither（无生产调用），变体构造属于测试侧 ----------
 
     private static TradeGuard.OpenReq withOrderType(TradeGuard.OpenReq r, String v) {
         return new TradeGuard.OpenReq(r.symbol(), r.side(), v, r.quantity(), r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), r.takeProfitPrice(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withQuantity(TradeGuard.OpenReq r, BigDecimal v) {
         return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), v, r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), r.takeProfitPrice(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withLeverage(TradeGuard.OpenReq r, Integer v) {
         return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), v,
-                r.limitPrice(), r.stopLossPrice(), r.takeProfitPrice(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withLimitPrice(TradeGuard.OpenReq r, BigDecimal v) {
         return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                v, r.stopLossPrice(), r.takeProfitPrice(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+                v, r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withStopLossPrice(TradeGuard.OpenReq r, BigDecimal v) {
         return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                r.limitPrice(), v, r.takeProfitPrice(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+                r.limitPrice(), v, r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withInvalidationCondition(TradeGuard.OpenReq r, String v) {
         return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), r.takeProfitPrice(), r.playType(), r.signalsUsed(), v);
+                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), v);
     }
 
-    private static TradeGuard.OpenReq withTakeProfitPrice(TradeGuard.OpenReq r, BigDecimal v) {
+    private static TradeGuard.OpenReq withTakeProfits(TradeGuard.OpenReq r, TargetRung... v) {
         return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), v, r.playType(), r.signalsUsed(), r.invalidationCondition());
+                r.limitPrice(), r.stopLossPrice(), List.of(v), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     @Test
@@ -90,28 +94,61 @@ class TradeGuardTest {
         assertThat(validateOpen(baseShort(), EQUITY, MARK, WL, cfg(), List.of())).isNull();
     }
 
-    // ---------- 止盈：计划的目标位，与止损同为硬规则 ----------
+    // ---------- 止盈：可以不设，设了最多 3 档 ----------
 
-    /** 没有目标位就没有盈亏比、也没有"到目标位落袋"可检验——缺了拒，拒因告诉它往远移不受限 */
     @Test
-    void takeProfitRequired() {
-        assertThat(validateOpen(withTakeProfitPrice(base(), null), EQUITY, MARK, WL, cfg(), List.of()))
-                .contains("止盈价").contains("目标位").contains("set_take_profit");
+    void takeProfitIsOptional() {
+        assertThat(validateOpen(withTakeProfits(base()), EQUITY, MARK, WL, cfg(), List.of())).isNull();
     }
 
-    /** SHORT 的方向校验「0 <= 入场价」为真会放行止盈价 0：正数校验要挡在方向校验之前 */
+    /** 分档：占比合计不到 100 也行，剩下那部分没有止盈单 */
     @Test
-    void takeProfitZeroRejectedBeforeDirectionCheck() {
-        assertThat(validateOpen(withTakeProfitPrice(baseShort(), BigDecimal.ZERO), EQUITY, MARK, WL, cfg(), List.of()))
-                .contains("正数").contains("你给了0");
+    void takeProfitLadderPasses() {
+        assertThat(validateOpen(withTakeProfits(base(), rung("105000", "30"), rung("110000", "30"), rung("120000", "20")),
+                EQUITY, MARK, WL, cfg(), List.of())).isNull();
     }
 
+    /** 超过 3 档、占比合计过 100、价位或占比不是正数（SHORT 的「0 <= 入场价」为真，方向校验挡不住 0）：都按形状不对拒 */
+    @Test
+    void takeProfitRungsShapeRejected() {
+        TargetRung quarter = rung("110000", "25");
+        assertThat(validateOpen(withTakeProfits(base(), quarter, quarter, quarter, quarter), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("最多 3 档");
+        assertThat(validateOpen(withTakeProfits(base(), rung("105000", "60"), rung("110000", "60")), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("合计不超过 100");
+        assertThat(validateOpen(withTakeProfits(baseShort(), rung("0", "100")), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("takeProfits 不合规");
+        assertThat(validateOpen(withTakeProfits(base(), new TargetRung(new BigDecimal("110000"), null)), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("takeProfits 不合规");
+    }
+
+    /** 哪一档站到入场价不利一侧都拒 */
     @Test
     void takeProfitWrongSideRejected() {
-        assertThat(validateOpen(withTakeProfitPrice(base(), new BigDecimal("99000")), EQUITY, MARK, WL, cfg(), List.of()))
-                .contains("LONG止盈须高于入场价");
-        assertThat(validateOpen(withTakeProfitPrice(baseShort(), new BigDecimal("101000")), EQUITY, MARK, WL, cfg(), List.of()))
-                .contains("SHORT止盈须低于入场价");
+        assertThat(validateOpen(withTakeProfits(base(), rung("110000", "50"), rung("99000", "50")), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("LONG每档止盈须高于入场价");
+        assertThat(validateOpen(withTakeProfits(baseShort(), rung("101000", "100")), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("SHORT每档止盈须低于入场价");
+    }
+
+    /** 0.001 BTC 分两档各 50%，每档 0.0005 不足步长 0.001：拒并点出是第几档 */
+    @Test
+    void takeProfitRungBelowStepRejected() {
+        TradeGuard.OpenReq tiny = withQuantity(withTakeProfits(base(), rung("105000", "50"), rung("110000", "50")),
+                new BigDecimal("0.001"));
+        assertThat(validateOpen(tiny, EQUITY, MARK, WL, cfg(), List.of())).contains("第 1 档").contains("BTCUSDT");
+    }
+
+    // ---------- 跟踪止损参数 ----------
+
+    @Test
+    void trailCallbackMustBeInRange() {
+        assertThat(TradeGuard.validateTrail(new BigDecimal("1.5"), null, PROMPTS, AgentLang.ZH)).isNull();
+        assertThat(TradeGuard.validateTrail(new BigDecimal("1.5"), new BigDecimal("101000"), PROMPTS, AgentLang.ZH)).isNull();
+        assertThat(TradeGuard.validateTrail(new BigDecimal("0.05"), null, PROMPTS, AgentLang.ZH)).contains("0.1~50");
+        assertThat(TradeGuard.validateTrail(new BigDecimal("60"), null, PROMPTS, AgentLang.ZH)).contains("0.1~50");
+        // 只给启动价不给幅度
+        assertThat(TradeGuard.validateTrail(null, new BigDecimal("101000"), PROMPTS, AgentLang.ZH)).contains("trailCallbackPct");
     }
 
     // ---------- 杠杆区间：允许集合，不是上限 ----------

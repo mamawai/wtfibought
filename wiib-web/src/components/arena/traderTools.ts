@@ -22,6 +22,8 @@ const TOOL_KEY: Record<string, string> = {
   orderbook_depth: 'tool.orderbookDepth', option_iv: 'tool.optionIv', news_search: 'tool.newsSearch',
   derivatives_history: 'tool.derivativesHistory', whale_positions: 'tool.whalePositions',
   cross_asset_snapshot: 'tool.crossAssetSnapshot', web_search: 'tool.webSearch',
+  // 不是模型调的工具：预案命中后平台执行的那一下，时间线上按一条动作显示
+  preset: 'tool.preset',
 };
 
 /** 工具的展示名；表里没有的（后端加了新工具）原样显示 id */
@@ -30,8 +32,30 @@ export function toolName(tool: string): string {
   return key ? i18n.t(`ai:${key}`) : tool;
 }
 
-/** 会动账本的那几个：时间线上独立成行展示参数与拒因，其余数据查询弱化成一句"看了什么" */
-export const TRADE_TOOL_SET: ReadonlySet<string> = new Set(TRADE_TOOLS);
+/** 会动账本的那几个，加上预案执行的那一下：时间线上独立成行展示参数与拒因，其余数据查询弱化成一句"看了什么" */
+export const TRADE_TOOL_SET: ReadonlySet<string> = new Set([...TRADE_TOOLS, 'preset']);
+
+/** 止盈的一档：价位，和这一档平掉仓位的百分之几 */
+export interface TargetRung {
+  price: number;
+  percent: number;
+}
+
+/** 计划里存的止盈分档；没设止盈或解析不了给空表 */
+export function planTargets(json: string | null | undefined): TargetRung[] {
+  try {
+    return json ? JSON.parse(json) as TargetRung[] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 止盈档写成「105000(50%) / 110000(50%)」 */
+function rungsText(rungs: unknown): string {
+  return Array.isArray(rungs)
+    ? (rungs as TargetRung[]).map(r => `${r.price}(${r.percent}%)`).join(' / ')
+    : '';
+}
 
 /** actions_json 里的一条工具动作 */
 export interface ActionRow {
@@ -63,12 +87,21 @@ export function doneTrades(d: AiTraderDecisionView): ActionRow[] {
 export function tradeArgsSummary(a: ActionRow): string {
   const g = (k: string) => a.args?.[k] != null ? String(a.args[k]) : '';
   const tr = (key: string, vars?: Record<string, string>) => i18n.t(`ai:${key}`, vars ?? {});
+  // 跟踪止损的参数：回调幅度，设了启动价的再带一句
+  const trail = () => {
+    const ts = a.args?.trailingStop as { callbackPct?: number; activationPrice?: number | null } | undefined;
+    if (ts?.callbackPct == null) return '';
+    return ts.activationPrice != null
+      ? tr('args.trailFrom', { pct: String(ts.callbackPct), p: String(ts.activationPrice) })
+      : tr('args.trail', { pct: String(ts.callbackPct) });
+  };
   switch (a.tool) {
     case 'open_position': {
+      const tp = rungsText(a.args?.takeProfits);
       const parts = [g('symbol'), g('side') === 'LONG' ? tr('args.long') : g('side') === 'SHORT' ? tr('args.short') : g('side'),
         g('quantity') && tr('args.qty', { n: g('quantity') }), g('leverage') && `${g('leverage')}x`,
         g('stopLossPrice') && tr('args.sl', { p: g('stopLossPrice') }),
-        g('takeProfitPrice') && tr('args.tp', { p: g('takeProfitPrice') }),
+        tp && tr('args.tp', { p: tp }), trail(),
         g('playType')];
       return parts.filter(Boolean).join(' · ');
     }
@@ -76,9 +109,16 @@ export function tradeArgsSummary(a: ActionRow): string {
       return [tr('args.position', { id: g('positionId') }), g('quantity') && tr('args.qty', { n: g('quantity') }), g('reason')]
         .filter(Boolean).join(' · ');
     case 'set_stop_loss':
-      return [`→${g('stopLossPrice')}`, g('reason')].filter(Boolean).join(' · ');
+      return [g('stopLossPrice') && `→${g('stopLossPrice')}`, trail(), g('reason')].filter(Boolean).join(' · ');
     case 'set_take_profit':
-      return [`→${g('takeProfitPrice')}`, g('reason')].filter(Boolean).join(' · ');
+      return [`→${rungsText(a.args?.takeProfits) || tr('args.tpNone')}`, g('reason')].filter(Boolean).join(' · ');
+    case 'preset': {
+      const target = [g('symbol'), g('side')].filter(Boolean).join(' ');
+      const what = g('type') === 'MOVE_STOP' ? tr('args.presetMoveStop', { p: g('stopLossPrice') })
+        : g('type') === 'CLOSE' ? tr('args.presetClose', { pct: g('closePercent') })
+          : tr('args.order', { id: g('orderId') });
+      return [target, what].filter(Boolean).join(' · ');
+    }
     case 'write_plan':
       return [g('playType'), g('invalidationCondition') && tr('args.invalidation', { c: g('invalidationCondition') })]
         .filter(Boolean).join(' · ');

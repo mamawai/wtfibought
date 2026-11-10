@@ -221,7 +221,7 @@ class ReviewMaterialAssemblerTest {
         plan.setSignalsUsed("突破前高+量比1.8");
         plan.setInvalidationCondition("1h收盘跌回98000下方");
         plan.setStopLossPrice(new BigDecimal("95500"));
-        plan.setTakeProfitPrice(new BigDecimal("110000"));
+        plan.setTakeProfitsJson("[{\"price\":110000,\"percent\":100}]");
         plan.setRevisionsJson("[{\"time\":\"x\",\"type\":\"stop_loss\",\"change\":\"95500→96000\",\"reason\":\"锁利\"}]");
         plan.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":350.5,\"stopAtr\":12.8,\"stopPct\":4.5,\"hourBj\":9,"
                 + "\"orderType\":\"MARKET\",\"leverage\":10,\"eventMin\":-90,\"eventTitle\":\"CPI\",\"funding\":0.0001}");
@@ -242,10 +242,11 @@ class ReviewMaterialAssemblerTest {
         assertThat(cases).contains("★ BREAKOUT（1 笔，0 胜，净 -50）");
         assertThat(cases).contains("- BTCUSDT LONG " + TIME.format(Instant.ofEpochMilli(openMs)) + " → "
                 + TIME.format(Instant.ofEpochMilli(closeMs))
-                + "（持有 5小时）｜ 入场 100000 止损 95500 目标 110000 出场 95000，止损带走 ｜ 净 -50，资金费 —");
+                + "（持有 5小时）｜ 入场 100000 止损 95500 目标 110000(100%) 出场 95000，止损带走 ｜ 净 -50，资金费 —");
+        // R = 4500：最大浮盈 2500 是 +0.56R、最大逆向 5000 是 -1.11R；第一根就到了 +0.5R，+1R 没到过
         assertThat(cases).contains("  路径：最大浮盈 102500（" + HM.format(Instant.ofEpochMilli(openMs + M5))
-                + "，目标的 25%）｜ 最大逆向 95000（止损的 111%）｜ 到目标 25% / 50% 用时 5 / — 分 ｜ 首次收回入场价 "
-                + HM.format(Instant.ofEpochMilli(FROM + 2 * H)) + " ｜ 出场后 4h / 24h 最有利 97000 / 99000，之后没到原目标");
+                + "，+0.56R）｜ 最大逆向 95000（-1.11R）｜ 到 +0.5R / +1R 用时 5 / — 分 ｜ 首次收回入场价 "
+                + HM.format(Instant.ofEpochMilli(FROM + 2 * H)) + " ｜ 出场后 4h / 24h 最有利 97000 / 99000，到过原目标 0/1 档");
         // R = 4500：净 -50 ÷（0.01 × 4500）；24h 内最高 102500、最低 95000、第 20 小时那根收 98000；止损原样在 95000 那根被打，放宽后都没碰到
         assertThat(cases).contains("  重放：实际 -1.11R ｜ 入场后 24h 内最大顺向 +0.56R、最大逆向 -1.11R，不设止损拿满 24h -0.44R"
                 + " ｜ 止损原样 止损（-1R）、1.5 倍 未决、2 倍 未决、3 倍 未决");
@@ -270,7 +271,7 @@ class ReviewMaterialAssemblerTest {
         plan.setSide("SHORT");
         plan.setPositionId(43L);
         plan.setStopLossPrice(new BigDecimal("101000"));
-        plan.setTakeProfitPrice(new BigDecimal("98000"));
+        plan.setTakeProfitsJson("[{\"price\":98000,\"percent\":100}]");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
         when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(List.of(
                 bar5m(openMs, "100000", "100400", "99200", "99300"),
@@ -291,7 +292,7 @@ class ReviewMaterialAssemblerTest {
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("★ 未标类型（1 笔，1 胜，净 +10）");
-        assertThat(cases).contains("  路径：最大浮盈 —（—，目标的 —）｜ 最大逆向 —（止损的 —）｜ 到目标 25% / 50% 用时 — / — 分 ｜ 首次收回入场价 — ｜ 出场后 4h / 24h 最有利 — / —，出场后数据不足");
+        assertThat(cases).contains("  路径：最大浮盈 —（—，—）｜ 最大逆向 —（—）｜ 到 +0.5R / +1R 用时 — / — 分 ｜ 首次收回入场价 — ｜ 出场后 4h / 24h 最有利 — / —，没设止盈");
         assertThat(cases).doesNotContain("1h 收盘");
         assertThat(cases).contains("  计划：（无计划记录）");
         assertThat(cases).doesNotContain("入场上下文");
@@ -320,7 +321,7 @@ class ReviewMaterialAssemblerTest {
         AiTraderPlan plan = planOf("BTCUSDT", "PULLBACK", FROM + H, false);
         plan.setEntryPrice(new BigDecimal("99000"));
         plan.setStopLossPrice(new BigDecimal("98000"));
-        plan.setTakeProfitPrice(new BigDecimal("102000"));
+        plan.setTakeProfitsJson("[{\"price\":102000,\"percent\":100}]");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
         // 归档后最低 99200 没回到限价位，最高 102300 到了目标
         when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(List.of(
@@ -330,8 +331,8 @@ class ReviewMaterialAssemblerTest {
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("窗口内无已了结交易");
-        assertThat(cases).contains("没成交就撤掉的限价单（归档后 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000，"
-                + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 归档 ｜ 之后价格没到过限价位，到过原目标");
+        assertThat(cases).contains("没成交就撤掉的限价单（归档后 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000(100%)，"
+                + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 归档 ｜ 之后价格没到过限价位，到过原目标 1/1 档");
     }
 
     // ==================== 案例素材：分组与选案 ====================
@@ -581,7 +582,7 @@ class ReviewMaterialAssemblerTest {
         AiTraderPlan plan42 = planOf("BTCUSDT", "PULLBACK", FROM + H, false);
         plan42.setPositionId(42L);
         plan42.setStopLossPrice(new BigDecimal("99000"));
-        plan42.setTakeProfitPrice(new BigDecimal("102000"));
+        plan42.setTakeProfitsJson("[{\"price\":102000,\"percent\":100}]");
         plan42.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":420,\"stopAtr\":2.4,\"stopPct\":1.0,\"hourBj\":9,\"orderType\":\"MARKET\",\"leverage\":10}");
         when(planMapper.selectList(any())).thenReturn(List.of(plan42));
 
@@ -590,7 +591,7 @@ class ReviewMaterialAssemblerTest {
         assertThat(block).startsWith("#5 通用 盈利处理 执行型 ｜ 动能变小即落袋 ｜ 支持 1 反对 2 未测试 0 ｜ 支持率 33% ｜ 历史最长连续反对 2 次\n");
         assertThat(block).contains("- 支持 ｜ 09-21 BTC 平在目标位\n- 反对 ｜ 出场后 4h 再走 1.1%\n- 反对 ｜ 出场后 4h 再走 0.8%\n");
         assertThat(block).contains("【支持的单子】（1 笔）\n- BTCUSDT LONG ")
-                .contains("入场 100000 止损 99000 目标 102000 出场 101400，主动平仓 ｜ 净 +280")
+                .contains("入场 100000 止损 99000 目标 102000(100%) 出场 101400，主动平仓 ｜ 净 +280")
                 .contains("  入场上下文：1h ADX 31.2 ｜ 1h 布林带宽 2.8 ｜ 1h ATR 420 ｜ 止损 2.4 个 ATR（1%）");
         assertThat(block).contains("【反对的单子】（2 笔）\n- BTCUSDT SHORT ")
                 .contains("入场 100000 止损 — 目标 — 出场 100900")

@@ -894,7 +894,8 @@ export interface AiTraderPlanView {
   invalidationCondition: string;
   entryPrice: number | null;
   stopLossPrice: number | null;
-  takeProfitPrice: number | null;
+  /** 开仓时的止盈分档 [{price,percent}]，percent=这一档平掉仓位的百分之几；没设止盈为 null */
+  takeProfitsJson: string | null;
   openedWakeTime: number;
   /** [{time,type,change,reason}] */
   revisionsJson: string | null;
@@ -947,9 +948,25 @@ export interface TraderDetailView {
   nextWakeAt: number | null;
   /** 本局还在盯的条件 */
   watches: TraderWatch[];
+  /** 本局在跟的跟踪止损规则 */
+  trails: TraderTrail[];
 }
 
-/** 它给自己布的一条盯盘条件（ai_trader_watch 原样），命中就叫醒它 */
+/** 一个仓位的跟踪止损规则（ai_trader_trail 原样）：止损跟着最有利价走，只进不退 */
+export interface TraderTrail {
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  /** 限价单还没成交为 null，成交后才开始跟 */
+  positionId: number | null;
+  /** 回调幅度 % */
+  callbackPct: number;
+  /** 标记价到这里才开始跟；null=一有仓位就跟 */
+  activationPrice: number | null;
+  /** 开始跟随后的最有利价；还没开始跟为 null */
+  bestPrice: number | null;
+}
+
+/** 它给自己布的一条盯盘条件（ai_trader_watch 原样），命中就叫醒它；带 actionJson 的是预案，命中时平台先把动作做掉 */
 export interface TraderWatch {
   id: number;
   symbol: string;
@@ -962,6 +979,11 @@ export interface TraderWatch {
   atTime: number | null;
   /** 它给下一轮自己的备注：这条命中意味着什么 */
   note: string;
+  /**
+   * 预案动作 {type,positionId,orderId,stopLossPrice,closePercent,symbol,side}，没带动作为 null。
+   * type: MOVE_STOP 移止损 / CLOSE 平掉仓位的百分之几 / CANCEL_ORDER 撤挂单；symbol、side 是动作指的那个仓位或挂单的
+   */
+  actionJson: string | null;
   /** 布下它的那轮唤醒时刻 ms */
   createdWakeTime: number;
 }
@@ -977,8 +999,9 @@ export interface AiTraderDecisionView {
    * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader）
    * EVENT=持仓事件唤醒（止损/止盈/强平/限价成交当场叫醒） WATCH=它自己布的盯盘条件命中
    * REVIEW=每日复盘（reasoning=复盘全文，无equity）
+   * PRESET=预案命中后平台代它执行的动作（没跑模型，reasoning=条件与执行结果，无equity）
    */
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'REVIEW';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'REVIEW' | 'PRESET';
   status: 'OK' | 'ERROR' | 'SKIPPED';
   equity: number | null;
   reasoning: string | null;

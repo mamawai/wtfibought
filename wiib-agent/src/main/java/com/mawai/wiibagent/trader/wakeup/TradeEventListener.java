@@ -2,6 +2,7 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.market.TradeEvent;
 import jakarta.annotation.PostConstruct;
@@ -22,6 +23,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价成交），
  * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就把它叫醒；不是 trader 的用户直接忽略。
  * 准入（冷静期 / 互斥 / 时段 / 交接）全在调度器，这里只认人。
+ * 限价单成交时顺手把挂单带的跟踪止损规则绑上仓位。
  */
 @Slf4j
 @Component
@@ -31,6 +33,7 @@ public class TradeEventListener implements MessageListener {
     private final RedisMessageListenerContainer listenerContainer;
     private final AiTraderMapper traderMapper;
     private final TraderScheduler scheduler;
+    private final TraderTrailStore trailStore;
 
     @PostConstruct
     public void init() {
@@ -62,6 +65,10 @@ public class TradeEventListener implements MessageListener {
                 .eq(AiTrader::getSimUserId, event.userId())
                 .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING));
         for (AiTrader t : traders) {
+            // 限价单成交：挂单时设的跟踪止损从这一刻绑上仓位开始跟，不等模型醒
+            if (TradeEvent.LIMIT_FILLED.equals(event.type())) {
+                trailStore.bind(t.getId(), t.getRoundNo(), event.symbol(), event.side(), event.positionId());
+            }
             scheduler.tryTriggerWake(t.getId(), new EventTrigger(event));
         }
     }

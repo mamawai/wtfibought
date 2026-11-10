@@ -11,7 +11,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 一个仓位一条：开仓那刻立的论点、依据、失效条件、入场/止损/目标价，外加后来每次改动的留痕。
+ * 一个仓位一条：开仓那刻立的论点、依据、失效条件、入场/止损价与止盈分档，外加后来每次改动的留痕。
  * 键 (trader, round, symbol, side)，活的至多一条；加仓＝新论点覆盖旧的。
  * <p>
  * 每次唤醒把活着的计划原样塞回提示词——没记忆的模型才看得见这仓当初为什么开、什么情况算论点错了、
@@ -57,13 +57,14 @@ public class AiTraderPlan {
     /** 原始止损快照；当前生效止损以 sim 仓位为准（可能已上移锁盈） */
     private BigDecimal stopLossPrice;
 
-    private BigDecimal takeProfitPrice;
+    /** 开仓时的止盈分档快照 JSON [{price,percent}]，由近到远；没设止盈为 null。当前挂着的止盈单以 sim 仓位为准 */
+    private String takeProfitsJson;
 
     /** 开仓所在唤醒边界(ms)，回注时计算已持有时长 */
     private Long openedWakeTime;
 
     /**
-     * 修订历史追加式 JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立。
+     * 修订历史追加式 JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行/跟踪止损的开启与结束。
      * 修改必须留痕带理由（回注给下轮无记忆的模型看）；计划本体价格字段永远是原始快照，当前生效单在 sim 仓位上。
      */
     private String revisionsJson;

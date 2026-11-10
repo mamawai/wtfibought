@@ -4,15 +4,14 @@ import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
-import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderTrail;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.entity.FuturesStopLoss;
-import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +69,8 @@ public class TradeTools {
     private final TraderPlanStore planStore;
     /** 模型给自己布的盯盘条件 */
     private final TraderWatchStore watchStore;
+    /** 跟踪止损的规则 */
+    private final TraderTrailStore trailStore;
     private final WakeCtx ctx;
     /** 拒因文案：回给模型、也进公开时间线，跟 {@code ctx.lang()} 走 */
     private final PromptCatalog prompts;
@@ -82,7 +83,7 @@ public class TradeTools {
 
     public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist, Set<String> watchSymbols,
                       Function<List<FuturesPositionDTO>, BigDecimal> equityOf, Function<String, BigDecimal> markPrice,
-                      TraderPlanStore planStore, TraderWatchStore watchStore, WakeCtx ctx,
+                      TraderPlanStore planStore, TraderWatchStore watchStore, TraderTrailStore trailStore, WakeCtx ctx,
                       PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext) {
         this.simTradeClient = simTradeClient;
         this.simUserId = simUserId;
@@ -92,6 +93,7 @@ public class TradeTools {
         this.markPrice = markPrice;
         this.planStore = planStore;
         this.watchStore = watchStore;
+        this.trailStore = trailStore;
         this.ctx = ctx;
         this.prompts = prompts;
         this.messages = messages;
@@ -158,15 +160,23 @@ public class TradeTools {
             the configured percent-of-equity cap — there is no lower bound (adds are exempt); same-symbol
             leverage must match any position or pending order already on that symbol;
             LIMIT price within 5% of mark and resting on the far side of it (LONG below, SHORT above) — a LIMIT
-            that would fill at once is rejected, use MARKET for that; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
+            that would fill at once is rejected, use MARKET for that; stopLossPrice is REQUIRED and on the correct side.
+            takeProfits is OPTIONAL: up to 3 rungs, each a price on the profit side of entry plus the percent of the
+            position it closes (percents sum to at most 100; whatever is left has no take-profit order). Omit it
+            and the position has no take-profit order at all.
+            trailCallbackPct is OPTIONAL and turns the stop into a trailing stop: the platform follows the mark
+            price and keeps moving the stop to (most favourable price since trailing began) minus/plus that
+            percent, only ever tighter; trailActivationPrice, if given, is the mark price at which trailing begins.
+            On a LIMIT order trailing begins once the order fills. stopLossPrice is the stop until then.
             playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
             signalsUsed: one sentence citing the concrete data fields your thesis rests on.
             invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
             number); it becomes part of your position's plan.
-            Stop, take-profit (= the plan's target) and invalidation condition are all filed into the plan and
-            injected back into your next opening message. The receipt carries a facts block for this order:
-            the round-trip fee estimate, the stop distance in % and in ATR14 of your heartbeat interval, the
-            reward-to-risk after fees, and the loss at the stop as a percentage of equity.""")
+            Stop, take-profit rungs (= the plan's targets) and invalidation condition are all filed into the plan
+            and injected back into your next opening message. The receipt carries a facts block for this order:
+            the round-trip fee estimate, the stop distance in % and in ATR14 of your heartbeat interval, the loss
+            at the stop as a percentage of equity, and — only when take-profit rungs are set — the gain if every
+            rung fills and the reward-to-risk after fees (counting only the part the rungs cover).""")
     public String openPosition(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                                @ToolParam(description = "LONG or SHORT") String side,
                                @ToolParam(description = "MARKET or LIMIT") String orderType,
@@ -176,7 +186,9 @@ public class TradeTools {
                                // 必须是包装类型：primitive 漏传会被绑成 0.0，护栏的 null 检查就成了摆设，
                                // LONG 的方向校验「0 >= 入场价」为假直接放行——裸多单就是这么开出去的
                                @ToolParam(description = "Stop-loss price, REQUIRED") Double stopLossPrice,
-                               @ToolParam(description = "Take-profit price, REQUIRED; it is recorded as the plan's target") Double takeProfitPrice,
+                               @ToolParam(description = "Take-profit rungs, optional: up to 3, each {price, percent}; they are recorded as the plan's targets", required = false) List<TargetRung> takeProfits,
+                               @ToolParam(description = "Trailing-stop callback in percent, optional, e.g. 1.5", required = false) Double trailCallbackPct,
+                               @ToolParam(description = "Mark price at which trailing begins, optional; omit to trail from the start", required = false) Double trailActivationPrice,
                                @ToolParam(description = "Thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER") String playType,
                                @ToolParam(description = "One sentence citing concrete data behind this trade") String signalsUsed,
                                @ToolParam(description = "Market condition that proves this thesis wrong, e.g. '1h close back below 64200 box top'") String invalidationCondition) {
@@ -184,9 +196,10 @@ public class TradeTools {
                 BigDecimal.valueOf(quantity), leverage,
                 limitPrice == null ? null : BigDecimal.valueOf(limitPrice),
                 stopLossPrice == null ? null : BigDecimal.valueOf(stopLossPrice),
-                takeProfitPrice == null ? null : BigDecimal.valueOf(takeProfitPrice),
+                takeProfits == null ? List.of() : takeProfits,
                 playType, signalsUsed, invalidationCondition);
-        ObjectNode argSummary = openArgs(req);
+        Trail trail = Trail.of(trailCallbackPct, trailActivationPrice);
+        ObjectNode argSummary = openArgs(req, trail);
         if (roundExpired()) {
             return expired("open_position", argSummary);
         }
@@ -206,12 +219,21 @@ public class TradeTools {
         BigDecimal equity = equityOf.apply(acct.positions());
         String reject = TradeGuard.validateOpen(req, equity, mark, symbolWhitelist, ctx.risk(), acct.snaps(),
                 prompts, ctx.lang());
+        if (reject == null && trail != null) {
+            reject = TradeGuard.validateTrail(trail.callbackPct(), trail.activationPrice(), prompts, ctx.lang());
+        }
         if (reject != null) {
             // rejected() 自己入轨迹，不许再包一层 record——否则拒绝动作双计
             return rejected("open_position", argSummary, reject);
         }
         // 同向已有仓位或开仓挂单：计划走覆盖而不是新立，旧论点进修订历史
         FuturesPositionDTO sameSide = acct.sameSide(req.symbol(), req.side());
+        // 加仓带的止盈档是追加到仓位现有档位后面的，sim 一个仓位最多挂这么多档
+        int hanging = sameSide == null || sameSide.getTakeProfits() == null ? 0 : sameSide.getTakeProfits().size();
+        if (hanging + req.takeProfits().size() > TradeGuard.SIM_SPLIT_LIMIT) {
+            return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.targetRungsOnAdd",
+                    Map.of("hanging", hanging, "limit", TradeGuard.SIM_SPLIT_LIMIT)));
+        }
         boolean coversPlan = sameSide != null || acct.pendingOpen(req.symbol(), req.side());
         // 入场参考价：限价单按限价、市价单按标记价；计划的入场价与回执里的事实都按它算
         BigDecimal entryRef = "LIMIT".equals(req.orderType()) ? req.limitPrice() : mark;
@@ -234,19 +256,28 @@ public class TradeTools {
             sl.setPrice(req.stopLossPrice());
             sl.setQuantity(req.quantity());
             openReq.setStopLosses(List.of(sl));
-            if (req.takeProfitPrice() != null) {
+            List<BigDecimal> rungQty = TargetRung.quantities(req.takeProfits(), req.quantity(), req.symbol());
+            List<FuturesOpenRequest.TakeProfit> tps = new ArrayList<>();
+            for (int i = 0; i < rungQty.size(); i++) {
                 FuturesOpenRequest.TakeProfit tp = new FuturesOpenRequest.TakeProfit();
-                tp.setPrice(req.takeProfitPrice());
-                tp.setQuantity(req.quantity());
-                openReq.setTakeProfits(List.of(tp));
+                tp.setPrice(req.takeProfits().get(i).price());
+                tp.setQuantity(rungQty.get(i));
+                tps.add(tp);
             }
+            openReq.setTakeProfits(tps);
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
-            persistPlan(req, entryRef, coversPlan, sameSide, resp);
+            // 市价单 / 市价加仓响应带仓位 id；限价加仓先认它将并入的那个仓；限价首开为 null，成交后才有
+            Long positionId = resp.getPositionId() != null ? resp.getPositionId()
+                    : sameSide == null ? null : sameSide.getId();
+            persistPlan(req, entryRef, coversPlan, positionId);
             OpenFacts.addAtr(facts, req, entryRef, ctx.interval(),
                     entryContext.atr14(req.symbol(), ctx.interval(), System.currentTimeMillis()));
             // 回执＝sim 的订单响应 + facts
             ObjectNode receipt = MAPPER.valueToTree(resp);
             receipt.set("facts", facts);
+            if (trail != null && startTrailOnOpen(req, positionId, trail)) {
+                receipt.set("trailingStop", trail.json());
+            }
             return ok("open_position", argSummary, receipt);
         } catch (SimOrderRetry.UnknownOutcome e) {
             return unknown("open_position", argSummary, e);
@@ -259,8 +290,7 @@ public class TradeTools {
      * 成交/挂单即落计划（下轮唤醒回注）：同键已有持仓或挂单走覆盖，否则新立。
      * 写失败只记日志不回错——交易已真实发生，回错误会诱导模型重复开仓。
      */
-    private void persistPlan(TradeGuard.OpenReq req, BigDecimal entryRef, boolean coversPlan,
-                             FuturesPositionDTO sameSide, FuturesOrderResponse resp) {
+    private void persistPlan(TradeGuard.OpenReq req, BigDecimal entryRef, boolean coversPlan, Long positionId) {
         try {
             AiTraderPlan plan = new AiTraderPlan();
             plan.setTraderId(ctx.traderId());
@@ -272,12 +302,10 @@ public class TradeTools {
             plan.setInvalidationCondition(req.invalidationCondition());
             plan.setEntryPrice(entryRef);
             plan.setStopLossPrice(req.stopLossPrice());
-            plan.setTakeProfitPrice(req.takeProfitPrice());
+            plan.setTakeProfitsJson(TargetRung.toJson(req.takeProfits()));
             plan.setOpenedWakeTime(ctx.boundaryTime());
-            // 市价单/市价加仓响应即带仓位id。限价挂单为null：是加仓就先绑到它将并入的那个仓
-            // （不然下轮对账见键上有仓就把还挂着的单当成交了），首开留空等成交后对账补上
-            plan.setPositionId(resp.getPositionId() != null ? resp.getPositionId()
-                    : sameSide == null ? null : sameSide.getId());
+            // 限价加仓先绑到它将并入的那个仓（不然下轮对账见键上有仓就把还挂着的单当成交了），首开留空等成交后对账补上
+            plan.setPositionId(positionId);
             if (coversPlan) {
                 planStore.cover(plan, ctx.lang());
             } else {
@@ -288,6 +316,45 @@ public class TradeTools {
             Thread.startVirtualThread(() -> captureEntryContext(plan.getId(), req, entryRef, nowMs));
         } catch (Exception e) {
             log.warn("[TradeTools] 计划落库失败 traderId={} {} msg={}", ctx.traderId(), req.symbol(), e.getMessage());
+        }
+    }
+
+    /**
+     * 开仓带的跟踪止损规则落库，往计划记一条开启。单子已经成交，落库失败只记日志、回执里不带 trailingStop，
+     * 下一轮账户块里也看不到在跟随。
+     */
+    private boolean startTrailOnOpen(TradeGuard.OpenReq req, Long positionId, Trail trail) {
+        try {
+            trailStore.start(ctx.traderId(), ctx.roundNo(), req.symbol(), req.side(), positionId,
+                    trail.callbackPct(), trail.activationPrice(), req.stopLossPrice());
+            revisePlan(req.symbol(), req.side(), prompts.get(ctx.lang(), "trader.revise.trailStart"),
+                    trail.text(prompts, ctx.lang()), prompts.get(ctx.lang(), "trader.revise.trailStartAtOpen"));
+            return true;
+        } catch (Exception e) {
+            log.warn("[TradeTools] 跟踪止损落库失败 traderId={} {} msg={}", ctx.traderId(), req.symbol(), e.getMessage());
+            return false;
+        }
+    }
+
+    /** 跟踪止损的两个参数；两个都没传为 null */
+    private record Trail(BigDecimal callbackPct, BigDecimal activationPrice) {
+        static Trail of(Double callbackPct, Double activationPrice) {
+            return callbackPct == null && activationPrice == null ? null : new Trail(
+                    callbackPct == null ? null : BigDecimal.valueOf(callbackPct),
+                    activationPrice == null ? null : BigDecimal.valueOf(activationPrice));
+        }
+
+        ObjectNode json() {
+            return MAPPER.createObjectNode().put("callbackPct", callbackPct).put("activationPrice", activationPrice);
+        }
+
+        /** 修订史里的写法：回调幅度，带启动价的再加一句 */
+        String text(PromptCatalog prompts, AgentLang lang) {
+            String callback = callbackPct.stripTrailingZeros().toPlainString();
+            return activationPrice == null
+                    ? prompts.get(lang, "trader.revise.trailStartChange", Map.of("callback", callback))
+                    : prompts.get(lang, "trader.revise.trailStartChangeFrom", Map.of(
+                            "callback", callback, "activation", activationPrice.stripTrailingZeros().toPlainString()));
         }
     }
 
@@ -328,7 +395,7 @@ public class TradeTools {
             req.setClientRequestId(UUID.randomUUID().toString());
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.closePosition(simUserId, req));
             // 平掉的数量进修订史，理由是模型给的；全平后计划到下轮开头对账归档
-            revisePlan(pos, prompts.get(ctx.lang(), "trader.revise.close"),
+            revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.close"),
                     BigDecimal.valueOf(quantity).stripTrailingZeros().toPlainString(), reason);
             return ok("close_position", args, MAPPER.writeValueAsString(resp));
         } catch (SimOrderRetry.UnknownOutcome e) {
@@ -339,18 +406,29 @@ public class TradeTools {
     }
 
     @Tool(name = "set_stop_loss", description = """
-            Replace the stop-loss of an open position (positionId from the [Account] block in your opening message, or get_account). The new stop
-            always covers the WHOLE position — you do not pass a quantity. Guard: tighten only —
-            LONG stops may only move UP, SHORT stops only DOWN (relative to the current stop); it cannot
-            sit on the far side of the current price (it would fire at once). To exit, use close_position.
+            Change the stop of an open position (positionId from the [Account] block in your opening message, or get_account).
+            The stop always covers the WHOLE position — you do not pass a quantity. Two things can be set, at least one:
+            stopLossPrice puts the stop at a fixed price. Guard: tighten only — LONG stops may only move UP, SHORT stops
+            only DOWN (relative to the current stop); it cannot sit on the far side of the current price (it would
+            fire at once). To exit, use close_position.
+            trailCallbackPct starts (or re-tunes) a trailing stop: from now on the platform follows the mark price and
+            keeps moving the stop to (most favourable price since trailing began) minus/plus that percent, only ever
+            tighter, without waking you; trailActivationPrice, if given, is the mark price at which trailing begins.
+            Passing stopLossPrice alone on a position that is trailing ends the trailing and leaves the fixed stop.
             reason is REQUIRED and becomes part of the position's public plan revision history.""")
     public String setStopLoss(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
-                              @ToolParam(description = "New stop-loss price") double stopLossPrice,
-                              @ToolParam(description = "Why you move the stop now, e.g. 'price +2R, lock breakeven'") String reason) {
+                              @ToolParam(description = "New fixed stop-loss price, optional when trailCallbackPct is given", required = false) Double stopLossPrice,
+                              @ToolParam(description = "Trailing-stop callback in percent, optional, e.g. 1.5", required = false) Double trailCallbackPct,
+                              @ToolParam(description = "Mark price at which trailing begins, optional; omit to trail from now", required = false) Double trailActivationPrice,
+                              @ToolParam(description = "Why you change the stop now, e.g. 'price +2R, lock breakeven'") String reason) {
+        Trail trail = Trail.of(trailCallbackPct, trailActivationPrice);
         ObjectNode args = MAPPER.createObjectNode()
                 .put("positionId", positionId)
                 .put("stopLossPrice", stopLossPrice)
                 .put("reason", reason);
+        if (trail != null) {
+            args.set("trailingStop", trail.json());
+        }
         if (roundExpired()) {
             return expired("set_stop_loss", args);
         }
@@ -362,40 +440,53 @@ public class TradeTools {
             if (reason == null || reason.isBlank()) {
                 return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.stopReasonRequired"));
             }
+            if (stopLossPrice == null && trail == null) {
+                return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.stopOrTrailRequired"));
+            }
+            if (trail != null) {
+                String invalid = TradeGuard.validateTrail(trail.callbackPct(), trail.activationPrice(), prompts, ctx.lang());
+                if (invalid != null) {
+                    return rejected("set_stop_loss", args, invalid);
+                }
+            }
             boolean isLong = "LONG".equals(pos.getSide());
-            BigDecimal newStop = BigDecimal.valueOf(stopLossPrice);
-            // 先校验站在现价哪一侧：止损挂到现价另一侧，下一tick就是市价平仓——比放宽止损更恶劣的
-            // 恐慌平仓马甲。这条不能挂在"有基线"的前提下：仓位从没挂过止损时基线为null，
-            // 只许收紧整条判定被短路，任意价格都能放行
-            BigDecimal mark = markPrice.apply(pos.getSymbol());
-            if (isLong ? newStop.compareTo(mark) >= 0 : newStop.compareTo(mark) <= 0) {
-                return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.stopWrongSide", Map.of(
-                        "mark", mark.stripTrailingZeros().toPlainString(),
-                        "rule", prompts.get(ctx.lang(), isLong ? "trader.reject.stopRuleLong" : "trader.reject.stopRuleShort"),
-                        "given", newStop.stripTrailingZeros().toPlainString())));
+            BigDecimal stopNow = StopOrders.tightest(pos);
+            if (stopLossPrice != null) {
+                BigDecimal newStop = BigDecimal.valueOf(stopLossPrice);
+                BigDecimal mark = markPrice.apply(pos.getSymbol());
+                switch (StopOrders.move(simTradeClient, simUserId, pos, newStop, mark)) {
+                    // 止损挂到现价另一侧，下一 tick 就是市价平仓
+                    case StopOrders.WrongSide _ -> {
+                        return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.stopWrongSide", Map.of(
+                                "mark", mark.stripTrailingZeros().toPlainString(),
+                                "rule", prompts.get(ctx.lang(), isLong ? "trader.reject.stopRuleLong" : "trader.reject.stopRuleShort"),
+                                "given", newStop.stripTrailingZeros().toPlainString())));
+                    }
+                    // 止损只许收紧：放宽止损=放大风险；想给仓位更多空间说明论点已动摇，该查失效条件而不是松止损
+                    case StopOrders.Looser l -> {
+                        return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.stopOnlyTighter",
+                                Map.of("current", l.current().stripTrailingZeros().toPlainString())));
+                    }
+                    case StopOrders.Moved m -> revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.moveStop"),
+                            (m.from() == null ? prompts.get(ctx.lang(), "trader.revise.none")
+                                    : m.from().stripTrailingZeros().toPlainString())
+                                    + "→" + newStop.stripTrailingZeros().toPlainString(), reason);
+                }
+                stopNow = newStop;
             }
-            // 止损只许收紧：放宽止损=放大风险=移动球门柱；想给仓位更多空间说明论点已动摇，该查失效条件而不是松止损
-            // 基准取最紧那档：sim 是整组替换，比最紧档松的新价会让原有某档变松，一律拒
-            BigDecimal tightest = TradeGuard.extremePrice(
-                    pos.getStopLosses() == null ? List.of()
-                            : pos.getStopLosses().stream().map(FuturesStopLoss::getPrice).toList(), isLong);
-            if (tightest != null && (isLong ? newStop.compareTo(tightest) < 0 : newStop.compareTo(tightest) > 0)) {
-                return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.stopOnlyTighter",
-                        Map.of("current", tightest.stripTrailingZeros().toPlainString())));
+            if (trail != null) {
+                trailStore.start(ctx.traderId(), ctx.roundNo(), pos.getSymbol(), pos.getSide(), pos.getId(),
+                        trail.callbackPct(), trail.activationPrice(), stopNow);
+                revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.trailStart"),
+                        trail.text(prompts, ctx.lang()), reason);
+            } else {
+                // 只给了固定价：这个仓位在跟随的话，跟随到此结束
+                AiTraderTrail trailing = trailStore.byKey(ctx.traderId(), ctx.roundNo())
+                        .get(TraderPlanStore.key(pos.getSymbol(), pos.getSide()));
+                if (trailing != null) {
+                    trailStore.end(trailing, ctx.lang(), reason);
+                }
             }
-            FuturesStopLossRequest req = new FuturesStopLossRequest();
-            req.setPositionId(positionId);
-            FuturesStopLossRequest.StopLossItem item = new FuturesStopLossRequest.StopLossItem();
-            item.setPrice(newStop);
-            // 覆盖量从仓位现取：本版 sl/tp 都是全仓单，让模型报数量它会照抄旧值，
-            // 加仓后仓位变大而覆盖量没跟上，一半仓位就裸奔了
-            item.setQuantity(pos.getQuantity());
-            req.setStopLosses(List.of(item));
-            simTradeClient.setStopLoss(simUserId, req);
-            revisePlan(pos, prompts.get(ctx.lang(), "trader.revise.moveStop"),
-                    (tightest == null ? prompts.get(ctx.lang(), "trader.revise.none")
-                            : tightest.stripTrailingZeros().toPlainString())
-                            + "→" + newStop.stripTrailingZeros().toPlainString(), reason);
             return ok("set_stop_loss", args, "{\"ok\":true}");
         } catch (Exception e) {
             return fail("set_stop_loss", args, e);
@@ -403,18 +494,21 @@ public class TradeTools {
     }
 
     @Tool(name = "set_take_profit", description = """
-            Replace the take-profit of an open position (positionId from the [Account] block in your opening message, or get_account). The new target
-            always covers the WHOLE position — you do not pass a quantity. Guard: away only —
-            LONG targets may only move UP, SHORT targets only DOWN; it cannot sit on the far side of the
-            current price (it would fire at once). To leave early, use close_position.
+            Replace ALL take-profit orders of an open position (positionId from the [Account] block in your opening
+            message, or get_account) with a new set of rungs: up to 3, each a price plus the percent of the current
+            position it closes (percents sum to at most 100; whatever is left has no take-profit order). An empty
+            array removes every take-profit order. Rungs may move nearer or farther; each must still be on the
+            profit side of the current price (LONG above, SHORT below), otherwise it would fire at once — to leave
+            now, use close_position.
             reason is REQUIRED (public plan revision history).""")
     public String setTakeProfit(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
-                                @ToolParam(description = "New take-profit price") double takeProfitPrice,
-                                @ToolParam(description = "Why you move the target now, e.g. 'trend accelerating, extend to next resistance'") String reason) {
+                                @ToolParam(description = "The whole new set of take-profit rungs, each {price, percent}; an empty array removes them all") List<TargetRung> takeProfits,
+                                @ToolParam(description = "Why you change the targets now, e.g. 'trend accelerating, extend to next resistance'") String reason) {
+        List<TargetRung> rungs = takeProfits == null ? List.of() : takeProfits;
         ObjectNode args = MAPPER.createObjectNode()
                 .put("positionId", positionId)
-                .put("takeProfitPrice", takeProfitPrice)
                 .put("reason", reason);
+        args.set("takeProfits", MAPPER.valueToTree(rungs));
         if (roundExpired()) {
             return expired("set_take_profit", args);
         }
@@ -426,60 +520,68 @@ public class TradeTools {
             if (reason == null || reason.isBlank()) {
                 return rejected("set_take_profit", args, prompts.get(ctx.lang(), "trader.reject.targetReasonRequired"));
             }
-            boolean isLong = "LONG".equals(pos.getSide());
-            BigDecimal newTarget = BigDecimal.valueOf(takeProfitPrice);
-            // 同 set_stop_loss：目标位站到现价另一侧就是秒触发的"止盈带走"马甲，
-            // 且原仓没挂过止盈时基线为null，只许远离那条判定同样管不住
-            BigDecimal mark = markPrice.apply(pos.getSymbol());
-            if (isLong ? newTarget.compareTo(mark) <= 0 : newTarget.compareTo(mark) >= 0) {
-                return rejected("set_take_profit", args, prompts.get(ctx.lang(), "trader.reject.targetWrongSide", Map.of(
-                        "mark", mark.stripTrailingZeros().toPlainString(),
-                        "rule", prompts.get(ctx.lang(), isLong ? "trader.reject.targetRuleLong" : "trader.reject.targetRuleShort"),
-                        "given", newTarget.stripTrailingZeros().toPlainString())));
+            String invalid = TradeGuard.validateTargets(rungs, prompts, ctx.lang());
+            if (invalid != null) {
+                return rejected("set_take_profit", args, invalid);
             }
-            // 止盈只许远离入场：把目标降到现价上方一点点秒触发＝"止盈带走"马甲下的恐慌平仓
-            BigDecimal farthest = TradeGuard.extremePrice(
-                    pos.getTakeProfits() == null ? List.of()
-                            : pos.getTakeProfits().stream().map(FuturesTakeProfit::getPrice).toList(), isLong);
-            if (farthest != null && (isLong ? newTarget.compareTo(farthest) < 0 : newTarget.compareTo(farthest) > 0)) {
-                return rejected("set_take_profit", args, prompts.get(ctx.lang(), "trader.reject.targetOnlyFarther",
-                        Map.of("current", farthest.stripTrailingZeros().toPlainString())));
+            boolean isLong = "LONG".equals(pos.getSide());
+            if (!rungs.isEmpty()) {
+                // 哪一档站到现价另一侧都是秒触发，等于换了个名字的市价平仓
+                BigDecimal mark = markPrice.apply(pos.getSymbol());
+                for (TargetRung rung : rungs) {
+                    if (isLong ? rung.price().compareTo(mark) <= 0 : rung.price().compareTo(mark) >= 0) {
+                        return rejected("set_take_profit", args, prompts.get(ctx.lang(), "trader.reject.targetWrongSide", Map.of(
+                                "mark", mark.stripTrailingZeros().toPlainString(),
+                                "rule", prompts.get(ctx.lang(), isLong ? "trader.reject.targetRuleLong" : "trader.reject.targetRuleShort"),
+                                "given", rung.price().stripTrailingZeros().toPlainString())));
+                    }
+                }
+                invalid = TradeGuard.targetQuantities(rungs, pos.getQuantity(), pos.getSymbol(), prompts, ctx.lang());
+                if (invalid != null) {
+                    return rejected("set_take_profit", args, invalid);
+                }
+            }
+            // 占比按仓位当前数量折成数量；sim 是整组替换，空表就是清掉
+            List<BigDecimal> rungQty = TargetRung.quantities(rungs, pos.getQuantity(), pos.getSymbol());
+            List<FuturesTakeProfitRequest.TakeProfitItem> items = new ArrayList<>();
+            for (int i = 0; i < rungQty.size(); i++) {
+                FuturesTakeProfitRequest.TakeProfitItem item = new FuturesTakeProfitRequest.TakeProfitItem();
+                item.setPrice(rungs.get(i).price());
+                item.setQuantity(rungQty.get(i));
+                items.add(item);
             }
             FuturesTakeProfitRequest req = new FuturesTakeProfitRequest();
             req.setPositionId(positionId);
-            FuturesTakeProfitRequest.TakeProfitItem item = new FuturesTakeProfitRequest.TakeProfitItem();
-            item.setPrice(newTarget);
-            // 同 set_stop_loss：全仓覆盖，量归代码取
-            item.setQuantity(pos.getQuantity());
-            req.setTakeProfits(List.of(item));
+            req.setTakeProfits(items);
             simTradeClient.setTakeProfit(simUserId, req);
-            revisePlan(pos, prompts.get(ctx.lang(), "trader.revise.moveTarget"),
-                    (farthest == null ? prompts.get(ctx.lang(), "trader.revise.none")
-                            : farthest.stripTrailingZeros().toPlainString())
-                            + "→" + newTarget.stripTrailingZeros().toPlainString(), reason);
+            revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.moveTarget"),
+                    targetsText(TargetRung.of(pos)) + "→" + targetsText(rungs), reason);
             return ok("set_take_profit", args, "{\"ok\":true}");
         } catch (Exception e) {
             return fail("set_take_profit", args, e);
         }
     }
 
+    /** 修订史里的止盈档写法；一档没有写"无" */
+    private String targetsText(List<TargetRung> rungs) {
+        return rungs.isEmpty() ? prompts.get(ctx.lang(), "trader.revise.none") : TargetRung.text(rungs);
+    }
+
     @Tool(name = "write_plan", description = """
             Backfill a trading plan for an open position that has NO plan record (positionId from the
-            [Account] block in your opening message, or get_account). The stop is copied from the position's
-            current stop-loss order; targetPrice falls back to its current take-profit order when omitted.
+            [Account] block in your opening message, or get_account). The stop and the take-profit rungs are
+            copied from the position's current orders.
             Rejected if the position already has a plan — plans are immutable; the only
             legal ways to change a thesis are adding to the position or closing and reopening.""")
     public String writePlan(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                             @ToolParam(description = "Thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER") String playType,
                             @ToolParam(description = "One sentence citing concrete data behind holding this position") String signalsUsed,
-                            @ToolParam(description = "Market condition that proves this thesis wrong (NOT a PnL number)") String invalidationCondition,
-                            @ToolParam(description = "Target price, optional", required = false) Double targetPrice) {
+                            @ToolParam(description = "Market condition that proves this thesis wrong (NOT a PnL number)") String invalidationCondition) {
         ObjectNode args = MAPPER.createObjectNode()
                 .put("positionId", positionId)
                 .put("playType", playType)
                 .put("signalsUsed", signalsUsed)
-                .put("invalidationCondition", invalidationCondition)
-                .put("targetPrice", targetPrice);
+                .put("invalidationCondition", invalidationCondition);
         try {
             FuturesPositionDTO pos = findPosition(positionId);
             if (pos == null) {
@@ -497,7 +599,6 @@ public class TradeTools {
                 return rejected("write_plan", args,
                         prompts.get(ctx.lang(), "trader.guard.invalidationRequired"));
             }
-            boolean isLong = "LONG".equals(pos.getSide());
             AiTraderPlan plan = new AiTraderPlan();
             plan.setTraderId(ctx.traderId());
             plan.setRoundNo(ctx.roundNo());
@@ -507,12 +608,9 @@ public class TradeTools {
             plan.setSignalsUsed(signalsUsed);
             plan.setInvalidationCondition(invalidationCondition);
             plan.setEntryPrice(pos.getEntryPrice());
-            plan.setStopLossPrice(TradeGuard.extremePrice(pos.getStopLosses() == null ? List.of()
-                    : pos.getStopLosses().stream().map(FuturesStopLoss::getPrice).toList(), isLong));
-            // 目标位没传就抄仓位现挂的止盈：计划的 target 是"到目标位落袋"和复盘配对的依据，不能空着
-            plan.setTakeProfitPrice(targetPrice != null ? BigDecimal.valueOf(targetPrice)
-                    : TradeGuard.extremePrice(pos.getTakeProfits() == null ? List.of()
-                            : pos.getTakeProfits().stream().map(FuturesTakeProfit::getPrice).toList(), isLong));
+            // 止损和止盈档都抄仓位现挂的单
+            plan.setStopLossPrice(StopOrders.tightest(pos));
+            plan.setTakeProfitsJson(TargetRung.toJson(TargetRung.of(pos)));
             // 补立也盖仓位id：入参已经 findPosition 对 sim 校验过，不是模型凭空抄的
             plan.setPositionId(pos.getId());
             // 持有时长按仓位真实开仓时间算，不是补立时刻——补立不能"清零仓龄"
@@ -577,18 +675,18 @@ public class TradeTools {
     }
 
     /**
-     * 移止损/移止盈/平仓的留痕：按仓位的币向找存活计划，这是唤醒中唯一可靠的找法
+     * 移止损/移止盈/平仓/跟踪止损开启的留痕：按币向找存活计划，这是唤醒中唯一可靠的找法
      * （本轮内成交的限价仓要到下轮开头才绑上 id）。没有计划（旧仓）不强求，write_plan 是补救路径。
      * 交易已成交，留痕失败只记日志不回错——回错会诱导模型再做一次。
      */
-    private void revisePlan(FuturesPositionDTO pos, String type, String change, String reason) {
+    private void revisePlan(String symbol, String side, String type, String change, String reason) {
         try {
-            AiTraderPlan plan = planStore.liveFor(ctx.traderId(), ctx.roundNo(), pos.getSymbol(), pos.getSide());
+            AiTraderPlan plan = planStore.liveFor(ctx.traderId(), ctx.roundNo(), symbol, side);
             if (plan != null) {
                 planStore.revise(plan, ctx.boundaryTime(), type, change, reason);
             }
         } catch (Exception e) {
-            log.warn("[TradeTools] 修订落库失败 traderId={} {} msg={}", ctx.traderId(), pos.getSymbol(), e.getMessage());
+            log.warn("[TradeTools] 修订落库失败 traderId={} {} msg={}", ctx.traderId(), symbol, e.getMessage());
         }
     }
 
@@ -645,7 +743,16 @@ public class TradeTools {
             what it means when this fires. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward
             (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm
             then. The previous set on the symbol is replaced in full, an empty array clears it. A condition fires
-            once and is removed.""")
+            once and is removed.
+            A condition may carry an action — a standing order the platform carries out by itself the moment the
+            condition fires, on any of your positions or pending orders (not necessarily on this symbol):
+            MOVE_STOP (positionId, stopLossPrice: tighten that position's stop to this price), CLOSE (positionId,
+            closePercent: close that percent of the position at market, 100 = all), CANCEL_ORDER (orderId: cancel
+            that pending order). There is no action that opens a position. After MOVE_STOP or CANCEL_ORDER you are
+            NOT woken: the next opening message reports what was done, and until then that direction on this
+            symbol has no condition armed. After CLOSE you are woken. If the action cannot be carried out (the
+            position or order is gone, the stop would loosen or sit on the wrong side of the price) you are woken
+            with the reason.""")
     public String setWatch(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                            @ToolParam(description = "The whole new list for this symbol (at most one upward, one downward, one AT_TIME); an empty array clears it") List<WatchSpec> watches) {
         ObjectNode args = MAPPER.createObjectNode().put("symbol", symbol);
@@ -668,23 +775,74 @@ public class TradeTools {
             if (reason != null) {
                 return rejected("set_watch", args, reason);
             }
-            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, ctx.boundaryTime());
+            // 预案动作对着账户查一遍，落库时带上那个仓位 / 挂单的币和方向；没带动作的条件不查账户
+            List<String> actions = new ArrayList<>();
+            Account acct = watches.stream().anyMatch(s -> s.action() != null) ? account() : null;
+            for (WatchSpec s : watches) {
+                if (s.action() == null) {
+                    actions.add(null);
+                    continue;
+                }
+                ObjectNode action = MAPPER.valueToTree(s.action());
+                reason = bindAction(s.action(), acct, action);
+                if (reason != null) {
+                    return rejected("set_watch", args, reason);
+                }
+                actions.add(MAPPER.writeValueAsString(action));
+            }
+            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, actions, ctx.boundaryTime());
             return ok("set_watch", args, "{\"ok\":true,\"armed\":" + watches.size() + "}");
         } catch (Exception e) {
             return fail("set_watch", args, e);
         }
     }
 
-    private static ObjectNode openArgs(TradeGuard.OpenReq req) {
-        return MAPPER.createObjectNode()
+    /**
+     * 预案动作指的仓位 / 挂单得在账户里，移止损的新价不能比现挂的松；查到了把币和方向写进 stored。
+     * 通过返回 null，否则是拒因。新止损站在现价哪一侧到命中那一刻才知道，这里不查
+     */
+    private String bindAction(WatchAction a, Account acct, ObjectNode stored) {
+        if (AiTraderWatch.ACTION_CANCEL_ORDER.equals(a.type())) {
+            FuturesOrderResponse order = acct.pending().stream()
+                    .filter(o -> a.orderId().equals(o.getOrderId())).findFirst().orElse(null);
+            if (order == null) {
+                return prompts.get(ctx.lang(), "trader.reject.orderIdNotFound");
+            }
+            stored.put("symbol", order.getSymbol()).put("side", order.getOrderSide());
+            return null;
+        }
+        FuturesPositionDTO pos = acct.positions().stream()
+                .filter(p -> a.positionId().equals(p.getId())).findFirst().orElse(null);
+        if (pos == null) {
+            return prompts.get(ctx.lang(), "trader.reject.positionIdNotFound");
+        }
+        if (AiTraderWatch.ACTION_MOVE_STOP.equals(a.type())) {
+            BigDecimal tightest = StopOrders.tightest(pos);
+            boolean isLong = "LONG".equals(pos.getSide());
+            if (tightest != null && (isLong ? a.stopLossPrice().compareTo(tightest) < 0
+                    : a.stopLossPrice().compareTo(tightest) > 0)) {
+                return prompts.get(ctx.lang(), "trader.reject.stopOnlyTighter",
+                        Map.of("current", tightest.stripTrailingZeros().toPlainString()));
+            }
+        }
+        stored.put("symbol", pos.getSymbol()).put("side", pos.getSide());
+        return null;
+    }
+
+    private static ObjectNode openArgs(TradeGuard.OpenReq req, Trail trail) {
+        ObjectNode args = MAPPER.createObjectNode()
                 .put("symbol", req.symbol())
                 .put("side", req.side())
                 .put("orderType", req.orderType())
                 .put("quantity", req.quantity())
                 .put("leverage", req.leverage())
                 .put("limitPrice", req.limitPrice())
-                .put("stopLossPrice", req.stopLossPrice())
-                .put("takeProfitPrice", req.takeProfitPrice())
+                .put("stopLossPrice", req.stopLossPrice());
+        args.set("takeProfits", MAPPER.valueToTree(req.takeProfits()));
+        if (trail != null) {
+            args.set("trailingStop", trail.json());
+        }
+        return args
                 .put("playType", req.playType())
                 .put("signalsUsed", req.signalsUsed())
                 .put("invalidationCondition", req.invalidationCondition());

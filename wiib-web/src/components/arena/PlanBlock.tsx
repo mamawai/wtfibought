@@ -2,8 +2,9 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn, fmtDateTime, fmtNum } from '../../lib/utils';
 import type { AiTraderPlanView, PlanRevision } from '../../types';
+import { planTargets } from './traderTools';
 
-/** 价位一格：标签 + 窄体大数，入场/原始止损/目标并排 */
+/** 价位一格：标签 + 窄体大数，入场/原始止损并排 */
 function Px({ label, value }: { label: string; value: number }) {
   return (
     <span>{label}<b className="text-foreground font-semibold text-[15px] [font-stretch:85%] ml-[5px]">{fmtNum(value)}</b></span>
@@ -24,6 +25,7 @@ export function PlanBlock({ plan, embedded }: { plan: AiTraderPlanView; embedded
       return [];
     }
   }, [plan.revisionsJson]);
+  const targets = useMemo(() => planTargets(plan.takeProfitsJson), [plan.takeProfitsJson]);
 
   return (
     <div className={cn(embedded ? 'mt-3 pt-3 border-t border-dashed border-border' : 'py-4 border-b border-border')}>
@@ -45,7 +47,16 @@ export function PlanBlock({ plan, embedded }: { plan: AiTraderPlanView; embedded
       <div className="num flex flex-wrap gap-x-[22px] gap-y-1 mt-2.5 text-[13px] mute">
         {plan.entryPrice != null && <Px label={t('plan.entry')} value={plan.entryPrice} />}
         {plan.stopLossPrice != null && <Px label={t('plan.origSl')} value={plan.stopLossPrice} />}
-        {plan.takeProfitPrice != null && <Px label={t('plan.target')} value={plan.takeProfitPrice} />}
+        {/* 止盈分档：每档价位后面跟平掉仓位的百分之几；没设止盈就没有这一格 */}
+        {targets.length > 0 && (
+          <span>{t('plan.target')}
+            {targets.map((r, i) => (
+              <b key={i} className="text-foreground font-semibold text-[15px] [font-stretch:85%] ml-[5px]">
+                {fmtNum(r.price)}<span className="mute font-normal text-[12.5px]">({r.percent}%)</span>
+              </b>
+            ))}
+          </span>
+        )}
       </div>
       {revisions.length > 0 && (
         <div className="text-[12.5px] mute mt-2 pt-2 border-t border-dashed border-border">

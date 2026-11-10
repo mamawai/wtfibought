@@ -306,15 +306,23 @@ tool:
     the configured percent-of-equity cap — there is no lower bound (adds are exempt); same-symbol
     leverage must match any position or pending order already on that symbol;
     LIMIT price within 5% of mark and resting on the far side of it (LONG below, SHORT above) — a LIMIT
-    that would fill at once is rejected, use MARKET for that; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
+    that would fill at once is rejected, use MARKET for that; stopLossPrice is REQUIRED and on the correct side.
+    takeProfits is OPTIONAL: up to 3 rungs, each a price on the profit side of entry plus the percent of the
+    position it closes (percents sum to at most 100; whatever is left has no take-profit order). Omit it
+    and the position has no take-profit order at all.
+    trailCallbackPct is OPTIONAL and turns the stop into a trailing stop: the platform follows the mark
+    price and keeps moving the stop to (most favourable price since trailing began) minus/plus that
+    percent, only ever tighter; trailActivationPrice, if given, is the mark price at which trailing begins.
+    On a LIMIT order trailing begins once the order fills. stopLossPrice is the stop until then.
     playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
     signalsUsed: one sentence citing the concrete data fields your thesis rests on.
     invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
     number); it becomes part of your position's plan.
-    Stop, take-profit (= the plan's target) and invalidation condition are all filed into the plan and
-    injected back into your next opening message. The receipt carries a facts block for this order:
-    the round-trip fee estimate, the stop distance in % and in ATR14 of your heartbeat interval, the
-    reward-to-risk after fees, and the loss at the stop as a percentage of equity.
+    Stop, take-profit rungs (= the plan's targets) and invalidation condition are all filed into the plan
+    and injected back into your next opening message. The receipt carries a facts block for this order:
+    the round-trip fee estimate, the stop distance in % and in ATR14 of your heartbeat interval, the loss
+    at the stop as a percentage of equity, and — only when take-profit rungs are set — the gain if every
+    rung fills and the reward-to-risk after fees (counting only the part the rungs cover).
 
   close_position: |-
     Close (part of) an open position by positionId (from the [Account] block in your opening message, or get_account), at market price.
@@ -322,23 +330,30 @@ tool:
     reason: one sentence on why you are closing now.
 
   set_stop_loss: |-
-    Replace the stop-loss of an open position (positionId from the [Account] block in your opening message, or get_account). The new stop
-    always covers the WHOLE position — you do not pass a quantity. Guard: tighten only —
-    LONG stops may only move UP, SHORT stops only DOWN (relative to the current stop); it cannot
-    sit on the far side of the current price (it would fire at once). To exit, use close_position.
+    Change the stop of an open position (positionId from the [Account] block in your opening message, or get_account).
+    The stop always covers the WHOLE position — you do not pass a quantity. Two things can be set, at least one:
+    stopLossPrice puts the stop at a fixed price. Guard: tighten only — LONG stops may only move UP, SHORT stops
+    only DOWN (relative to the current stop); it cannot sit on the far side of the current price (it would
+    fire at once). To exit, use close_position.
+    trailCallbackPct starts (or re-tunes) a trailing stop: from now on the platform follows the mark price and
+    keeps moving the stop to (most favourable price since trailing began) minus/plus that percent, only ever
+    tighter, without waking you; trailActivationPrice, if given, is the mark price at which trailing begins.
+    Passing stopLossPrice alone on a position that is trailing ends the trailing and leaves the fixed stop.
     reason is REQUIRED and becomes part of the position's public plan revision history.
 
   set_take_profit: |-
-    Replace the take-profit of an open position (positionId from the [Account] block in your opening message, or get_account). The new target
-    always covers the WHOLE position — you do not pass a quantity. Guard: away only —
-    LONG targets may only move UP, SHORT targets only DOWN; it cannot sit on the far side of the
-    current price (it would fire at once). To leave early, use close_position.
+    Replace ALL take-profit orders of an open position (positionId from the [Account] block in your opening
+    message, or get_account) with a new set of rungs: up to 3, each a price plus the percent of the current
+    position it closes (percents sum to at most 100; whatever is left has no take-profit order). An empty
+    array removes every take-profit order. Rungs may move nearer or farther; each must still be on the
+    profit side of the current price (LONG above, SHORT below), otherwise it would fire at once — to leave
+    now, use close_position.
     reason is REQUIRED (public plan revision history).
 
   write_plan: |-
     Backfill a trading plan for an open position that has NO plan record (positionId from the
-    [Account] block in your opening message, or get_account). The stop is copied from the position's
-    current stop-loss order; targetPrice falls back to its current take-profit order when omitted.
+    [Account] block in your opening message, or get_account). The stop and the take-profit rungs are
+    copied from the position's current orders.
     Rejected if the position already has a plan — plans are immutable; the only
     legal ways to change a thesis are adding to the position or closing and reopening.
 
@@ -358,6 +373,15 @@ tool:
     (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm
     then. The previous set on the symbol is replaced in full, an empty array clears it. A condition fires
     once and is removed.
+    A condition may carry an action — a standing order the platform carries out by itself the moment the
+    condition fires, on any of your positions or pending orders (not necessarily on this symbol):
+    MOVE_STOP (positionId, stopLossPrice: tighten that position's stop to this price), CLOSE (positionId,
+    closePercent: close that percent of the position at market, 100 = all), CANCEL_ORDER (orderId: cancel
+    that pending order). There is no action that opens a position. After MOVE_STOP or CANCEL_ORDER you are
+    NOT woken: the next opening message reports what was done, and until then that direction on this
+    symbol has no condition armed. After CLOSE you are woken. If the action cannot be carried out (the
+    position or order is gone, the stop would loosen or sit on the wrong side of the price) you are woken
+    with the reason.
 
   # Behaviour analysis: one call = 7 internal data endpoints + one large deep-model call. Same shape
   # as run_deep_analysis; only the trigger phrases follow the language.

@@ -31,6 +31,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 盯盘哨兵：盯模型用 set_watch 布的条件。触及价位和到时刻看 markPrice tick（~1s），命中就广播一个 {@link WatchTrigger}
  * 让调度器叫醒；周期收盘由调度器在 5m 收盘时来问 {@link #closeHits}，这样命中能并进同一刻的例行唤醒而不是叫两次。
+ * 带动作的条件（预案）命中后先交给 {@link PresetExecutor} 执行，它说要叫醒才叫。
  * 命中：库里 ARMED → FIRED（CAS，并发 tick 只有一个赢），赢了才从名单摘掉。
  * 名单在内存里按币放着，条件一变（{@link WatchesChanged}）整份重载。
  */
@@ -42,6 +43,8 @@ public class WatchSentinel implements MessageListener {
     private final RedisMessageListenerContainer listenerContainer;
     private final TraderWatchStore watchStore;
     private final ApplicationEventPublisher events;
+    /** 带动作的条件命中时，先由它把动作做掉 */
+    private final PresetExecutor presets;
 
     /** 币 → 在盯的条件。整份替换，读到的是快照 */
     private volatile Map<String, List<AiTraderWatch>> armed = Map.of();
@@ -101,7 +104,16 @@ public class WatchSentinel implements MessageListener {
                 default -> false;
             };
             if (hit && fire(w, price, now)) {
-                events.publishEvent(new WatchTrigger(w, price, now));
+                if (w.getActionJson() == null) {
+                    events.publishEvent(new WatchTrigger(w, price, now));
+                } else {
+                    // 预案要调 sim，不占行情线程；做完该叫醒的再广播
+                    Thread.startVirtualThread(() -> {
+                        if (presets.execute(w, price, now)) {
+                            events.publishEvent(new WatchTrigger(w, price, now));
+                        }
+                    });
+                }
             }
         }
     }
@@ -123,7 +135,9 @@ public class WatchSentinel implements MessageListener {
             }
             boolean hit = AiTraderWatch.CLOSE_ABOVE.equals(w.getKind()) ? close.compareTo(w.getLevel()) >= 0
                     : close.compareTo(w.getLevel()) <= 0;
-            if (hit && fire(w, close, closeTime + 1)) {
+            // 预案当场做完再往下走：同一刻的例行轮读到的就是做完之后的账户；不用叫醒的不进名单
+            if (hit && fire(w, close, closeTime + 1)
+                    && (w.getActionJson() == null || presets.execute(w, close, closeTime + 1))) {
                 hits.add(new WatchTrigger(w, close, closeTime + 1));
             }
         }
