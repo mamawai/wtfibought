@@ -217,7 +217,6 @@ CREATE TABLE IF NOT EXISTS futures_order (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-ALTER TABLE futures_order ADD COLUMN IF NOT EXISTS liquidation_fee DECIMAL(18,2);
 
 COMMENT ON TABLE futures_order IS '永续合约订单表';
 COMMENT ON COLUMN futures_order.user_id IS '用户ID';
@@ -514,7 +513,6 @@ COMMENT ON COLUMN workbench_chat_message.model_label IS '这一轮用的对话�
 COMMENT ON COLUMN workbench_chat_message.total_tokens IS '本轮主agent与整理上下文的模型调用token合计(后台子运行另记账,不在内);NULL=上游端点没返回usage或本轮被中断账不可信,不是0';
 COMMENT ON COLUMN workbench_chat_message.latency_ms IS '本轮墙钟耗时:准入与建叶子之后开跑起算;比[TurnMetrics]日志多一帧session与user行落库';
 COMMENT ON COLUMN workbench_chat_message.sources IS '这一轮联网搜索搜到/引用的来源 [{url,title}],按url去重;答案底部展示;没搜过或老数据为NULL';
-ALTER TABLE workbench_chat_message ADD COLUMN IF NOT EXISTS steps JSONB;
 COMMENT ON COLUMN workbench_chat_message.steps IS '这一轮的过程事件数组[{type,...}](阶段/工具调用/搜索/子运行),与SSE帧同形;重开历史时前端据它重建过程轨;老数据与user行为NULL';
 COMMENT ON COLUMN workbench_chat_message.context_tokens IS '这一轮结束时的上下文用量(token):最后一次模型调用的输入+输出,上游没报就按字数估;给对话框底栏计量条用;中断的轮与老数据为NULL';
 COMMENT ON COLUMN workbench_chat_message.context_window IS '这一轮时对话主模型端点配的上下文窗口(token)';
@@ -717,12 +715,6 @@ COMMENT ON TABLE ai_trader IS 'AI Trader：用户BYOK自主交易代理（每用
 COMMENT ON COLUMN ai_trader.status IS 'PAUSED/RUNNING/LIQUIDATED';
 COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分隔（须在agent的binance.symbols+crypto-futures-symbols范围内）';
 COMMENT ON COLUMN ai_trader.interval_code IS '心跳周期 15m/1h/4h：每根该级别K线收盘例行唤醒一次定期复查；两次心跳之间由止损止盈、盯盘条件命中、持仓事件、波动警报叫醒。5m已下线（存量迁15m）';
--- 5m 档下线：存量迁到 15m（幂等）
-UPDATE ai_trader SET interval_code = '15m' WHERE interval_code = '5m';
--- 保证金占比下限已删，只留上限（幂等）
-ALTER TABLE ai_trader DROP COLUMN IF EXISTS margin_pct_min;
--- 保证金占比上限最高 50%：存量超过的压到 50（幂等）
-UPDATE ai_trader SET margin_pct_max = 50 WHERE margin_pct_max > 50;
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：目标/边界/偏好，没写到的模型自己定（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当目标与边界；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
@@ -804,18 +796,6 @@ CREATE TABLE IF NOT EXISTS ai_trader_plan (
 -- 同键同一时刻至多一份存活计划；归档行不占键——同轮重开/跨轮重开都能再立新计划
 CREATE UNIQUE INDEX IF NOT EXISTS uq_atp_live ON ai_trader_plan (trader_id, round_no, symbol, side)
     WHERE status = 'LIVE';
--- 止盈从单个目标价改成分档：存量的 take_profit_price 搬成一档 100%，搬完删旧列（幂等）
-ALTER TABLE ai_trader_plan ADD COLUMN IF NOT EXISTS take_profits_json TEXT;
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns
-               WHERE table_name = 'ai_trader_plan' AND column_name = 'take_profit_price') THEN
-        UPDATE ai_trader_plan
-        SET take_profits_json = '[{"price":' || take_profit_price::text || ',"percent":100}]'
-        WHERE take_profit_price IS NOT NULL AND take_profits_json IS NULL;
-        ALTER TABLE ai_trader_plan DROP COLUMN take_profit_price;
-    END IF;
-END $$;
 COMMENT ON COLUMN ai_trader_plan.take_profits_json IS '开仓时的止盈分档快照JSON [{price,percent}]，由近到远，percent=这一档平掉仓位的百分之几；没设止盈为NULL。当前挂着的止盈单以sim仓位为准';
 COMMENT ON TABLE ai_trader_plan IS 'AI Trader持仓交易计划：开仓立的论点/失效条件/止损止盈快照，每次唤醒原样回注提示词（nof1式plan reinjection）——退出纪律的记忆载体。键(symbol,side)：sim同向开仓自动并入，任意时刻至多一仓，加仓=新论点覆盖';
 COMMENT ON COLUMN ai_trader_plan.invalidation_condition IS '失效条件：什么市场状况证明论点错了（市场条件而非盈亏数字），触发才允许主动平仓';
@@ -842,6 +822,9 @@ CREATE TABLE IF NOT EXISTS ai_trader_watch (
     fired_at        BIGINT,
     fired_price     NUMERIC(20,8),
     woke_at         BIGINT,
+    action_json     TEXT,
+    action_result   TEXT,
+    action_ok       BOOLEAN,
     created_wake_time BIGINT NOT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -853,10 +836,6 @@ COMMENT ON COLUMN ai_trader_watch.kind IS 'TOUCH_ABOVE/TOUCH_BELOW=标记价触�
 COMMENT ON COLUMN ai_trader_watch.note IS '模型给下一轮自己的备注：这条命中意味着什么，命中唤醒的开场白原样念给它';
 COMMENT ON COLUMN ai_trader_watch.status IS 'ARMED=在盯 FIRED=命中过（fired_at/fired_price记命中时刻与价） REPLACED=被整组替换或重置作废';
 COMMENT ON COLUMN ai_trader_watch.woke_at IS '模型得知这次命中的那轮唤醒时刻ms（当作触发叫醒它，或开场白里补报）；为空=命中了但还没哪轮告诉过它，下一轮开场白补报';
--- 预案：条件带一个命中时由代码执行的动作（幂等）
-ALTER TABLE ai_trader_watch ADD COLUMN IF NOT EXISTS action_json TEXT;
-ALTER TABLE ai_trader_watch ADD COLUMN IF NOT EXISTS action_result TEXT;
-ALTER TABLE ai_trader_watch ADD COLUMN IF NOT EXISTS action_ok BOOLEAN;
 COMMENT ON COLUMN ai_trader_watch.action_json IS '预案动作JSON，没带动作为NULL：type=MOVE_STOP(positionId,stopLossPrice)/CLOSE(positionId,closePercent)/CANCEL_ORDER(orderId)，另带布下时那个仓位或挂单的symbol、side。命中时代码当场执行，只会减风险';
 COMMENT ON COLUMN ai_trader_watch.action_result IS '预案执行结果一句话（跟主人语言）；没带动作或还没命中为NULL';
 COMMENT ON COLUMN ai_trader_watch.action_ok IS '预案做成了没有；没带动作或还没命中为NULL。移止损和撤单做成了不叫醒，平仓做成了或动作没做成都叫醒';
