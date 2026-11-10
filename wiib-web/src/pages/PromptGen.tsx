@@ -28,7 +28,7 @@ const ORB_DARK = { color: '#f97316', base: '#1a1b1f' };
 const PANEL = 'pt-card flex flex-col h-[calc(100dvh-12rem)] min-h-[30rem]';
 /** 流式输出尾巴上的光标 */
 const CURSOR = 'inline-block w-1.5 h-3.5 bg-primary/80 ml-0.5 align-middle animate-pulse motion-reduce:animate-none';
-/** 单独一行的段名：【方法】或 [Method] */
+/** 单独一行的段名：【目标】或 [Goal] */
 const SECTION_LINE = /^\s*(【[^】]+】|\[[A-Za-z][^\]]*\])\s*$/;
 
 type Stage = 'thinking' | 'reading' | 'writing';

@@ -247,7 +247,7 @@
     },
     "prompt": {
       "title": "Trading instructions",
-      "body": "The platform system prompt only describes the environment, the tools, the position spec and what the guard rejects — expand it to read the full text, word for word what the AI is fed, and it holds no trading opinion at all.\n\nYour trading instructions are appended after it and are the only source of method, style and discipline: which timeframes to read, which setups to take, how to place the stop, how to manage a position, how to size. A new trader starts with the platform default filled in; edit or delete it as you like. Position spec, guard and closing format are enforced by the system and cannot be overridden.\n\nSaved is live: the next candle already runs on the new text, no restart needed."
+      "body": "The platform system prompt only describes the environment, the tools, the position spec and what the guard rejects — expand it to read the full text, word for word what the AI is fed, and it holds no trading opinion at all.\n\nYour trading instructions are appended after it and hold the goal you set, the limits it must not cross and your preferences; how to read the market, how to enter and exit and how to size are left to its own judgement. A new trader starts with the platform default filled in; edit or delete it as you like. Position spec, guard and closing format are enforced by the system and cannot be overridden.\n\nSaved is live: the next candle already runs on the new text, no restart needed."
     },
     "save": {
       "title": "Save, then start",
@@ -261,7 +261,7 @@
     "reviewOn": "Daily review",
     "restrictionHold": "Let it use learned \"do not open\" rules as a reason to stay flat",
     "manageEndpoints": "Manage endpoints (AI page · Model config)",
-    "customPromptPh": "e.g. Trend breakouts only, never catch a falling knife; risk at most 2% of equity per trade; after two losses in a row, watch only for the rest of the day.",
+    "customPromptPh": "e.g. Goal: maximise net PnL; risk at most 2% of equity per trade and 6% in total; long only; prefer swings held 4 to 24 hours.",
     "genPrompt": "Prompt Generator",
     "resetDefaultPrompt": "Reset to platform default",
     "resetDefaultPromptConfirm": "Replace the current instructions with the platform default?",
@@ -466,7 +466,7 @@
       "hint": "Every wake and daily review burns this endpoint's key; switching endpoints tests the connection when you save."
     },
     "prompt": {
-      "desc": "The only source of method, style and discipline; the position spec, guardrails and closing format are enforced by the system",
+      "desc": "The goal, limits and preferences you give it, with the rest left to its own judgement; the position spec, guardrails and closing format are enforced by the system",
       "isDefault": "Platform default",
       "edited": "Edited",
       "live": "Takes effect on save, from the next heartbeat",

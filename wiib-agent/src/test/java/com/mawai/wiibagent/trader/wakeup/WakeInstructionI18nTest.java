@@ -208,9 +208,9 @@ class WakeInstructionI18nTest {
         String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", calendar, AgentLang.ZH, false);
 
         assertThat(single).contains(calendar);
-        assertThat(single.indexOf(calendar)).isLessThan(single.indexOf("本轮：按主人的交易指令"));
+        assertThat(single.indexOf(calendar)).isLessThan(single.indexOf("本轮：看整盘"));
         assertThat(alert.indexOf(calendar)).isLessThan(alert.indexOf("注意：本次不是例行唤醒"));
-        assertThat(second.indexOf(calendar)).isLessThan(second.indexOf("本段：按主人的交易指令"));
+        assertThat(second.indexOf(calendar)).isLessThan(second.indexOf("本段：看整盘"));
     }
 
     /** 观察包（账户/上一轮结论）的文案：英文侧零中文（含全角【】），中文侧段头齐全；没承诺、没事件就不算忙 */
@@ -278,9 +278,9 @@ class WakeInstructionI18nTest {
     void 中文单段开场白逐字不变() {
         assertThat(runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.ZH))
                 .isEqualTo("新一根 1h K线已收盘（" + TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY)) + "）。"
-                        + "本轮：按主人的交易指令看每个可交易币有没有进场条件到位；每个币下一步等什么，用 set_watch 布下去"
-                        + "（每个方向布最先要处理的一条，更远的写进等待行），没什么可等的写明为什么。"
-                        + "先读上面的事实，判断用工具求证。"
+                        + "本轮：看整盘——每个可交易币现在有没有值得做的交易。先读上面的事实，判断用工具求证。"
+                        + "想让系统在某个价位、某根收盘或某个时刻叫醒你，用 set_watch 布下去"
+                        + "（每个方向只留得下一条，布最先要处理的，更远的写进等待行）；不需要叫醒的币不用布。"
                         + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
     }
 
@@ -290,12 +290,13 @@ class WakeInstructionI18nTest {
         assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.ZH))
                 .isEqualTo("新一根 1h K线已收盘（" + TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY)) + "）。"
                         + "本段只处置你自己留下的事：这根收盘命中的盯盘条件按布它时的备注办；【自上次唤醒以来】的结局先对账；"
-                        + "【你的承诺】逐条回答还成立吗，该动的动（移止损、平仓、撤单、按备注进场）；主人的留言按它段内的说明办。动作按主人的交易指令定。"
+                        + "【你的承诺】逐条回答还成立吗，该动的动（移止损、平仓、撤单、按备注进场）；主人的留言按它段内的说明办。"
                         + "写了等待但没布条件的，说明是不需要叫醒还是忘了。本段不布盯盘条件、不写[本轮结论]块，那是第二段的事。");
         assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
-                        + "本段：按主人的交易指令看整盘——有没有新的进场条件到位；每个可交易币下一步等什么，用 set_watch 布下去"
-                        + "（一次整组替换该币全部条件，要留的旧条件一并带上；每个方向布最先要处理的一条，更远的写进等待行），没什么可等的写明为什么。"
+                        + "本段：看整盘——有没有值得做的新交易。想让系统在某个价位、某根收盘或某个时刻叫醒你，用 set_watch 布下去"
+                        + "（一次整组替换该币全部条件，要留的旧条件一并带上；每个方向只留得下一条，布最先要处理的，更远的写进等待行）；"
+                        + "还在盯的条件不用重布，不需要叫醒的币不用布。"
                         + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
         assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
@@ -322,10 +323,10 @@ class WakeInstructionI18nTest {
                 .isEqualTo("行情波动警报（" + time + "）：BTCUSDT 5分钟内波动 5.2%（方向：上涨，现价 100000）\n"
                         + "你上次唤醒本局还没有过唤醒，距下一次例行唤醒还有约 60 分钟。\n"
                         + "注意：本次不是例行唤醒，当前 1h K线尚未收盘——按 1h 收盘定义的条件此刻不作数，求证请用已收盘的K线。\n"
-                        + "本次是非例行唤醒，上面列的就是把你叫醒的事。先用工具看清它们前后的行情，再回答它意味着什么："
+                        + "本次是非例行唤醒，上面列的就是把你叫醒的事。先回答它意味着什么，要不要先用工具求证、求证到哪一步由你定："
                         + "盯盘命中的，这条是真到位还是插针，布它时你写的备注现在还该照做吗；"
                         + "持仓事件的，这个结局改变了你对这个币的看法吗，下一步重进、观望还是撤掉剩下的挂单；"
-                        + "波动警报的，持仓的计划被它动摇了吗。然后处置【你的承诺】里的每一条，动作按主人的交易指令定。"
+                        + "波动警报的，持仓的计划被它动摇了吗。然后处置【你的承诺】里的每一条。"
                         + "被叫醒本身不是动作的理由，也不是不动的理由。本段不布盯盘条件、不写[本轮结论]块，那是第二段的事。");
     }
 }

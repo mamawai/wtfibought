@@ -40,7 +40,7 @@ class PromptGenRealRunTest {
     /** 真跑要烧的那份 BYOK 配在 1 号名下 */
     private static final long ADMIN_USER_ID = 1L;
 
-    /** 必问 3~4 题加几道追问，留足余量；超了说明 agent 不肯写稿 */
+    /** 必问 5~6 题加几道追问，留足余量；超了说明 agent 不肯写稿 */
     private static final int MAX_ROUNDS = 16;
 
     @Autowired
@@ -71,7 +71,7 @@ class PromptGenRealRunTest {
         assertThat(view.currentNo()).as("问了 %d 轮还没写出一版", MAX_ROUNDS).isNotNull();
         assertThat(view.items()).filteredOn(item -> "question".equals(item.type()))
                 .extracting(item -> item.question().key())
-                .contains("direction", "holding", "style");
+                .contains("goal", "style", "holding", "direction", "limits");
         PromptGenView.Version version = view.versions().getFirst();
         log.info("[RealRun] v{} 正文（{}字）：\n{}\nnotes：\n{}", version.no(), version.body().length(),
                 version.body(), version.notes());

@@ -260,7 +260,7 @@ class TraderPromptAssemblerTest {
 
     /**
      * 模板只讲事实，两个方向都不带偏置：行动偏置（"不开仓才是失败"）与不动偏置（"HOLD 是常态"、
-     * "浮亏不是平仓理由"、"退出只有四条路"）都必须绝迹，方法归主人的交易指令。
+     * "浮亏不是平仓理由"、"退出只有四条路"）都必须绝迹，打法平台不写。
      */
     @Test
     void templateCarriesNoTradingOpinion() {
@@ -331,11 +331,14 @@ class TraderPromptAssemblerTest {
                 .doesNotContain("主人没写指令").contains("下面这段是你主人亲笔写的").contains("只做突破，不抄底。");
     }
 
-    /** 平台默认指令按语言取，两门都有自己的文案 */
+    /** 平台默认指令按语言取，两门都是四段、段名独占一行 */
     @Test
     void defaultInstructionsPerLanguage() {
-        assertThat(assembler.defaultInstructions(AgentLang.ZH)).contains("【方法】").contains("四条路");
-        assertThat(assembler.defaultInstructions(AgentLang.EN)).contains("[Method]").doesNotContain("【");
+        assertThat(assembler.defaultInstructions(AgentLang.ZH))
+                .contains("【目标】\n").contains("【交给你定】\n").contains("【边界】\n").contains("【偏好】\n");
+        assertThat(assembler.defaultInstructions(AgentLang.EN))
+                .contains("[Goal]\n").contains("[Your call]\n").contains("[Limits]\n").contains("[Preferences]\n")
+                .doesNotContain("【");
     }
 
     /** 模板交代开场白清单、收尾指针与方法归属；不给单问题框架，不给分析次序 */

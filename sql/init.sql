@@ -723,7 +723,7 @@ UPDATE ai_trader SET interval_code = '15m' WHERE interval_code = '5m';
 ALTER TABLE ai_trader DROP COLUMN IF EXISTS margin_pct_min;
 -- 保证金占比上限最高 50%：存量超过的压到 50（幂等）
 UPDATE ai_trader SET margin_pct_max = 50 WHERE margin_pct_max > 50;
-COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：方法/风格/纪律的唯一来源（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
+COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：目标/边界/偏好，没写到的模型自己定（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';

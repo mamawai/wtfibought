@@ -49,13 +49,14 @@ class PromptGenFactsTest {
     @Test
     void modeIsRequiredOnlyWithAnInstructionAndBeforeTheFirstVersion() {
         AiTrader trader = new AiTrader();
-        assertThat(PromptGenFacts.required(null, false)).containsExactly("direction", "holding", "style");
-        assertThat(PromptGenFacts.required(trader, false)).containsExactly("direction", "holding", "style");
+        assertThat(PromptGenFacts.required(null, false)).containsExactly("goal", "style", "holding", "direction", "limits");
+        assertThat(PromptGenFacts.required(trader, false)).containsExactly("goal", "style", "holding", "direction", "limits");
 
-        trader.setCustomPrompt("[Method]\n- trade breakouts");
-        assertThat(PromptGenFacts.required(trader, false)).containsExactly("mode", "direction", "holding", "style");
+        trader.setCustomPrompt("[Goal]\nGrow the account");
+        assertThat(PromptGenFacts.required(trader, false))
+                .containsExactly("mode", "goal", "style", "holding", "direction", "limits");
         // 写出过版本后用户把它存进了 My Trader：不因此回头问 mode
-        assertThat(PromptGenFacts.required(trader, true)).containsExactly("direction", "holding", "style");
+        assertThat(PromptGenFacts.required(trader, true)).containsExactly("goal", "style", "holding", "direction", "limits");
     }
 
     @Test
@@ -63,7 +64,7 @@ class PromptGenFactsTest {
         AiTrader trader = new AiTrader();
         trader.setSymbols("BTCUSDT,ETHUSDT");
         trader.setIntervalCode("1h");
-        trader.setCustomPrompt("[Method]\n- trade breakouts");
+        trader.setCustomPrompt("[Goal]\nGrow the account");
         PromptGenFacts.Prompts withTrader = facts.prompts(trader, false, AgentLang.EN, AgentLang.EN);
         PromptGenFacts.Prompts noTrader = facts.prompts(null, false, AgentLang.EN, AgentLang.ZH);
 

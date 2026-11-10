@@ -41,8 +41,8 @@ public class PromptGenFacts {
             Map.entry("balanced", BigDecimal.ONE),
             Map.entry("aggressive", new BigDecimal("2")));
 
-    /** 必问项：方向 / 持仓时长 / 风格 */
-    private static final List<String> BASE_REQUIRED = List.of("direction", "holding", "style");
+    /** 必问项：目标 / 风格 / 持仓时长 / 方向 / 绝对不做的事 */
+    private static final List<String> BASE_REQUIRED = List.of("goal", "style", "holding", "direction", "limits");
 
     /** 有现成指令、本对话又还没写出过版本时多问一项：在它上面改还是从零写 */
     static final String MODE_KEY = "mode";

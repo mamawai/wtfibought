@@ -38,7 +38,7 @@ public class AiTrader {
     /** 唤醒K线级别：5m/15m/1h/4h（1d 已下线） */
     private String intervalCode;
 
-    /** 主人的交易指令（方法/风格/纪律的唯一来源），追加在平台系统提示词之后；每次唤醒现读现拼，改完下一根K线生效 */
+    /** 主人的交易指令（目标、边界、偏好，没写到的模型自己定），追加在平台系统提示词之后；每次唤醒现读现拼，改完下一根K线生效 */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String customPrompt;
 

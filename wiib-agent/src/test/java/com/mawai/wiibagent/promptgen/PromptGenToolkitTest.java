@@ -108,7 +108,7 @@ class PromptGenToolkitTest {
 
     @Test
     void draftSplitsBodyAndNotesAndWaitsToBeSaved() {
-        when(model.stream(any(Prompt.class))).thenReturn(Flux.just(frame("【方法】\n- 只做突破"),
+        when(model.stream(any(Prompt.class))).thenReturn(Flux.just(frame("【边界】\n- 只做多"),
                 frame("\n=====NOTES=====\n"), frame("第一版")));
         PromptGenRun run = run(requiredAnswered());
 
@@ -116,9 +116,9 @@ class PromptGenToolkitTest {
                 .writeDraft("要点", true));
 
         assertThat(result.path("no").asInt()).isEqualTo(4);
-        assertThat(result.path("body").asString()).isEqualTo("【方法】\n- 只做突破");
+        assertThat(result.path("body").asString()).isEqualTo("【边界】\n- 只做多");
         assertThat(result.path("notes").asString()).isEqualTo("第一版");
-        assertThat(run.staged()).isEqualTo(new PromptGenHistory.Drafted(4, "【方法】\n- 只做突破", "第一版", true));
+        assertThat(run.staged()).isEqualTo(new PromptGenHistory.Drafted(4, "【边界】\n- 只做多", "第一版", true));
         assertThat(events.getFirst()).contains("writing");
         assertThat(events).filteredOn(e -> e.startsWith("draft")).hasSize(3);
     }
@@ -143,9 +143,9 @@ class PromptGenToolkitTest {
 
     private List<Message> requiredAnswered() {
         List<Message> history = new ArrayList<>(List.of(new UserMessage("开场")));
-        history.addAll(answeredAsk("direction"));
-        history.addAll(answeredAsk("holding"));
-        history.addAll(answeredAsk("style"));
+        for (String key : List.of("goal", "style", "holding", "direction", "limits")) {
+            history.addAll(answeredAsk(key));
+        }
         return history;
     }
 

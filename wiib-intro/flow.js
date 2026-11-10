@@ -95,7 +95,7 @@ const PANELS = [
         chips: [
           { id: 'c1', t: { zh: '平台规则', en: 'platform rules' } },
           { id: 'c2', t: { zh: '经验账本', en: 'ledger' } },
-          { id: 'c4', t: { zh: '交易指令', en: 'owner playbook' } },
+          { id: 'c4', t: { zh: '交易指令', en: 'instructions' } },
           { id: 'c5', t: { zh: '事件·账户', en: 'events+account' } },
           { id: 'cw', t: { zh: '盯盘条件', en: 'watches' } },
           { id: 'c6', t: { zh: '上轮结论', en: 'last conclusion' } },
@@ -103,7 +103,7 @@ const PANELS = [
           { id: 'c8', t: { zh: '财经日历', en: 'econ calendar' } },
           { id: 'c9', t: { zh: '主人留言', en: 'owner note' } }
         ],
-        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、经验账本里的规律和执行缺口、主人的交易指令——方法与纪律只来自主人，平台不带交易观点。状态进开场白：上次醒来后的事件、账户（持仓附自上次决策以来的波动）、在盯的盯盘条件、上一轮结论、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the rules and execution gaps from the experience ledger, and the owner’s playbook — method and discipline come only from the owner. State goes into the opening message: events since the last wake, the account (each position with what it went through since the last decision), the watch conditions still armed, the last conclusion, play stats, the econ calendar, with the owner’s note last.' } },
+        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、经验账本里的规律和执行缺口、主人的交易指令——目标、边界、偏好来自主人，打法由模型自己定，平台不带交易观点。状态进开场白：上次醒来后的事件、账户（持仓附自上次决策以来的波动）、在盯的盯盘条件、上一轮结论、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the rules and execution gaps from the experience ledger, and the owner’s instructions — goal, limits and preferences come from the owner, and how to trade is the model’s own call. State goes into the opening message: events since the last wake, the account (each position with what it went through since the last decision), the watch conditions still armed, the last conclusion, play stats, the econ calendar, with the owner’s note last.' } },
       { id: 'agent', x: 668, y: 84, w: 180, h: 104, tag: 'REACT', icon: 'cpu',
         title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
@@ -135,7 +135,7 @@ const PANELS = [
           { id: 'tp', t: 'set_take_profit' }, { id: 'plan', t: 'write_plan' },
           { id: 'cancel', t: 'cancel_order' }, { id: 'watch', t: 'set_watch' }
         ],
-        detail: { zh: '非 Spring bean：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与币种白名单。开仓要带止损、止盈、论点标签、数据引用和失效条件，计划随开仓落库、之后不可改；回执带四个数——往返手续费、止损是几倍 ATR、扣费后的盈亏比、这笔风险占权益多少，只报数不评价。止损只许收紧不许放宽；write_plan 只给没有计划的持仓补立；set_watch 给一个币布盯盘条件，一次整组替换。平仓要写一句理由。什么时候退出由主人的交易指令定，默认四条路：止损带走、到目标位、失效条件触发、主人留言让离场。', en: 'Not Spring beans: constructed fresh per wakeup, bound to this trader’s sim sub-account and symbol whitelist. An open carries its stop, target, thesis tag, data citation and invalidation; the plan is stored with the position and never edited, and the receipt reports four numbers — round-trip fees, the stop in ATR multiples, reward-to-risk after fees, and the share of equity at risk — facts, no verdict. Stops can only be tightened, never loosened; write_plan only backfills a position that has none; set_watch arms a symbol’s watch conditions, replacing the whole set at once. A close needs a one-line reason. When to exit is the owner’s playbook; the default lists four ways out: stop-loss, target, invalidation, or the owner’s note saying leave.' } },
+        detail: { zh: '非 Spring bean：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与币种白名单。开仓要带止损、止盈、论点标签、数据引用和失效条件，计划随开仓落库、之后不可改；回执带四个数——往返手续费、止损是几倍 ATR、扣费后的盈亏比、这笔风险占权益多少，只报数不评价。止损只许收紧不许放宽；write_plan 只给没有计划的持仓补立；set_watch 给一个币布盯盘条件，一次整组替换。平仓要写一句理由。什么时候退出由模型自己判断，主人的交易指令里有要求的按主人的。', en: 'Not Spring beans: constructed fresh per wakeup, bound to this trader’s sim sub-account and symbol whitelist. An open carries its stop, target, thesis tag, data citation and invalidation; the plan is stored with the position and never edited, and the receipt reports four numbers — round-trip fees, the stop in ATR multiples, reward-to-risk after fees, and the share of equity at risk — facts, no verdict. Stops can only be tightened, never loosened; write_plan only backfills a position that has none; set_watch arms a symbol’s watch conditions, replacing the whole set at once. A close needs a one-line reason. When to exit is the model’s own judgement, within whatever the owner’s instructions require.' } },
       { id: 'sim', x: 888, y: 592, w: 180, h: 76, tag: 'SIM', icon: 'server',
         title: { zh: 'wiib-sim 子账户', en: 'wiib-sim account' },
         sub: { zh: '模拟盘账本 · 唯一事实源', en: 'the ledger of record' },
@@ -927,7 +927,7 @@ async function trEnter(c, src) {
   await c.pulse('sch-asm');
   c.done('sched'); c.on('asm');
   for (const ch of ['c1', 'c2', 'c4', 'c5', 'cw', 'c6', 'c7', 'c8', 'c9']) { c.chip('asm', ch); await c.sleep(120); }
-  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 经验账本 + 交易指令）+ 开场白（事件 · 账户 · 盯盘条件 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + ledger + playbook) + opening (events · account · watches · last conclusion · calendar)' });
+  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 经验账本 + 交易指令）+ 开场白（事件 · 账户 · 盯盘条件 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + ledger + instructions) + opening (events · account · watches · last conclusion · calendar)' });
   await c.sleep(500);
   await c.pulse('asm-ag');
   c.done('asm'); c.on('agent');
