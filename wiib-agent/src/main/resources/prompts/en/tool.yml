@@ -150,8 +150,9 @@ tool:
       NOT ATR. Never mix the two.
     - swings are local extremes over ±swingWindow bars. The last swingWindow bars can never
       qualify (their right side isn't confirmed yet), so a turn that just happened is missing.
-    - segments_swing cuts at swing points and adjacent segments SHARE their boundary bar, so
-      their volumes add up to more than volume.total. Do not sum them.
+    - segments_swing (price and volume leg by leg between swing points) is returned only with
+      includeSwingSegments=true. It cuts at swing points and adjacent segments SHARE their
+      boundary bar, so their volumes add up to more than volume.total. Do not sum them.
     - every idx refers to the same row order as `klines` on this symbol+interval; the forming
       row is simply absent here. If a bar closed between the two calls the window has slid by
       one row — match rows by time_ms / openTime then, not by idx.

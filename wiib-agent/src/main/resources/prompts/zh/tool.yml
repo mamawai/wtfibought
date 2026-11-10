@@ -118,8 +118,8 @@ tool:
       简单算术平均：记忆更短、更贴当前波动，但它不是 ATR，两者绝不能混用。
     - swings 是 ±swingWindow 根内的局部极值。最后 swingWindow 根永远不可能入选
       （右侧尚未确认），刚发生的转折不在里面。
-    - segments_swing 按摆动点切段，相邻段共享边界那一根，各段成交量相加会大于
-      volume.total，不要求和。
+    - segments_swing（相邻摆动点之间逐段的量价）要传 includeSwingSegments=true 才带。它按摆动点切段，
+      相邻段共享边界那一根，各段成交量相加会大于 volume.total，不要求和。
     - 所有 idx 都指向与 `klines` 同一 symbol+interval 的同一行序，只是在走的那一行这里没有。
       两次调用之间若有一根收盘，窗口整体后移一行，这时按 time_ms / openTime 对行，别按 idx。
     给到你的是算好的路径加 focus_bars——最近 N 根与各关键点附近的原始 K 线；

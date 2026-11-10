@@ -396,14 +396,17 @@ class TraderWakeupLoopTest {
         when(planMapper.selectList(any())).thenReturn(List.of(stale));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTrader twoCoins = trader();
+        twoCoins.setSymbols("BTCUSDT,ETHUSDT");
 
-        runner.wake(trader(), 1785171600000L);
+        runner.wake(twoCoins, 1785171600000L);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, org.mockito.Mockito.atLeastOnce()).stream(prompt.capture());
         String injected = prompt.getAllValues().get(0).getInstructions().stream()
                 .map(org.springframework.ai.chat.messages.Message::getText).reduce("", String::concat);
-        assertThat(injected).contains("站上 1925").doesNotContain("回踩 63400");
+        // 被忽略的那段剔掉之后，BTC 就没有结论段了
+        assertThat(injected).contains("站上 1925").doesNotContain("回踩 63400").contains("[BTCUSDT] 还没有结论段");
         // 行头时刻保留：警报开场白的"上次唤醒在X"要用真时刻，剔的是内容不是行
         assertThat(injected).contains(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
                 .withZone(java.time.ZoneId.systemDefault())
@@ -728,9 +731,12 @@ class TraderWakeupLoopTest {
         assertThat(system).doesNotContain("\"equity\"").doesNotContain("1h收盘跌回64200箱体内");
     }
 
-    /** 上一轮结论整块原样回注（多币段一个不少、不截断）；更早的轮次只留一行轨迹（时刻/状态/权益/工具名） */
+    /**
+     * 上一轮结论按币取最近一段：最近一轮只写了 BTC 和 ETH，SOL 沿用更早那轮写的段、带它自己的时刻；
+     * BTC 更早的旧段不带；从没写过的 XRP 点名；段身不截断。更早的轮次另在轨迹里各留一行（时刻/状态/权益/工具名）
+     */
     @Test
-    void latestConclusionInjectedWholeAndOlderRowsAsOneLine() {
+    void lastConclusionTakesEachSymbolsLatestSegment() {
         stubHealthyAccount();
         long boundary = 1785171600000L;
         AiTraderDecision latest = new AiTraderDecision();
@@ -738,33 +744,42 @@ class TraderWakeupLoopTest {
         latest.setKind(AiTraderDecision.KIND_TRADE);
         latest.setStatus(AiTraderDecision.STATUS_OK);
         latest.setEquity(new BigDecimal("10123.45"));
-        // 300 字铺垫 + 三个币段各 400 字判断：整块远超旧口径的 1000 字尾截
-        latest.setReasoning("行情铺垫".repeat(75) + "\n[本轮结论]\n"
+        // 300 字铺垫 + 两个币段各 400 字判断：整块远超旧口径的 1000 字尾截
+        latest.setReasoning("行情铺垫".repeat(75) + "\n[本轮结论]\n总评：只动了两个币\n"
                 + "[BTCUSDT]\n判断：" + "x".repeat(400) + "\n动作：HOLD\n等待：BTC等待A\n"
-                + "[ETHUSDT]\n判断：" + "y".repeat(400) + "\n动作：HOLD\n等待：ETH等待B\n"
-                + "[SOLUSDT]\n判断：" + "z".repeat(400) + "\n动作：HOLD\n等待：SOL等待C");
+                + "[ETHUSDT]\n判断：" + "y".repeat(400) + "\n动作：HOLD\n等待：ETH等待B");
         AiTraderDecision older = new AiTraderDecision();
         older.setWakeTime(boundary - 7200_000L);
         older.setKind(AiTraderDecision.KIND_TRADE);
         older.setStatus(AiTraderDecision.STATUS_OK);
         older.setEquity(new BigDecimal("10050"));
-        older.setReasoning("[本轮结论]\n[BTCUSDT]\n等待：旧等待条件XYZ");
+        older.setReasoning("[本轮结论]\n总评：旧总评\n[BTCUSDT]\n等待：旧等待条件XYZ\n[SOLUSDT]\n动作：HOLD\n等待：SOL等待C");
         older.setActionsJson("[{\"tool\":\"klines\",\"args\":{}},{\"tool\":\"klines\",\"args\":{}}]");
         when(decisionMapper.selectList(any())).thenReturn(List.of(latest, older));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTrader fourCoins = trader();
+        fourCoins.setSymbols("BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT");
 
-        runner.wake(trader(), boundary);
+        runner.wake(fourCoins, boundary);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompt.capture());
-        // 上一轮写了等待行就分两段：结论在第一段、轨迹在第二段，拿最后一次调用的输入看全
+        // 写了等待行就分两段：结论在第一段、轨迹在第二段，拿最后一次调用的输入看全
         String injected = prompt.getAllValues().getLast().getInstructions().stream()
                 .map(Message::getText).reduce("", String::concat);
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
+                .withZone(java.time.ZoneId.systemDefault());
         assertThat(injected)
-                .contains("【上一轮结论】")
-                .contains("BTC等待A").contains("ETH等待B").contains("SOL等待C")
+                .contains("【上一轮结论】（最近一轮 " + fmt.format(java.time.Instant.ofEpochMilli(boundary - 3600_000L)))
+                .contains("总评：只动了两个币").doesNotContain("旧总评")
+                .contains("[BTCUSDT]（" + fmt.format(java.time.Instant.ofEpochMilli(boundary - 3600_000L)) + " 写下）\n判断：" + "x".repeat(400))
+                .contains("ETH等待B")
+                .contains("[SOLUSDT]（" + fmt.format(java.time.Instant.ofEpochMilli(boundary - 7200_000L)) + " 写下）\n动作：HOLD\n等待：SOL等待C")
+                .contains("[XRPUSDT] 还没有结论段")
                 .doesNotContain("旧等待条件XYZ")
+                // 等待行也按每币最近一段取：SOL 的来自更早那轮
+                .contains("- SOLUSDT 你上一轮等的「SOL等待C」")
                 .contains("工具：klines×2");
     }
 

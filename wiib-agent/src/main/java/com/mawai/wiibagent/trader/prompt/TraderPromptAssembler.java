@@ -9,6 +9,7 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TradeGuard;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.wakeup.TraderWakeupRunner;
+import com.mawai.wiibagent.trader.wakeup.WakeObservation;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -88,7 +89,8 @@ public class TraderPromptAssembler {
 
     /**
      * 固定收尾格式块：系统强制，主人指令改不掉。复盘素材、stale 剔段、观望门控全靠 [SYMBOL] 段切分，
-     * 格式丢了下游全退化。骨架按 trader 真实币种生成：首币写全三行，其余只列段头——模型照着填，不用自己猜币码。
+     * 格式丢了下游全退化。按币增量：只写本轮有变化的币。
+     * 骨架按 trader 真实币种生成：首币写全三行，其余只列段头——模型照着填，不用自己猜币码。
      * 预览接口也用它，MyTrader 页看到的与真喂的一致
      */
     public String closingFormat(AgentLang lang, String symbols) {
@@ -193,6 +195,7 @@ public class TraderPromptAssembler {
                 Map.entry("leverageMin", risk.leverageMin()),
                 Map.entry("leverageMax", risk.leverageMax()),
                 Map.entry("marginPctMax", plain(risk.marginPctMax())),
+                Map.entry("conclusionLookback", WakeObservation.CONCLUSION_LOOKBACK),
                 Map.entry("trailMin", plain(TradeGuard.TRAIL_CALLBACK_MIN)),
                 Map.entry("trailMax", plain(TradeGuard.TRAIL_CALLBACK_MAX)),
                 Map.entry("positionRule", positionRule(lang, risk)),

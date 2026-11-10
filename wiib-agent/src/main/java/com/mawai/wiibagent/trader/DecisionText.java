@@ -107,6 +107,12 @@ public class DecisionText {
         return out;
     }
 
+    /** 结论块正文里第一个 [SYMBOL] 标记之前的引子（总评、主人留言的对账行）；没分段的整块都是引子 */
+    public static String intro(String conclusionBody) {
+        Matcher m = SEGMENT_TAG.matcher(conclusionBody);
+        return (m.find() ? conclusionBody.substring(0, m.start()) : conclusionBody).strip();
+    }
+
     // ==================== 被标记不算数的交易，从决策正文里剔掉 ====================
 
     /**

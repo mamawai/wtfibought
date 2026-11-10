@@ -31,7 +31,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>
  * 不跑完整唤醒回路（那需要 sim 子账户与真 trader 行）：用真实的系统提示词组装 + 真实开场白 +
  * 手造账户状态，单次调用无工具。验收对象只有一个：模型收到新模板后，结论块是否按
- * [SYMBOL] 分段、每个可交易币各一段。
+ * [SYMBOL] 分段。开场白里没有上一轮结论（首轮），所以每个可交易币都该有一段；
+ * 之后的轮次只写有变化的币，那要看线上的时间线。
  * <p>
  * 会烧真 token（2 次调用），默认跳过。跑法（项目根）：
  * <pre>
@@ -92,7 +93,7 @@ class TraderConclusionFormatRealRunTest {
             List<DecisionText.ConclusionSegment> segments =
                     DecisionText.splitSegments(output.substring(output.lastIndexOf(mark) + mark.length()));
             assertThat(segments.stream().map(DecisionText.ConclusionSegment::symbol))
-                    .as("%s 每个可交易币各一段", lang.code())
+                    .as("%s 首轮每个可交易币各一段", lang.code())
                     .containsExactlyInAnyOrderElementsOf(SYMBOLS);
         }
     }

@@ -145,8 +145,9 @@ public class IndicatorToolkit {
               NOT ATR. Never mix the two.
             - swings are local extremes over ±swingWindow bars. The last swingWindow bars can never
               qualify (their right side isn't confirmed yet), so a turn that just happened is missing.
-            - segments_swing cuts at swing points and adjacent segments SHARE their boundary bar, so
-              their volumes add up to more than volume.total. Do not sum them.
+            - segments_swing (price and volume leg by leg between swing points) is returned only with
+              includeSwingSegments=true. It cuts at swing points and adjacent segments SHARE their
+              boundary bar, so their volumes add up to more than volume.total. Do not sum them.
             - every idx refers to the same row order as `klines` on this symbol+interval; the forming
               row is simply absent here. If a bar closed between the two calls the window has slid by
               one row — match rows by time_ms / openTime then, not by idx.
@@ -167,6 +168,10 @@ public class IndicatorToolkit {
                     Include focus_bars — raw candles for the last N plus those around the high /
                     low / max-volume bar (default true). Pass false if you already called klines.""")
             Boolean includeBars,
+            @ToolParam(required = false, description = """
+                    Include segments_swing — per-leg price and volume between consecutive swing points
+                    (default false). It is the largest block of the output, a little under half.""")
+            Boolean includeSwingSegments,
             @ToolParam(required = false, description = END_TIME_DESC) String endTime) {
         String err = validateInterval(interval);
         if (err != null) {
@@ -190,6 +195,10 @@ public class IndicatorToolkit {
                         d.volBinTop(), d.recentSwingLevels()));
         if (!withBars) {
             out.remove("focus_bars");
+        }
+        // 按摆动点切的逐段量价占整份输出四成多，要了才带
+        if (!Boolean.TRUE.equals(includeSwingSegments)) {
+            out.remove("segments_swing");
         }
         // 默认不写 null：字段缺席本身就是"算不出"，warnings 里另有说明，省下的是实打实的 token
         return MAPPER.writeValueAsString(out);

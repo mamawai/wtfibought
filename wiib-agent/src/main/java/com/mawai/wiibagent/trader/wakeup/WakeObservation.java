@@ -40,7 +40,8 @@ import java.util.stream.Collectors;
 
 /**
  * 开场白里的观察包。第一段「处置」用 {@link #assemble}：收盘命中 + 上次醒来后的事件 + 账户状态（持仓带自上次完成决策以来的波动）
- * + 上一轮结论 + 承诺块（持仓与挂单的失效条件、布的每条盯盘条件离现价多远 / 还有多久、上一轮写的等待行，只列事实）。
+ * + 上一轮结论（每个币最近一次写下的那段，没变化的币沿用旧段）+ 承诺块（持仓与挂单的失效条件、布的每条盯盘条件离现价多远 / 还有多久、
+ * 各币最近一段里的等待行，只列事实）。
  * 第二段「布防与收尾」用 {@link #history}（最近轨迹 + 论点战绩）、{@link #symbolsSummary}（各币自上次唤醒以来的开高低收）
  * 和 {@link #snapshot}（各币标记价与涨跌、美股参考）。
  * 只读不写，取数和成文都在这里。
@@ -49,7 +50,10 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class WakeObservation {
 
+    /** 最近唤醒轨迹列几轮 */
     private static final int RECENT_DECISIONS = 5;
+    /** 找每个币最近一次写的结论段，最多往回翻这么多轮；再早的不带，那个币得重写 */
+    public static final int CONCLUSION_LOOKBACK = 30;
     private static final DateTimeFormatter TIME_FMT =
             DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
@@ -85,8 +89,13 @@ public class WakeObservation {
     record Pack(String text, boolean busy, Long lastOkWakeMs) {
     }
 
+    /** 一个币最近一次写下的结论段：哪一轮写的、用哪门语言写的（等待行的标记按它认）、段身 */
+    record Segment(long wakeTime, AgentLang lang, String body) {
+    }
+
     /**
-     * 最近 {@value #RECENT_DECISIONS} 条交易行（例行/警报/手动/持仓事件），最新在前。
+     * 最近 {@value #CONCLUSION_LOOKBACK} 条交易行（例行/警报/手动/持仓事件/盯盘命中），最新在前。
+     * 轨迹只列前 {@value #RECENT_DECISIONS} 条，其余是给"每个币最近一次的结论段"往回翻用的。
      * 复盘行不进来：它的产出已经走 memory 注入，再进就是重复占字数。
      * 忽略过滤要按计划生命期判段落归属（同币另一方向没被忽略的段得留），plans 是本局全部计划。
      */
@@ -97,7 +106,7 @@ public class WakeObservation {
                 .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .lt(AiTraderDecision::getWakeTime, boundaryTime)
                 .orderByDesc(AiTraderDecision::getWakeTime)
-                .last("LIMIT " + RECENT_DECISIONS));
+                .last("LIMIT " + CONCLUSION_LOOKBACK));
         List<RecentWake> out = new ArrayList<>(rows.size());
         for (AiTraderDecision d : rows) {
             String reasoning = decisionText.staleFiltered(d, plans);
@@ -143,10 +152,10 @@ public class WakeObservation {
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
                 .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(),
                         trails, boundaryTime, paths)).append('\n');
-        RecentWake concluded = latestConcluded(recent);
-        sb.append('\n').append(lastConclusion(concluded, lang));
-        String commitments = commitments(trader, symbols, positions, pendingOrders, reconcile.live(),
-                armed, concluded, marks, boundaryTime, lang);
+        Map<String, Segment> segments = latestSegments(recent, symbols);
+        sb.append('\n').append(lastConclusion(latestConcluded(recent), segments, symbols, lang));
+        String commitments = commitments(trader, positions, pendingOrders, reconcile.live(),
+                armed, segments, marks, boundaryTime, lang);
         sb.append(commitments);
         boolean busy = !hitsNow.isEmpty() || !firedQuietly.isEmpty() || !reconcile.events().isEmpty() || !commitments.isEmpty();
         return new Pack(sb.toString(), busy, lastOk);
@@ -316,26 +325,66 @@ public class WakeObservation {
         return null;
     }
 
-    /** 上一轮结论块原样全文；没有就说没有 */
-    private String lastConclusion(RecentWake concluded, AgentLang lang) {
+    /**
+     * 每个可交易币最近一次写下的结论段，按币码排好：从最新一轮往回翻，一个币只认最先碰到的那段。
+     * 翻完都没写过的币不在结果里
+     */
+    private Map<String, Segment> latestSegments(List<RecentWake> recent, Collection<String> symbols) {
+        Map<String, Segment> found = new HashMap<>();
+        for (RecentWake w : recent) {
+            if (found.size() == symbols.size()) {
+                break;
+            }
+            DecisionText.Conclusion c = AiTraderDecision.STATUS_OK.equals(w.status()) && !w.reasoning().isBlank()
+                    ? decisionText.locateConclusion(w.reasoning(), AgentLang.ZH) : null;
+            if (c == null) {
+                continue;
+            }
+            for (DecisionText.ConclusionSegment s : DecisionText.splitSegments(c.body(w.reasoning()))) {
+                if (symbols.contains(s.symbol())) {
+                    found.putIfAbsent(s.symbol(), new Segment(w.wakeTime(), c.lang(), s.body().strip()));
+                }
+            }
+        }
+        Map<String, Segment> out = new LinkedHashMap<>();
+        symbols.stream().sorted().filter(found::containsKey).forEach(s -> out.put(s, found.get(s)));
+        return out;
+    }
+
+    /**
+     * 上一轮结论：最近一轮的引子（总评、主人留言的对账行）+ 每个币最近一次写下的那段，段头带写下它的时刻。
+     * 本轮没写的币沿用旧段，所以各段的时刻可以不同；翻不到段的币点名；一轮结论都没有就说没有
+     */
+    private String lastConclusion(RecentWake concluded, Map<String, Segment> segments, Collection<String> symbols,
+                                  AgentLang lang) {
         if (concluded == null) {
             return prompts.get(lang, "trader.wake.lastConclusionNone") + "\n";
         }
-        return prompts.get(lang, "trader.wake.lastConclusionHeader", Map.of(
+        StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.wake.lastConclusionHeader", Map.of(
                 "time", TIME_FMT.format(Instant.ofEpochMilli(concluded.wakeTime())),
-                "equity", concluded.equity().setScale(0, RoundingMode.HALF_UP)))
-                + "\n" + decisionText.conclusionBlock(concluded.reasoning()) + "\n";
+                "equity", concluded.equity().setScale(0, RoundingMode.HALF_UP)))).append('\n');
+        DecisionText.Conclusion c = decisionText.locateConclusion(concluded.reasoning(), lang);
+        String intro = DecisionText.intro(c.body(concluded.reasoning()));
+        if (!intro.isEmpty()) {
+            sb.append(intro).append('\n');
+        }
+        segments.forEach((symbol, s) -> sb.append(prompts.get(lang, "trader.wake.lastSegment", Map.of(
+                "symbol", symbol, "time", TIME_FMT.format(Instant.ofEpochMilli(s.wakeTime())))))
+                .append('\n').append(s.body()).append('\n'));
+        symbols.stream().sorted().filter(s -> !segments.containsKey(s)).forEach(s ->
+                sb.append(prompts.get(lang, "trader.wake.lastSegmentNone", Map.of("symbol", s))).append('\n'));
+        return sb.toString();
     }
 
     // ==================== 承诺块 ====================
 
     /**
      * 承诺块：持仓与挂单各一行（失效条件 + 刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（离现价多远 / 还有多久，带预案的跟上命中后平台会做什么）、
-     * 上一轮每个币的等待行一行（那个币一条条件都没布就说一句）。只列事实，判断留给模型。一条都没有返回空串
+     * 每个币最近一段结论里的等待行一行（那个币一条条件都没布就说一句）。只列事实，判断留给模型。一条都没有返回空串
      */
-    private String commitments(AiTrader trader, Collection<String> symbols, List<FuturesPositionDTO> positions,
+    private String commitments(AiTrader trader, List<FuturesPositionDTO> positions,
                                List<FuturesOrderResponse> pendingOrders, List<AiTraderPlan> live, List<AiTraderWatch> armed,
-                               RecentWake concluded, Map<String, BigDecimal> marks, long boundaryTime, AgentLang lang) {
+                               Map<String, Segment> segments, Map<String, BigDecimal> marks, long boundaryTime, AgentLang lang) {
         long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         live.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
@@ -376,12 +425,9 @@ public class WakeObservation {
             }
         }
         Set<String> armedSymbols = armed.stream().map(AiTraderWatch::getSymbol).collect(Collectors.toSet());
-        waitLines(concluded, lang).forEach((symbol, wait) -> {
-            if (symbols.contains(symbol)) {
+        waitLines(segments).forEach((symbol, wait) ->
                 lines.add(prompts.get(lang, "trader.wake.commitWait", Map.of("symbol", symbol, "wait", wait))
-                        + (armedSymbols.contains(symbol) ? "" : prompts.get(lang, "trader.wake.commitWaitUnarmed")));
-            }
-        });
+                        + (armedSymbols.contains(symbol) ? "" : prompts.get(lang, "trader.wake.commitWaitUnarmed"))));
         if (lines.isEmpty()) {
             return "";
         }
@@ -412,32 +458,20 @@ public class WakeObservation {
     }
 
     /**
-     * 上一轮结论里每个币的"等待"行（写了"无"的不算）：按结论块自己那门语言的标记认。
-     * 没结论、没分段或一行等待都没写返回空表；顺序照结论里的分段
+     * 每个币最近一段结论里的"等待"行（写了"无"的不算）：按那段自己那门语言的标记认。
+     * 一行等待都没写返回空表；顺序照币码
      */
-    private Map<String, String> waitLines(RecentWake concluded, AgentLang lang) {
+    private Map<String, String> waitLines(Map<String, Segment> segments) {
         Map<String, String> out = new LinkedHashMap<>();
-        if (concluded == null) {
-            return out;
-        }
-        DecisionText.Conclusion c = decisionText.locateConclusion(concluded.reasoning(), lang);
-        if (c == null) {
-            return out;
-        }
-        // 长的排前面：等待条件 / Waiting for 要先于 等待 / Waiting 认
-        Pattern line = Pattern.compile("(?m)^\\s*(?:" + Pattern.quote(prompts.get(c.lang(), "trader.mark.waitLong"))
-                + "|" + Pattern.quote(prompts.get(c.lang(), "trader.mark.wait")) + ")\\s*[:：]\\s*(.+?)\\s*$");
-        String none = prompts.get(c.lang(), "trader.mark.waitNone");
-        for (DecisionText.ConclusionSegment segment : DecisionText.splitSegments(c.body(concluded.reasoning()))) {
-            Matcher m = line.matcher(segment.body());
-            if (!m.find()) {
-                continue;
+        segments.forEach((symbol, s) -> {
+            // 长的排前面：等待条件 / Waiting for 要先于 等待 / Waiting 认
+            Matcher m = Pattern.compile("(?m)^\\s*(?:" + Pattern.quote(prompts.get(s.lang(), "trader.mark.waitLong"))
+                    + "|" + Pattern.quote(prompts.get(s.lang(), "trader.mark.wait")) + ")\\s*[:：]\\s*(.+?)\\s*$").matcher(s.body());
+            if (m.find() && !m.group(1).replaceAll("[。.\\s]+$", "")
+                    .equalsIgnoreCase(prompts.get(s.lang(), "trader.mark.waitNone"))) {
+                out.put(symbol, m.group(1));
             }
-            String wait = m.group(1);
-            if (!wait.replaceAll("[。.\\s]+$", "").equalsIgnoreCase(none)) {
-                out.putIfAbsent(segment.symbol(), wait);
-            }
-        }
+        });
         return out;
     }
 
@@ -447,7 +481,7 @@ public class WakeObservation {
             return "";
         }
         StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.wake.trajectoryHeader")).append('\n');
-        for (RecentWake w : recent) {
+        for (RecentWake w : recent.subList(0, Math.min(RECENT_DECISIONS, recent.size()))) {
             sb.append("- ").append(TIME_FMT.format(Instant.ofEpochMilli(w.wakeTime())))
                     .append(" [").append(w.status()).append(']');
             if (w.equity() != null) {

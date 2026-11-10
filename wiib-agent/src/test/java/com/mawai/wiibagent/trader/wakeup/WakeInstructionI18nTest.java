@@ -154,8 +154,9 @@ class WakeInstructionI18nTest {
                     runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, lang),
                     runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", lang),
                     runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", lang),
-                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, false),
-                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, true));
+                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, false, false),
+                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, true, false),
+                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, false, true));
             for (String opening : openings) {
                 assertThat(opening).as("%s 开场白的收尾标记要与系统提示词同源", lang.code()).contains(mark);
                 // 另一门语言的标记一个都不许漏进来——那正是"两条指令打架"的形态
@@ -183,9 +184,11 @@ class WakeInstructionI18nTest {
         PromptI18nAssertions.assertNoCjk("英文第一段（警报）",
                 runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.EN));
         PromptI18nAssertions.assertNoCjk("英文第二段（带休眠提示）",
-                runner.stageTwoInstruction(windowed, BOUNDARY, "", "", "", null, AgentLang.EN, false));
+                runner.stageTwoInstruction(windowed, BOUNDARY, "", "", "", null, AgentLang.EN, false, false));
+        PromptI18nAssertions.assertNoCjk("英文第二段（非例行轮）",
+                runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.EN, true, false));
         PromptI18nAssertions.assertNoCjk("英文第二段（预算已尽）",
-                runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.EN, true));
+                runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.EN, false, true));
         // 留言段的段头/亲笔提示/footer 都是平台文案，英文用户一个中文字都不许见；正文是主人亲笔，拿英文造
         PromptI18nAssertions.assertNoCjk("英文第一段（带留言段）",
                 runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null,
@@ -217,7 +220,7 @@ class WakeInstructionI18nTest {
         String calendar = "【财经日历】美国 High 级宏观事件\n- 09-04 20:30 Non Farm Payrolls 实际:206K 预测:205K 前值:207K\n";
         String single = runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", calendar, AgentLang.ZH);
         String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", calendar, "", AgentLang.ZH);
-        String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", calendar, AgentLang.ZH, false);
+        String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", calendar, AgentLang.ZH, false, false);
 
         assertThat(single).contains(calendar);
         assertThat(single.indexOf(calendar)).isLessThan(single.indexOf("本轮：看整盘"));
@@ -366,27 +369,36 @@ class WakeInstructionI18nTest {
                         + "本轮：看整盘——每个可交易币现在有没有值得做的交易。先读上面的事实，判断用工具求证。"
                         + "想让系统在某个价位、某根收盘或某个时刻叫醒你，用 set_watch 布下去"
                         + "（每个方向只留得下一条，布最先要处理的，更远的写进等待行）；不需要叫醒的币不用布。"
-                        + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
+                        + "最后用[本轮结论]固定格式收尾（只写有变化的币）。");
     }
 
-    /** 中文第一段（例行）与第二段两版逐字钉死 */
+    /** 中文第一段（例行）与第二段三版（例行 / 非例行 / 预算已尽）逐字钉死 */
     @Test
     void 中文两段开场白逐字不变() {
         assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.ZH))
                 .isEqualTo("新一根 1h K线已收盘（" + TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY)) + "）。"
                         + "本段只处置你自己留下的事：这根收盘命中的盯盘条件按布它时的备注办；【自上次唤醒以来】的结局先对账；"
-                        + "【你的承诺】逐条回答还成立吗，该动的动（移止损、平仓、撤单、按备注进场）；主人的留言按它段内的说明办。"
+                        + "【你的承诺】只处置有变化的——失效条件被触发或快到的、挂单该撤的、等的条件到了的，"
+                        + "该动的动（移止损、平仓、撤单、按备注进场），没变化的不用逐条复述；主人的留言按它段内的说明办。"
                         + "写了等待但没布条件的，说明是不需要叫醒还是忘了。本段不布盯盘条件、不写[本轮结论]块，那是第二段的事。");
-        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false))
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, false))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
                         + "本段：看整盘——有没有值得做的新交易。想让系统在某个价位、某根收盘或某个时刻叫醒你，用 set_watch 布下去"
                         + "（一次整组替换该币全部条件，要留的旧条件一并带上；每个方向只留得下一条，布最先要处理的，更远的写进等待行）；"
                         + "还在盯的条件不用重布，不需要叫醒的币不用布。"
-                        + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
-        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true))
+                        + "最后用[本轮结论]固定格式收尾（只写有变化的币）。");
+        // 非例行轮：只给被叫醒的那件事涉及的币布防和收尾，整盘留给例行轮
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, false))
+                .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
+                        + "本段：只给本轮涉及的币布防和收尾——把你叫醒的那件事涉及的币，加上你在第一段动过的币。"
+                        + "它们的盯盘条件要变就用 set_watch 重布"
+                        + "（一次整组替换该币全部条件，要留的旧条件一并带上；每个方向只留得下一条，布最先要处理的，更远的写进等待行）。"
+                        + "别的币的结论和盯盘条件原样留着，不用重写也不用重布，整盘留给例行轮看。"
+                        + "最后用[本轮结论]固定格式收尾，只写这几个币的段。");
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, true))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
                         + "本段：模型调用预算已用完，不能再调用任何工具，set_watch 也不行。"
-                        + "直接用[本轮结论]固定格式收尾（每个可交易币各一段），要等的条件写进\"等待\"行，下一轮再布。");
+                        + "直接用[本轮结论]固定格式收尾（只写有变化的币），要等的条件写进\"等待\"行，下一轮再布。");
     }
 
     /** 警报里"距下一次例行唤醒"要看时段：时段末尾的警报，下次醒是时段再开门那一刻，不是下一根 */
@@ -411,7 +423,7 @@ class WakeInstructionI18nTest {
                         + "本次是非例行唤醒，上面列的就是把你叫醒的事。先回答它意味着什么，要不要先用工具求证、求证到哪一步由你定："
                         + "盯盘命中的，这条是真到位还是插针，布它时你写的备注现在还该照做吗；"
                         + "持仓事件的，这个结局改变了你对这个币的看法吗，下一步重进、观望还是撤掉剩下的挂单；"
-                        + "波动警报的，持仓的计划被它动摇了吗。然后处置【你的承诺】里的每一条。"
+                        + "波动警报的，持仓的计划被它动摇了吗。然后只处置【你的承诺】里和这件事有关的、或者已经有变化的那几条，别的币留给例行轮。"
                         + "被叫醒本身不是动作的理由，也不是不动的理由。本段不布盯盘条件、不写[本轮结论]块，那是第二段的事。");
     }
 }

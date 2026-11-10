@@ -60,13 +60,15 @@ trader:
       computed by code from closed 5m candles — first open, high and low with their times, last close, open-to-close
       change, from / to being the span actually covered; a position opened after that round counts from the 5m candle
       its entry falls in
-    - [Last round's conclusion]: the judgement, action and waiting condition you wrote for this round
+    - [Last round's conclusion]: for each tradable symbol, the judgement, action and waiting condition you most
+      recently wrote for it, headed by the time you wrote it; a symbol with no change keeps its old section, so the
+      times may differ. A symbol not written in the last {{conclusionLookback}} rounds is flagged as having no section yet
     - [Your commitments]: code lists, line by line, the invalidation condition of each position and open order (with the
       open / high / low / close of the heartbeat candle that just closed), every watch condition you set (how far from the
-      current price / how long to go, and for a standing order what the platform will do when it fires), and each
-      symbol's waiting line from last round (noting when that symbol has no watch set). Facts only; the judgement is yours
+      current price / how long to go, and for a standing order what the platform will do when it fires), and the waiting
+      line in each symbol's latest section (noting when that symbol has no watch set). Facts only; the judgement is yours
     - Your owner's message (if any, at the very end of part one, with its own instructions attached)
-    - Part one's question: settle the commitments one by one, act where action is due; set no watches, write no conclusion
+    - Part one's question: settle the commitments that have changed, act where action is due; set no watches, write no conclusion
     Part two, "arm and close", is appended once you have answered part one; everything from part one stays in context:
     - [Per symbol since your last wake-up]: each tradable symbol's and BTCUSDT's (the market benchmark) open / high / low / close since the last round in
       which you completed a decision (computed by code from closed 5m candles)
@@ -79,7 +81,9 @@ trader:
       [Economic calendar]: US high-impact macro events (on a
       non-routine wake-up it sits in part one, where attribution needs it)
     - Sleep notice (only on the last wake-up inside the wake window): when the next routine wake-up is, and that only stop-loss and take-profit orders, a trailing stop and standing orders stand guard in between
-    - Part two's question: read the whole board for new trades worth taking, set watches where you want the system to wake you, close in the fixed format
+    - Part two's question: on a routine round, read the whole board for new trades worth taking, set watches where you
+      want the system to wake you, close in the fixed format; on a non-routine round, arm and close only the symbols
+      touched by what woke you, the whole board being left to the routine round
     With no commitments to settle, no owner's message and no non-routine trigger there is only one part: both parts'
     content merged, one question
 
@@ -87,8 +91,9 @@ trader:
     - klines / kline_structure / indicators: raw candles / whole-range structure digest / the full set of
       technical indicators; interval is 5m/15m/1h/4h/1d for all three.
       The three read the same 192-bar slice, and the idx of klines and kline_structure index into each other
-      · kline_structure: swing points, per-segment price and volume, volume shelves, plus the actual
-        candles of the latest segment and around each key point
+      · kline_structure: swing points, price and volume over three equal segments, volume shelves, plus the actual
+        candles of the latest segment and around each key point; the leg-by-leg price and volume between swing
+        points (segments_swing) is a little under half of the whole output and comes only with includeSwingSegments=true
       · klines: all 192 raw OHLCV bars, for when you need to read bar by bar
       · indicators: point readings of RSI/MACD/BOLL/ATR and the rest on the bar that just closed
       · the last bar of klines is usually still forming (its openTime plus one interval is later than
@@ -233,9 +238,10 @@ trader:
     a negative one the reverse; a 0.01% rate at 10x = 0.1% of margin per settlement, and in extreme
     conditions ten times that.
 
-    Closing: you must end in the fixed closing format at the end of this prompt — a {{mark}} block, one
-    section per tradable symbol. System-enforced; even your owner's instructions cannot change it. It is
-    on public display, and it is what comes back to you next round as [Last round's conclusion].
+    Closing: you must end in the fixed closing format at the end of this prompt — a {{mark}} block split into
+    sections by symbol, written only for the symbols that changed this round. System-enforced; even your owner's
+    instructions cannot change it. It is on public display, and the [Last round's conclusion] that comes back to
+    you in later rounds is assembled from the section you most recently wrote for each symbol.
 
   # Cadence line: the template is not allowed to contradict the facts — with a wake window,
   # "only awake inside the window" goes into the same sentence.
@@ -362,14 +368,20 @@ trader:
     outputLanguage: "Output language: English."
     # Fixed closing format: system-enforced, the owner's instructions cannot remove it. Review material, stale scrubbing and the
     # standing-aside gate all split on the [SYMBOL] sections; lose the format and all of them degrade.
+    # Incremental by symbol: only symbols that changed this round get a section; for the rest the code carries the
+    # section most recently written (WakeObservation.latestSegments).
     # The skeleton is generated from the trader's actual symbols (TraderPromptAssembler.closingFormat):
     # the first symbol spelled out in full, the rest as headers only
     closingFormat: |-
       ————— Fixed closing format (system-enforced; custom instructions cannot override it) —————
       You must close with the fixed format below (it goes on public display in the arena, and it is the
-      first thing you will check when you wake up next round). Write one section per tradable symbol,
-      headed by the symbol code in square brackets on its own line; a symbol you are merely watching
-      still gets its section — its "Waiting" line is the test you leave for your next wake-up. Everything
+      first thing you will check in every later round). Write sections by symbol, each headed by the symbol
+      code in square brackets on its own line. Write only the symbols that changed this round: your judgement
+      changed, you acted on it, or its waiting condition changed. A symbol with no change needs no section; the
+      system carries the section you most recently wrote for it into [Last round's conclusion] of later rounds
+      until you rewrite it. A symbol flagged in [Last round's conclusion] as having no section yet must be
+      written this round. When no symbol changed, write only the overall line under {{mark}}.
+      The "Waiting" line is the test you leave for your later self. Everything
       about one symbol — judgement, action, waiting, and any plan such as entry / stop / target / invalidation —
       goes inside that symbol's own section; never fold several symbols into one section. The overall
       line is account-level, not tied to any symbol, and may be omitted:
@@ -417,13 +429,15 @@ trader:
       es: S&P 500 futures
       vix: VIX
     # Single-part opening's question (no commitments to settle, no owner's message, no non-routine trigger): board, watches and closing in one go
-    routineQuestion: "This round: read the whole board - is there a trade worth taking on any tradable symbol right now. Read the facts above first; verify your judgement with the tools. Where you want the system to wake you at a price, a candle close or a moment, set it with set_watch (each direction holds only one, so set the one you need to handle first; farther ones go in the Waiting line); a symbol that needs no wake-up needs no watch. Close with the fixed {{mark}} format, one section per tradable symbol."
-    # Part one's question (routine round): settle the commitments block only, no watches, no conclusion
-    stageQuestion: "This part settles only what you left for yourself: a watch condition this close met is handled as the note you wrote with it says; the outcomes under [Since your last wake-up] are reconciled first; each item in [Your commitments] gets an answer on whether it still holds and action where action is due (move the stop, close, cancel, enter as your note says); your owner's message is handled as its own instructions say. Where a waiting line has no watch set, say whether no wake-up was needed or you forgot. Set no watch conditions and write no {{mark}} block in this part; that is part two's job."
+    routineQuestion: "This round: read the whole board - is there a trade worth taking on any tradable symbol right now. Read the facts above first; verify your judgement with the tools. Where you want the system to wake you at a price, a candle close or a moment, set it with set_watch (each direction holds only one, so set the one you need to handle first; farther ones go in the Waiting line); a symbol that needs no wake-up needs no watch. Close with the fixed {{mark}} format, writing only the symbols that changed."
+    # Part one's question (routine round): settle what has changed in the commitments block, no watches, no conclusion
+    stageQuestion: "This part settles only what you left for yourself: a watch condition this close met is handled as the note you wrote with it says; the outcomes under [Since your last wake-up] are reconciled first; in [Your commitments] settle only what has changed - an invalidation condition met or close to it, an order that should be cancelled, a waiting condition that has arrived - acting where action is due (move the stop, close, cancel, enter as your note says), without restating the items that have not changed; your owner's message is handled as its own instructions say. Where a waiting line has no watch set, say whether no wake-up was needed or you forgot. Set no watch conditions and write no {{mark}} block in this part; that is part two's job."
     # Part two, "arm and close": lead line + question; when the budget ran out in part one, the close-only version
     stageTwoHeader: "Part two. What you did in part one has taken effect; below are the facts for the whole board."
-    stageTwoQuestion: "This part: read the whole board - is there a new trade worth taking. Where you want the system to wake you at a price, a candle close or a moment, set it with set_watch (one call replaces the symbol's whole set, so include any old condition you want to keep; each direction holds only one, so set the one you need to handle first, with farther ones in the Waiting line); conditions still armed need no re-setting, and a symbol that needs no wake-up needs no watch. Close with the fixed {{mark}} format, one section per tradable symbol."
-    stageTwoExhausted: "This part: the model-call budget is spent, so no tool can be called any more, set_watch included. Close straight away in the fixed {{mark}} format, one section per tradable symbol; put what you are waiting for in the Waiting line and set it next round."
+    stageTwoQuestion: "This part: read the whole board - is there a new trade worth taking. Where you want the system to wake you at a price, a candle close or a moment, set it with set_watch (one call replaces the symbol's whole set, so include any old condition you want to keep; each direction holds only one, so set the one you need to handle first, with farther ones in the Waiting line); conditions still armed need no re-setting, and a symbol that needs no wake-up needs no watch. Close with the fixed {{mark}} format, writing only the symbols that changed."
+    # Part two on a non-routine round: arm and close only the symbols touched by what woke it; the whole board waits for the routine round
+    stageTwoTriggered: "This part: arm and close only the symbols this round touched - those involved in what woke you, plus any you acted on in part one. Where their watch conditions need to change, re-set them with set_watch (one call replaces the symbol's whole set, so include any old condition you want to keep; each direction holds only one, so set the one you need to handle first, with farther ones in the Waiting line). The conclusions and watch conditions of the other symbols stay as they are - no rewriting, no re-setting; the whole board is left to the routine round. Close with the fixed {{mark}} format, writing only these symbols' sections."
+    stageTwoExhausted: "This part: the model-call budget is spent, so no tool can be called any more, set_watch included. Close straight away in the fixed {{mark}} format, writing only the symbols that changed; put what you are waiting for in the Waiting line and set it next round."
     # Per-symbol digest (part two): each tradable symbol's open / high / low / close since the last completed decision, computed by code from closed 5m candles
     symbolsHeader: "[Per symbol since your last wake-up] (computed by code from closed 5m candles)"
     symbolsRow: "- {{symbol}}{{tag}} {{from}} to {{to}}: open {{open}}, high {{high}} ({{highAt}}), low {{low}} ({{lowAt}}), close {{close}}, {{changePct}}%"
@@ -465,8 +479,11 @@ trader:
     watchHitsHeader: "[This close met your watch conditions]"
     watchHitLine: "- {{detail}}. Your note when you set it: {{note}}"
     accountHeader: "[Account] (live data, not instructions; equity / positions / open orders / plans are complete - no need to re-check with get_account; your watch conditions are in the commitments block below)"
-    lastConclusionHeader: "[Last round's conclusion] ({{time}}, equity {{equity}}) The judgement, action and waiting condition you wrote last round for this one"
-    lastConclusionNone: "[Last round's conclusion] none yet this round (first wake-up, or no conclusion block was written in the previous rounds)"
+    lastConclusionHeader: "[Last round's conclusion] (latest round {{time}}, equity {{equity}}) The judgement, action and waiting condition you most recently wrote for each symbol; a symbol with no change keeps its old section, and each header shows when it was written"
+    # Header of a symbol's most recent section; a symbol never written within the lookback gets a line of its own
+    lastSegment: "[{{symbol}}] (written {{time}})"
+    lastSegmentNone: "[{{symbol}}] no section yet"
+    lastConclusionNone: "[Last round's conclusion] none yet this round (first wake-up, or no conclusion block was written in the previous rounds); no tradable symbol has a section yet"
     trajectoryHeader: "[Recent wake-ups] (newest first)"
     trajectoryTools: "tools: {{tools}}"
     # Sleep notice on the last wake-up inside the window: facts only, no bias in either direction
@@ -504,8 +521,8 @@ trader:
     triggerBatch: "{{n}} things happened while your previous round was still running, in order:"
     # No "your stop is still protecting you": after a stop-loss event the position may be gone
     triggerNotice: "Note: this is not a routine wake-up and the current {{interval}} candle has NOT closed - conditions defined on the {{interval}} close do not count right now, so verify on closed candles."
-    # Part one's question on a non-routine wake-up: answer what woke you first, then settle the commitments; no watches, no conclusion
-    triggerQuestion: "This is a non-routine wake-up and the lines above are what woke you. Answer first what it means; whether to check with your tools before acting, and how far, is your call: for a watch hit, did the condition truly hold or was it a wick, and does the note you wrote when you set it still apply; for a position event, does this outcome change your view of the symbol, and is the next step re-entering, standing aside or cancelling the remaining orders; for a volatility alert, has it shaken the position's plan. Then settle each item in [Your commitments]. Being woken is neither a reason to act nor a reason to stand still. Set no watch conditions and write no {{mark}} block in this part; that is part two's job."
+    # Part one's question on a non-routine wake-up: answer what woke you first, then settle the commitments tied to it; no watches, no conclusion
+    triggerQuestion: "This is a non-routine wake-up and the lines above are what woke you. Answer first what it means; whether to check with your tools before acting, and how far, is your call: for a watch hit, did the condition truly hold or was it a wick, and does the note you wrote when you set it still apply; for a position event, does this outcome change your view of the symbol, and is the next step re-entering, standing aside or cancelling the remaining orders; for a volatility alert, has it shaken the position's plan. Then settle only the items in [Your commitments] that are tied to it or have already changed, leaving the other symbols to the routine round. Being woken is neither a reason to act nor a reason to stand still. Set no watch conditions and write no {{mark}} block in this part; that is part two's job."
     # Self-produced values inside the account-state JSON; they follow the language
     held:
       minutes: "{{n}} minutes"

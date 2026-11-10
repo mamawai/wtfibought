@@ -396,7 +396,7 @@ public class TraderWakeupRunner {
                 .serialTools(TradeTools.SERIAL_TOOLS)
                 // 第一段答完追加第二段：整盘事实 + 布防 + 收尾
                 .stages(twoStage ? stageTwo(trader, boundaryTime, whitelist, pack.lastOkWakeMs(), recent,
-                        triggers == null ? calendar : null, lang) : null)
+                        triggers == null ? calendar : null, lang, triggers != null) : null)
                 .build();
         run.prompt(prompt, instruction);
         // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
@@ -598,15 +598,17 @@ public class TraderWakeupRunner {
 
     /**
      * 第二段「布防与收尾」开场白：头一句 + 整盘事实 + 第二段的问题。
+     * 例行轮问整盘；非例行轮（triggered）只给被叫醒的那件事涉及的币收尾，整盘留给例行轮。
      * 预算在第一段用尽的（exhausted）换成只许收尾的问题：工具一个都调不了，set_watch 也不行
      */
     String stageTwoInstruction(AiTrader trader, long wakeTime, String symbols, String history, String snapshot,
-                               String calendar, AgentLang lang, boolean exhausted) {
+                               String calendar, AgentLang lang, boolean triggered, boolean exhausted) {
         long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
+        String question = exhausted ? "trader.wake.stageTwoExhausted"
+                : triggered ? "trader.wake.stageTwoTriggered" : "trader.wake.stageTwoQuestion";
         return prompts.get(lang, "trader.wake.stageTwoHeader") + '\n'
                 + facts(trader, alignedBoundary(wakeTime, intervalMs), intervalMs, symbols, history, snapshot, calendar, lang)
-                + prompts.get(lang, exhausted ? "trader.wake.stageTwoExhausted" : "trader.wake.stageTwoQuestion",
-                        Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
+                + prompts.get(lang, question, Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
     }
 
     /**
@@ -614,7 +616,8 @@ public class TraderWakeupRunner {
      * 第一段可能跑了几分钟，标记价重拉一次，不拿开场时那份
      */
     private ReactLoop.Stages stageTwo(AiTrader trader, long wakeTime, Set<String> whitelist, Long lastOkWakeMs,
-                                      List<WakeObservation.RecentWake> recent, String calendar, AgentLang lang) {
+                                      List<WakeObservation.RecentWake> recent, String calendar, AgentLang lang,
+                                      boolean triggered) {
         AtomicBoolean sent = new AtomicBoolean();
         return exhausted -> {
             if (sent.getAndSet(true)) {
@@ -623,7 +626,8 @@ public class TraderWakeupRunner {
             String symbols = wakeObservation.symbolsSummary(trader, whitelist, lastOkWakeMs, wakeTime, lang);
             String history = wakeObservation.history(trader, recent, lang);
             String snapshot = wakeObservation.snapshot(quotes(WakeObservation.board(whitelist)), whitelist, nowMs.getAsLong(), lang);
-            return Optional.of(new UserMessage(stageTwoInstruction(trader, wakeTime, symbols, history, snapshot, calendar, lang, exhausted)));
+            return Optional.of(new UserMessage(stageTwoInstruction(trader, wakeTime, symbols, history, snapshot, calendar, lang,
+                    triggered, exhausted)));
         };
     }
 

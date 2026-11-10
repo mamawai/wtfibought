@@ -621,7 +621,7 @@
       "set_watch": "Watch conditions on one coin: price touches a level, a candle of some period closes above or below it, or a set time arrives. It is woken the moment one is met; at most one upward, one downward and one timed per coin, each fires once. Any coin the platform tracks can be watched, not only the tradable ones. A condition may also carry a standing order: when it fires the platform itself moves a stop, closes part or all of a position, or cancels a pending order — <0>risk-reducing only, never an entry</0>.",
       "get_account": "Balance / positions / pending orders. Already injected every round; normally only called to re-check after its own orders.",
       "klines": "192 raw OHLCV bars, last one still forming. For bar-by-bar pattern checks or its own swing rules.",
-      "kline_structure": "Swings, segments, volume-by-price and key levels of the same bars; facts only, no calls.",
+      "kline_structure": "Swings, segments, volume-by-price and key levels of the same bars; facts only, no calls. The leg-by-leg detail between swings comes only when it asks for it.",
       "indicators": "MA/EMA · RSI · MACD · BOLL · ATR · KDJ · ADX · OBV · volume ratio, as of the last closed bar.",
       "market_snapshot": "The latest raw reading from each data source: price change, funding rate, open interest, account and top-trader long/short ratios, taker volume, liquidations over the last 5 / 30 minutes, top-5 book depth, recent trades, fear & greed. No scoring.",
       "funding_history": "Last 30 settlements plus next funding time and mark price.",
