@@ -167,7 +167,7 @@ reviewer:
     # 本期全部单子的重放汇总，行由 PlayStatsAssembler.replayLines 出
     caseReplaySummary: 本期重放汇总：
     # 没绑过仓位就归档的计划
-    cancelledHeader: 没成交就撤掉的限价单（归档后 24 小时内的 5m K线）：
+    cancelledHeader: 没成交就撤掉的限价单（从最后一次见它还挂着的那轮起 24 小时内的 5m K线）：
     cancelledRow: "- {{symbol}} {{side}} 限价 {{limit}} 止损 {{stop}} 目标 {{target}}，{{closed}} 归档 ｜ 之后价格{{touched}}限价位，{{targetsAfter}}"
     reached: 到过
     notReached: 没到过

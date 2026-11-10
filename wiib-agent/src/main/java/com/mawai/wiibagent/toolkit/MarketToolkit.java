@@ -47,7 +47,7 @@ public class MarketToolkit {
             - funding: current rate as a raw decimal per settlement (0.0001 = 0.01%), nextFundingTime, markPrice, indexPrice
             - liquidations: last5m and last30m, each with longUsd (longs liquidated), shortUsd (shorts liquidated) and
               count. Binance only; its liquidation stream is sampled, not complete, so the amounts are a lower
-              bound and fall further short the faster the market moves
+              bound and fall further short the faster the market moves; only for coins the platform collects liquidations for
             - futuresBookTop5 / spotBookTop5: total bid quantity and ask quantity (coins) over the top 5 levels
             - trades3m: taker buy and taker sell notional (USDT) over the last 3 minutes, how much of each came from
               single trades above largeThresholdUsd (the same threshold for every coin), and the trade count;

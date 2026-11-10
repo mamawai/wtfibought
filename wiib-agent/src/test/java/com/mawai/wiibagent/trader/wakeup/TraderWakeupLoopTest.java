@@ -155,7 +155,7 @@ class TraderWakeupLoopTest {
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
             wakeObservation,
             mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger,
-            mock(BinanceProperties.class));
+            mock(BinanceProperties.class), mock(PresetExecutor.class));
 
     {
         // 测试边界是固定历史时刻，墙钟钉在边界后 1s——预算充足，各用例不受真实时间影响

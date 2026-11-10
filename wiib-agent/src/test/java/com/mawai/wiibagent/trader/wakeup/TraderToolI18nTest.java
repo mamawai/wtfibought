@@ -81,7 +81,8 @@ class TraderToolI18nTest {
             new LocalizedToolCallbacks(prompts),
             mock(WakeObservation.class),
             mock(EconCalendarAssembler.class), new TraderLiveHub(), mock(EntryContext.class),
-            mock(DecisionText.class), mock(ExperienceLedger.class), mock(BinanceProperties.class));
+            mock(DecisionText.class), mock(ExperienceLedger.class), mock(BinanceProperties.class),
+            mock(PresetExecutor.class));
 
     /** 只做反射扫描的壳：工具方法一个都不会被调起来，依赖给 null 即可 */
     private final TradeTools tradeTools = new TradeTools(

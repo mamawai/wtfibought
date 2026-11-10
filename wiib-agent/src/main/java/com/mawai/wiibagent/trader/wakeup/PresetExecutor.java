@@ -7,6 +7,7 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.StopOrders;
 import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
@@ -28,7 +29,10 @@ import tools.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -36,6 +40,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 预案执行：带动作的盯盘条件命中时，由代码当场把动作做掉——移止损、平掉一部分或全部、撤一张挂单，都只会减风险。
  * 结果记三处：条件行（action_ok / action_result）、那个仓位的计划修订史、时间线上一行 PRESET。
  * 不看 trader 是不是在运行、在不在唤醒时段：预案和止损止盈单一样是挂出去的承诺。
+ * 执行放在虚拟线程上，不占行情线程和 K 线事件线程；同一个 trader 这时要醒，先等它的预案做完（{@link #awaitIdle}）。
  */
 @Slf4j
 @Component
@@ -47,22 +52,56 @@ public class PresetExecutor {
     private final AiTraderDecisionMapper decisionMapper;
     private final TraderPlanStore planStore;
     private final TraderWatchStore watchStore;
+    private final TraderTrailStore trailStore;
     private final UserLangResolver userLangResolver;
     private final PromptCatalog prompts;
     private final MessageCatalog messages;
+
+    /** trader → 它还没做完的预案 */
+    private final Map<Long, Set<CompletableFuture<Boolean>>> running = new ConcurrentHashMap<>();
 
     /** 一次执行的结果：做没做成，和一句话 */
     private record Done(boolean ok, String text) {
     }
 
     /**
-     * 执行这条命中的预案，结果写回 w 和库里。
+     * 把这条命中的预案交给虚拟线程执行。登记是同步做的：调用一返回，{@link #awaitIdle} 就等得到它。
      *
      * @param price 命中时的价
      * @param at    命中时刻 ms
-     * @return 要不要为这次命中叫醒模型：移止损和撤单做成了不叫，平仓做成了叫，没做成的都叫
+     * @return 做完后给出要不要为这次命中叫醒模型
      */
-    public boolean execute(AiTraderWatch w, BigDecimal price, long at) {
+    public CompletableFuture<Boolean> submit(AiTraderWatch w, BigDecimal price, long at) {
+        CompletableFuture<Boolean> done = new CompletableFuture<>();
+        Set<CompletableFuture<Boolean>> mine = running.computeIfAbsent(w.getTraderId(), _ -> ConcurrentHashMap.newKeySet());
+        mine.add(done);
+        Thread.startVirtualThread(() -> {
+            try {
+                done.complete(execute(w, price, at));
+            } catch (Exception e) {
+                log.warn("[Preset] 执行出错 traderId={} watchId={} msg={}", w.getTraderId(), w.getId(), e.toString());
+                done.complete(true);
+            } finally {
+                mine.remove(done);
+            }
+        });
+        return done;
+    }
+
+    /** 等这个 trader 手上的预案都做完：唤醒开头调，读到的账户和命中记录才是做完之后的 */
+    public void awaitIdle(long traderId) {
+        Set<CompletableFuture<Boolean>> mine = running.get(traderId);
+        if (mine != null) {
+            CompletableFuture.allOf(mine.toArray(CompletableFuture[]::new)).join();
+        }
+    }
+
+    /**
+     * 执行这条命中的预案，结果写回 w 和库里。
+     *
+     * @return 要不要为这次命中叫醒模型：移止损和撤单做成了不叫，平仓做成了叫，没做成或结果未知的都叫
+     */
+    boolean execute(AiTraderWatch w, BigDecimal price, long at) {
         AiTrader trader = traderMapper.selectById(w.getTraderId());
         if (trader == null) {
             return false;
@@ -77,6 +116,11 @@ public class PresetExecutor {
                 case AiTraderWatch.ACTION_CLOSE -> close(trader, w, action, at, lang);
                 default -> cancel(trader, action, lang);
             };
+        } catch (SimOrderRetry.UnknownOutcome e) {
+            // 重发也没问到结果：可能已经成交，不能说成没做成，不然模型照备注再平一次
+            log.warn("[Preset] 结果未知 traderId={} watchId={} msg={}", trader.getId(), w.getId(), e.getCause().toString());
+            done = new Done(false, prompts.get(lang, "trader.preset.unknown",
+                    Map.of("cause", String.valueOf(e.getCause().getMessage()))));
         } catch (Exception e) {
             // sim 拒了或连不上：按没做成报，叫醒模型自己处理
             log.warn("[Preset] 执行失败 traderId={} watchId={} msg={}", trader.getId(), w.getId(), e.toString());
@@ -84,8 +128,13 @@ public class PresetExecutor {
         }
         w.setActionOk(done.ok());
         w.setActionResult(done.text());
-        watchStore.recordAction(w.getId(), done.ok(), done.text());
-        timeline(trader, w, action, price, at, done, lang);
+        try {
+            watchStore.recordAction(w.getId(), done.ok(), done.text());
+            timeline(trader, w, action, price, at, done, lang);
+        } catch (Exception e) {
+            // 动作已经做了，记账失败不许把该有的唤醒也带没
+            log.warn("[Preset] 结果落库失败 traderId={} watchId={} msg={}", trader.getId(), w.getId(), e.toString());
+        }
         log.info("[Preset] traderId={} watchId={} {} ok={} {}", trader.getId(), w.getId(), type, done.ok(), done.text());
         return !done.ok() || AiTraderWatch.ACTION_CLOSE.equals(type);
     }
@@ -131,10 +180,14 @@ public class PresetExecutor {
     }
 
     private Done cancel(AiTrader trader, JsonNode action, AgentLang lang) {
+        String symbol = action.path("symbol").asString();
+        String orderSide = action.path("side").asString();
         simTradeClient.cancelOrder(trader.getSimUserId(), action.path("orderId").asLong());
+        // 这张单带着成交后才开始跟的跟踪止损的话，一起清掉
+        trailStore.orderCancelled(trader.getId(), trader.getRoundNo(), symbol, orderSide,
+                () -> simTradeClient.getPendingOrders(trader.getSimUserId(), null));
         return new Done(true, prompts.get(lang, "trader.preset.cancelled", Map.of(
-                "symbol", action.path("symbol").asString(), "side", action.path("side").asString(),
-                "orderId", action.path("orderId").asLong())));
+                "symbol", symbol, "side", orderSide, "orderId", action.path("orderId").asLong())));
     }
 
     /** 动作指的那个仓位现在还在不在；不在给 null */
@@ -148,7 +201,7 @@ public class PresetExecutor {
     private void revise(AiTrader trader, FuturesPositionDTO pos, long at, String type, String change, String reason) {
         AiTraderPlan plan = planStore.liveFor(trader.getId(), trader.getRoundNo(), pos.getSymbol(), pos.getSide());
         if (plan != null) {
-            planStore.revise(plan, at, type, change, reason);
+            planStore.appendRevision(plan.getId(), at, type, change, reason);
         }
     }
 

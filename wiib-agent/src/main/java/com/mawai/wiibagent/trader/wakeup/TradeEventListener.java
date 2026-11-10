@@ -21,9 +21,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价成交），
- * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就把它叫醒；不是 trader 的用户直接忽略。
+ * 事件里的 sim 用户是哪个 trader 的子账户：在运行的就把它叫醒；不是 trader 的用户直接忽略。
  * 准入（冷静期 / 互斥 / 时段 / 交接）全在调度器，这里只认人。
- * 限价单成交时顺手把挂单带的跟踪止损规则绑上仓位。
+ * 限价单成交时顺手把挂单带的跟踪止损规则绑上仓位，这一步不看 trader 在不在运行。
  */
 @Slf4j
 @Component
@@ -62,14 +62,15 @@ public class TradeEventListener implements MessageListener {
 
     void onEvent(TradeEvent event) {
         List<AiTrader> traders = traderMapper.selectList(new LambdaQueryWrapper<AiTrader>()
-                .eq(AiTrader::getSimUserId, event.userId())
-                .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING));
+                .eq(AiTrader::getSimUserId, event.userId()));
         for (AiTrader t : traders) {
-            // 限价单成交：挂单时设的跟踪止损从这一刻绑上仓位开始跟，不等模型醒
+            // 限价单成交：挂单时设的跟踪止损从这一刻绑上仓位开始跟，不等模型醒；暂停着的 trader 也绑，跟踪止损不看它在不在运行
             if (TradeEvent.LIMIT_FILLED.equals(event.type())) {
                 trailStore.bind(t.getId(), t.getRoundNo(), event.symbol(), event.side(), event.positionId());
             }
-            scheduler.tryTriggerWake(t.getId(), new EventTrigger(event));
+            if (AiTrader.STATUS_RUNNING.equals(t.getStatus())) {
+                scheduler.tryTriggerWake(t.getId(), new EventTrigger(event));
+            }
         }
     }
 }

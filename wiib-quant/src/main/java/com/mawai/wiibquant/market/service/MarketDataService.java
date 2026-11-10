@@ -111,7 +111,7 @@ public class MarketDataService {
         this.binanceRestClient = binanceRestClient;
         this.depthStreamCache = depthStreamCache;
         this.collectNode = new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient,
-                Set.copyOf(binanceProperties.getFuturesOnlySymbols()));
+                Set.copyOf(binanceProperties.getFuturesOnlySymbols()), Set.copyOf(binanceProperties.getAllFuturesSymbols()));
         this.featuresBuilder = new BuildFeaturesBuilder(orderFlowAggregator, decisionInterval);
         this.ttlMillis = ttlMillis;
     }

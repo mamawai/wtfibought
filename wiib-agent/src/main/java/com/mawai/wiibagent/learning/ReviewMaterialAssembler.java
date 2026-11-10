@@ -143,7 +143,7 @@ public class ReviewMaterialAssembler {
                 .filter(p -> AiTraderPlan.STATUS_CLOSED.equals(p.getStatus()) && p.getPositionId() == null && !isStale(p))
                 .filter(p -> !planByPos.containsValue(p))
                 .filter(p -> p.getClosedWakeTime() > fromMs && p.getClosedWakeTime() <= toMs)
-                .map(caseFiles::cancelledLimit).filter(Objects::nonNull).toList();
+                .map(p -> caseFiles.cancelledLimit(p, lastSeenPending(trader, p))).filter(Objects::nonNull).toList();
         String stats = playStats.assemble(trader, lang);
         return new ReviewMaterial(
                 statsBlock(trader, fromMs, toMs, visible, maybeTruncated, lang),
@@ -275,6 +275,22 @@ public class ReviewMaterialAssembler {
         return sb.toString();
     }
 
+    /**
+     * 撤掉的限价单最后一次被看到还挂着的时刻：归档它的那轮之前最近的一次唤醒，撤单就发生在那之后；
+     * 中间没有别的唤醒就是挂出它的那轮
+     */
+    private long lastSeenPending(AiTrader t, AiTraderPlan plan) {
+        AiTraderDecision before = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
+                .select(AiTraderDecision::getWakeTime)
+                .eq(AiTraderDecision::getTraderId, t.getId())
+                .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
+                .lt(AiTraderDecision::getWakeTime, plan.getClosedWakeTime())
+                .orderByDesc(AiTraderDecision::getWakeTime)
+                .last("LIMIT 1"));
+        return before == null ? plan.getOpenedWakeTime() : Math.max(before.getWakeTime(), plan.getOpenedWakeTime());
+    }
+
     /** 计划里的止盈档写法；没计划或没设止盈写"无" */
     private String targets(AiTraderPlan plan, AgentLang lang) {
         List<TargetRung> rungs = TargetRung.of(plan);
@@ -380,12 +396,15 @@ public class ReviewMaterialAssembler {
                 Map.entry("funding", pos.getFundingFeeTotal() == null ? none : signed(pos.getFundingFeeTotal()))));
     }
 
-    /** 入场上下文一行；限价单记了下单时刻的，带上挂了多久才成交 */
+    /**
+     * 入场上下文一行；限价单记了下单时刻的，带上挂了多久才成交。
+     * 加仓会把上下文换成加仓那一单的，它的下单时刻晚于仓位开仓，这时不带
+     */
     private String ctxLine(JsonNode ctx, FuturesPositionDTO pos, AgentLang lang) {
         String none = prompts.get(lang, "reviewer.label.none");
-        String pending = "LIMIT".equals(ctx.path("orderType").asString(null)) && ctx.has("placedAt")
-                ? prompts.get(lang, "reviewer.label.casePending", Map.of("held", humanize(prompts,
-                        TradePairing.msOf(pos.getCreatedAt()) - ctx.path("placedAt").asLong(), lang)))
+        long pendingMs = TradePairing.msOf(pos.getCreatedAt()) - ctx.path("placedAt").asLong();
+        String pending = "LIMIT".equals(ctx.path("orderType").asString(null)) && ctx.has("placedAt") && pendingMs >= 0
+                ? prompts.get(lang, "reviewer.label.casePending", Map.of("held", humanize(prompts, pendingMs, lang)))
                 : "";
         return prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
                 Map.entry("pending", pending),

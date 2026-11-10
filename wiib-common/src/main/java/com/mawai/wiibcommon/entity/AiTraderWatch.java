@@ -35,7 +35,6 @@ public class AiTraderWatch {
     public static final String ACTION_MOVE_STOP = "MOVE_STOP";
     public static final String ACTION_CLOSE = "CLOSE";
     public static final String ACTION_CANCEL_ORDER = "CANCEL_ORDER";
-    public static final List<String> ACTIONS = List.of(ACTION_MOVE_STOP, ACTION_CLOSE, ACTION_CANCEL_ORDER);
 
     @TableId(type = IdType.AUTO)
     private Long id;

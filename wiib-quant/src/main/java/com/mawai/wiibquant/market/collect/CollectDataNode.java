@@ -30,15 +30,18 @@ public class CollectDataNode {
     private final DeribitClient deribitClient;
     /** 只有合约、没有现货盘的标的（HYPE、黄金原油等） */
     private final Set<String> futuresOnlySymbols;
+    /** 爆仓流入库的币（配置币池）；池外的币库里没有爆仓记录，不当成 0 给出去 */
+    private final Set<String> liquidationSymbols;
 
     public CollectDataNode(BinanceRestClient binanceRestClient, ForceOrderService forceOrderService,
                            DepthStreamCache depthStreamCache, DeribitClient deribitClient,
-                           Set<String> futuresOnlySymbols) {
+                           Set<String> futuresOnlySymbols, Set<String> liquidationSymbols) {
         this.binanceRestClient = binanceRestClient;
         this.forceOrderService = forceOrderService;
         this.depthStreamCache = depthStreamCache;
         this.deribitClient = deribitClient;
         this.futuresOnlySymbols = futuresOnlySymbols;
+        this.liquidationSymbols = liquidationSymbols;
     }
 
     /** 采集入口；preFetchedFearGreed 非空则跳过 FGI 拉取（调度器可能已预取）。 */
@@ -100,7 +103,8 @@ public class CollectDataNode {
             Future<String> spotObF = hasSpot ? executor.submit(() -> binanceRestClient.getOrderbook(symbol, 20)) : null;
             var oiHistF = executor.submit(() -> binanceRestClient.getOpenInterestHist(symbol, "5m", 48));
             var lsrF = executor.submit(() -> binanceRestClient.getLongShortRatio(symbol));
-            var forceOrdersF = executor.submit(() -> buildForceOrdersJson(symbol));
+            Future<String> forceOrdersF = liquidationSymbols.contains(symbol)
+                    ? executor.submit(() -> buildForceOrdersJson(symbol)) : null;
             var topTraderF = executor.submit(() -> binanceRestClient.getTopTraderPositionRatio(symbol, "5m", 24));
             var takerLsrF = executor.submit(() -> binanceRestClient.getTakerLongShortRatio(symbol, "5m", 24));
             var fearGreedF = skipFearGreed ? null
@@ -130,7 +134,7 @@ public class CollectDataNode {
             putIfNotNull(spotOrderbookMap, symbol, spotObF != null ? safeGet(spotObF, "spotOrderbook", deadlineNanos) : null);
             putIfNotNull(openInterestHistMap, symbol, safeGet(oiHistF, "openInterestHist", deadlineNanos));
             putIfNotNull(longShortRatioMap, symbol, safeGet(lsrF, "longShortRatio", deadlineNanos));
-            putIfNotNull(forceOrdersMap, symbol, safeGet(forceOrdersF, "forceOrders", deadlineNanos));
+            putIfNotNull(forceOrdersMap, symbol, forceOrdersF != null ? safeGet(forceOrdersF, "forceOrders", deadlineNanos) : null);
             putIfNotNull(topTraderPositionMap, symbol, safeGet(topTraderF, "topTraderPosition", deadlineNanos));
             putIfNotNull(takerLongShortMap, symbol, safeGet(takerLsrF, "takerLongShort", deadlineNanos));
 
@@ -220,8 +224,7 @@ public class CollectDataNode {
 
     private String buildForceOrdersJson(String symbol) {
         List<ForceOrder> orders = forceOrderService.getRecent(symbol, 30);
-        if (orders == null || orders.isEmpty()) return null;
-        // MarketReadings 读的格式: [{side, price, origQty, time(ms)}]
+        // MarketReadings 读的格式: [{side, price, origQty, time(ms)}]；这 30 分钟没有记录就是空数组
         List<Map<String, Object>> list = orders.stream().map(o -> Map.<String, Object>of(
                 "side", o.getSide(),
                 "price", o.getAvgPrice(),

@@ -44,6 +44,7 @@ class TradeEventListenerTest {
         t.setId(7L);
         t.setRoundNo(1);
         t.setSimUserId(42L);
+        t.setStatus(AiTrader.STATUS_RUNNING);
         return t;
     }
 
@@ -58,6 +59,19 @@ class TradeEventListenerTest {
         verify(trailStore).bind(7L, 1, "BTCUSDT", "LONG", 9L);
         verify(scheduler).tryTriggerWake(eq(7L),
                 argThat((WakeTrigger tr) -> tr instanceof EventTrigger e && e.event().equals(event())));
+    }
+
+    /** 暂停着的 trader：限价成交照样把跟踪止损绑上仓位，只是不叫醒 */
+    @Test
+    void pausedTraderStillBindsTrailButIsNotWoken() {
+        AiTrader t = trader();
+        t.setStatus(AiTrader.STATUS_PAUSED);
+        when(traderMapper.selectList(any())).thenReturn(List.of(t));
+
+        listener.onEvent(event());
+
+        verify(trailStore).bind(7L, 1, "BTCUSDT", "LONG", 9L);
+        verify(scheduler, never()).tryTriggerWake(anyLong(), any());
     }
 
     /** 普通用户的止损不是 trader 的事 */

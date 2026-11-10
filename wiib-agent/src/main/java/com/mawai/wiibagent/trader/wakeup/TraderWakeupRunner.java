@@ -162,6 +162,8 @@ public class TraderWakeupRunner {
     private final ExperienceLedger ledger;
     /** 平台在采的全部币：盯盘条件可以布在这些币上 */
     private final BinanceProperties binanceProperties;
+    /** 预案执行器：醒来先等这个 trader 手上的预案做完 */
+    private final PresetExecutor presets;
 
     /** 墙钟注入点：预算计算要可测（测试里把"现在"钉在边界附近） */
     LongSupplier nowMs = System::currentTimeMillis;
@@ -230,6 +232,8 @@ public class TraderWakeupRunner {
         // begin 之前出的异常没有这一轮现场
         TraderLiveHub.Run run = null;
         try {
+            // 这个 trader 有预案正在执行就等它做完，下面读到的账户和命中记录才是做完之后的
+            presets.awaitIdle(trader.getId());
             List<FuturesPositionDTO> positions = simTradeClient.getAllPositions(trader.getSimUserId());
             BigDecimal equity = computeEquity(trader.getSimUserId(), positions);
             decision.setEquity(equity);

@@ -29,6 +29,7 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.web.client.ResourceAccessException;
 import tools.jackson.databind.JsonNode;
 
@@ -46,6 +47,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -438,16 +440,19 @@ class TradeToolsTest {
         trailing.setBestPrice(new BigDecimal("99000"));
         trailing.setStopPrice(new BigDecimal("97515"));
         when(trailMapper.selectList(any())).thenReturn(List.of(trailing));
+        // 结束跟随那条修订是按 id 现读现写的
+        AiTraderPlan reread = existingPlan();
+        when(planMapper.selectById(21L)).thenReturn(reread);
 
         String r = tools.setStopLoss(5L, 98000.0, null, null, "到阻力了，换回固定止损");
 
-        assertThat(r).contains("ok");
+        assertThat(r).contains("\"ok\":true");
         verify(simTradeClient).setStopLoss(eq(99L), any());
         verify(trailMapper).deleteById(31L);
         verify(trailMapper, never()).insert(any(AiTraderTrail.class));
-        ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
-        verify(planMapper, times(2)).updateById(plan.capture());
-        assertThat(plan.getValue().getRevisionsJson()).contains("跟踪止损结束").contains("最有利价 99000，止损跟到 97515");
+        verify(planMapper).updateById(any(AiTraderPlan.class));
+        verify(planMapper).update(isNull(), any());
+        assertThat(reread.getRevisionsJson()).contains("跟踪止损结束").contains("最有利价 99000，止损跟到 97515");
     }
 
     /** 固定价和回调幅度一个都没给、幅度越界：拒，不动 sim 也不落规则 */
@@ -846,6 +851,63 @@ class TradeToolsTest {
         // coversPlan 由同向持仓/开仓挂单推出：覆盖走 updateById，判成新立就会多插一行
         verify(planMapper).updateById(any(AiTraderPlan.class));
         verify(planMapper, never()).insert(any(AiTraderPlan.class));
+        // 现有保护单的数量没超过仓位，不重挂
+        verify(simTradeClient, never()).setStopLoss(anyLong(), any());
+        verify(simTradeClient, never()).setTakeProfit(anyLong(), any());
+    }
+
+    /** 分批止盈走了一半（仓位剩 0.005，止损止盈单还挂着 0.01）再加仓：先按仓位现量把保护单重挂，再发加仓单 */
+    @Test
+    void addOnRefitsStaleProtectiveOrdersBeforeSending() {
+        FuturesPositionDTO held = longPosition();
+        held.setQuantity(new BigDecimal("0.005"));
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(held));
+        FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setOrderId(778L);
+        resp.setPositionId(5L);
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
+        when(planMapper.selectOne(any())).thenReturn(existingPlan());
+
+        tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
+                null, 95000.0, null, null, null, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
+
+        InOrder sent = inOrder(simTradeClient);
+        ArgumentCaptor<FuturesStopLossRequest> sl = ArgumentCaptor.forClass(FuturesStopLossRequest.class);
+        ArgumentCaptor<FuturesTakeProfitRequest> tp = ArgumentCaptor.forClass(FuturesTakeProfitRequest.class);
+        sent.verify(simTradeClient).setStopLoss(eq(99L), sl.capture());
+        sent.verify(simTradeClient).setTakeProfit(eq(99L), tp.capture());
+        sent.verify(simTradeClient).openPosition(eq(99L), any());
+        assertThat(sl.getValue().getStopLosses()).singleElement()
+                .satisfies(i -> assertThat(i.getQuantity()).isEqualByComparingTo("0.005"));
+        assertThat(tp.getValue().getTakeProfits()).singleElement()
+                .satisfies(i -> assertThat(i.getQuantity()).isEqualByComparingTo("0.005"));
+    }
+
+    /** 同向已有仓位时限价单带跟踪止损：拒，不发单 */
+    @Test
+    void limitAddOnCannotCarryTrailingStop() {
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+
+        String r = tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.01, 10,
+                98000.0, 95000.0, null, 2.0, null, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
+
+        assertThat(r).startsWith("REJECTED").contains("限价加仓不能带跟踪止损");
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+    }
+
+    /** 撤掉带跟踪止损的限价单：同币同向没有别的开仓挂单了，它带的那条没绑仓位的规则一起删 */
+    @Test
+    void cancelOrderDropsTheUnboundTrailItCarried() {
+        FuturesOrderResponse cancelled = new FuturesOrderResponse();
+        cancelled.setOrderId(600L);
+        cancelled.setSymbol("BTCUSDT");
+        cancelled.setOrderSide("OPEN_LONG");
+        when(simTradeClient.cancelOrder(99L, 600L)).thenReturn(cancelled);
+        when(trailMapper.selectCount(any())).thenReturn(1L);
+
+        assertThat(tools.cancelOrder(600L)).contains("600");
+
+        verify(trailMapper).delete(any());
     }
 
     /** 同币同向还挂着限价单时再挂一张：计划走覆盖，不能把挂着那张的计划归档掉 */

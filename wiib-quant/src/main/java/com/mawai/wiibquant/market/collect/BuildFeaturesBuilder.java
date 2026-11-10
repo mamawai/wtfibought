@@ -141,9 +141,12 @@ public final class BuildFeaturesBuilder {
         if (!oiHistMap.containsKey(symbol)) qualityFlags.add("NO_OI_HISTORY");
         if (!readings.has("trades3m")) {
             qualityFlags.add("NO_AGG_TRADE");
-        } else if (System.currentTimeMillis() - orderFlowAggregator.getLastUpdateMs(symbol) > 30_000) {
-            // 成交 Stream 里有旧数据，但 30 秒没来新成交（断流或卡顿）
-            qualityFlags.add("STALE_AGG_TRADE");
+        } else {
+            long lastTrade = orderFlowAggregator.getLastUpdateMs(symbol);
+            // 成交 Stream 里有旧数据，但 30 秒没来新成交（断流或卡顿）；0 是这次没读到时间，不算
+            if (lastTrade > 0 && System.currentTimeMillis() - lastTrade > 30_000) {
+                qualityFlags.add("STALE_AGG_TRADE");
+            }
         }
         if (dvolIndex <= 0 && atmIv <= 0) qualityFlags.add("NO_OPTION_IV");
         if (atr == null) qualityFlags.add("NO_ATR");

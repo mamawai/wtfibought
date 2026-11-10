@@ -152,6 +152,23 @@ class TrailSentinelTest {
         verify(store, timeout(2_000)).advance(eq(31L), num("99"), num("99.99"));
     }
 
+    /** 名单重载（别的规则变了）：还在名单里的规则沿用内存里跟到哪了，库里读回来的那份旧也不退回去，反弹照样不动 */
+    @Test
+    void reloadKeepsWhereItHasTrailedTo() {
+        tracking(rule());
+        holding("102", "100");
+        tick("100");
+        assertThat(movedTo(1)).isEqualByComparingTo("101");
+        verify(store, after(200)).advance(eq(31L), num("100"), num("101"));
+
+        // 重载读回来的还是没开始跟的那份
+        tracking(rule());
+        holding("101", "100.5");
+        tick("100.5");
+
+        verify(store, after(300).times(1)).advance(anyLong(), any(), any());
+    }
+
     /** 设了启动价 99.5：价格没到不跟；到了从那一刻的价格起算。还没绑仓位的规则（限价单没成交）不跟 */
     @Test
     void waitsForActivationPriceAndSkipsUnboundRules() {

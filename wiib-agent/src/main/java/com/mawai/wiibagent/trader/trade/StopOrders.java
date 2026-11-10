@@ -6,6 +6,8 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -31,6 +33,48 @@ public final class StopOrders {
 
     /** 新止损比现有最紧那档松 */
     public record Looser(BigDecimal current) implements Outcome {
+    }
+
+    /**
+     * 仓位现挂的止损单按触发先后（最紧的先）摊到仓位现量上，摊不到的不算。
+     * 分批止盈或部分平仓之后 sim 只减仓位数量、不减止损单的数量，各档合计会超过仓位；真触发时 sim 也是按仓位现量封顶
+     */
+    public static List<FuturesStopLoss> effective(FuturesPositionDTO pos) {
+        if (pos.getStopLosses() == null) {
+            return List.of();
+        }
+        boolean isLong = "LONG".equals(pos.getSide());
+        Comparator<FuturesStopLoss> byPrice = Comparator.comparing(FuturesStopLoss::getPrice);
+        List<FuturesStopLoss> out = new ArrayList<>();
+        BigDecimal left = pos.getQuantity();
+        for (FuturesStopLoss sl : pos.getStopLosses().stream().sorted(isLong ? byPrice.reversed() : byPrice).toList()) {
+            BigDecimal qty = sl.getQuantity().min(left);
+            if (qty.signum() > 0) {
+                out.add(new FuturesStopLoss(sl.getId(), sl.getPrice(), qty));
+                left = left.subtract(qty);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 止损单数量合计超过仓位现量时，按 {@link #effective} 重挂一遍，没超就不动。
+     * 加仓前要做：sim 并单时各档合计不得超过合并后的持仓，带着过期数量会把加仓拒掉
+     */
+    public static void refit(SimTradeClient sim, long simUserId, FuturesPositionDTO pos) {
+        if (pos.getStopLosses() == null || pos.getStopLosses().stream().map(FuturesStopLoss::getQuantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add).compareTo(pos.getQuantity()) <= 0) {
+            return;
+        }
+        FuturesStopLossRequest req = new FuturesStopLossRequest();
+        req.setPositionId(pos.getId());
+        req.setStopLosses(effective(pos).stream().map(sl -> {
+            FuturesStopLossRequest.StopLossItem item = new FuturesStopLossRequest.StopLossItem();
+            item.setPrice(sl.getPrice());
+            item.setQuantity(sl.getQuantity());
+            return item;
+        }).toList());
+        sim.setStopLoss(simUserId, req);
     }
 
     /** 仓位现挂止损里最紧的那一档；没挂为 null */

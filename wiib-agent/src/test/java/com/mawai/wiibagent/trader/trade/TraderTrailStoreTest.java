@@ -73,13 +73,11 @@ class TraderTrailStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(filled, closed, pending, cancelled));
         when(mapper.update(isNull(), any())).thenReturn(1);
         AiTraderPlan plan = new AiTraderPlan();
+        plan.setId(60L);
         when(planStore.byPosition(7L, 1, 50L)).thenReturn(plan);
-        FuturesOrderResponse order = new FuturesOrderResponse();
-        order.setSymbol("SOLUSDT");
-        order.setOrderSide("OPEN_LONG");
 
         Map<String, AiTraderTrail> live = store.reconcile(7L, 1,
-                List.of(position(41L, "BTCUSDT", "LONG")), List.of(order), AgentLang.ZH);
+                List.of(position(41L, "BTCUSDT", "LONG")), List.of(openOrder("SOLUSDT", "OPEN_LONG")), AgentLang.ZH);
 
         // 限价成交的绑上仓位；还挂着单的原样留着
         assertThat(live).containsOnlyKeys("BTCUSDT|LONG", "SOLUSDT|LONG");
@@ -87,9 +85,42 @@ class TraderTrailStoreTest {
         verify(mapper, times(1)).update(isNull(), any());
         // 仓位没了的结束：删行，计划记下跟到哪了
         verify(mapper).deleteById(2L);
-        verify(planStore).revise(eq(plan), anyLong(), eq("跟踪止损结束"), eq("最有利价 2000，止损跟到 2020"), eq("仓位已了结"));
+        verify(planStore).appendRevision(eq(60L), anyLong(), eq("跟踪止损结束"), eq("最有利价 2000，止损跟到 2020"), eq("仓位已了结"));
         // 挂单没了的没有仓位，只删行
         verify(mapper).deleteById(4L);
         verify(planStore, never()).byPosition(eq(7L), eq(1), eq(4L));
+    }
+
+    /** 单还挂着、同币同向又有了仓位（另开的）：规则是那张单的，接着等它成交，不绑到这个仓位上 */
+    @Test
+    void reconcileKeepsUnboundRuleWaitingWhileItsOrderStillRests() {
+        when(mapper.selectList(any())).thenReturn(List.of(trail(1L, "BTCUSDT", "LONG", null)));
+
+        Map<String, AiTraderTrail> live = store.reconcile(7L, 1,
+                List.of(position(41L, "BTCUSDT", "LONG")), List.of(openOrder("BTCUSDT", "OPEN_LONG")), AgentLang.ZH);
+
+        assertThat(live.get("BTCUSDT|LONG").getPositionId()).isNull();
+        verify(mapper, never()).update(isNull(), any());
+    }
+
+    /** 撤掉开仓挂单：同币同向没有别的开仓挂单了，才把它带的没绑仓位的规则删掉；撤的是平仓单不管 */
+    @Test
+    void cancellingTheLastOpenOrderDropsItsUnboundRule() {
+        when(mapper.selectCount(any())).thenReturn(1L);
+        when(mapper.delete(any())).thenReturn(1);
+
+        store.orderCancelled(7L, 1, "BTCUSDT", "CLOSE_LONG", List::of);
+        store.orderCancelled(7L, 1, "BTCUSDT", "OPEN_LONG", () -> List.of(openOrder("BTCUSDT", "OPEN_LONG")));
+        verify(mapper, never()).delete(any());
+
+        store.orderCancelled(7L, 1, "BTCUSDT", "OPEN_LONG", () -> List.of(openOrder("BTCUSDT", "OPEN_SHORT")));
+        verify(mapper).delete(any());
+    }
+
+    private static FuturesOrderResponse openOrder(String symbol, String orderSide) {
+        FuturesOrderResponse order = new FuturesOrderResponse();
+        order.setSymbol(symbol);
+        order.setOrderSide(orderSide);
+        return order;
     }
 }

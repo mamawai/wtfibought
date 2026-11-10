@@ -115,6 +115,18 @@ class TraderWakeupRunnerAccountStateTest {
         assertThat(out.get("lossAtAllStopsPctOfEquity").decimalValue()).isEqualByComparingTo("0.16");
     }
 
+    /** 分批止盈走了一半：止损单的数量还是原来的 10，止损打掉亏多少按仓位现量 5 算 */
+    @Test
+    void lossAtStopCountsOnlyWhatIsStillHeld() {
+        FuturesPositionDTO pos = riskPosition(349L, "BTCUSDT", "LONG", "100", "104", "98", "10");
+        pos.setQuantity(new BigDecimal("5"));
+
+        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("10000"),
+                List.of(pos), List.of(), List.of(), Map.of(), BOUNDARY, Map.of()));
+
+        assertThat(out.get("positions").get(0).get("lossAtStopPctOfEquity").decimalValue()).isEqualByComparingTo("0.10");
+    }
+
     /**
      * 持仓行：止盈带每档的价位和数量，计划带开仓时的分档，在跟的跟踪止损带规则和跟到哪；
      * 限价单带的规则还没绑仓位，在挂单行，成交后才开始跟

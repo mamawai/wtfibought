@@ -10,6 +10,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.LongSupplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -71,11 +74,19 @@ public class CrossAssetService {
         return hit != null && now - hit.at() < MAX_STALE_MS ? hit.quotes() : List.of();
     }
 
-    /** 逐个取，拿到几个算几个 */
+    /** 几个代码一起取，拿到几个算几个 */
     private List<Quote> fetch() {
+        List<CompletableFuture<String>> raws;
+        // 出 try 块时全部取完
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            raws = INSTRUMENTS.stream()
+                    .map(i -> CompletableFuture.supplyAsync(() -> yahoo.chart5d(i.symbol()), pool))
+                    .toList();
+        }
         List<Quote> out = new ArrayList<>();
-        for (Instrument i : INSTRUMENTS) {
-            String raw = yahoo.chart5d(i.symbol());
+        for (int n = 0; n < INSTRUMENTS.size(); n++) {
+            Instrument i = INSTRUMENTS.get(n);
+            String raw = raws.get(n).join();
             if (raw == null) {
                 continue;
             }

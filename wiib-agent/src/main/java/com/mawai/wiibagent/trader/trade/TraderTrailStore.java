@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * 跟踪止损规则的存取。一个仓位（trader + round + symbol + side）至多一条：开启就是整条换掉，结束就是删行。
@@ -99,7 +100,7 @@ public class TraderTrailStore {
         AiTraderPlan plan = t.getPositionId() == null ? null
                 : planStore.byPosition(t.getTraderId(), t.getRoundNo(), t.getPositionId());
         if (plan != null) {
-            planStore.revise(plan, System.currentTimeMillis(), prompts.get(lang, "trader.revise.trailEnd"),
+            planStore.appendRevision(plan.getId(), System.currentTimeMillis(), prompts.get(lang, "trader.revise.trailEnd"),
                     prompts.get(lang, t.getBestPrice() == null ? "trader.revise.trailEndIdle" : "trader.revise.trailEndChange",
                             Map.of("best", plain(t.getBestPrice()), "stop", plain(t.getStopPrice()))),
                     reason);
@@ -112,8 +113,31 @@ public class TraderTrailStore {
     }
 
     /**
-     * 唤醒开头对一遍：限价单成交了的绑上仓位；绑着的仓位不在了的结束；还没绑、挂单也没了的结束。
-     * 返回对完还在的规则，按 {@link TraderPlanStore#key}
+     * 撤掉一张开仓挂单之后：这个币向上没有别的开仓挂单了，它带的、还没绑仓位的规则一起删。
+     * 不删的话，之后同币同向再开的仓会被当成这张单成交了，把规则接过去
+     */
+    public void orderCancelled(long traderId, int roundNo, String symbol, String orderSide,
+                               Supplier<List<FuturesOrderResponse>> pendingOrders) {
+        if (!orderSide.startsWith("OPEN_")) {
+            return;
+        }
+        LambdaQueryWrapper<AiTraderTrail> unbound = scope(traderId, roundNo)
+                .eq(AiTraderTrail::getSymbol, symbol)
+                .eq(AiTraderTrail::getSide, orderSide.substring("OPEN_".length()))
+                .isNull(AiTraderTrail::getPositionId);
+        if (mapper.selectCount(unbound) > 0 && !hasPendingOpen(pendingOrders.get(), symbol, orderSide)
+                && mapper.delete(unbound) > 0) {
+            events.publishEvent(new TrailsChanged(traderId));
+        }
+    }
+
+    private static boolean hasPendingOpen(List<FuturesOrderResponse> pendingOrders, String symbol, String orderSide) {
+        return pendingOrders.stream().anyMatch(o -> symbol.equals(o.getSymbol()) && orderSide.equals(o.getOrderSide()));
+    }
+
+    /**
+     * 唤醒开头对一遍。还没绑仓位的（限价单带的）：单还挂着就接着等；单没了、键上有仓位，是成交了，绑上；都没有就删。
+     * 绑着的仓位不在了的结束。返回对完还在的规则，按 {@link TraderPlanStore#key}
      */
     public Map<String, AiTraderTrail> reconcile(long traderId, int roundNo, List<FuturesPositionDTO> positions,
                                                 List<FuturesOrderResponse> pendingOrders, AgentLang lang) {
@@ -127,13 +151,12 @@ public class TraderTrailStore {
             AiTraderTrail t = e.getValue();
             FuturesPositionDTO open = openByKey.get(e.getKey());
             if (t.getPositionId() == null) {
+                if (hasPendingOpen(pendingOrders, t.getSymbol(), "OPEN_" + t.getSide())) {
+                    return false;
+                }
                 if (open != null) {
                     bind(traderId, roundNo, t.getSymbol(), t.getSide(), open.getId());
                     t.setPositionId(open.getId());
-                    return false;
-                }
-                if (pendingOrders.stream().anyMatch(o -> t.getSymbol().equals(o.getSymbol())
-                        && ("OPEN_" + t.getSide()).equals(o.getOrderSide()))) {
                     return false;
                 }
             } else if (open != null && open.getId().equals(t.getPositionId())) {

@@ -67,12 +67,27 @@ class MarketReadingsTest {
                 "{\"last5m\":{\"longUsd\":0,\"shortUsd\":500,\"count\":1},\"last30m\":{\"longUsd\":3000,\"shortUsd\":500,\"count\":3}}");
     }
 
+    /** 没取到的段不出现；爆仓在采而没有记录（空数组）是 0，没在采（没有这个键）就没有这一段 */
     @Test
-    void missingSourcesAreAbsentAndLiquidationsDefaultToZero() {
-        ObjectNode r = MarketReadings.build("ETHUSDT", Map.of(), null, NOW);
+    void missingSourcesAreAbsentAndCollectedLiquidationsDefaultToZero() {
+        assertThat(MarketReadings.build("ETHUSDT", Map.of(), null, NOW).isEmpty()).isTrue();
+
+        ObjectNode r = MarketReadings.build("ETHUSDT", raw("force_orders_map", "[]"), null, NOW);
 
         assertThat(r.propertyNames()).containsExactly("liquidations");
         assertThat(r.path("liquidations").path("last30m").toString()).isEqualTo("{\"longUsd\":0,\"shortUsd\":0,\"count\":0}");
+    }
+
+    /** 一个数据源的回包不是预期的形状：只丢它那一段，别的段照出 */
+    @Test
+    void malformedSourceDropsOnlyItsOwnSection() {
+        Map<String, Object> raw = Map.of(
+                "oi_hist_map", Map.of("ETHUSDT", "<html>502 Bad Gateway</html>"),
+                "orderbook_map", Map.of("ETHUSDT", "{\"bids\":[[\"1\",\"2\"]],\"asks\":[[\"1\",\"3\"]]}"));
+
+        ObjectNode r = MarketReadings.build("ETHUSDT", raw, null, NOW);
+
+        assertThat(r.propertyNames()).containsExactly("futuresBookTop5");
     }
 
     @Test

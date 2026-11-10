@@ -54,7 +54,7 @@ tool:
     - takerVolume5m：最新 5 分钟的主动买量 buy、主动卖量 sell（币数）和两者之比
     - funding：当期资金费率 rate（原始小数、按每期计，0.0001＝0.01%）、下次结算时刻 nextFundingTime、标记价、指数价
     - liquidations：last5m、last30m 两个窗口各自的 longUsd（多头被爆的金额）、shortUsd（空头被爆的金额）和 count（笔数）。
-      只有 Binance 一家，而且它的强平推送是抽样的、不是全量，所以金额是下限，行情越急少得越多
+      只有 Binance 一家，而且它的强平推送是抽样的、不是全量，所以金额是下限，行情越急少得越多；只有平台在采爆仓的币有这一段
     - futuresBookTop5 / spotBookTop5：合约、现货盘口前 5 档的买量合计 bidQty、卖量合计 askQty（币数）
     - trades3m：最近 3 分钟的主动买入额 takerBuyUsd、主动卖出额 takerSellUsd（USDT），其中单笔超过 largeThresholdUsd 的各多少
       （所有币同一个门槛），以及成交笔数；只有平台在采逐笔成交的币有这一段
@@ -244,7 +244,8 @@ tool:
     takeProfits 可选：最多 3 档，每档一个在入场价有利一侧的价位，加这一档平掉仓位的百分之几
     （各档占比合计不超过 100，没盖住的那部分仓位没有止盈单）。不传就是这个仓位一张止盈单都没有。
     trailCallbackPct 可选，传了止损就成了跟踪止损：平台盯标记价，把止损一路挪到"开始跟随后的最有利价"回撤这个百分比的位置，
-    只进不退；trailActivationPrice（可不传）是标记价到哪里才开始跟。限价单要等成交后才开始跟，在那之前止损就是 stopLossPrice。
+    只进不退；trailActivationPrice（可不传）是标记价到哪里才开始跟。限价单要等成交后才开始跟，在那之前止损就是 stopLossPrice；
+    同币同向已有仓位时，限价单不能带跟踪止损。
     playType 是论点标签：BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER。
     signalsUsed：一句话，引用论点所依据的具体数据字段。
     invalidationCondition：能证明论点错了的市场条件（不是盈亏数字），它进入该仓位的计划。

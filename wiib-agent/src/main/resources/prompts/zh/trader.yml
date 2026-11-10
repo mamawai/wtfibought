@@ -497,6 +497,7 @@ trader:
     stopOrTrailRequired: stopLossPrice 和 trailCallbackPct 至少给一个：前者把止损放到固定价，后者开启跟踪止损
     targetReasonRequired: 必须给reason：说明为什么现在改止盈（会进公开修订历史）
     targetRungsOnAdd: "这个仓位已经挂着 {{hanging}} 档止盈，加仓带的止盈档是追加上去的，一个仓位最多 {{limit}} 档。少带几档；或者这次不带 takeProfits，成交后用 set_take_profit 给整个仓位重新分档"
+    trailOnLimitAdd: 限价加仓不能带跟踪止损：跟踪止损管的是整个仓位，这张单还没成交。现在就想跟，用 set_stop_loss 给现有仓位开；想等加仓成交后再跟，成交那轮再开
     stopWrongSide: "止损价站错边：当前现价{{mark}}，{{rule}}，你给的{{given}}会立刻触发＝变相市价平仓。想离场就用 close_position 说明理由"
     stopRuleLong: LONG止损必须低于现价
     stopRuleShort: SHORT止损必须高于现价
@@ -545,4 +546,5 @@ trader:
     positionGone: 动作指的那个仓位已经不在
     stopWrongSide: "新止损 {{stop}} 在现价 {{mark}} 的另一侧，挂上去会立刻触发，没有移"
     stopLooser: "新止损 {{stop}} 比现挂的 {{current}} 松，没有移"
+    unknown: "指令发给交易所后没问到结果（{{cause}}），可能已经执行、也可能没有；先核对账户里的仓位和挂单，再决定要不要补做"
     timeline: "预案命中：{{detail}}。布它时的备注：{{note}}。平台执行：{{result}}"

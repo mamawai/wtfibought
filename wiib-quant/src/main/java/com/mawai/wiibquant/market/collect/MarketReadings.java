@@ -1,6 +1,7 @@
 package com.mawai.wiibquant.market.collect;
 
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
+import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
@@ -16,9 +17,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 衍生品与微结构的原始读数：每个数据源取最新一个点原样给，再带一两个对照点，不打分。
- * 哪个数据源这次没取到，它那一段就不出现；爆仓那段没有记录就是 0。
+ * 哪个数据源这次没取到、或者回包算不出来，它那一段就不出现；爆仓那段只有平台在采的币才有，在采而没有记录是 0。
  * 时刻都按北京时间成文。
  */
+@Slf4j
 public final class MarketReadings {
 
     private static final DateTimeFormatter TIME =
@@ -38,16 +40,26 @@ public final class MarketReadings {
     /** @param rawData {@link CollectDataNode#collect} 的回包 */
     public static ObjectNode build(String symbol, Map<String, Object> rawData, OrderFlowAggregator orderFlow, long nowMs) {
         ObjectNode out = MAPPER.createObjectNode();
-        accountLongShort(out, raw(rawData, "long_short_ratio_map", symbol));
-        openInterest(out, raw(rawData, "oi_hist_map", symbol));
-        topTrader(out, raw(rawData, "top_trader_position_map", symbol));
-        takerVolume(out, raw(rawData, "taker_long_short_map", symbol));
-        funding(out, raw(rawData, "funding_rate_map", symbol));
-        out.set("liquidations", liquidations(raw(rawData, "force_orders_map", symbol), nowMs));
-        book(out, "futuresBookTop5", raw(rawData, "orderbook_map", symbol));
-        book(out, "spotBookTop5", raw(rawData, "spot_orderbook_map", symbol));
-        trades(out, symbol, orderFlow);
+        section(out, "accountLongShort", symbol, () -> accountLongShort(out, raw(rawData, "long_short_ratio_map", symbol)));
+        section(out, "openInterest", symbol, () -> openInterest(out, raw(rawData, "oi_hist_map", symbol)));
+        section(out, "topTraderPositionLongShort", symbol, () -> topTrader(out, raw(rawData, "top_trader_position_map", symbol)));
+        section(out, "takerVolume5m", symbol, () -> takerVolume(out, raw(rawData, "taker_long_short_map", symbol)));
+        section(out, "funding", symbol, () -> funding(out, raw(rawData, "funding_rate_map", symbol)));
+        section(out, "liquidations", symbol, () -> liquidations(out, raw(rawData, "force_orders_map", symbol), nowMs));
+        section(out, "futuresBookTop5", symbol, () -> book(out, "futuresBookTop5", raw(rawData, "orderbook_map", symbol)));
+        section(out, "spotBookTop5", symbol, () -> book(out, "spotBookTop5", raw(rawData, "spot_orderbook_map", symbol)));
+        section(out, "trades3m", symbol, () -> trades(out, symbol, orderFlow));
         return out;
+    }
+
+    /** 各段各算各的：哪个数据源的回包不是预期的形状，只丢它那一段，别的段照出 */
+    private static void section(ObjectNode out, String field, String symbol, Runnable build) {
+        try {
+            build.run();
+        } catch (RuntimeException e) {
+            out.remove(field);
+            log.warn("[MarketReadings] {} 的 {} 算不出来: {}", symbol, field, e.toString());
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -144,19 +156,24 @@ public final class MarketReadings {
                 .put("indexPrice", p.path("indexPrice").asDecimal(null));
     }
 
-    /** 爆仓：最近 5 分钟和最近 30 分钟各自的多头爆仓额、空头爆仓额（USDT）和笔数 */
-    private static ObjectNode liquidations(ArrayNode orders, long nowMs) {
-        ObjectNode out = MAPPER.createObjectNode();
-        out.set("last5m", liquidationWindow(orders, nowMs - 5 * 60_000L));
-        out.set("last30m", liquidationWindow(orders, nowMs - 30 * 60_000L));
-        return out;
+    /**
+     * 爆仓：最近 5 分钟和最近 30 分钟各自的多头爆仓额、空头爆仓额（USDT）和笔数。
+     * 平台没在采这个币的爆仓（orders 为 null）就不出这一段；在采、这段时间没有记录是 0
+     */
+    private static void liquidations(ObjectNode out, ArrayNode orders, long nowMs) {
+        if (orders == null) {
+            return;
+        }
+        ObjectNode liq = out.putObject("liquidations");
+        liq.set("last5m", liquidationWindow(orders, nowMs - 5 * 60_000L));
+        liq.set("last30m", liquidationWindow(orders, nowMs - 30 * 60_000L));
     }
 
     private static ObjectNode liquidationWindow(ArrayNode orders, long sinceMs) {
         BigDecimal longUsd = BigDecimal.ZERO;
         BigDecimal shortUsd = BigDecimal.ZERO;
         int count = 0;
-        for (JsonNode o : orders == null ? MAPPER.createArrayNode() : orders) {
+        for (JsonNode o : orders) {
             if (o.path("time").asLong() < sinceMs) {
                 continue;
             }

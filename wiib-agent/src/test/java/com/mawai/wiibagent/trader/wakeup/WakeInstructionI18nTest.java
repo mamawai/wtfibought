@@ -103,7 +103,8 @@ class WakeInstructionI18nTest {
             new LocalizedToolCallbacks(prompts),
             wakeObservation,
             mock(EconCalendarAssembler.class), new TraderLiveHub(), mock(EntryContext.class),
-            mock(DecisionText.class), mock(ExperienceLedger.class), mock(BinanceProperties.class));
+            mock(DecisionText.class), mock(ExperienceLedger.class), mock(BinanceProperties.class),
+            mock(PresetExecutor.class));
 
     {
         runner.nowMs = () -> BOUNDARY + 1_000L;

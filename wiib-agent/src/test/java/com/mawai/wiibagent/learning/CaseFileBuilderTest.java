@@ -208,7 +208,7 @@ class CaseFileBuilderTest {
                 CaseFileBuilder.Outcome.OPEN, CaseFileBuilder.Outcome.OPEN);
     }
 
-    /** 撤掉的限价单：归档后价格到没到过限价位、到过几档止盈 */
+    /** 撤掉的限价单：从给的那一刻起，价格到没到过限价位、到过几档止盈 */
     @Test
     void cancelledLimitCountsTargetsReachedAfterwards() {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
@@ -221,7 +221,7 @@ class CaseFileBuilderTest {
         plan.setClosedWakeTime(T0);
         plan.setTakeProfitsJson("[{\"price\":104,\"percent\":50},{\"price\":108,\"percent\":50}]");
 
-        CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(plan);
+        CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(plan, T0);
 
         // 最低 99.5 没回到限价 99；最高 104.5 到过第一档
         assertThat(c.touchedLimit()).isFalse();

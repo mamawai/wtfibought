@@ -89,11 +89,16 @@ public class TrailSentinel implements MessageListener {
     }
 
     synchronized void reload() {
+        // 还在名单里的规则沿用内存里跟到哪了：最有利价只在挪止损时落库，库里那份可能旧一点。
+        // 换参数是删了重插，id 会变，所以同一个 id 就是同一条规则
+        Map<Long, Tracked> before = new HashMap<>();
+        tracked.values().forEach(list -> list.forEach(t -> before.put(t.rule.getId(), t)));
         Map<String, List<Tracked>> bySymbol = new HashMap<>();
         for (AiTraderTrail t : trailStore.all()) {
             // 限价单还没成交的没有仓位，绑上了才跟
             if (t.getPositionId() != null) {
-                bySymbol.computeIfAbsent(t.getSymbol(), k -> new ArrayList<>()).add(new Tracked(t));
+                Tracked kept = before.get(t.getId());
+                bySymbol.computeIfAbsent(t.getSymbol(), k -> new ArrayList<>()).add(kept != null ? kept : new Tracked(t));
             }
         }
         tracked = Map.copyOf(bySymbol);

@@ -12,6 +12,7 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +23,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
@@ -167,7 +169,8 @@ public class TradeTools {
             trailCallbackPct is OPTIONAL and turns the stop into a trailing stop: the platform follows the mark
             price and keeps moving the stop to (most favourable price since trailing began) minus/plus that
             percent, only ever tighter; trailActivationPrice, if given, is the mark price at which trailing begins.
-            On a LIMIT order trailing begins once the order fills. stopLossPrice is the stop until then.
+            On a LIMIT order trailing begins once the order fills. stopLossPrice is the stop until then. A LIMIT order
+            cannot carry a trailing stop while a position on the same coin and side is already open.
             playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
             signalsUsed: one sentence citing the concrete data fields your thesis rests on.
             invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
@@ -234,6 +237,10 @@ public class TradeTools {
             return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.targetRungsOnAdd",
                     Map.of("hanging", hanging, "limit", TradeGuard.SIM_SPLIT_LIMIT)));
         }
+        // 跟踪止损是整仓一条规则，限价加仓还没成交，没法只管将来并进来的那部分
+        if (trail != null && sameSide != null && "LIMIT".equals(req.orderType())) {
+            return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.trailOnLimitAdd"));
+        }
         boolean coversPlan = sameSide != null || acct.pendingOpen(req.symbol(), req.side());
         // 入场参考价：限价单按限价、市价单按标记价；计划的入场价与回执里的事实都按它算
         BigDecimal entryRef = "LIMIT".equals(req.orderType()) ? req.limitPrice() : mark;
@@ -265,6 +272,11 @@ public class TradeTools {
                 tps.add(tp);
             }
             openReq.setTakeProfits(tps);
+            if (sameSide != null) {
+                // 加仓：现有保护单的数量要是过期了先按仓位现量重挂，不然 sim 并单时按合计超量拒
+                StopOrders.refit(simTradeClient, simUserId, sameSide);
+                refitTakeProfits(sameSide);
+            }
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
             // 市价单 / 市价加仓响应带仓位 id；限价加仓先认它将并入的那个仓；限价首开为 null，成交后才有
             Long positionId = resp.getPositionId() != null ? resp.getPositionId()
@@ -284,6 +296,35 @@ public class TradeTools {
         } catch (Exception e) {
             return fail("open_position", argSummary, e);
         }
+    }
+
+    /**
+     * 止盈单数量合计超过仓位现量时（部分平仓之后 sim 不缩减它们的数量），按触发先后摊到仓位现量上重挂，摊不到的那档撤掉。
+     * 和 {@link StopOrders#refit} 是一回事，止盈是近的先触发
+     */
+    private void refitTakeProfits(FuturesPositionDTO pos) {
+        if (pos.getTakeProfits() == null || pos.getTakeProfits().stream().map(FuturesTakeProfit::getQuantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add).compareTo(pos.getQuantity()) <= 0) {
+            return;
+        }
+        Comparator<FuturesTakeProfit> byPrice = Comparator.comparing(FuturesTakeProfit::getPrice);
+        List<FuturesTakeProfitRequest.TakeProfitItem> items = new ArrayList<>();
+        BigDecimal left = pos.getQuantity();
+        for (FuturesTakeProfit tp : pos.getTakeProfits().stream()
+                .sorted("LONG".equals(pos.getSide()) ? byPrice : byPrice.reversed()).toList()) {
+            BigDecimal qty = tp.getQuantity().min(left);
+            if (qty.signum() > 0) {
+                FuturesTakeProfitRequest.TakeProfitItem item = new FuturesTakeProfitRequest.TakeProfitItem();
+                item.setPrice(tp.getPrice());
+                item.setQuantity(qty);
+                items.add(item);
+                left = left.subtract(qty);
+            }
+        }
+        FuturesTakeProfitRequest req = new FuturesTakeProfitRequest();
+        req.setPositionId(pos.getId());
+        req.setTakeProfits(items);
+        simTradeClient.setTakeProfit(simUserId, req);
     }
 
     /**
@@ -724,6 +765,9 @@ public class TradeTools {
         }
         try {
             FuturesOrderResponse resp = simTradeClient.cancelOrder(simUserId, orderId);
+            // 这张单带着成交后才开始跟的跟踪止损的话，一起清掉
+            trailStore.orderCancelled(ctx.traderId(), ctx.roundNo(), resp.getSymbol(), resp.getOrderSide(),
+                    () -> simTradeClient.getPendingOrders(simUserId, null));
             return ok("cancel_order", args, MAPPER.writeValueAsString(resp));
         } catch (Exception e) {
             return fail("cancel_order", args, e);
@@ -776,11 +820,11 @@ public class TradeTools {
                 return rejected("set_watch", args, reason);
             }
             // 预案动作对着账户查一遍，落库时带上那个仓位 / 挂单的币和方向；没带动作的条件不查账户
-            List<String> actions = new ArrayList<>();
+            List<String> presets = new ArrayList<>();
             Account acct = watches.stream().anyMatch(s -> s.action() != null) ? account() : null;
             for (WatchSpec s : watches) {
                 if (s.action() == null) {
-                    actions.add(null);
+                    presets.add(null);
                     continue;
                 }
                 ObjectNode action = MAPPER.valueToTree(s.action());
@@ -788,9 +832,9 @@ public class TradeTools {
                 if (reason != null) {
                     return rejected("set_watch", args, reason);
                 }
-                actions.add(MAPPER.writeValueAsString(action));
+                presets.add(MAPPER.writeValueAsString(action));
             }
-            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, actions, ctx.boundaryTime());
+            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, presets, ctx.boundaryTime());
             return ok("set_watch", args, "{\"ok\":true,\"armed\":" + watches.size() + "}");
         } catch (Exception e) {
             return fail("set_watch", args, e);

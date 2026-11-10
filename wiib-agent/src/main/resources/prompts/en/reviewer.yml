@@ -181,7 +181,7 @@ reviewer:
     # Replay summary over all of this period's trades; the rows come from PlayStatsAssembler.replayLines
     caseReplaySummary: "This period's replay summary:"
     # Plans archived without ever binding a position
-    cancelledHeader: "Limit orders cancelled unfilled (5m candles over the 24h after archiving):"
+    cancelledHeader: "Limit orders cancelled unfilled (5m candles over the 24h from the last round that still saw the order resting):"
     cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, archived {{closed}} | afterwards price {{touched}} the limit level; {{targetsAfter}}"
     reached: reached
     notReached: never reached

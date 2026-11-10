@@ -104,23 +104,33 @@ public class WatchSentinel implements MessageListener {
                 default -> false;
             };
             if (hit && fire(w, price, now)) {
-                if (w.getActionJson() == null) {
-                    events.publishEvent(new WatchTrigger(w, price, now));
-                } else {
-                    // 预案要调 sim，不占行情线程；做完该叫醒的再广播
-                    Thread.startVirtualThread(() -> {
-                        if (presets.execute(w, price, now)) {
-                            events.publishEvent(new WatchTrigger(w, price, now));
-                        }
-                    });
+                WatchTrigger trigger = new WatchTrigger(w, price, now);
+                if (!runPreset(trigger)) {
+                    events.publishEvent(trigger);
                 }
             }
         }
     }
 
     /**
+     * 命中的条件带动作的话交给执行器（它在虚拟线程上调 sim，不占行情线程和 K 线事件线程），做完说要叫醒才广播。
+     * 返回这条是不是预案
+     */
+    private boolean runPreset(WatchTrigger hit) {
+        if (hit.watch().getActionJson() == null) {
+            return false;
+        }
+        presets.submit(hit.watch(), hit.price(), hit.firedAt()).thenAccept(wake -> {
+            if (wake) {
+                events.publishEvent(hit);
+            }
+        });
+        return true;
+    }
+
+    /**
      * 这根 5m 收盘命中的收盘类条件：收盘时刻落在该条件周期的边界上，收盘价又站上 / 跌破价位的，CAS 命中后交给调度器，
-     * 由它决定并进例行唤醒还是单独叫醒。
+     * 由它决定并进例行唤醒还是单独叫醒。带动作的不在返回里：交给执行器，要叫醒时它自己广播。
      */
     List<WatchTrigger> closeHits(String symbol, long closeTime, KlineBar bar) {
         List<AiTraderWatch> list = armed.get(symbol);
@@ -135,10 +145,11 @@ public class WatchSentinel implements MessageListener {
             }
             boolean hit = AiTraderWatch.CLOSE_ABOVE.equals(w.getKind()) ? close.compareTo(w.getLevel()) >= 0
                     : close.compareTo(w.getLevel()) <= 0;
-            // 预案当场做完再往下走：同一刻的例行轮读到的就是做完之后的账户；不用叫醒的不进名单
-            if (hit && fire(w, close, closeTime + 1)
-                    && (w.getActionJson() == null || presets.execute(w, close, closeTime + 1))) {
-                hits.add(new WatchTrigger(w, close, closeTime + 1));
+            if (hit && fire(w, close, closeTime + 1)) {
+                WatchTrigger trigger = new WatchTrigger(w, close, closeTime + 1);
+                if (!runPreset(trigger)) {
+                    hits.add(trigger);
+                }
             }
         }
         return hits;

@@ -315,7 +315,7 @@ class ReviewMaterialAssemblerTest {
         assertThat(cases).contains("｜ LIMIT 10x（挂了 35分钟 才成交）");
     }
 
-    /** 没绑过仓位就归档的计划单列一块：归档后价格到没到过限价位和原目标 */
+    /** 没绑过仓位就归档的计划单列一块：从最后一次见它还挂着的那轮起，价格到没到过限价位和原目标 */
     @Test
     void cancelledLimitOrdersListedWithWhatPriceDidNext() {
         AiTraderPlan plan = planOf("BTCUSDT", "PULLBACK", FROM + H, false);
@@ -323,15 +323,18 @@ class ReviewMaterialAssemblerTest {
         plan.setStopLossPrice(new BigDecimal("98000"));
         plan.setTakeProfitsJson("[{\"price\":102000,\"percent\":100}]");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
-        // 归档后最低 99200 没回到限价位，最高 102300 到了目标
-        when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(List.of(
+        // 归档那轮之前的最后一轮：那时单子还挂着，撤单发生在它之后
+        long lastSeen = FROM + H + 6 * M5;
+        when(decisionMapper.selectOne(any())).thenReturn(equityRow(lastSeen, "10000"));
+        // 之后最低 99200 没回到限价位，最高 102300 到了目标
+        when(historyStore.load("BTCUSDT", "5m", lastSeen, lastSeen + 24 * H)).thenReturn(List.of(
                 bar5m(FROM + 2 * H, "100000", "100500", "99200", "100400"),
                 bar5m(FROM + 2 * H + M5, "100400", "102300", "100300", "102000")));
 
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("窗口内无已了结交易");
-        assertThat(cases).contains("没成交就撤掉的限价单（归档后 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000(100%)，"
+        assertThat(cases).contains("没成交就撤掉的限价单（从最后一次见它还挂着的那轮起 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000(100%)，"
                 + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 归档 ｜ 之后价格没到过限价位，到过原目标 1/1 档");
     }
 

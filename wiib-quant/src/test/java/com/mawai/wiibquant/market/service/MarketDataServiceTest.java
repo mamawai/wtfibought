@@ -218,7 +218,10 @@ class MarketDataServiceTest {
     @Test
     void 采集失败时等待者拿到降级快照() throws Exception {
         stubSlowCollectableSymbol();
-        when(orderFlowAggregator.hasData("BTCUSDT")).thenThrow(new IllegalStateException("aggTrade 数据结构坏了"));
+        // 逐笔成交那段读数出得来，轮到查最近一笔成交时刻时炸
+        when(orderFlowAggregator.hasData("BTCUSDT")).thenReturn(true);
+        when(orderFlowAggregator.getMetrics("BTCUSDT", 180)).thenReturn(new OrderFlowAggregator.Metrics(100, 100, 0, 0, 42));
+        when(orderFlowAggregator.getLastUpdateMs("BTCUSDT")).thenThrow(new IllegalStateException("aggTrade 数据结构坏了"));
         MarketDataService service = service(60_000);
 
         Outcome outcome = assembleFromTwoThreads(service);

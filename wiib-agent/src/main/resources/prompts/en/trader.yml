@@ -611,6 +611,7 @@ trader:
     stopOrTrailRequired: "give at least one of stopLossPrice and trailCallbackPct: the first puts the stop at a fixed price, the second starts a trailing stop"
     targetReasonRequired: "reason is required: say why you are changing the take-profit now (it goes into the public revision history)"
     targetRungsOnAdd: "this position already has {{hanging}} take-profit rungs resting; the rungs an add brings are appended, and a position holds at most {{limit}}. Bring fewer rungs, or leave takeProfits out of this order and re-ladder the whole position with set_take_profit once it fills"
+    trailOnLimitAdd: "a limit add cannot carry a trailing stop: a trailing stop covers the whole position and this order has not filled. To trail now, start it on the existing position with set_stop_loss; to trail only once the add fills, start it in the round that sees the fill"
     stopWrongSide: "the stop is on the wrong side: mark is {{mark}}, {{rule}}, and the {{given}} you gave would trigger instantly - a market exit in disguise. If you want out, use close_position with a reason"
     stopRuleLong: a LONG stop must be below the mark
     stopRuleShort: a SHORT stop must be above the mark
@@ -660,4 +661,5 @@ trader:
     positionGone: the position the action names is no longer there
     stopWrongSide: "the new stop {{stop}} is on the far side of the current price {{mark}} and would fire at once; not moved"
     stopLooser: "the new stop {{stop}} is looser than the resting one at {{current}}; not moved"
+    unknown: "the instruction was sent to the exchange and no result came back ({{cause}}); it may or may not have been carried out. Check the account's positions and resting orders before deciding whether to redo it"
     timeline: "Standing order fired: {{detail}}. Note written when it was set: {{note}}. Carried out by the platform: {{result}}"

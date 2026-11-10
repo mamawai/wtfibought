@@ -115,7 +115,7 @@ public class CaseFileBuilder {
                                 BigDecimal actualR, BigDecimal untouchedR) {
     }
 
-    /** 没成交就撤掉的限价单：计划归档后 24 小时内价格到没到过限价位、到过计划里的几档止盈 */
+    /** 没成交就撤掉的限价单：从最后一次见它还挂着的那轮起 24 小时内，价格到没到过限价位、到过计划里的几档止盈 */
     public record CancelledLimit(AiTraderPlan plan, boolean touchedLimit, int reachedTargets) {
     }
 
@@ -155,10 +155,14 @@ public class CaseFileBuilder {
                 openBar, openBar + REPLAY_MS), openBar);
     }
 
-    /** 没成交就撤掉的限价单之后怎么走；归档后没 K 线返回 null */
-    public CancelledLimit cancelledLimit(AiTraderPlan plan) {
+    /**
+     * 没成交就撤掉的限价单之后怎么走；那段没 K 线返回 null。
+     *
+     * @param fromMs 从哪一刻看起：最后一次见它还挂着的那轮。计划是下一轮对账时才归档的，从归档时刻看会漏掉撤单后的头一段
+     */
+    public CancelledLimit cancelledLimit(AiTraderPlan plan, long fromMs) {
         List<KlineBar> bars = historyStore.load(plan.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
-                plan.getClosedWakeTime(), plan.getClosedWakeTime() + AFTER_LONG_MS);
+                fromMs, fromMs + AFTER_LONG_MS);
         if (bars.isEmpty()) {
             return null;
         }

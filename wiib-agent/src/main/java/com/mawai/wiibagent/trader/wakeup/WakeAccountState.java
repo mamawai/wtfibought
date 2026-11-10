@@ -10,6 +10,7 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.TradePairing;
+import com.mawai.wiibagent.trader.trade.StopOrders;
 import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import tools.jackson.databind.JsonNode;
@@ -80,10 +81,13 @@ final class WakeAccountState {
         return out;
     }
 
-    /** 这个仓位当前的止损单全被打掉，相对开仓价亏多少（止损已经挪过成本的是负数，即锁住的利润）；不计手续费，没挂止损的仓位算 0 */
+    /**
+     * 这个仓位当前的止损单全被打掉，相对开仓价亏多少（止损已经挪过成本的是负数，即锁住的利润）；不计手续费，没挂止损的仓位算 0。
+     * 数量按仓位现量封顶：分批止盈之后止损单上的数量还是旧的
+     */
     private static BigDecimal lossAtStops(FuturesPositionDTO p) {
         BigDecimal loss = BigDecimal.ZERO;
-        for (FuturesStopLoss sl : p.getStopLosses() == null ? List.<FuturesStopLoss>of() : p.getStopLosses()) {
+        for (FuturesStopLoss sl : StopOrders.effective(p)) {
             BigDecimal perUnit = "LONG".equals(p.getSide())
                     ? p.getEntryPrice().subtract(sl.getPrice()) : sl.getPrice().subtract(p.getEntryPrice());
             loss = loss.add(perUnit.multiply(sl.getQuantity()));
