@@ -178,13 +178,20 @@ class TradeToolsTest {
                 .contains("\"armed\":1");
     }
 
-    /** 模型传进来的是 JSON：框架要能把 watches 数组落成 WatchSpec 列表，schema 里也得有字段名 */
+    /**
+     * 模型传进来的是 JSON：框架要能把 watches 数组落成 WatchSpec 列表，schema 里也得有字段名。
+     * 必填的只有 kind 和 note，action 里只有 type：不带动作的条件不用填 action
+     */
     @Test
     void setWatchBindsJsonArgumentsThroughToolCallback() {
         ToolCallback cb = Arrays.stream(ToolCallbacks.from(tools))
                 .filter(c -> "set_watch".equals(c.getToolDefinition().name())).findFirst().orElseThrow();
         assertThat(cb.getToolDefinition().inputSchema()).contains("watches").contains("kind").contains("level").contains("note")
                 .contains("action").contains("closePercent");
+        JsonNode item = MAPPER.readTree(cb.getToolDefinition().inputSchema()).at("/properties/watches/items");
+        assertThat(item.path("required")).extracting(JsonNode::asString).containsExactlyInAnyOrder("kind", "note");
+        assertThat(item.at("/properties/action/required")).extracting(JsonNode::asString).containsExactly("type");
+        assertThat(item.at("/properties/action/description").asString()).contains("Leave it out");
 
         String r = cb.call("{\"symbol\":\"BTCUSDT\",\"watches\":[{\"kind\":\"TOUCH_BELOW\",\"level\":95000,\"note\":\"回踩需求区\"}]}");
 
