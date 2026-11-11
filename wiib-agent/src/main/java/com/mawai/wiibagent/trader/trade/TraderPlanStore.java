@@ -394,16 +394,6 @@ public class TraderPlanStore {
                 .last("LIMIT " + limit));
     }
 
-    /** 绑着这个仓位的计划，活的或已归档的；没有给 null */
-    public AiTraderPlan byPosition(long traderId, int roundNo, long positionId) {
-        return mapper.selectOne(new LambdaQueryWrapper<AiTraderPlan>()
-                .eq(AiTraderPlan::getTraderId, traderId)
-                .eq(AiTraderPlan::getRoundNo, roundNo)
-                .eq(AiTraderPlan::getPositionId, positionId)
-                .orderByDesc(AiTraderPlan::getId)
-                .last("LIMIT 1"));
-    }
-
     /** 按 id 取计划（stale 开关的归属校验用），无则 null。 */
     public AiTraderPlan byId(long planId) {
         return mapper.selectById(planId);

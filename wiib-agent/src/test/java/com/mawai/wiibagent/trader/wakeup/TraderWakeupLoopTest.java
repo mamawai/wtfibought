@@ -1023,7 +1023,7 @@ class TraderWakeupLoopTest {
         long pressed = boundary + 37 * 60_000L;
         runner.nowMs = () -> pressed;
 
-        String opening = runner.routineInstruction(trader(), pressed, "", "", "", "", null, AgentLang.ZH);
+        String opening = runner.routineInstruction(trader(), pressed, "", "", "", "", null, AgentLang.ZH, false);
 
         assertThat(opening).contains("已收盘（" + java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
                 .withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(boundary)) + "）");
@@ -1035,7 +1035,7 @@ class TraderWakeupLoopTest {
         TradeEvent e = new TradeEvent(TradeEvent.STOP_LOSS, 42L, 9L, null, "ETHUSDT", "SHORT",
                 new BigDecimal("0.50"), new BigDecimal("2377.0"), new BigDecimal("-13.1"), 1785171600000L + 600_000L);
 
-        String opening = runner.stageOneInstruction(trader(), List.of(new EventTrigger(e)), e.at(), null, "", null, "", AgentLang.ZH);
+        String opening = runner.stageOneInstruction(trader(), List.of(new EventTrigger(e)), e.at(), null, "", null, "", AgentLang.ZH, false);
 
         assertThat(opening).contains("持仓事件（")
                 .contains("ETHUSDT SHORT 止损单已触发，平掉 0.5 @2377")
@@ -1053,7 +1053,7 @@ class TraderWakeupLoopTest {
         EventTrigger event = new EventTrigger(new TradeEvent(TradeEvent.LIMIT_FILLED, 99L, 9L, 100L, "ETHUSDT", "LONG",
                 new BigDecimal("0.5"), new BigDecimal("2300"), null, base + 660_000L));
 
-        String opening = runner.stageOneInstruction(trader(), List.of(alert, event), base + 700_000L, null, "", null, "", AgentLang.ZH);
+        String opening = runner.stageOneInstruction(trader(), List.of(alert, event), base + 700_000L, null, "", null, "", AgentLang.ZH, false);
 
         assertThat(opening).contains("又发生了 2 件事");
         assertThat(opening.indexOf("- 行情波动警报")).isLessThan(opening.indexOf("- 持仓事件（"));

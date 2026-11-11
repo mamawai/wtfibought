@@ -96,9 +96,8 @@ public class TraderChatService {
                 .put("reviewEnabled", t.getReviewEnabled())
                 .put("learnedRestrictionHold", t.getLearnedRestrictionHold())
                 .put("alertEnabled", t.getAlertEnabled())
-                // 联网搜索真开着没有：主人的开关和端点两道都过才算，跟唤醒时判的一样
-                .put("webSearchEnabled", Boolean.TRUE.equals(t.getWebSearchEnabled())
-                        && endpoint != null && TraderModelFactory.searches(endpoint))
+                // 联网搜索真开着没有：主人的开关和端点两道都过才算，跟唤醒时判的是同一处
+                .put("webSearchEnabled", TraderModelFactory.webSearchEnabled(t, endpoint))
                 .put("wakeWindow", t.getWakeWindow() == null
                         ? prompts.get(lang, "chat.traderQuery.wakeWindowAllDay")
                         : prompts.get(lang, "chat.traderQuery.wakeWindowNote", Map.of("window", t.getWakeWindow())))

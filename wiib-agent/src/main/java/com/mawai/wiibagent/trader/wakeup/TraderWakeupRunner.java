@@ -332,6 +332,8 @@ public class TraderWakeupRunner {
                                    AgentLang lang, TraderLiveHub.Run run) throws Exception {
         // 用量统计装饰器 每轮新建
         UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
+        // 联网搜索开没开，一轮只定这一次：挂不挂 web_search、问不问那一句都按它
+        boolean webSearch = modelFactory.webSearchEnabled(trader);
         Set<String> whitelist = Arrays.stream(trader.getSymbols().split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
         TradeTools tradeTools = tradeToolsFor(trader, whitelist, boundaryTime, deadline, lang);
         // 计划对照 sim 持仓/挂单：了结的归档并报结局、限价成交的绑上仓位，存活的随持仓注入账户状态；已平仓位只在有事时才查
@@ -373,18 +375,18 @@ public class TraderWakeupRunner {
         // 日历只出现一次：非例行唤醒放第一段（归因要用），例行轮放第二段。单段的整盘事实现在就算，两段的到追加第二段时再算
         String instruction = twoStage
                 ? stageOneInstruction(trader, triggers, boundaryTime, lastRealWake(recent), pack.text(),
-                        triggers == null ? null : calendar, ownerNote, lang)
+                        triggers == null ? null : calendar, ownerNote, lang, webSearch)
                 : routineInstruction(trader, boundaryTime, pack.text(),
                         wakeObservation.symbolsSummary(trader, whitelist, pack.lastOkWakeMs(), boundaryTime, lang),
                         wakeObservation.history(trader, recent, lang),
-                        wakeObservation.snapshot(quotes, whitelist, nowMs.getAsLong(), lang), calendar, lang);
+                        wakeObservation.snapshot(quotes, whitelist, nowMs.getAsLong(), lang), calendar, lang, webSearch);
 
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
         // 不强制 tool_choice："先读事实、用工具求证"写在开场白的问题里
         // 开了联网搜索的多挂一个 web_search：搜索单独发一次请求，用量记在同一轮账上
         LlmClient client = LlmClient.builder().model(model).systemPrompt(prompt)
-                .tools(wakeTools(lang, tradeTools, modelFactory.webSearchEnabled(trader)
+                .tools(wakeTools(lang, tradeTools, webSearch
                         ? new WebSearchTool(model, prompts.get(lang, "trader.wake.searchInstruction")) : null))
                 .build();
         ReactLoop loop = ReactLoop.builder().client(client)
@@ -396,7 +398,7 @@ public class TraderWakeupRunner {
                 .serialTools(TradeTools.SERIAL_TOOLS)
                 // 第一段答完追加第二段：整盘事实 + 布防 + 收尾
                 .stages(twoStage ? stageTwo(trader, boundaryTime, whitelist, pack.lastOkWakeMs(), recent,
-                        triggers == null ? calendar : null, lang, triggers != null) : null)
+                        triggers == null ? calendar : null, lang, triggers != null, webSearch) : null)
                 .build();
         run.prompt(prompt, instruction);
         // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
@@ -558,22 +560,23 @@ public class TraderWakeupRunner {
      * @param history     最近轨迹 + 论点战绩（{@link WakeObservation#history}），空串=不带
      * @param calendar    财经日历块（{@link EconCalendarAssembler}），null=整块缺席。
      *                    与快照同属事实区，排在快照之后、休眠提示与本轮任务之前
+     * @param webSearch   这一轮开没开联网搜索（开场时定的那一次），开了才多问一句要不要搜
      */
     String routineInstruction(AiTrader trader, long wakeTime, String observation, String symbols, String history,
-                              String snapshot, String calendar, AgentLang lang) {
+                              String snapshot, String calendar, AgentLang lang, boolean webSearch) {
         long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         long boundaryTime = alignedBoundary(wakeTime, intervalMs);
         return routineHeader(trader, boundaryTime, lang)
                 + observation
                 + facts(trader, boundaryTime, intervalMs, symbols, history, snapshot, calendar, lang)
-                + searchQuestion(trader, lang)
+                + searchQuestion(webSearch, lang)
                 + prompts.get(lang, "trader.wake.routineQuestion",
                         Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
     }
 
-    /** 联网搜索那一问，排在主问题前面单独一行；没开联网搜索的不问（开没开见 TraderModelFactory.webSearchEnabled） */
-    private String searchQuestion(AiTrader trader, AgentLang lang) {
-        return modelFactory.webSearchEnabled(trader) ? prompts.get(lang, "trader.wake.searchQuestion") + '\n' : "";
+    /** 联网搜索那一问，排在主问题前面单独一行；没开联网搜索的不问 */
+    private String searchQuestion(boolean webSearch, AgentLang lang) {
+        return webSearch ? prompts.get(lang, "trader.wake.searchQuestion") + '\n' : "";
     }
 
     /**
@@ -582,10 +585,11 @@ public class TraderWakeupRunner {
      * 非例行唤醒（triggers 非空）的头是触发行加"上次唤醒"那行，日历跟在观察包后面——被叫醒时"刚才是否有数据公布"
      * 正是归因的关键事实；问题前多一句"当前 K 线未收盘"。留言只给例行轮。
      *
-     * @param calendar 财经日历块，只有非例行唤醒放这儿，例行轮它在第二段；null=整块缺席
+     * @param calendar  财经日历块，只有非例行唤醒放这儿，例行轮它在第二段；null=整块缺席
+     * @param webSearch 这一轮开没开联网搜索；开了、且叫醒它的全是波动警报，才多问一句要不要搜
      */
     String stageOneInstruction(AiTrader trader, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime,
-                               String observation, String calendar, String ownerNote, AgentLang lang) {
+                               String observation, String calendar, String ownerNote, AgentLang lang, boolean webSearch) {
         String mark = prompts.get(lang, "trader.mark.conclusion");
         if (triggers == null) {
             long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
@@ -598,8 +602,8 @@ public class TraderWakeupRunner {
                 + observation
                 + (calendar == null ? "" : calendar)
                 + prompts.get(lang, "trader.wake.triggerNotice", Map.of("interval", trader.getIntervalCode())) + '\n'
-                // 被波动警报叫醒的才问要不要搜；盯盘命中和持仓事件要抢时间，不问
-                + (triggers.stream().anyMatch(AlertTrigger.class::isInstance) ? searchQuestion(trader, lang) : "")
+                // 叫醒它的全是波动警报才问要不要搜；批里带盯盘命中或持仓事件的要抢时间，不问
+                + (triggers.stream().allMatch(AlertTrigger.class::isInstance) ? searchQuestion(webSearch, lang) : "")
                 + prompts.get(lang, "trader.wake.triggerQuestion", Map.of("mark", mark));
     }
 
@@ -609,14 +613,14 @@ public class TraderWakeupRunner {
      * 预算在第一段用尽的（exhausted）换成只许收尾的问题：工具一个都调不了，set_watch 也不行
      */
     String stageTwoInstruction(AiTrader trader, long wakeTime, String symbols, String history, String snapshot,
-                               String calendar, AgentLang lang, boolean triggered, boolean exhausted) {
+                               String calendar, AgentLang lang, boolean triggered, boolean exhausted, boolean webSearch) {
         long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
         String question = exhausted ? "trader.wake.stageTwoExhausted"
                 : triggered ? "trader.wake.stageTwoTriggered" : "trader.wake.stageTwoQuestion";
         return prompts.get(lang, "trader.wake.stageTwoHeader") + '\n'
                 + facts(trader, alignedBoundary(wakeTime, intervalMs), intervalMs, symbols, history, snapshot, calendar, lang)
                 // 例行轮看整盘的那一问才带；非例行轮的第二段只收尾，预算用尽的调不了工具
-                + (triggered || exhausted ? "" : searchQuestion(trader, lang))
+                + (triggered || exhausted ? "" : searchQuestion(webSearch, lang))
                 + prompts.get(lang, question, Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
     }
 
@@ -626,7 +630,7 @@ public class TraderWakeupRunner {
      */
     private ReactLoop.Stages stageTwo(AiTrader trader, long wakeTime, Set<String> whitelist, Long lastOkWakeMs,
                                       List<WakeObservation.RecentWake> recent, String calendar, AgentLang lang,
-                                      boolean triggered) {
+                                      boolean triggered, boolean webSearch) {
         AtomicBoolean sent = new AtomicBoolean();
         return exhausted -> {
             if (sent.getAndSet(true)) {
@@ -636,7 +640,7 @@ public class TraderWakeupRunner {
             String history = wakeObservation.history(trader, recent, lang);
             String snapshot = wakeObservation.snapshot(quotes(WakeObservation.board(whitelist)), whitelist, nowMs.getAsLong(), lang);
             return Optional.of(new UserMessage(stageTwoInstruction(trader, wakeTime, symbols, history, snapshot, calendar, lang,
-                    triggered, exhausted)));
+                    triggered, exhausted, webSearch)));
         };
     }
 

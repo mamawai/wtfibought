@@ -94,6 +94,11 @@ public class LlmEndpointService {
         return e != null && e.getUserId() == userId ? e : null;
     }
 
+    /** 端点开了联网搜索：协议支持且用户勾了 */
+    public static boolean searches(UserLlmEndpoint endpoint) {
+        return AiProtocols.supportsServerSearch(endpoint.getApiProtocol()) && Boolean.TRUE.equals(endpoint.getWebSearch());
+    }
+
     /** 默认端点；没有任何端点返回 null。默认标记意外丢了（不该发生）就拿最早那条兜住 */
     public UserLlmEndpoint defaultOf(long userId) {
         UserLlmEndpoint d = endpointMapper.selectOne(new LambdaQueryWrapper<UserLlmEndpoint>()

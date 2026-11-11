@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.trader;
 
-import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
@@ -58,12 +57,12 @@ public class TraderModelFactory {
 
     /** 这个 trader 联不联网搜索，两道都要过：主人在「我的 Trader」开了，所用端点也开了 */
     public boolean webSearchEnabled(AiTrader trader) {
-        return Boolean.TRUE.equals(trader.getWebSearchEnabled()) && searches(endpointFor(trader));
+        return webSearchEnabled(trader, endpointFor(trader));
     }
 
-    /** 端点开了联网搜索：协议支持且用户勾了 */
-    public static boolean searches(UserLlmEndpoint endpoint) {
-        return AiProtocols.supportsServerSearch(endpoint.getApiProtocol()) && Boolean.TRUE.equals(endpoint.getWebSearch());
+    /** 同上，端点已经在手里的用这个；端点被删光了（null）算没开 */
+    public static boolean webSearchEnabled(AiTrader trader, UserLlmEndpoint endpoint) {
+        return Boolean.TRUE.equals(trader.getWebSearchEnabled()) && endpoint != null && LlmEndpointService.searches(endpoint);
     }
 
     public void evict(long traderId) {

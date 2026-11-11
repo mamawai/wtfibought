@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.chat;
 
-import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalGate;
@@ -19,6 +18,7 @@ import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.llm.LlmClient;
+import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
@@ -210,11 +210,6 @@ public class ChatAgentFactory {
                 + ':' + eps.deep().getAntigravity() + ':' + eps.lightOrDeep().getAntigravity();
     }
 
-    /** 端点声明了服务端搜索：协议支持且用户勾了 */
-    private static boolean serverSearch(UserLlmEndpoint endpoint) {
-        return AiProtocols.supportsServerSearch(endpoint.getApiProtocol()) && Boolean.TRUE.equals(endpoint.getWebSearch());
-    }
-
     /**
      * 给被授权搜索的 agent 挂工具，搜索按端点给：Antigravity 来源多挂一个本地工具 web_search
      * （它不收服务端搜索和函数工具在同一请求里，见 {@link WebSearchTool}）；其余端点开了搜索就每次调用捎服务端搜索许可
@@ -229,7 +224,7 @@ public class ChatAgentFactory {
             withSearchTool[toolkits.length] = new WebSearchTool(model);
             client.tools(localizedTools.of(lang, withSearchTool));
         } else {
-            client.tools(localizedTools.of(lang, toolkits)).webSearch(serverSearch(endpoint));
+            client.tools(localizedTools.of(lang, toolkits)).webSearch(LlmEndpointService.searches(endpoint));
         }
     }
 
@@ -276,7 +271,7 @@ public class ChatAgentFactory {
                                  UserLlmEndpoint endpoint, java.util.function.Function<WorkerKind, Worker> workers) {
         LlmClient.Builder client = LlmClient.builder()
                 .model(deep)
-                .systemPrompt(mainInstruction(lang, serverSearch(endpoint)))
+                .systemPrompt(mainInstruction(lang, LlmEndpointService.searches(endpoint)))
                 .origin(String.join("\0", endpoint.getApiProtocol(), endpoint.getBaseUrl(), endpoint.getModel(),
                         endpoint.getApiKeyEnc()))
                 .maxAttempts(3).initialDelay(500).maxDelay(4000);

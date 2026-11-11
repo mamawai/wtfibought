@@ -412,7 +412,7 @@ trader:
       nq: Nasdaq 100 futures
       es: S&P 500 futures
       vix: VIX
-    # The web-search question: for a trader whose endpoint has search on, it goes ahead of the routine board question and the volatility-alert question
+    # The web-search question: for a trader with web search on (the owner's switch and the endpoint both), it goes ahead of the routine board question and the volatility-alert question
     searchQuestion: "First settle one thing: is there anything this round you want to search the web for - a move the news feed and the calendar do not explain, an event specific to one coin, the reason behind a sharp move in US equities, how the market read a data release, the day's wider backdrop? If there is, search with web_search first and carry on once it returns; if not, carry on. Filter the noise out of what comes back: use only facts that carry a date and a source; price predictions, other people's technical analysis, trading calls and promotion do not count; where a figure disagrees with the data tools, the data tools win."
     # System prompt of the separate search request behind web_search: facts only, opinion-type content is dropped at this step and never reaches the trader's context
     searchInstruction: "Search the web for the request below and report only the facts the search results contain: what happened, when, the figures, and who reported it. Give every item its date and source; leave out anything that has neither. Leave out price predictions, other people's technical analysis, trading calls, promotion and sponsored content. Where results contradict each other, list both sides, each with its source. Add no analysis, opinion or advice of your own. If the results contain nothing relevant, say so."

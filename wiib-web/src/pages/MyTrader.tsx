@@ -557,11 +557,14 @@ export function MyTrader() {
             <LlmEndpointSelect endpoints={endpoints} value={form.llmEndpointId} onChange={id => set({ llmEndpointId: id })}
                                className="w-full max-w-[480px] h-[46px] border-foreground bg-transparent px-3 text-[15px] font-semibold" />
             <p className="tr-hint mt-2.5">{t('my.model.hint')}</p>
-            <div className="mt-5">
-              <SwitchRow on={endpointSearch && form.webSearchEnabled} onChange={v => set({ webSearchEnabled: v })}
-                         disabled={!endpointSearch} title={t('my.model.search')}
-                         desc={endpointSearch ? t('my.model.searchDesc') : t('my.model.searchNeedEndpoint')} />
-            </div>
+            {/* 端点列表到手了才摆这个开关：没到手时分不清端点开没开搜索 */}
+            {endpoints.length > 0 && (
+              <div className="mt-5">
+                <SwitchRow on={endpointSearch && form.webSearchEnabled} onChange={v => set({ webSearchEnabled: v })}
+                           disabled={!endpointSearch} title={t('my.model.search')}
+                           desc={endpointSearch ? t('my.model.searchDesc') : t('my.model.searchNeedEndpoint')} />
+              </div>
+            )}
           </section>
 
           <PromptSection form={form} set={set} defaultInstructions={defaultInstructions} />

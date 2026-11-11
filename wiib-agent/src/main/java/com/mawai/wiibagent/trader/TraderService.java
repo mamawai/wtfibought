@@ -556,7 +556,7 @@ public class TraderService {
         t.setReviewEnabled(!Boolean.FALSE.equals(req.reviewEnabled()));
         t.setLearnedRestrictionHold(Boolean.TRUE.equals(req.learnedRestrictionHold()));
         // 端点没开联网搜索的，这个开关开不了
-        t.setWebSearchEnabled(Boolean.TRUE.equals(req.webSearchEnabled()) && TraderModelFactory.searches(endpoint));
+        t.setWebSearchEnabled(Boolean.TRUE.equals(req.webSearchEnabled()) && LlmEndpointService.searches(endpoint));
         // 存归一化文本（validate 已 parse 过），全天存 null
         WakeWindow window = WakeWindow.parse(req.wakeWindow());
         t.setWakeWindow(window == null ? null : window.text());

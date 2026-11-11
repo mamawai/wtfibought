@@ -57,7 +57,6 @@ import java.util.Map;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -155,12 +154,12 @@ class WakeInstructionI18nTest {
                     .platformTemplate(lang, "1h", "BTCUSDT", TraderRiskConfig.of(new AiTrader()), null);
             assertThat(template).as("%s 系统提示词要带收尾标记", lang.code()).contains(mark);
             List<String> openings = List.of(
-                    runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, lang),
-                    runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", lang),
-                    runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", lang),
-                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, false, false),
-                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, true, false),
-                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, false, true));
+                    runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, lang, false),
+                    runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", lang, false),
+                    runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", lang, false),
+                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, false, false, false),
+                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, true, false, false),
+                    runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, lang, false, true, false));
             for (String opening : openings) {
                 assertThat(opening).as("%s 开场白的收尾标记要与系统提示词同源", lang.code()).contains(mark);
                 // 另一门语言的标记一个都不许漏进来——那正是"两条指令打架"的形态
@@ -178,25 +177,25 @@ class WakeInstructionI18nTest {
     @Test
     void 英文唤醒开场白全文无中文() {
         PromptI18nAssertions.assertNoCjk("英文单段开场白",
-                runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.EN));
+                runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.EN, false));
         AiTrader windowed = trader();
         windowed.setWakeWindow("21:00-08:00");
         PromptI18nAssertions.assertNoCjk("英文单段开场白（带休眠提示）",
-                runner.routineInstruction(windowed, BOUNDARY, "", "", "", "", null, AgentLang.EN));
+                runner.routineInstruction(windowed, BOUNDARY, "", "", "", "", null, AgentLang.EN, false));
         PromptI18nAssertions.assertNoCjk("英文第一段（例行）",
-                runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.EN));
+                runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.EN, false));
         PromptI18nAssertions.assertNoCjk("英文第一段（警报）",
-                runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.EN));
+                runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.EN, false));
         PromptI18nAssertions.assertNoCjk("英文第二段（带休眠提示）",
-                runner.stageTwoInstruction(windowed, BOUNDARY, "", "", "", null, AgentLang.EN, false, false));
+                runner.stageTwoInstruction(windowed, BOUNDARY, "", "", "", null, AgentLang.EN, false, false, false));
         PromptI18nAssertions.assertNoCjk("英文第二段（非例行轮）",
-                runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.EN, true, false));
+                runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.EN, true, false, false));
         PromptI18nAssertions.assertNoCjk("英文第二段（预算已尽）",
-                runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.EN, false, true));
+                runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.EN, false, true, false));
         // 留言段的段头/亲笔提示/footer 都是平台文案，英文用户一个中文字都不许见；正文是主人亲笔，拿英文造
         PromptI18nAssertions.assertNoCjk("英文第一段（带留言段）",
                 runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null,
-                        noteBlock(AgentLang.EN, "Take profit on ETH now."), AgentLang.EN));
+                        noteBlock(AgentLang.EN, "Take profit on ETH now."), AgentLang.EN, false));
     }
 
     /**
@@ -210,10 +209,10 @@ class WakeInstructionI18nTest {
                 .startsWith("\n")
                 .contains("主人的留言").contains("ETH 提前止盈")
                 .as("留言段自带反重放").contains("一次性动作做过不要再做");
-        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, block, AgentLang.ZH)).endsWith(block);
+        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, block, AgentLang.ZH, false)).endsWith(block);
 
         String en = noteBlock(AgentLang.EN, "Take profit on ETH now.");
-        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, en, AgentLang.EN))
+        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, en, AgentLang.EN, false))
                 .endsWith(en)
                 .contains("Do not repeat a one-shot action");
     }
@@ -222,9 +221,9 @@ class WakeInstructionI18nTest {
     @Test
     void 财经日历块排在问题之前() {
         String calendar = "【财经日历】美国 High 级宏观事件\n- 09-04 20:30 Non Farm Payrolls 实际:206K 预测:205K 前值:207K\n";
-        String single = runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", calendar, AgentLang.ZH);
-        String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", calendar, "", AgentLang.ZH);
-        String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", calendar, AgentLang.ZH, false, false);
+        String single = runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", calendar, AgentLang.ZH, false);
+        String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", calendar, "", AgentLang.ZH, false);
+        String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", calendar, AgentLang.ZH, false, false, false);
 
         assertThat(single).contains(calendar);
         assertThat(single.indexOf(calendar)).isLessThan(single.indexOf("本轮：看整盘"));
@@ -239,9 +238,9 @@ class WakeInstructionI18nTest {
                 nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(), Map.of());
         PromptI18nAssertions.assertNoCjk("英文观察包", en.text());
         PromptI18nAssertions.assertNoCjk("英文第一段（带观察包）",
-                runner.stageOneInstruction(trader(), null, BOUNDARY, null, en.text(), null, "", AgentLang.EN));
+                runner.stageOneInstruction(trader(), null, BOUNDARY, null, en.text(), null, "", AgentLang.EN, false));
         PromptI18nAssertions.assertNoCjk("英文警报第一段（带观察包）",
-                runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, en.text(), null, "", AgentLang.EN));
+                runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, en.text(), null, "", AgentLang.EN, false));
         assertThat(en.text()).contains("[Account]").contains("[Last round's conclusion]");
         assertThat(en.busy()).isFalse();
 
@@ -356,11 +355,11 @@ class WakeInstructionI18nTest {
     void 观察包排在头部事实之后() {
         String obs = "\n【当前账户】\n{}\n";
         String snapshot = "- BTCUSDT 标记价 100000，资金费率 0.0001\n";
-        String routine = runner.routineInstruction(trader(), BOUNDARY, obs, "", "", snapshot, null, AgentLang.ZH);
+        String routine = runner.routineInstruction(trader(), BOUNDARY, obs, "", "", snapshot, null, AgentLang.ZH, false);
         assertThat(routine.indexOf(obs)).isGreaterThan(routine.indexOf("新一根 1h K线已收盘"));
         assertThat(routine.indexOf(obs)).isLessThan(routine.indexOf("行情快照"));
 
-        String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, obs, null, "", AgentLang.ZH);
+        String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, obs, null, "", AgentLang.ZH, false);
         assertThat(alert.indexOf(obs)).isGreaterThan(alert.indexOf("你上次唤醒"));
         assertThat(alert.indexOf(obs)).isLessThan(alert.indexOf("注意：本次不是例行唤醒，当前 1h K线尚未收盘"));
     }
@@ -368,7 +367,7 @@ class WakeInstructionI18nTest {
     /** 中文单段开场白逐字钉死 */
     @Test
     void 中文单段开场白逐字不变() {
-        assertThat(runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.ZH))
+        assertThat(runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.ZH, false))
                 .isEqualTo("新一根 1h K线已收盘（" + TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY)) + "）。"
                         + "本轮：看整盘——每个可交易币现在有没有值得做的交易。先读上面的事实，判断用工具求证。"
                         + "想让系统在某个价位、某根收盘或某个时刻叫醒你，用 set_watch 布下去"
@@ -379,27 +378,27 @@ class WakeInstructionI18nTest {
     /** 中文第一段（例行）与第二段三版（例行 / 非例行 / 预算已尽）逐字钉死 */
     @Test
     void 中文两段开场白逐字不变() {
-        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.ZH))
+        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.ZH, false))
                 .isEqualTo("新一根 1h K线已收盘（" + TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY)) + "）。"
                         + "本段只处置你自己留下的事：这根收盘命中的盯盘条件按布它时的备注办；【自上次唤醒以来】的结局先对账；"
                         + "【你的承诺】只处置有变化的——失效条件被触发或快到的、挂单该撤的、等的条件到了的，"
                         + "该动的动（移止损、平仓、撤单、按备注进场），没变化的不用逐条复述；主人的留言按它段内的说明办。"
                         + "写了等待但没布条件的，说明是不需要叫醒还是忘了。本段不布盯盘条件、不写[本轮结论]块，那是第二段的事。");
-        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, false))
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, false, false))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
                         + "本段：看整盘——有没有值得做的新交易。想让系统在某个价位、某根收盘或某个时刻叫醒你，用 set_watch 布下去"
                         + "（一次整组替换该币全部条件，要留的旧条件一并带上；每个方向只留得下一条，布最先要处理的，更远的写进等待行）；"
                         + "还在盯的条件不用重布，不需要叫醒的币不用布。"
                         + "最后用[本轮结论]固定格式收尾（只写有变化的币）。");
         // 非例行轮：只给被叫醒的那件事涉及的币布防和收尾，整盘留给例行轮
-        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, false))
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, false, false))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
                         + "本段：只给本轮涉及的币布防和收尾——把你叫醒的那件事涉及的币，加上你在第一段动过的币。"
                         + "它们的盯盘条件要变就用 set_watch 重布"
                         + "（一次整组替换该币全部条件，要留的旧条件一并带上；每个方向只留得下一条，布最先要处理的，更远的写进等待行）。"
                         + "别的币的结论和盯盘条件原样留着，不用重写也不用重布，整盘留给例行轮看。"
                         + "最后用[本轮结论]固定格式收尾，只写这几个币的段。");
-        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, true))
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, true, false))
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
                         + "本段：模型调用预算已用完，不能再调用任何工具，set_watch 也不行。"
                         + "直接用[本轮结论]固定格式收尾（只写有变化的币），要等的条件写进\"等待\"行，下一轮再布。");
@@ -407,31 +406,33 @@ class WakeInstructionI18nTest {
 
     /**
      * 开了联网搜索：例行轮看整盘的问题（单段、第二段）和波动警报的问题前面多问一句本轮有没有要搜的；
-     * 例行轮第一段、持仓事件、非例行轮第二段、预算用尽的不问。没开搜索的都不问（上面几条逐字钉死的就是没开的样子）
+     * 例行轮第一段、持仓事件（和警报合成一批的也算）、非例行轮第二段、预算用尽的不问。
+     * 没开搜索的都不问（上面几条逐字钉死的就是没开的样子）
      */
     @Test
     void 开了联网搜索的例行轮和警报轮多问一句要不要搜() {
-        when(modelFactory.webSearchEnabled(any())).thenReturn(true);
         String ask = "先定一件事：本轮有没有想联网搜的内容";
-        TradeEvent filled = new TradeEvent(TradeEvent.LIMIT_FILLED, 42L, 9L, 100L, "BTCUSDT", "LONG",
-                new BigDecimal("0.01"), new BigDecimal("63120"), null, BOUNDARY);
+        EventTrigger filled = new EventTrigger(new TradeEvent(TradeEvent.LIMIT_FILLED, 42L, 9L, 100L, "BTCUSDT", "LONG",
+                new BigDecimal("0.01"), new BigDecimal("63120"), null, BOUNDARY));
 
-        String single = runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.ZH);
+        String single = runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.ZH, true);
         assertThat(single).contains(ask).contains("过滤噪声");
         assertThat(single.indexOf(ask)).as("排在主问题前面").isLessThan(single.indexOf("本轮：看整盘"));
-        String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, false);
+        String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, false, true);
         assertThat(second.indexOf(ask)).isBetween(0, second.indexOf("本段：看整盘"));
-        String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH);
+        String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH, true);
         assertThat(alert.indexOf(ask)).isBetween(0, alert.indexOf("本次是非例行唤醒"));
 
-        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.ZH)).doesNotContain(ask);
-        assertThat(runner.stageOneInstruction(trader(), List.of(new EventTrigger(filled)), BOUNDARY, null, "", null, "", AgentLang.ZH))
+        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.ZH, true)).doesNotContain(ask);
+        assertThat(runner.stageOneInstruction(trader(), List.of(filled), BOUNDARY, null, "", null, "", AgentLang.ZH, true))
                 .doesNotContain(ask);
-        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, false)).doesNotContain(ask);
-        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, true)).doesNotContain(ask);
+        assertThat(runner.stageOneInstruction(trader(), List.of(alert(), filled), BOUNDARY, null, "", null, "", AgentLang.ZH, true))
+                .doesNotContain(ask);
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, false, true)).doesNotContain(ask);
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, true, true)).doesNotContain(ask);
 
         PromptI18nAssertions.assertNoCjk("英文单段开场白（带搜索那一问）",
-                runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.EN));
+                runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.EN, true));
         PromptI18nAssertions.assertNoCjk("英文搜索请求的系统提示", prompts.get(AgentLang.EN, "trader.wake.searchInstruction"));
     }
 
@@ -442,7 +443,7 @@ class WakeInstructionI18nTest {
         // BOUNDARY 是北京时间 01:00，时段内最后一根；下一边界 02:00 已出时段，再醒是 08:00
         t.setWakeWindow("08:00-01:00");
 
-        assertThat(runner.stageOneInstruction(t, List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH))
+        assertThat(runner.stageOneInstruction(t, List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH, false))
                 .contains("距下一次例行唤醒还有约 420 分钟");
     }
 
@@ -450,7 +451,7 @@ class WakeInstructionI18nTest {
     @Test
     void 中文警报开场白逐字不变() {
         String time = TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY));
-        assertThat(runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH))
+        assertThat(runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH, false))
                 .isEqualTo("行情波动警报（" + time + "）：BTCUSDT 5分钟内波动 5.2%（方向：上涨，现价 100000）\n"
                         + "你上次唤醒本局还没有过唤醒，距下一次例行唤醒还有约 60 分钟。\n"
                         + "注意：本次不是例行唤醒，当前 1h K线尚未收盘——按 1h 收盘定义的条件此刻不作数，求证请用已收盘的K线。\n"
