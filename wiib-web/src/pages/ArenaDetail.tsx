@@ -531,7 +531,7 @@ export function ArenaDetail() {
 
         <div className="contents xl:flex xl:col-span-5 xl:flex-col xl:gap-11">
           <div className="order-3 xl:order-none">
-            {detail && <Holdings positions={detail.positions} orders={detail.pendingOrders} plans={detail.plans} trails={detail.trails} />}
+            {detail && <Holdings positions={detail.positions} orders={detail.pendingOrders} plans={detail.plans} />}
           </div>
           <div className="order-4 xl:order-none">
             {detail && <WatchList watches={detail.watches} />}

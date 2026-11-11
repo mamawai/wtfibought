@@ -13,12 +13,10 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibcommon.entity.AiTraderTrail;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
-import com.mawai.wiibagent.mapper.AiTraderTrailMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import org.springframework.ai.tool.ToolCallback;
@@ -57,7 +55,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 交易工具直测：止损只许收紧、止盈分档与可选、跟踪止损的开启与结束、预案动作对着账户的校验、计划不可改写只可修订留痕。
+ * 交易工具直测：止损只许收紧、止盈分档与可选、预案动作对着账户的校验、计划不可改写只可修订留痕。
  * 这些约束是"计划=事前承诺"的工具层执行——提示词只能劝，工具拒绝才是真禁止。
  */
 class TradeToolsTest {
@@ -69,7 +67,6 @@ class TradeToolsTest {
     static void initTableInfoCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderPlan.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderWatch.class);
-        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderTrail.class);
     }
 
     /** 本轮截止时间：默认给足，只有专门验"超时后拒发"的用例才把它设到过去 */
@@ -78,13 +75,11 @@ class TradeToolsTest {
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
     private final AiTraderWatchMapper watchMapper = mock(AiTraderWatchMapper.class);
-    private final AiTraderTrailMapper trailMapper = mock(AiTraderTrailMapper.class);
     private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper, mock(ApplicationEventPublisher.class));
     private final TraderPlanStore planStore = new TraderPlanStore(planMapper, PROMPTS);
-    private final TraderTrailStore trailStore = new TraderTrailStore(trailMapper, planStore, PROMPTS, mock(ApplicationEventPublisher.class));
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
             positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
-            planStore, watchStore, trailStore,
+            planStore, watchStore,
             new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                     new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
             PROMPTS, MESSAGES, mock(EntryContext.class));
@@ -244,7 +239,7 @@ class TradeToolsTest {
     void stopLossWidenRejected() {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
 
-        String r = tools.setStopLoss(5L, 94000.0, null, null, "给它多一点空间");
+        String r = tools.setStopLoss(5L, 94000.0, "给它多一点空间");
 
         assertThat(r).startsWith("REJECTED").contains("收紧");
         verify(simTradeClient, never()).setStopLoss(anyLong(), any());
@@ -256,7 +251,7 @@ class TradeToolsTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
-        String r = tools.setStopLoss(5L, 98000.0, null, null, "价格+2R，上移锁保本");
+        String r = tools.setStopLoss(5L, 98000.0, "价格+2R，上移锁保本");
 
         assertThat(r).contains("ok");
         verify(simTradeClient).setStopLoss(eq(99L), any());
@@ -280,7 +275,7 @@ class TradeToolsTest {
         p.setStopLosses(List.of());
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(p));
 
-        String r = tools.setStopLoss(5L, 105000.0, null, null, "先挂上面看看");
+        String r = tools.setStopLoss(5L, 105000.0, "先挂上面看看");
 
         assertThat(r).startsWith("REJECTED").contains("现价");
         verify(simTradeClient, never()).setStopLoss(anyLong(), any());
@@ -291,7 +286,7 @@ class TradeToolsTest {
     void stopLossAboveMarkRejectedEvenWhenTighterThanBaseline() {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
 
-        String r = tools.setStopLoss(5L, 105000.0, null, null, "收紧一点");
+        String r = tools.setStopLoss(5L, 105000.0, "收紧一点");
 
         assertThat(r).startsWith("REJECTED").contains("现价");
         verify(simTradeClient, never()).setStopLoss(anyLong(), any());
@@ -305,7 +300,7 @@ class TradeToolsTest {
         p.setStopLosses(List.of());
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(p));
 
-        String r = tools.setStopLoss(5L, 95000.0, null, null, "锁一点利润");
+        String r = tools.setStopLoss(5L, 95000.0, "锁一点利润");
 
         assertThat(r).startsWith("REJECTED").contains("现价");
         verify(simTradeClient, never()).setStopLoss(anyLong(), any());
@@ -319,7 +314,7 @@ class TradeToolsTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(p));
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
-        String r = tools.setStopLoss(5L, 97000.0, null, null, "裸奔仓位补挂保护");
+        String r = tools.setStopLoss(5L, 97000.0, "裸奔仓位补挂保护");
 
         assertThat(r).contains("ok");
         verify(simTradeClient).setStopLoss(eq(99L), any());
@@ -364,7 +359,7 @@ class TradeToolsTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(p));
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
-        String r = tools.setStopLoss(5L, 98000.0, null, null, "价格+2R，上移锁保本");
+        String r = tools.setStopLoss(5L, 98000.0, "价格+2R，上移锁保本");
 
         assertThat(r).contains("ok");
         ArgumentCaptor<FuturesStopLossRequest> cap = ArgumentCaptor.forClass(FuturesStopLossRequest.class);
@@ -398,7 +393,7 @@ class TradeToolsTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
-        String r = tools.setTakeProfit(5L, List.of(), "不设目标，改用跟踪止损");
+        String r = tools.setTakeProfit(5L, List.of(), "不设目标");
 
         assertThat(r).contains("ok");
         ArgumentCaptor<FuturesTakeProfitRequest> cap = ArgumentCaptor.forClass(FuturesTakeProfitRequest.class);
@@ -407,70 +402,6 @@ class TradeToolsTest {
         ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).updateById(plan.capture());
         assertThat(plan.getValue().getRevisionsJson()).contains("110000(100%)→无");
-    }
-
-    // ---------- 跟踪止损 ----------
-
-    /** 只传回调幅度：不动现挂的止损，规则落库（止损记现挂的那档），计划记一条开启 */
-    @Test
-    void trailOnlyStartsTrailingWithoutMovingStop() {
-        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
-        when(planMapper.selectOne(any())).thenReturn(existingPlan());
-
-        String r = tools.setStopLoss(5L, null, 1.5, 104000.0, "趋势走出来了，让止损跟着走");
-
-        assertThat(r).contains("ok");
-        verify(simTradeClient, never()).setStopLoss(anyLong(), any());
-        ArgumentCaptor<AiTraderTrail> trail = ArgumentCaptor.forClass(AiTraderTrail.class);
-        verify(trailMapper).insert(trail.capture());
-        assertThat(trail.getValue().getPositionId()).isEqualTo(5L);
-        assertThat(trail.getValue().getCallbackPct()).isEqualByComparingTo("1.5");
-        assertThat(trail.getValue().getActivationPrice()).isEqualByComparingTo("104000");
-        assertThat(trail.getValue().getStopPrice()).isEqualByComparingTo("95000");
-        ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
-        verify(planMapper).updateById(plan.capture());
-        assertThat(plan.getValue().getRevisionsJson()).contains("开启跟踪止损").contains("回调 1.5%").contains("104000");
-    }
-
-    /** 在跟随的仓位只传固定价：止损挪过去，跟随结束（删行），计划记一条结束 */
-    @Test
-    void fixedStopOnTrailingPositionEndsTrailing() {
-        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
-        when(planMapper.selectOne(any())).thenReturn(existingPlan());
-        AiTraderTrail trailing = new AiTraderTrail();
-        trailing.setId(31L);
-        trailing.setTraderId(7L);
-        trailing.setRoundNo(1);
-        trailing.setSymbol("BTCUSDT");
-        trailing.setSide("LONG");
-        trailing.setPositionId(5L);
-        trailing.setBestPrice(new BigDecimal("99000"));
-        trailing.setStopPrice(new BigDecimal("97515"));
-        when(trailMapper.selectList(any())).thenReturn(List.of(trailing));
-        // 结束跟随那条修订是按 id 现读现写的
-        AiTraderPlan reread = existingPlan();
-        when(planMapper.selectById(21L)).thenReturn(reread);
-
-        String r = tools.setStopLoss(5L, 98000.0, null, null, "到阻力了，换回固定止损");
-
-        assertThat(r).contains("\"ok\":true");
-        verify(simTradeClient).setStopLoss(eq(99L), any());
-        verify(trailMapper).deleteById(31L);
-        verify(trailMapper, never()).insert(any(AiTraderTrail.class));
-        verify(planMapper).updateById(any(AiTraderPlan.class));
-        verify(planMapper).update(isNull(), any());
-        assertThat(reread.getRevisionsJson()).contains("跟踪止损结束").contains("最有利价 99000，止损跟到 97515");
-    }
-
-    /** 固定价和回调幅度一个都没给、幅度越界：拒，不动 sim 也不落规则 */
-    @Test
-    void stopLossNeedsPriceOrValidTrail() {
-        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
-
-        assertThat(tools.setStopLoss(5L, null, null, null, "x")).startsWith("REJECTED").contains("至少给一个");
-        assertThat(tools.setStopLoss(5L, 98000.0, 80.0, null, "x")).startsWith("REJECTED").contains("0.1~50");
-        verify(simTradeClient, never()).setStopLoss(anyLong(), any());
-        verify(trailMapper, never()).insert(any(AiTraderTrail.class));
     }
 
     /**
@@ -555,7 +486,7 @@ class TradeToolsTest {
         when(entryContext.atr14(eq("BTCUSDT"), eq("1h"), anyLong())).thenReturn(new BigDecimal("2000"));
         TradeTools withAtr = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
-                planStore, watchStore, trailStore,
+                planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, entryContext);
@@ -590,7 +521,7 @@ class TradeToolsTest {
         when(planMapper.selectOne(any())).thenReturn(null);
 
         JsonNode facts = MAPPER.readTree(tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.01, 10,
-                96000.0, 95000.0, oneRung("110000"), null, null, "PULLBACK", "回踩支撑", "1h收盘跌破95000")).path("facts");
+                96000.0, 95000.0, oneRung("110000"), "PULLBACK", "回踩支撑", "1h收盘跌破95000")).path("facts");
 
         assertThat(facts.path("entryRef").asDecimal()).isEqualByComparingTo("96000");
         assertThat(facts.path("feeRoundTrip").asDecimal()).isEqualByComparingTo("0.58");
@@ -599,12 +530,9 @@ class TradeToolsTest {
         assertThat(facts.has("atrInterval")).isFalse();
     }
 
-    /**
-     * 不设止盈也能开：sim 那边一张止盈单都没有，计划没有目标位，回执没有盈利和盈亏比两项。
-     * 带了跟踪止损：规则落库绑上响应里的仓位 id，止损记开仓那一档，回执带 trailingStop
-     */
+    /** 不设止盈也能开：sim 那边一张止盈单都没有，计划没有目标位，回执没有盈利和盈亏比两项 */
     @Test
-    void openWithoutTakeProfitAndWithTrailingStop() {
+    void openWithoutTakeProfit() {
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setOrderId(892L);
         resp.setPositionId(42L);
@@ -612,7 +540,7 @@ class TradeToolsTest {
         when(planMapper.selectOne(any())).thenReturn(null);
 
         JsonNode receipt = MAPPER.readTree(tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, null, 2.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"));
+                null, 95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"));
 
         ArgumentCaptor<FuturesOpenRequest> req = ArgumentCaptor.forClass(FuturesOpenRequest.class);
         verify(simTradeClient).openPosition(eq(99L), req.capture());
@@ -624,12 +552,6 @@ class TradeToolsTest {
         assertThat(receipt.path("facts").has("lossAtStop")).isTrue();
         assertThat(receipt.path("facts").has("gainAtTargets")).isFalse();
         assertThat(receipt.path("facts").has("rewardRiskAfterFees")).isFalse();
-        ArgumentCaptor<AiTraderTrail> trail = ArgumentCaptor.forClass(AiTraderTrail.class);
-        verify(trailMapper).insert(trail.capture());
-        assertThat(trail.getValue().getPositionId()).isEqualTo(42L);
-        assertThat(trail.getValue().getCallbackPct()).isEqualByComparingTo("2");
-        assertThat(trail.getValue().getStopPrice()).isEqualByComparingTo("95000");
-        assertThat(receipt.path("trailingStop").path("callbackPct").asDecimal()).isEqualByComparingTo("2");
     }
 
     /** 开仓带分档止盈：sim 收到的是每档的价位和折好的数量，计划里存的是价位和占比 */
@@ -641,7 +563,7 @@ class TradeToolsTest {
         when(planMapper.selectOne(any())).thenReturn(null);
 
         tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, List.of(rung("105000", "50"), rung("110000", "30")), null, null,
+                null, 95000.0, List.of(rung("105000", "50"), rung("110000", "30")),
                 "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
         ArgumentCaptor<FuturesOpenRequest> req = ArgumentCaptor.forClass(FuturesOpenRequest.class);
@@ -664,7 +586,7 @@ class TradeToolsTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(held));
 
         String r = tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10, null, 95000.0,
-                List.of(rung("105000", "30"), rung("110000", "30"), rung("120000", "40")), null, null,
+                List.of(rung("105000", "30"), rung("110000", "30"), rung("120000", "40")),
                 "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
 
         assertThat(r).startsWith("REJECTED").contains("已经挂着 2 档").contains("最多 4 档");
@@ -684,7 +606,7 @@ class TradeToolsTest {
         });
         TradeTools withCtx = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
-                planStore, watchStore, trailStore,
+                planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, entryContext);
@@ -713,7 +635,7 @@ class TradeToolsTest {
     /** 常规开仓参数（护栏全过），下单链路的用例都用它 */
     private String openOnce(TradeTools t) {
         return t.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, oneRung("110000"), null, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+                null, 95000.0, oneRung("110000"), "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
     }
 
     /**
@@ -788,14 +710,14 @@ class TradeToolsTest {
     void expiredRoundRejectsAllWriteTools() {
         TradeTools late = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
-                planStore, watchStore, trailStore,
+                planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, System.currentTimeMillis() - 1,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, mock(EntryContext.class));
 
         assertThat(openOnce(late)).startsWith("REJECTED").contains("本轮已超时");
         assertThat(late.closePosition(5L, 0.01, "失效条件触发")).contains("本轮已超时");
-        assertThat(late.setStopLoss(5L, 98000.0, null, null, "上移锁保本")).contains("本轮已超时");
+        assertThat(late.setStopLoss(5L, 98000.0, "上移锁保本")).contains("本轮已超时");
         assertThat(late.setTakeProfit(5L, oneRung("120000"), "趋势加速")).contains("本轮已超时");
         assertThat(late.cancelOrder(11L)).contains("本轮已超时");
         // 连持仓查询都不该发出：超时后一次 sim 调用都不欠
@@ -811,13 +733,13 @@ class TradeToolsTest {
         TradeTools strict = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("10000"),
                 sym -> { throw new IllegalStateException("不该发起行情查询"); },
-                planStore, watchStore, trailStore,
+                planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, mock(EntryContext.class));
 
         String r = strict.openPosition(null, "SHORT", "MARKET", 0.64, 20,
-                null, 64980.0, oneRung("64640"), null, null, "BREAKOUT", "突破", "收回箱体");
+                null, 64980.0, oneRung("64640"), "BREAKOUT", "突破", "收回箱体");
 
         assertThat(r).startsWith("REJECTED").contains("白名单").contains("完整给出全部参数");
     }
@@ -830,7 +752,7 @@ class TradeToolsTest {
     @Test
     void missingStopLossRejectedInsteadOfOpeningNakedLong() {
         String r = tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, null, oneRung("110000"), null, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+                null, null, oneRung("110000"), "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
         assertThat(r).startsWith("REJECTED").contains("止损");
         verify(simTradeClient, never()).openPosition(anyLong(), any());
@@ -850,7 +772,7 @@ class TradeToolsTest {
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
         String r = tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, oneRung("110000"), null, null, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
+                null, 95000.0, oneRung("110000"), "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
 
         assertThat(r).doesNotStartWith("REJECTED").contains("777");
         assertThat(tools.actions().get(0).path("status").asString(null)).isEqualTo("ok");
@@ -876,7 +798,7 @@ class TradeToolsTest {
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
         tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, null, null, null, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
+                null, 95000.0, null, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
 
         InOrder sent = inOrder(simTradeClient);
         ArgumentCaptor<FuturesStopLossRequest> sl = ArgumentCaptor.forClass(FuturesStopLossRequest.class);
@@ -888,33 +810,6 @@ class TradeToolsTest {
                 .satisfies(i -> assertThat(i.getQuantity()).isEqualByComparingTo("0.005"));
         assertThat(tp.getValue().getTakeProfits()).singleElement()
                 .satisfies(i -> assertThat(i.getQuantity()).isEqualByComparingTo("0.005"));
-    }
-
-    /** 同向已有仓位时限价单带跟踪止损：拒，不发单 */
-    @Test
-    void limitAddOnCannotCarryTrailingStop() {
-        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
-
-        String r = tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.01, 10,
-                98000.0, 95000.0, null, 2.0, null, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
-
-        assertThat(r).startsWith("REJECTED").contains("限价加仓不能带跟踪止损");
-        verify(simTradeClient, never()).openPosition(anyLong(), any());
-    }
-
-    /** 撤掉带跟踪止损的限价单：同币同向没有别的开仓挂单了，它带的那条没绑仓位的规则一起删 */
-    @Test
-    void cancelOrderDropsTheUnboundTrailItCarried() {
-        FuturesOrderResponse cancelled = new FuturesOrderResponse();
-        cancelled.setOrderId(600L);
-        cancelled.setSymbol("BTCUSDT");
-        cancelled.setOrderSide("OPEN_LONG");
-        when(simTradeClient.cancelOrder(99L, 600L)).thenReturn(cancelled);
-        when(trailMapper.selectCount(any())).thenReturn(1L);
-
-        assertThat(tools.cancelOrder(600L)).contains("600");
-
-        verify(trailMapper).delete(any());
     }
 
     /** 同币同向还挂着限价单时再挂一张：计划走覆盖，不能把挂着那张的计划归档掉 */
@@ -933,7 +828,7 @@ class TradeToolsTest {
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
         String r = tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.02, 10,
-                97000.0, 95000.0, oneRung("110000"), null, null, "PULLBACK", "二次回踩", "1h收盘跌破96000");
+                97000.0, 95000.0, oneRung("110000"), "PULLBACK", "二次回踩", "1h收盘跌破96000");
 
         assertThat(r).doesNotStartWith("REJECTED").contains("601");
         ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
@@ -997,13 +892,13 @@ class TradeToolsTest {
     void marginCapUsesEquityAtOpenTime() {
         TradeTools poorer = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
                 positions -> new BigDecimal("5000"), sym -> new BigDecimal("100000"),
-                planStore, watchStore, trailStore,
+                planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, mock(EntryContext.class));
 
         String r = poorer.openPosition("BTCUSDT", "LONG", "MARKET", 0.4, 10,
-                null, 95000.0, null, null, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+                null, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
         assertThat(r).startsWith("REJECTED").contains("数量最多");
         verify(simTradeClient, never()).openPosition(anyLong(), any());

@@ -116,7 +116,7 @@ chat:
     leverage: "{{min}}~{{max}}倍"
     memoryNote: 复盘笔记全文：reviewer 每日复盘写的，trader 每次唤醒都会看到
     kindNote: TRADE=K线收盘唤醒 ALERT=波动警报唤醒 MANUAL=主人手动唤醒 EVENT=持仓事件唤醒（止损/止盈/强平/限价成交） WATCH=它自己布的盯盘条件命中 REVIEW=每日复盘（reasoning是复盘全文） PRESET=它布的预案命中后平台代它执行的动作（移止损/平仓/撤单，没跑模型，reasoning是条件与执行结果）
-    planNote: invalidationCondition 是开仓时立的失效条件——它被触发才允许主动平仓；targets 是开仓时设的止盈分档（price 价位、percent 平掉仓位的百分之几），空数组=没设止盈；revisions 是止损止盈、预案执行、跟踪止损开启与结束的修订留痕
+    planNote: invalidationCondition 是开仓时立的失效条件——它被触发才允许主动平仓；targets 是开仓时设的止盈分档（price 价位、percent 平掉仓位的百分之几），空数组=没设止盈；revisions 是止损止盈、预案执行的修订留痕
     tradeNote: closeManner 是了结方式：stopLoss=止损带走 takeProfit=到目标位 manual=它自己调工具平的 liquidated=强平 UNKNOWN=判不出；count/wins/totalClosedPnl 只统计本次返回的这几笔
     unknownKind: "kind 只能是 TRADE / ALERT / MANUAL / EVENT / WATCH / REVIEW，收到的是 {{kind}}；不传 kind 就是全部"
     noTrader: 这位用户还没有创建 AI Trader，可以去「我的 Trader」页创建一个

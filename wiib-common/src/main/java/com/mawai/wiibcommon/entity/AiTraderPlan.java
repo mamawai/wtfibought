@@ -64,7 +64,7 @@ public class AiTraderPlan {
     private Long openedWakeTime;
 
     /**
-     * 修订历史追加式 JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行/跟踪止损的开启与结束。
+     * 修订历史追加式 JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行。
      * 修改必须留痕带理由（回注给下轮无记忆的模型看）；计划本体价格字段永远是原始快照，当前生效单在 sim 仓位上。
      */
     private String revisionsJson;

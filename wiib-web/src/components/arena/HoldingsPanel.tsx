@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useMarkPrices } from '../../hooks/useMarkPrices';
 import { formatCoinPrice, getCoin } from '../../lib/coinConfig';
 import { cn, fmtDateTime, fmtNum, fmtSignedPct, fmtTime } from '../../lib/utils';
-import type { AiTraderPlanView, FuturesOrder, FuturesPosition, PlanRevision, TraderTrail, TraderWatch } from '../../types';
+import type { AiTraderPlanView, FuturesOrder, FuturesPosition, PlanRevision, TraderWatch } from '../../types';
 import { planTargets } from './traderTools';
 
 /** 盯盘价离现价不到这么多（%）就标「快到了」 */
@@ -29,14 +29,6 @@ function nearestTp(p: FuturesPosition): number | null {
 
 function planFor(plans: AiTraderPlanView[], symbol: string, side: 'LONG' | 'SHORT') {
   return plans.find(p => p.symbol === symbol && p.side === side);
-}
-
-/** 跟踪止损一句话：回调幅度；设了启动价还没开始跟的，带上到哪个价才开始 */
-function useTrailText() {
-  const { t } = useTranslation('ai');
-  return (trail: TraderTrail) => trail.bestPrice == null && trail.activationPrice != null
-    ? t('wb.hold.trailingFrom', { pct: trail.callbackPct, price: formatCoinPrice(trail.symbol, trail.activationPrice) })
-    : t('wb.hold.trailing', { pct: trail.callbackPct });
 }
 
 /** 一个仓挂的全部止损或止盈价，多档用 / 连起来 */
@@ -79,11 +71,10 @@ function PlanLines({ plan }: { plan?: AiTraderPlanView }) {
   );
 }
 
-/** 一个持仓：浮盈跟着实时标记价走；止损止盈都挂了才画止损（左）到止盈（右）的条，竖线是现价；在跟踪止损的标出回调幅度 */
-function PositionCard({ p, plan, trail, mark }: { p: FuturesPosition; plan?: AiTraderPlanView; trail?: TraderTrail; mark: number }) {
+/** 一个持仓：浮盈跟着实时标记价走；止损止盈都挂了才画止损（左）到止盈（右）的条，竖线是现价 */
+function PositionCard({ p, plan, mark }: { p: FuturesPosition; plan?: AiTraderPlanView; mark: number }) {
   const { t } = useTranslation('ai');
   const moveText = useMoveText();
-  const trailText = useTrailText();
   const cfg = getCoin(p.symbol);
   const Icon = cfg.icon;
   const long = p.side === 'LONG';
@@ -125,7 +116,7 @@ function PositionCard({ p, plan, trail, mark }: { p: FuturesPosition; plan?: AiT
       {/* 多档全列出来，离触发多远按最近那档算 */}
       <div className="tr-pc-ends num">
         {sl != null
-          ? <span className="dn">{t('wb.hold.sl', { price: levelsText(p.symbol, p.stopLosses) })}{locked && ` · ${t('wb.hold.locked')}`}{trail && ` · ${trailText(trail)}`}<em>{t('wb.hold.trigger', { move: moveText(sl, mark) })}</em></span>
+          ? <span className="dn">{t('wb.hold.sl', { price: levelsText(p.symbol, p.stopLosses) })}{locked && ` · ${t('wb.hold.locked')}`}<em>{t('wb.hold.trigger', { move: moveText(sl, mark) })}</em></span>
           : <span className="mute">{t('wb.hold.noSl')}</span>}
         {tp != null
           ? <span className="r up">{t('wb.hold.tp', { price: levelsText(p.symbol, p.takeProfits) })}<em>{t('wb.hold.trigger', { move: moveText(tp, mark) })}</em></span>
@@ -136,11 +127,10 @@ function PositionCard({ p, plan, trail, mark }: { p: FuturesPosition; plan?: AiT
   );
 }
 
-/** 一个没成交的挂单：挂在哪、离现价多远就成交、成交后的止损止盈（取自计划）和成交后才开始跟的跟踪止损 */
-function OrderCard({ o, plan, trail, mark }: { o: FuturesOrder; plan?: AiTraderPlanView; trail?: TraderTrail; mark?: number }) {
+/** 一个没成交的挂单：挂在哪、离现价多远就成交、成交后的止损止盈（取自计划） */
+function OrderCard({ o, plan, mark }: { o: FuturesOrder; plan?: AiTraderPlanView; mark?: number }) {
   const { t } = useTranslation('ai');
   const moveText = useMoveText();
-  const trailText = useTrailText();
   const cfg = getCoin(o.symbol);
   const Icon = cfg.icon;
   const long = o.orderSide.includes('LONG');
@@ -165,7 +155,6 @@ function OrderCard({ o, plan, trail, mark }: { o: FuturesOrder; plan?: AiTraderP
           {t('wb.hold.fillIn', { now: px(mark), move: moveText(o.limitPrice, mark) })}
           {plan?.stopLossPrice != null
             && ` ${targets ? t('wb.hold.afterFill', { sl: px(plan.stopLossPrice), tp: targets }) : t('wb.hold.afterFillSl', { sl: px(plan.stopLossPrice) })}`}
-          {trail && ` ${trailText(trail)}`}
         </p>
       )}
       <PlanLines plan={plan} />
@@ -173,9 +162,9 @@ function OrderCard({ o, plan, trail, mark }: { o: FuturesOrder; plan?: AiTraderP
   );
 }
 
-/** 工作台右栏「手上的仓位」：持仓 + 挂单，交易计划和跟踪止损并进对应那张卡 */
-export function Holdings({ positions, orders, plans, trails }: {
-  positions: FuturesPosition[]; orders: FuturesOrder[]; plans: AiTraderPlanView[]; trails: TraderTrail[];
+/** 工作台右栏「手上的仓位」：持仓 + 挂单，交易计划并进对应那张卡 */
+export function Holdings({ positions, orders, plans }: {
+  positions: FuturesPosition[]; orders: FuturesOrder[]; plans: AiTraderPlanView[];
 }) {
   const { t } = useTranslation('ai');
   const marks = useMarkPrices([...positions.map(p => p.symbol), ...orders.map(o => o.symbol)]);
@@ -188,11 +177,6 @@ export function Holdings({ positions, orders, plans, trails }: {
     const side = o.orderSide.includes('LONG') ? 'LONG' : 'SHORT';
     return held.has(`${o.symbol}|${side}`) ? undefined : planFor(plans, o.symbol, side);
   };
-  // 跟踪止损同理：绑了仓位的挂持仓卡，还没绑的是开仓挂单带的
-  const trailFor = (symbol: string, side: string, bound: boolean) =>
-    trails.find(x => x.symbol === symbol && x.side === side && (x.positionId != null) === bound);
-  const orderTrail = (o: FuturesOrder) =>
-    o.orderSide.startsWith('OPEN') ? trailFor(o.symbol, o.orderSide.includes('LONG') ? 'LONG' : 'SHORT', false) : undefined;
   return (
     <div>
       <div className={BLK_H}>
@@ -206,9 +190,9 @@ export function Holdings({ positions, orders, plans, trails }: {
         : (
           <>
             {positions.map(p => (
-              <PositionCard key={p.id} p={p} plan={planFor(plans, p.symbol, p.side)} trail={trailFor(p.symbol, p.side, true)} mark={markOf(p)} />
+              <PositionCard key={p.id} p={p} plan={planFor(plans, p.symbol, p.side)} mark={markOf(p)} />
             ))}
-            {orders.map(o => <OrderCard key={o.orderId} o={o} mark={marks[o.symbol]} plan={orderPlan(o)} trail={orderTrail(o)} />)}
+            {orders.map(o => <OrderCard key={o.orderId} o={o} mark={marks[o.symbol]} plan={orderPlan(o)} />)}
           </>
         )}
     </div>

@@ -243,9 +243,6 @@ tool:
     会当场成交的限价单被拒；stopLossPrice 必填且方向正确。
     takeProfits 可选：最多 3 档，每档一个在入场价有利一侧的价位，加这一档平掉仓位的百分之几
     （各档占比合计不超过 100，没盖住的那部分仓位没有止盈单）。不传就是这个仓位一张止盈单都没有。
-    trailCallbackPct 可选，传了止损就成了跟踪止损：平台盯标记价，把止损一路挪到"开始跟随后的最有利价"回撤这个百分比的位置，
-    只进不退；trailActivationPrice（可不传）是标记价到哪里才开始跟。限价单要等成交后才开始跟，在那之前止损就是 stopLossPrice；
-    同币同向已有仓位时，限价单不能带跟踪止损。
     playType 是论点标签：BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER。
     signalsUsed：一句话，引用论点所依据的具体数据字段。
     invalidationCondition：能证明论点错了的市场条件（不是盈亏数字），它进入该仓位的计划。
@@ -258,14 +255,9 @@ tool:
     quantity：要平的币数；传持仓全量即全平。reason：一句话说明为什么现在平。
 
   set_stop_loss: |-
-    改持仓的止损（positionId 见开场白【当前账户】的持仓，或 get_account）。止损始终覆盖整个仓位——不传数量。
-    能设两样，至少给一样：
-    stopLossPrice 把止损放到固定价。护栏：只许收紧，LONG 的止损只能上移、SHORT 的只能下移（相对当前止损）；
-    不能放到现价另一侧（会立刻触发）。想离场用 close_position。
-    trailCallbackPct 开启（或改）跟踪止损：从现在起平台盯标记价，把止损一路挪到"开始跟随后的最有利价"回撤这个百分比的位置，
-    只进不退，不叫醒你；trailActivationPrice（可不传）是标记价到哪里才开始跟。
-    在跟踪的仓位只传 stopLossPrice，跟踪就到此结束，留下这个固定止损。
-    reason 必填，进入该仓位公开的计划修订史。
+    替换持仓的止损（positionId 见开场白【当前账户】的持仓，或 get_account）。新止损始终覆盖整个仓位——不传数量。
+    护栏：只许收紧，LONG 的止损只能上移、SHORT 的只能下移（相对当前止损）；不能放到现价另一侧（会立刻触发）。
+    想离场用 close_position。reason 必填，进入该仓位公开的计划修订史。
 
   set_take_profit: |-
     整组替换持仓的止盈单（positionId 见开场白【当前账户】的持仓，或 get_account）：最多 3 档，每档一个价位加

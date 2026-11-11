@@ -6,7 +6,6 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibcommon.entity.AiTraderTrail;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -124,11 +123,10 @@ public class WakeObservation {
      * @param firedQuietly 命中了还没哪轮告诉过它的盯盘条件，进"自上次唤醒以来"补报
      * @param armed        还在盯的盯盘条件，进承诺块
      * @param marks        各币标记价，承诺块算"离价位多远"用；没有的币不带距离
-     * @param trails       在跟的跟踪止损规则（按 symbol|side），进账户块的持仓行和挂单行
      */
     Pack assemble(AiTrader trader, Collection<String> symbols, BigDecimal equity, List<FuturesPositionDTO> positions,
                   List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Reconcile reconcile,
-                  Map<String, AiTraderTrail> trails, List<RecentWake> recent, long boundaryTime, AgentLang lang,
+                  List<RecentWake> recent, long boundaryTime, AgentLang lang,
                   List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly, List<AiTraderWatch> armed,
                   Map<String, BigDecimal> marks) {
         StringBuilder sb = new StringBuilder();
@@ -151,7 +149,7 @@ public class WakeObservation {
         }
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
                 .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(),
-                        trails, boundaryTime, paths)).append('\n');
+                        boundaryTime, paths)).append('\n');
         Map<String, Segment> segments = latestSegments(recent, symbols);
         sb.append('\n').append(lastConclusion(latestConcluded(recent), segments, symbols, lang));
         String commitments = commitments(trader, positions, pendingOrders, reconcile.live(),

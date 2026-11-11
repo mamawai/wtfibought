@@ -139,18 +139,6 @@ class TradeGuardTest {
         assertThat(validateOpen(tiny, EQUITY, MARK, WL, cfg(), List.of())).contains("第 1 档").contains("BTCUSDT");
     }
 
-    // ---------- 跟踪止损参数 ----------
-
-    @Test
-    void trailCallbackMustBeInRange() {
-        assertThat(TradeGuard.validateTrail(new BigDecimal("1.5"), null, PROMPTS, AgentLang.ZH)).isNull();
-        assertThat(TradeGuard.validateTrail(new BigDecimal("1.5"), new BigDecimal("101000"), PROMPTS, AgentLang.ZH)).isNull();
-        assertThat(TradeGuard.validateTrail(new BigDecimal("0.05"), null, PROMPTS, AgentLang.ZH)).contains("0.1~50");
-        assertThat(TradeGuard.validateTrail(new BigDecimal("60"), null, PROMPTS, AgentLang.ZH)).contains("0.1~50");
-        // 只给启动价不给幅度
-        assertThat(TradeGuard.validateTrail(null, new BigDecimal("101000"), PROMPTS, AgentLang.ZH)).contains("trailCallbackPct");
-    }
-
     // ---------- 杠杆区间：允许集合，不是上限 ----------
 
     /** 配 5~20 时选 3 也不行——低于下界同样拒，这是"必须从区间里选"的核心语义 */

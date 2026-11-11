@@ -801,7 +801,7 @@ COMMENT ON TABLE ai_trader_plan IS 'AI Trader持仓交易计划：开仓立的�
 COMMENT ON COLUMN ai_trader_plan.invalidation_condition IS '失效条件：什么市场状况证明论点错了（市场条件而非盈亏数字），触发才允许主动平仓';
 COMMENT ON COLUMN ai_trader_plan.stop_loss_price IS '原始止损快照；当前生效止损以sim仓位为准（可能已上移锁盈）';
 COMMENT ON COLUMN ai_trader_plan.opened_wake_time IS '开仓所在唤醒边界(ms)，回注时计算已持有时长';
-COMMENT ON COLUMN ai_trader_plan.revisions_json IS '修订历史追加式JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行/跟踪止损的开启与结束——修改必须留痕带理由，计划本体价格字段永远是原始快照';
+COMMENT ON COLUMN ai_trader_plan.revisions_json IS '修订历史追加式JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行——修改必须留痕带理由，计划本体价格字段永远是原始快照';
 COMMENT ON COLUMN ai_trader_plan.status IS 'LIVE=仓位/挂单存活 CLOSED=已了结归档。归档不删：论点→结局的配对数据是reviewer每日复盘的原料（结局按position_id join sim已平仓位，历史无id行按symbol/side/时间就近兜底）';
 COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：唤醒开头对账发现仓位已了结的边界/重置时刻，与opened_wake_time围出计划生命期';
 COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜照常。仅CLOSED可标,可随时取消';
@@ -839,31 +839,6 @@ COMMENT ON COLUMN ai_trader_watch.woke_at IS '模型得知这次命中的那轮�
 COMMENT ON COLUMN ai_trader_watch.action_json IS '预案动作JSON，没带动作为NULL：type=MOVE_STOP(positionId,stopLossPrice)/CLOSE(positionId,closePercent)/CANCEL_ORDER(orderId)，另带布下时那个仓位或挂单的symbol、side。命中时代码当场执行，只会减风险';
 COMMENT ON COLUMN ai_trader_watch.action_result IS '预案执行结果一句话（跟主人语言）；没带动作或还没命中为NULL';
 COMMENT ON COLUMN ai_trader_watch.action_ok IS '预案做成了没有；没带动作或还没命中为NULL。移止损和撤单做成了不叫醒，平仓做成了或动作没做成都叫醒';
-
--- ============================================
--- 31.0 AI Trader 跟踪止损的跟随状态
--- ============================================
-CREATE TABLE IF NOT EXISTS ai_trader_trail (
-    id              BIGSERIAL PRIMARY KEY,
-    trader_id       BIGINT NOT NULL,
-    round_no        INT NOT NULL,
-    symbol          VARCHAR(20) NOT NULL,
-    side            VARCHAR(8) NOT NULL,
-    position_id     BIGINT,
-    callback_pct    NUMERIC(6,3) NOT NULL,
-    activation_price NUMERIC(20,8),
-    best_price      NUMERIC(20,8),
-    stop_price      NUMERIC(20,8),
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_att_key ON ai_trader_trail (trader_id, round_no, symbol, side);
-COMMENT ON TABLE ai_trader_trail IS 'AI Trader 跟踪止损的跟随状态，一个仓位一行。止损单本身在sim仓位上；agent的哨兵看标记价，最有利价每往前走一步长就把止损挪到回撤callback_pct的位置，只进不退。仓位了结或换回固定止损就删行';
-COMMENT ON COLUMN ai_trader_trail.position_id IS 'sim仓位id；限价单还没成交为NULL，成交后绑上才开始跟';
-COMMENT ON COLUMN ai_trader_trail.callback_pct IS '回调幅度%：止损挂在最有利价回撤这么多的位置';
-COMMENT ON COLUMN ai_trader_trail.activation_price IS '启动价：标记价到了才开始跟；NULL=一绑上仓位就跟';
-COMMENT ON COLUMN ai_trader_trail.best_price IS '开始跟随后的最有利标记价；还没开始跟为NULL。只在挪止损时落库，重启后从这里接着跟';
-COMMENT ON COLUMN ai_trader_trail.stop_price IS '这条规则上次看到或挪到的止损价';
 
 -- ============================================
 -- 31.1 AI Trader 经验账本（复盘沉淀的经验，一条一行，代码记账）

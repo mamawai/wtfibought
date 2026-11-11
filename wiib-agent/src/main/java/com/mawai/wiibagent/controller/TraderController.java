@@ -8,7 +8,6 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibcommon.entity.AiTraderTrail;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
@@ -27,7 +26,6 @@ import com.mawai.wiibagent.trader.TraderActionService;
 import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
-import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
@@ -82,7 +80,6 @@ public class TraderController {
     private final ExperienceLedger ledger;
     private final TraderScheduler scheduler;
     private final TraderWatchStore watchStore;
-    private final TraderTrailStore trailStore;
 
     // ========== 我的 trader ==========
 
@@ -374,15 +371,14 @@ public class TraderController {
      * 详情视图：公开视图 + 实时持仓/挂单 + 本局存活计划 + 经验账本。
      * memory=账本渲染文本，trader 每次唤醒真正读到的东西；lastReviewAt 是最近一次复盘写 memory 的时刻（ms），没有=null。
      * 公开口径与时间线一致：REVIEW 行本就带 memoryAfter 快照。
-     * nextWakeAt=下次例行唤醒时刻，不在运行中为 null；watches=本局还在盯的条件（参数本就在时间线的 set_watch 动作里公开）；
-     * trails=本局在跟的跟踪止损规则。
+     * nextWakeAt=下次例行唤醒时刻，不在运行中为 null；watches=本局还在盯的条件（参数本就在时间线的 set_watch 动作里公开）。
      */
     public record TraderDetailView(TraderPublicView trader,
                                    List<FuturesPositionDTO> positions,
                                    List<FuturesOrderResponse> pendingOrders,
                                    List<AiTraderPlan> plans,
                                    String memory, Long lastReviewAt,
-                                   Long nextWakeAt, List<AiTraderWatch> watches, List<AiTraderTrail> trails) {
+                                   Long nextWakeAt, List<AiTraderWatch> watches) {
     }
 
     @GetMapping("/{id}")
@@ -404,8 +400,7 @@ public class TraderController {
         Long nextWakeAt = AiTrader.STATUS_RUNNING.equals(t.getStatus()) ? scheduler.nextRoutineWakeAt(t) : null;
         return Result.ok(new TraderDetailView(publicView(t, viewer, modelName(t)), positions, pending,
                 traderService.plans(t), t.getMemory(), traderService.latestReviewTime(id),
-                nextWakeAt, watchStore.armed(id, t.getRoundNo()),
-                List.copyOf(trailStore.byKey(id, t.getRoundNo()).values())));
+                nextWakeAt, watchStore.armed(id, t.getRoundNo())));
     }
 
     @GetMapping("/{id}/decisions")

@@ -11,7 +11,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 改止损的那条路，set_stop_loss、预案的移止损、跟踪止损共用：新止损得站在现价的止损一侧（多单在下、空单在上，
+ * 改止损的那条路，set_stop_loss 和预案的移止损共用：新止损得站在现价的止损一侧（多单在下、空单在上，
  * 不然下一个 tick 就成了市价平仓），不许比现有最紧那档松；过了才调 sim，整仓一档。
  */
 public final class StopOrders {

@@ -49,10 +49,6 @@ public final class TradeGuard {
     /** sim 一个仓位最多挂几档止盈（止损同）；加仓带的档位是追加上去的 */
     public static final int SIM_SPLIT_LIMIT = 4;
 
-    /** 跟踪止损回调幅度（%）的上下限：再小每个 tick 都在挪止损，再大等于没有止损 */
-    public static final BigDecimal TRAIL_CALLBACK_MIN = new BigDecimal("0.1");
-    public static final BigDecimal TRAIL_CALLBACK_MAX = new BigDecimal("50");
-
     /**
      * 开仓请求（工具参数的结构化镜像）。takeProfits 是止盈分档，空表＝不设止盈。
      * 变体构造归测试侧（TradeGuardTest 的 with* 助手）。
@@ -245,18 +241,6 @@ public final class TradeGuard {
                 return prompts.get(lang, "trader.guard.targetRungTooSmall", Map.of(
                         "n", i + 1, "symbol", symbol, "quantity", plain(positionQty)));
             }
-        }
-        return null;
-    }
-
-    /** 跟踪止损的两个参数：回调幅度必须给且在上下限内，启动价（可不给）为正。通过返回 null */
-    public static String validateTrail(BigDecimal callbackPct, BigDecimal activationPrice,
-                                       PromptCatalog prompts, AgentLang lang) {
-        if (callbackPct == null
-                || callbackPct.compareTo(TRAIL_CALLBACK_MIN) < 0 || callbackPct.compareTo(TRAIL_CALLBACK_MAX) > 0
-                || activationPrice != null && activationPrice.signum() <= 0) {
-            return prompts.get(lang, "trader.guard.trailInvalid", Map.of(
-                    "min", plain(TRAIL_CALLBACK_MIN), "max", plain(TRAIL_CALLBACK_MAX)));
         }
         return null;
     }

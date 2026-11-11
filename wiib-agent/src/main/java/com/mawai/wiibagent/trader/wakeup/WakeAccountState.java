@@ -3,7 +3,6 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibcommon.entity.AiTraderTrail;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -30,7 +29,7 @@ import java.util.Map;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 开场白里的账户状态块：持仓（带计划与修订史、在跟的跟踪止损规则）+ 挂单（带挂出时刻与已挂时长）。盯盘条件不在这儿，在承诺块里。
+ * 开场白里的账户状态块：持仓（带计划与修订史）+ 挂单（带挂出时刻与已挂时长）。盯盘条件不在这儿，在承诺块里。
  * 全静态无状态，prompts/lang 随参数进来。
  */
 final class WakeAccountState {
@@ -48,7 +47,7 @@ final class WakeAccountState {
     static String accountStateJson(PromptCatalog prompts, AgentLang lang,
                                    BigDecimal equity, List<FuturesPositionDTO> positions,
                                    List<FuturesOrderResponse> pendingOrders,
-                                   List<AiTraderPlan> plans, Map<String, AiTraderTrail> trails, long boundaryTime,
+                                   List<AiTraderPlan> plans, long boundaryTime,
                                    Map<Long, CaseFileBuilder.MarketWindow> paths) {
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         plans.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
@@ -59,26 +58,13 @@ final class WakeAccountState {
         // 全部持仓的止损同时被打掉，合计亏权益的百分之几
         out.put("lossAtAllStopsPctOfEquity", pctOfEquity(
                 positions.stream().map(WakeAccountState::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
-        out.set("positions", positionsJson(prompts, lang, equity, positions, planByKey, trails, boundaryTime, paths));
+        out.set("positions", positionsJson(prompts, lang, equity, positions, planByKey, boundaryTime, paths));
         // 挂单同样给足：开仓挂单占坑且带着计划（成交后计划全文随持仓回注，这里给轻量版）。
         // 挂出时刻与已挂时长必须在：限价单挂了多久只有代码知道，模型据此执行自己写的作废条件
         if (pendingOrders != null && !pendingOrders.isEmpty()) {
-            out.set("pendingOrders", pendingOrdersJson(prompts, lang, pendingOrders, planByKey, trails, boundaryTime));
+            out.set("pendingOrders", pendingOrdersJson(prompts, lang, pendingOrders, planByKey, boundaryTime));
         }
         return MAPPER.writeValueAsString(out);
-    }
-
-    /** 跟踪止损规则：回调幅度、启动价（设了才有）、开始跟了没有、开始跟随后的最有利价（开始了才有） */
-    private static ObjectNode trailJson(AiTraderTrail t) {
-        ObjectNode out = MAPPER.createObjectNode().put("callbackPct", t.getCallbackPct());
-        if (t.getActivationPrice() != null) {
-            out.put("activationPrice", t.getActivationPrice());
-        }
-        out.put("trailing", t.getBestPrice() != null);
-        if (t.getBestPrice() != null) {
-            out.put("bestPrice", t.getBestPrice());
-        }
-        return out;
     }
 
     /**
@@ -100,13 +86,13 @@ final class WakeAccountState {
     }
 
     /**
-     * 持仓行：仓位事实 + 当前止损止盈（止盈带每档数量）+ 跟踪止损规则（在跟才有）
+     * 持仓行：仓位事实 + 当前止损止盈（止盈带每档数量）
      * + 风险事实（浮盈是几 R、离止损多远、止损打掉亏权益百分之几）
      * + 自上次完成决策以来的波动（paths 按 positionId，没有就不带）+ 所属计划（含修订历史）。
      */
     private static ArrayNode positionsJson(PromptCatalog prompts, AgentLang lang, BigDecimal equity,
                                            List<FuturesPositionDTO> positions,
-                                           Map<String, AiTraderPlan> planByKey, Map<String, AiTraderTrail> trails,
+                                           Map<String, AiTraderPlan> planByKey,
                                            long boundaryTime, Map<Long, CaseFileBuilder.MarketWindow> paths) {
         ArrayNode ps = MAPPER.createArrayNode();
         for (FuturesPositionDTO p : positions) {
@@ -134,10 +120,6 @@ final class WakeAccountState {
                 p.getTakeProfits().forEach(tp -> tps.add(MAPPER.createObjectNode()
                         .put("price", tp.getPrice()).put("quantity", tp.getQuantity())));
                 row.set("currentTakeProfit", tps);
-            }
-            AiTraderTrail trail = trails.get(TraderPlanStore.key(p.getSymbol(), p.getSide()));
-            if (trail != null) {
-                row.set("trailingStop", trailJson(trail));
             }
             CaseFileBuilder.MarketWindow w = paths.get(p.getId());
             if (w != null) {
@@ -193,11 +175,10 @@ final class WakeAccountState {
         return ps;
     }
 
-    /** 挂单行：订单事实 + 开仓挂单所属计划的轻量版 + 成交后才开始跟的跟踪止损规则。 */
+    /** 挂单行：订单事实 + 开仓挂单所属计划的轻量版。 */
     private static ArrayNode pendingOrdersJson(PromptCatalog prompts, AgentLang lang,
                                                List<FuturesOrderResponse> pendingOrders,
-                                               Map<String, AiTraderPlan> planByKey, Map<String, AiTraderTrail> trails,
-                                               long boundaryTime) {
+                                               Map<String, AiTraderPlan> planByKey, long boundaryTime) {
         ArrayNode po = MAPPER.createArrayNode();
         for (FuturesOrderResponse o : pendingOrders) {
             ObjectNode row = MAPPER.createObjectNode()
@@ -208,13 +189,8 @@ final class WakeAccountState {
                     .put("limitPrice", o.getLimitPrice())
                     .put("leverage", o.getLeverage());
             if (o.getOrderSide() != null && o.getOrderSide().startsWith("OPEN_")) {
-                String key = TraderPlanStore.key(o.getSymbol(), o.getOrderSide().substring("OPEN_".length()));
-                // 还没绑仓位的规则是这张限价单带的，成交后开始跟
-                AiTraderTrail trail = trails.get(key);
-                if (trail != null && trail.getPositionId() == null) {
-                    row.set("trailingStopOnceFilled", trailJson(trail));
-                }
-                AiTraderPlan plan = planByKey.get(key);
+                AiTraderPlan plan = planByKey.get(
+                        TraderPlanStore.key(o.getSymbol(), o.getOrderSide().substring("OPEN_".length())));
                 if (plan != null) {
                     // 挂出时刻按订单自己的
                     long placed = TradePairing.msOf(o.getCreatedAt());

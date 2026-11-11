@@ -87,21 +87,13 @@ export function doneTrades(d: AiTraderDecisionView): ActionRow[] {
 export function tradeArgsSummary(a: ActionRow): string {
   const g = (k: string) => a.args?.[k] != null ? String(a.args[k]) : '';
   const tr = (key: string, vars?: Record<string, string>) => i18n.t(`ai:${key}`, vars ?? {});
-  // 跟踪止损的参数：回调幅度，设了启动价的再带一句
-  const trail = () => {
-    const ts = a.args?.trailingStop as { callbackPct?: number; activationPrice?: number | null } | undefined;
-    if (ts?.callbackPct == null) return '';
-    return ts.activationPrice != null
-      ? tr('args.trailFrom', { pct: String(ts.callbackPct), p: String(ts.activationPrice) })
-      : tr('args.trail', { pct: String(ts.callbackPct) });
-  };
   switch (a.tool) {
     case 'open_position': {
       const tp = rungsText(a.args?.takeProfits);
       const parts = [g('symbol'), g('side') === 'LONG' ? tr('args.long') : g('side') === 'SHORT' ? tr('args.short') : g('side'),
         g('quantity') && tr('args.qty', { n: g('quantity') }), g('leverage') && `${g('leverage')}x`,
         g('stopLossPrice') && tr('args.sl', { p: g('stopLossPrice') }),
-        tp && tr('args.tp', { p: tp }), trail(),
+        tp && tr('args.tp', { p: tp }),
         g('playType')];
       return parts.filter(Boolean).join(' · ');
     }
@@ -109,7 +101,7 @@ export function tradeArgsSummary(a: ActionRow): string {
       return [tr('args.position', { id: g('positionId') }), g('quantity') && tr('args.qty', { n: g('quantity') }), g('reason')]
         .filter(Boolean).join(' · ');
     case 'set_stop_loss':
-      return [g('stopLossPrice') && `→${g('stopLossPrice')}`, trail(), g('reason')].filter(Boolean).join(' · ');
+      return [`→${g('stopLossPrice')}`, g('reason')].filter(Boolean).join(' · ');
     case 'set_take_profit':
       return [`→${rungsText(a.args?.takeProfits) || tr('args.tpNone')}`, g('reason')].filter(Boolean).join(' · ');
     case 'preset': {

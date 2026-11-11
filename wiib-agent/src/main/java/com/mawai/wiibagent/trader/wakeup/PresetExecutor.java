@@ -7,7 +7,6 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.StopOrders;
 import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
-import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
@@ -52,7 +51,6 @@ public class PresetExecutor {
     private final AiTraderDecisionMapper decisionMapper;
     private final TraderPlanStore planStore;
     private final TraderWatchStore watchStore;
-    private final TraderTrailStore trailStore;
     private final UserLangResolver userLangResolver;
     private final PromptCatalog prompts;
     private final MessageCatalog messages;
@@ -183,9 +181,6 @@ public class PresetExecutor {
         String symbol = action.path("symbol").asString();
         String orderSide = action.path("side").asString();
         simTradeClient.cancelOrder(trader.getSimUserId(), action.path("orderId").asLong());
-        // 这张单带着成交后才开始跟的跟踪止损的话，一起清掉
-        trailStore.orderCancelled(trader.getId(), trader.getRoundNo(), symbol, orderSide,
-                () -> simTradeClient.getPendingOrders(trader.getSimUserId(), null));
         return new Done(true, prompts.get(lang, "trader.preset.cancelled", Map.of(
                 "symbol", symbol, "side", orderSide, "orderId", action.path("orderId").asLong())));
     }

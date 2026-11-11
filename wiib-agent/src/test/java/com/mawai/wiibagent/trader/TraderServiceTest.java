@@ -19,7 +19,6 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
-import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
@@ -70,7 +69,7 @@ class TraderServiceTest {
 
     private final TraderService service = new TraderService(
             traderMapper, decisionMapper, modelFactory, endpointService,
-            simTradeClient, binanceProperties, planStore, watchStore, mock(TraderTrailStore.class), scheduler, hub,
+            simTradeClient, binanceProperties, planStore, watchStore, scheduler, hub,
             new PromptCatalog(), langResolver, new MessageCatalog(), ledger);
 
     /** 端点库里的一条 */

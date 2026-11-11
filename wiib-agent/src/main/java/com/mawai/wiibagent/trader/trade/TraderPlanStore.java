@@ -133,8 +133,8 @@ public class TraderPlanStore {
     }
 
     /**
-     * 唤醒之外的线程（预案执行、跟踪止损结束）给计划追加一条修订：现读现写，只写修订史这一列。
-     * 那些线程和唤醒不串行，整行写回会把唤醒里刚改的别的列（比如归档状态）盖回去
+     * 唤醒之外的线程（预案执行）给计划追加一条修订：现读现写，只写修订史这一列。
+     * 它和唤醒不串行，整行写回会把唤醒里刚改的别的列（比如归档状态）盖回去
      */
     public void appendRevision(long planId, long time, String type, String change, String reason) {
         AiTraderPlan plan = mapper.selectById(planId);

@@ -311,11 +311,6 @@ tool:
     takeProfits is OPTIONAL: up to 3 rungs, each a price on the profit side of entry plus the percent of the
     position it closes (percents sum to at most 100; whatever is left has no take-profit order). Omit it
     and the position has no take-profit order at all.
-    trailCallbackPct is OPTIONAL and turns the stop into a trailing stop: the platform follows the mark
-    price and keeps moving the stop to (most favourable price since trailing began) minus/plus that
-    percent, only ever tighter; trailActivationPrice, if given, is the mark price at which trailing begins.
-    On a LIMIT order trailing begins once the order fills. stopLossPrice is the stop until then. A LIMIT order
-    cannot carry a trailing stop while a position on the same coin and side is already open.
     playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
     signalsUsed: one sentence citing the concrete data fields your thesis rests on.
     invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
@@ -332,15 +327,10 @@ tool:
     reason: one sentence on why you are closing now.
 
   set_stop_loss: |-
-    Change the stop of an open position (positionId from the [Account] block in your opening message, or get_account).
-    The stop always covers the WHOLE position — you do not pass a quantity. Two things can be set, at least one:
-    stopLossPrice puts the stop at a fixed price. Guard: tighten only — LONG stops may only move UP, SHORT stops
-    only DOWN (relative to the current stop); it cannot sit on the far side of the current price (it would
-    fire at once). To exit, use close_position.
-    trailCallbackPct starts (or re-tunes) a trailing stop: from now on the platform follows the mark price and
-    keeps moving the stop to (most favourable price since trailing began) minus/plus that percent, only ever
-    tighter, without waking you; trailActivationPrice, if given, is the mark price at which trailing begins.
-    Passing stopLossPrice alone on a position that is trailing ends the trailing and leaves the fixed stop.
+    Replace the stop-loss of an open position (positionId from the [Account] block in your opening message, or get_account). The new stop
+    always covers the WHOLE position — you do not pass a quantity. Guard: tighten only —
+    LONG stops may only move UP, SHORT stops only DOWN (relative to the current stop); it cannot
+    sit on the far side of the current price (it would fire at once). To exit, use close_position.
     reason is REQUIRED and becomes part of the position's public plan revision history.
 
   set_take_profit: |-

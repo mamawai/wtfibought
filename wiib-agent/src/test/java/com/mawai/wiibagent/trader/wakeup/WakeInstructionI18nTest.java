@@ -25,7 +25,6 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
-import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.trader.DecisionText;
@@ -97,7 +96,6 @@ class WakeInstructionI18nTest {
             mock(CrossAssetToolkit.class),
             traderMapper, mock(AiTraderDecisionMapper.class),
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts), watchStore,
-            mock(TraderTrailStore.class),
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
@@ -233,7 +231,7 @@ class WakeInstructionI18nTest {
     @Test
     void 观察包中英文案无中文() {
         WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), Map.of(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(), Map.of());
+                nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(), Map.of());
         PromptI18nAssertions.assertNoCjk("英文观察包", en.text());
         PromptI18nAssertions.assertNoCjk("英文第一段（带观察包）",
                 runner.stageOneInstruction(trader(), null, BOUNDARY, null, en.text(), null, "", AgentLang.EN));
@@ -243,7 +241,7 @@ class WakeInstructionI18nTest {
         assertThat(en.busy()).isFalse();
 
         WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), Map.of(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(), Map.of());
+                nothing(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(), Map.of());
         assertThat(zh.text()).contains("【当前账户】").contains("\"equity\":10000.00")
                 .contains("【上一轮结论】本局还没有上一轮结论");
     }
@@ -260,13 +258,13 @@ class WakeInstructionI18nTest {
         Map<String, BigDecimal> marks = Map.of("BTCUSDT", new BigDecimal("64000"));
 
         WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), Map.of(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(w), marks);
+                nothing(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(w), marks);
         assertThat(zh.text()).contains("【你的承诺】")
                 .contains("- BTCUSDT 触及 65000 以上（备注：breakout, chase long）：未命中；现价 64000，在 65000 下方 1.54%");
         assertThat(zh.busy()).isTrue();
 
         WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), Map.of(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(w), marks);
+                nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(w), marks);
         PromptI18nAssertions.assertNoCjk("英文承诺块", en.text());
         assertThat(en.text()).contains("[Your commitments]").contains("1.54% below 65000");
     }
@@ -292,14 +290,14 @@ class WakeInstructionI18nTest {
         fired.setActionResult("ETHUSDT LONG 止损 3000→3050");
 
         String zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), Map.of(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(fired), List.of(armed), Map.of()).text();
+                nothing(), List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(fired), List.of(armed), Map.of()).text();
         assertThat(zh)
                 .contains("- BTCUSDT 触及 63000 以下（备注：market breaks, cut the alt）：未命中；预案：命中后平台市价平掉 ETHUSDT LONG（positionId 12）的 50%，然后叫醒你")
                 .contains("你的备注：lock breakeven｜预案已由平台执行：ETHUSDT LONG 止损 3000→3050");
 
         fired.setActionResult("ETHUSDT LONG stop 3000→3050");
         String en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
-                nothing(), Map.of(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(fired), List.of(armed), Map.of()).text();
+                nothing(), List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(fired), List.of(armed), Map.of()).text();
         PromptI18nAssertions.assertNoCjk("英文预案", en);
         assertThat(en).contains("standing order: when it fires the platform closes 50% of ETHUSDT LONG (positionId 12) at market, then wakes you")
                 .contains("standing order carried out by the platform: ETHUSDT LONG stop 3000→3050");

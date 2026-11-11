@@ -280,7 +280,7 @@ class TraderPromptAssemblerTest {
                 .doesNotContain("2:1");
     }
 
-    /** 模板必须交代护栏会拒的动作：放宽止损、把止盈放到现价另一侧、给已有计划的仓再写计划；跟踪止损的幅度上下限按代码里的常量渲染 */
+    /** 模板必须交代护栏会拒的动作：放宽止损、把止盈放到现价另一侧、给已有计划的仓再写计划 */
     @Test
     void templateMentionsGuardRejections() {
         String prompt = assembler.assemble(trader(), AgentLang.ZH);
@@ -289,7 +289,6 @@ class TraderPromptAssemblerTest {
                 .contains("write_plan")
                 .contains("放宽止损")
                 .contains("set_take_profit 把任一档放到现价另一侧")
-                .contains("回调幅度不在 0.1%~50% 之间")
                 .contains("计划不可改写");
     }
 

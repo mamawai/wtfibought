@@ -948,22 +948,6 @@ export interface TraderDetailView {
   nextWakeAt: number | null;
   /** 本局还在盯的条件 */
   watches: TraderWatch[];
-  /** 本局在跟的跟踪止损规则 */
-  trails: TraderTrail[];
-}
-
-/** 一个仓位的跟踪止损规则（ai_trader_trail 原样）：止损跟着最有利价走，只进不退 */
-export interface TraderTrail {
-  symbol: string;
-  side: 'LONG' | 'SHORT';
-  /** 限价单还没成交为 null，成交后才开始跟 */
-  positionId: number | null;
-  /** 回调幅度 % */
-  callbackPct: number;
-  /** 标记价到这里才开始跟；null=一有仓位就跟 */
-  activationPrice: number | null;
-  /** 开始跟随后的最有利价；还没开始跟为 null */
-  bestPrice: number | null;
 }
 
 /** 它给自己布的一条盯盘条件（ai_trader_watch 原样），命中就叫醒它；带 actionJson 的是预案，命中时平台先把动作做掉 */

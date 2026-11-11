@@ -5,7 +5,6 @@ import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
-import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
@@ -51,10 +50,9 @@ class PresetExecutorTest {
     private final AiTraderDecisionMapper decisionMapper = mock(AiTraderDecisionMapper.class);
     private final TraderPlanStore planStore = mock(TraderPlanStore.class);
     private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
-    private final TraderTrailStore trailStore = mock(TraderTrailStore.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
     private final PresetExecutor executor = new PresetExecutor(sim, traderMapper, decisionMapper, planStore, watchStore,
-            trailStore, langResolver, new PromptCatalog(), new MessageCatalog());
+            langResolver, new PromptCatalog(), new MessageCatalog());
 
     {
         AiTrader t = new AiTrader();
@@ -167,14 +165,13 @@ class PresetExecutorTest {
         verify(planStore, never()).appendRevision(anyLong(), anyLong(), any(), any(), any());
     }
 
-    /** 撤单做成了不叫醒，顺带让跟踪止损那边清掉这张单带的规则；sim 拒了（单子已经不在）按没做成报，叫醒 */
+    /** 撤单做成了不叫醒；sim 拒了（单子已经不在）按没做成报，叫醒 */
     @Test
     void cancelOrderQuietWhenDoneAndWakesWhenSimRefuses() {
         AiTraderWatch w = watch("{\"type\":\"CANCEL_ORDER\",\"orderId\":600,\"symbol\":\"BTCUSDT\",\"side\":\"OPEN_LONG\"}");
 
         assertThat(executor.execute(w, new BigDecimal("1899"), AT)).isFalse();
         verify(sim).cancelOrder(99L, 600L);
-        verify(trailStore).orderCancelled(eq(7L), eq(1), eq("BTCUSDT"), eq("OPEN_LONG"), any());
         verify(watchStore).recordAction(31L, true, "BTCUSDT OPEN_LONG 挂单 600 已撤");
 
         when(sim.cancelOrder(99L, 600L)).thenThrow(new IllegalStateException("订单不可撤"));

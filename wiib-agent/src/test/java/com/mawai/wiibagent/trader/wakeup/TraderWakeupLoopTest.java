@@ -9,7 +9,6 @@ import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
-import com.mawai.wiibagent.trader.trade.TraderTrailStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.config.BinanceProperties;
@@ -151,7 +150,7 @@ class TraderWakeupLoopTest {
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             mock(CrossAssetToolkit.class),
             traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), watchStore,
-            mock(TraderTrailStore.class), langResolver,
+            langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
             wakeObservation,
             mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger,
