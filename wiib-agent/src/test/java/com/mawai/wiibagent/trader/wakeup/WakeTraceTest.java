@@ -2,6 +2,7 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.tool.execution.DefaultToolCallResultConverter;
 import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
@@ -32,7 +33,7 @@ class WakeTraceTest {
         t.token("先看");
         t.callEnd("先看K线", List.of(call("c1", "klines", "{\"symbol\":\"BTCUSDT\"}"), call("c2", "x", "not json")));
         t.toolResult("c1", "klines", "OK data");
-        t.toolResult("c2", "x", "REJECTED: 不行");
+        t.toolResult("c2", "x", receipt("REJECTED: 不行"));
         t.callStart();
         t.callEnd("结论", List.of());
         t.end("OK", null, new BigDecimal("10012.3"), 42000, 2, 18000L);
@@ -78,15 +79,27 @@ class WakeTraceTest {
         assertThat(end.path("totalTokens").asLong(0)).isEqualTo(18000L);
     }
 
+    /** 工具返回值过一遍 Spring 的结果转换器，就是循环里真正拿到的回执：纯文本会被包成带引号的一行 JSON 字符串 */
+    private static String receipt(String toolReturn) {
+        return new DefaultToolCallResultConverter().convert(toolReturn, String.class);
+    }
+
     @Test
     void 回执预览截2000字且status按前缀判() {
         WakeTrace t = trace();
         t.callStart();
-        t.callEnd("", List.of(call("c1", "klines", "{}"), call("c2", "a", "{}"), call("c3", "b", "{}")));
+        t.callEnd("", List.of(call("c1", "klines", "{}"), call("c2", "a", "{}"), call("c3", "b", "{}"),
+                call("c4", "c", "{}"), call("c5", "d", "{}"), call("c6", "e", "{}")));
 
-        WakeTrace.Frame ok = t.toolResult("c1", "klines", "x".repeat(WakeTrace.PREVIEW_CHARS + 500));
-        WakeTrace.Frame error = t.toolResult("c2", "a", "ERROR: 上游超时");
-        WakeTrace.Frame rejected = t.toolResult("c3", "b", "REJECTED: 杠杆越界");
+        WakeTrace.Frame ok = t.toolResult("c1", "klines", receipt("x".repeat(WakeTrace.PREVIEW_CHARS + 500)));
+        WakeTrace.Frame error = t.toolResult("c2", "a", receipt("ERROR: 上游超时"));
+        WakeTrace.Frame rejected = t.toolResult("c3", "b", receipt("REJECTED: 杠杆越界\n上限 \"20\" 倍"));
+        // 返回 JSON 的工具，回执就是那段 JSON
+        WakeTrace.Frame json = t.toolResult("c4", "c", receipt("{\"available\":false}"));
+        // 工具名对不上的回执是循环自己写的，不过转换器
+        WakeTrace.Frame unknownTool = t.toolResult("c5", "d", "ERROR: unknown tool \"d\"");
+        // 预算用尽那一批的最后一条，回执后面贴着预算提示
+        WakeTrace.Frame lastCall = t.toolResult("c6", "e", receipt("REJECTED: 不行") + "\n\n（预算已用完）");
 
         assertThat(ok.event()).isEqualTo("tool_result");
         assertThat(ok.data().path("call").asInt(0)).isEqualTo(1);
@@ -96,7 +109,12 @@ class WakeTraceTest {
         assertThat(ok.data().path("preview").asString(null)).hasSize(WakeTrace.PREVIEW_CHARS);
         assertThat(error.data().path("status").asString(null)).isEqualTo("error");
         assertThat(rejected.data().path("status").asString(null)).isEqualTo("rejected");
-        assertThat(rejected.data().path("preview").asString(null)).isEqualTo("REJECTED: 杠杆越界");
+        assertThat(rejected.data().path("preview").asString(null)).isEqualTo("REJECTED: 杠杆越界\n上限 \"20\" 倍");
+        assertThat(json.data().path("status").asString(null)).isEqualTo("ok");
+        assertThat(json.data().path("preview").asString(null)).isEqualTo("{\"available\":false}");
+        assertThat(unknownTool.data().path("status").asString(null)).isEqualTo("error");
+        assertThat(lastCall.data().path("status").asString(null)).isEqualTo("rejected");
+        assertThat(lastCall.data().path("preview").asString(null)).isEqualTo("REJECTED: 不行\n\n（预算已用完）");
     }
 
     @Test

@@ -181,15 +181,28 @@ public final class WakeTrace {
         return modelEnd(call);
     }
 
-    /** 一条工具回执：status 按前缀判，preview 截 {@link #PREVIEW_CHARS} */
+    /** 一条工具回执：先还原成工具返回的原文，status 按原文前缀判，preview 截 {@link #PREVIEW_CHARS} */
     public synchronized Frame toolResult(String id, String name, String responseData) {
         Call call = calls.getLast();
-        String status = responseData.startsWith("REJECTED:") ? "rejected"
-                : responseData.startsWith("ERROR:") ? "error" : "ok";
-        String preview = responseData.length() > PREVIEW_CHARS ? responseData.substring(0, PREVIEW_CHARS) : responseData;
+        String text = plainText(responseData);
+        String status = text.startsWith("REJECTED:") ? "rejected" : text.startsWith("ERROR:") ? "error" : "ok";
+        String preview = text.length() > PREVIEW_CHARS ? text.substring(0, PREVIEW_CHARS) : text;
         ToolResult result = new ToolResult(id, name, status, preview);
         call.results.add(result);
         return toolResultFrame(call, result);
+    }
+
+    /**
+     * 工具返回纯文本时，回执是一行带引号、换行转义过的 JSON 字符串（Spring 的结果转换器转的），这里还原成原文；
+     * 返回 JSON 的回执不动。预算提示贴在换行后面（见 ModelCallLimiter），原样接回去
+     */
+    private static String plainText(String responseData) {
+        if (!responseData.startsWith("\"")) {
+            return responseData;
+        }
+        int cut = responseData.indexOf('\n');
+        return cut < 0 ? MAPPER.readValue(responseData, String.class)
+                : MAPPER.readValue(responseData.substring(0, cut), String.class) + responseData.substring(cut);
     }
 
     /**
