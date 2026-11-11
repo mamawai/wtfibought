@@ -56,9 +56,13 @@ public class TraderModelFactory {
         return endpointService.resolve(trader.getUserId(), UserLlmBinding.TRADER);
     }
 
-    /** 这个 trader 的端点能不能联网搜索：协议支持且用户勾了 */
+    /** 这个 trader 联不联网搜索，两道都要过：主人在「我的 Trader」开了，所用端点也开了 */
     public boolean webSearchEnabled(AiTrader trader) {
-        UserLlmEndpoint endpoint = endpointFor(trader);
+        return Boolean.TRUE.equals(trader.getWebSearchEnabled()) && searches(endpointFor(trader));
+    }
+
+    /** 端点开了联网搜索：协议支持且用户勾了 */
+    public static boolean searches(UserLlmEndpoint endpoint) {
         return AiProtocols.supportsServerSearch(endpoint.getApiProtocol()) && Boolean.TRUE.equals(endpoint.getWebSearch());
     }
 

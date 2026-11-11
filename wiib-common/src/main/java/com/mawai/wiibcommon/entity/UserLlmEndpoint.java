@@ -38,7 +38,7 @@ public class UserLlmEndpoint {
     private String reasoningEffort;
     /**
      * 服务端联网搜索：请求里声明该协议的服务端搜索工具才搜（opt-in）；勾了的保存前会探测，探测不过不让存。
-     * 能声明的协议才存 true（AiProtocols.supportsServerSearch）。当前只有对话的主 agent 与 researcher worker 会用到。
+     * 能声明的协议才存 true（AiProtocols.supportsServerSearch）。对话的主 agent 与 researcher worker 会用；trader 还要主人开 AiTrader.webSearchEnabled 才用。
      */
     private Boolean webSearch;
     /**

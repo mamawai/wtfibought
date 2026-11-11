@@ -382,7 +382,7 @@ public class TraderWakeupRunner {
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
         // 不强制 tool_choice："先读事实、用工具求证"写在开场白的问题里
-        // 端点开了联网搜索的多挂一个 web_search：搜索单独发一次请求，用量记在同一轮账上
+        // 开了联网搜索的多挂一个 web_search：搜索单独发一次请求，用量记在同一轮账上
         LlmClient client = LlmClient.builder().model(model).systemPrompt(prompt)
                 .tools(wakeTools(lang, tradeTools, modelFactory.webSearchEnabled(trader)
                         ? new WebSearchTool(model, prompts.get(lang, "trader.wake.searchInstruction")) : null))
@@ -508,7 +508,7 @@ public class TraderWakeupRunner {
      * <p>
      * 快讯工具的语言在这里烤进实例（英文取译文，缺译文回落中文原文）——取哪门语言的新闻不是模型的选择。
      *
-     * @param webSearch 联网搜索工具，端点没开搜索时为 null，不挂
+     * @param webSearch 联网搜索工具，没开联网搜索时为 null，不挂
      */
     List<ToolCallback> wakeTools(AgentLang lang, TradeTools tradeTools, WebSearchTool webSearch) {
         List<Object> toolkits = new ArrayList<>(List.of(tradeTools, indicatorToolkit, marketToolkit, derivativesToolkit,
@@ -571,7 +571,7 @@ public class TraderWakeupRunner {
                         Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
     }
 
-    /** 联网搜索那一问，排在主问题前面单独一行；端点没开搜索的不问 */
+    /** 联网搜索那一问，排在主问题前面单独一行；没开联网搜索的不问（开没开见 TraderModelFactory.webSearchEnabled） */
     private String searchQuestion(AiTrader trader, AgentLang lang) {
         return modelFactory.webSearchEnabled(trader) ? prompts.get(lang, "trader.wake.searchQuestion") + '\n' : "";
     }

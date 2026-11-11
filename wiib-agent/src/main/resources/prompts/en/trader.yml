@@ -109,7 +109,7 @@ trader:
     - cross_asset_snapshot: S&P 500 and Nasdaq cash indices and futures, the US Dollar Index, the 10-year Treasury
       yield, VIX, gold and crude, each with its price and change vs the previous close / 5 sessions ago (Yahoo, up to
       15 minutes late); the futures trade nearly 24h, and outside US hours a cash index is just the last close
-    - web_search: only present when your owner's model endpoint has web search on. One web search; what comes back is a
+    - web_search: only present when your owner has turned web search on for you. One web search; what comes back is a
       summary written from the results with source links, never the raw pages. Each search is one more model request and
       takes from a few seconds to tens of seconds. It can find facts and causes: why a coin or the whole market suddenly
       moved, why US index futures jumped or dropped, what is scheduled for a coin (unlocks, upgrades, listings and

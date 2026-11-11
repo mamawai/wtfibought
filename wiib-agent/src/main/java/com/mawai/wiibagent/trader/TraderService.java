@@ -76,14 +76,17 @@ public class TraderService {
     /** 经验账本：开新局带入、清旧局、删 trader 时一并清 */
     private final ExperienceLedger ledger;
 
-    /** llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（北京时间），null=全天 */
+    /**
+     * llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（北京时间），null=全天。
+     * webSearchEnabled：联网搜索开关，所用端点没开联网搜索的存 false
+     */
     public record UpsertReq(String name, String symbols, String intervalCode, String customPrompt,
                             Long llmEndpointId,
                             Integer leverageMin, Integer leverageMax, BigDecimal marginPctMax,
                             Boolean allowMultiPosition, Boolean allowHedge,
                             Boolean alertEnabled, BigDecimal alertThresholdMult,
                             Boolean reviewEnabled, Boolean learnedRestrictionHold,
-                            String wakeWindow) {
+                            Boolean webSearchEnabled, String wakeWindow) {
     }
 
     public AiTrader mine(long userId) {
@@ -117,7 +120,7 @@ public class TraderService {
         }
         AiTrader t = new AiTrader();
         t.setUserId(userId);
-        applyConfig(t, req);
+        applyConfig(t, req, endpoint);
         t.setStatus(AiTrader.STATUS_PAUSED);
         t.setRoundNo(1);
         t.setConsecutiveFailures(0);
@@ -151,7 +154,7 @@ public class TraderService {
             }
         }
         AiTrader probe = new AiTrader();
-        applyConfig(probe, req);
+        applyConfig(probe, req, endpoint);
         // 列级更新只写配置字段：整行 updateById 会把唤醒回路并发写的 status/连败计数盖回快照旧值
         // （连通性测试要出网数秒，窗口不小）——与 runner 侧"状态回写列级更新"是同一条铁律的两半
         traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
@@ -169,6 +172,7 @@ public class TraderService {
                 .set(AiTrader::getAlertThresholdMult, probe.getAlertThresholdMult())
                 .set(AiTrader::getReviewEnabled, probe.getReviewEnabled())
                 .set(AiTrader::getLearnedRestrictionHold, probe.getLearnedRestrictionHold())
+                .set(AiTrader::getWebSearchEnabled, probe.getWebSearchEnabled())
                 .set(AiTrader::getWakeWindow, probe.getWakeWindow())
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
         endpointService.bind(userId, UserLlmBinding.TRADER, req.llmEndpointId());
@@ -535,7 +539,8 @@ public class TraderService {
         return null;
     }
 
-    private static void applyConfig(AiTrader t, UpsertReq req) {
+    /** @param endpoint 这次保存选定的端点 */
+    private static void applyConfig(AiTrader t, UpsertReq req, UserLlmEndpoint endpoint) {
         t.setName(req.name().trim());
         t.setSymbols(String.join(",", parseSymbols(req.symbols())));
         t.setIntervalCode(req.intervalCode());
@@ -550,6 +555,8 @@ public class TraderService {
         t.setAlertThresholdMult(req.alertThresholdMult() == null ? BigDecimal.ONE : req.alertThresholdMult());
         t.setReviewEnabled(!Boolean.FALSE.equals(req.reviewEnabled()));
         t.setLearnedRestrictionHold(Boolean.TRUE.equals(req.learnedRestrictionHold()));
+        // 端点没开联网搜索的，这个开关开不了
+        t.setWebSearchEnabled(Boolean.TRUE.equals(req.webSearchEnabled()) && TraderModelFactory.searches(endpoint));
         // 存归一化文本（validate 已 parse 过），全天存 null
         WakeWindow window = WakeWindow.parse(req.wakeWindow());
         t.setWakeWindow(window == null ? null : window.text());

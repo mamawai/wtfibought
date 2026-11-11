@@ -57,6 +57,7 @@ const EMPTY_FORM: TraderUpsertRequest = {
   llmEndpointId: null,
   spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, reviewEnabled: true,
   learnedRestrictionHold: false,
+  webSearchEnabled: false,
   wakeWindow: null,
 };
 
@@ -68,6 +69,7 @@ function formOf(v: TraderOwnerView): TraderUpsertRequest {
     alertEnabled: v.alertEnabled, alertThresholdMult: v.alertThresholdMult,
     reviewEnabled: v.reviewEnabled,
     learnedRestrictionHold: v.learnedRestrictionHold,
+    webSearchEnabled: v.webSearchEnabled,
     wakeWindow: v.wakeWindow,
   };
 }
@@ -79,7 +81,7 @@ const SECTIONS: { id: string; keys: (keyof TraderUpsertRequest)[] }[] = [
   { id: 'beat', keys: ['intervalCode', 'wakeWindow'] },
   { id: 'spec', keys: ['spec'] },
   { id: 'alert', keys: ['alertEnabled', 'alertThresholdMult', 'reviewEnabled', 'learnedRestrictionHold'] },
-  { id: 'model', keys: ['llmEndpointId'] },
+  { id: 'model', keys: ['llmEndpointId', 'webSearchEnabled'] },
   { id: 'prompt', keys: ['customPrompt'] },
 ];
 
@@ -266,6 +268,9 @@ export function MyTrader() {
   const selected = symbolsOf(form.symbols);
   const win = parseWindow(form.wakeWindow);
   const perDay = beatsPerDay(form.intervalCode, win);
+  // 表单里选的那条端点（没选就是默认端点）开没开联网搜索；没开的话联网搜索开关点不动
+  const endpointSearch = (endpoints.find(e => e.id === form.llmEndpointId)
+    ?? endpoints.find(e => e.isDefault) ?? endpoints[0])?.webSearch ?? false;
 
   const dirty = SECTIONS.filter(s => s.keys.some(k => !same(form[k], base[k])));
   const errors = [
@@ -552,6 +557,11 @@ export function MyTrader() {
             <LlmEndpointSelect endpoints={endpoints} value={form.llmEndpointId} onChange={id => set({ llmEndpointId: id })}
                                className="w-full max-w-[480px] h-[46px] border-foreground bg-transparent px-3 text-[15px] font-semibold" />
             <p className="tr-hint mt-2.5">{t('my.model.hint')}</p>
+            <div className="mt-5">
+              <SwitchRow on={endpointSearch && form.webSearchEnabled} onChange={v => set({ webSearchEnabled: v })}
+                         disabled={!endpointSearch} title={t('my.model.search')}
+                         desc={endpointSearch ? t('my.model.searchDesc') : t('my.model.searchNeedEndpoint')} />
+            </div>
           </section>
 
           <PromptSection form={form} set={set} defaultInstructions={defaultInstructions} />

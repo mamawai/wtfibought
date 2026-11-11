@@ -86,6 +86,22 @@ class TraderModelFactoryTest {
         assertThat(f.modelFor(trader())).isNotSameAs(first);
     }
 
+    /** 联网搜索两道闸：主人开了开关、端点也开了才算开 */
+    @Test
+    void webSearchNeedsTraderSwitchAndEndpoint() {
+        UserLlmEndpoint endpoint = endpoint(1, "responses", "grok-4");
+        endpoint.setWebSearch(true);
+        when(endpointService.resolve(eq(9L), eq(UserLlmBinding.TRADER))).thenReturn(endpoint);
+        AiTrader switchedOn = trader();
+        switchedOn.setWebSearchEnabled(true);
+
+        assertThat(factory().webSearchEnabled(switchedOn)).isTrue();
+        assertThat(factory().webSearchEnabled(trader())).isFalse();
+
+        endpoint.setWebSearch(false);
+        assertThat(factory().webSearchEnabled(switchedOn)).isFalse();
+    }
+
     /** 用户把端点删光：抛异常让 runner 的失败处理接管，不能悄悄返回 null 让下游 NPE */
     @Test
     void noEndpointThrows() {

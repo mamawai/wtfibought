@@ -77,6 +77,9 @@ public class AiTrader {
     /** 警报灵敏度系数 ≥1.0 只能调高：生效阈值 = 每币基准 × 本系数 */
     private BigDecimal alertThresholdMult;
 
+    /** 联网搜索开关：开了且所用端点也开了联网搜索，唤醒时才挂 web_search、才多问一句要不要搜 */
+    private Boolean webSearchEnabled;
+
     /**
      * 唤醒时段（北京时间）"HH:mm-HH:mm"，5 分钟粒度、两端含、可跨午夜；null=全天。
      * 只管交易类唤醒（例行/警报），手动唤醒不拦；日线交接的复盘不看它——夜里交易了就该复盘夜里的交易。

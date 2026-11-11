@@ -468,7 +468,10 @@
       "restrictDesc": "Off: such rules are only a reference, opening follows your instructions; on: it can use them alone as a reason to stay out"
     },
     "model": {
-      "hint": "Every wake and daily review burns this endpoint's key; switching endpoints tests the connection when you save."
+      "hint": "Every wake and daily review burns this endpoint's key; switching endpoints tests the connection when you save.",
+      "search": "Web search",
+      "searchDesc": "On: it gets a web_search tool and, on every heartbeat wake and volatility-alert wake, first decides whether to search this round; each search costs one more model request",
+      "searchNeedEndpoint": "The selected endpoint doesn't have web search on, so this can't be turned on; tick web search for it under Model config first"
     },
     "prompt": {
       "desc": "The goal, limits and preferences you give it, with the rest left to its own judgement; the position spec, guardrails and closing format are enforced by the system",
@@ -627,7 +630,7 @@
       "whale_positions": "Hyperliquid on-chain whale positions, entries and liquidation levels, refreshed every 10 minutes; BTC / ETH / SOL / XRP / DOGE only.",
       "news_search": "Recent market news flashes, full text; it can also search the local archive by keyword and time window (up to 7 days back).",
       "cross_asset_snapshot": "Latest quotes and moves of US indices and index futures, the dollar index, the 10Y yield, VIX, gold and crude.",
-      "web_search": "One web search, returning a summary written from the results with source links. Only there when the model endpoint has web search on; each search costs one more model request."
+      "web_search": "One web search, returning a summary written from the results with source links. Only there when the model endpoint has web search on and web search is switched on in the Model section above; each search costs one more model request."
     }
   },
   "chat": {
@@ -873,7 +876,7 @@
     "contextWindow": "Context window",
     "contextWindowHint": "When this endpoint is the workbench chat's main model and context usage reaches 90% of this window, the context is compacted before the next turn starts. About 80% of the model's actual window works best: usage keeps growing within a turn, and compaction itself needs room. Range 128K–1000K (1M).",
     "webSearch": "Web search",
-    "webSearchHint": "Declares this protocol's server-side search tool in requests. Saving and the connectivity test probe it first and block the endpoint if the upstream doesn't support it — untick it then. The workbench chat's main model, its research sub-agent and the trader use it: a trader on this endpoint gets a web_search tool and decides for itself when to search; the market-analysis sub-agent is unaffected. Searches count toward upstream usage.",
+    "webSearchHint": "Declares this protocol's server-side search tool in requests. Saving and the connectivity test probe it first and block the endpoint if the upstream doesn't support it — untick it then. The workbench chat's main model and its research sub-agent use it; a trader on this endpoint also needs web search switched on in My Trader's Model section; the market-analysis sub-agent is unaffected. Searches count toward upstream usage.",
     "webSearchOpenAiHint": "The openai protocol has no standard server-side search; pick responses / anthropic / gemini for web search",
     "antigravity": "Is this Gemini backed by Antigravity (e.g. through a CPA proxy)? Tick it if so",
     "antigravityHint": "Antigravity won't take web search and local tools in the same request. When ticked, the model gets a local web search tool instead: each call sends a separate search-only request and hands the results back to the model. Leave it unticked for Google's official Gemini API.",

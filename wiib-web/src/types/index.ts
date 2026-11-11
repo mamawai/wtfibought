@@ -749,7 +749,7 @@ export interface LlmEndpointView {
   model: string;
   /** 任意上游认的档位值（none/low/medium/high/xhigh…），null=不传给上游走模型默认 */
   reasoningEffort: string | null;
-  /** 服务端联网搜索（responses / anthropic / gemini 协议端点可开；只有对话的主 agent 与调研子 agent 用它） */
+  /** 服务端联网搜索（responses / anthropic / gemini 协议端点可开）：对话的主 agent 与调研子 agent 用它；交易员还要自己那个联网搜索开关也开着 */
   webSearch: boolean;
   /** Gemini 来源是 Antigravity（如经 CPA 反代）：搜索单独发一次，只在 gemini 协议且勾了联网搜索时为 true */
   antigravity: boolean;
@@ -828,6 +828,8 @@ export interface TraderOwnerView {
   reviewEnabled: boolean;
   /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
   learnedRestrictionHold: boolean;
+  /** 联网搜索开关：开了且所用端点也开了联网搜索，它醒来才有 web_search、才多问一句要不要搜 */
+  webSearchEnabled: boolean;
   /** 唤醒时段 "HH:mm-HH:mm"，null=全天 */
   wakeWindow: string | null;
 }
@@ -1106,6 +1108,8 @@ export interface TraderUpsertRequest {
   alertThresholdMult: number;
   reviewEnabled: boolean;
   learnedRestrictionHold: boolean;
+  /** 联网搜索开关；所选端点没开联网搜索的，后端存 false */
+  webSearchEnabled: boolean;
   /** 唤醒时段 "HH:mm-HH:mm"（北京时间），null=全天 */
   wakeWindow: string | null;
 }

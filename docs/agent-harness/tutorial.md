@@ -400,7 +400,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
   → 计划对账（TraderPlanStore.reconcile：逐份 LIVE 计划对 sim 持仓/挂单，出 Reconcile(live, events)；已平仓位懒取）
   → 组装系统提示词（promptAssembler.assemble）、第一段观察包（WakeObservation.assemble：事件 / 账户 / 上一轮结论 / 承诺）
   → 两段还是一段：非例行唤醒、有留言、有承诺要处置就分两段（stageOneInstruction，ReactLoop.stages 追加 stageTwoInstruction），否则 routineInstruction 一段
-  → LlmClient（系统提示 + 19 工具，端点开了联网搜索的多挂一个 web_search；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
+  → LlmClient（系统提示 + 19 工具，主人开了联网搜索、端点也开了的多挂一个 web_search；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
      + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
   → FutureTask 限时执行
   → finally：动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
@@ -440,7 +440,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ### 5.5 动手面
 
-`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`；平台在采的币都能布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）；条件可以带一个预案动作（`WatchAction`：移止损 / 平仓 / 撤单，指的仓位或挂单不必在这个币上，没有开仓）。止损必填、止盈可选：`open_position` 和 `set_take_profit` 的止盈是最多 3 档的 `TargetRung`（价位 + 平掉仓位的百分之几），计划里按同一个形状存。`set_stop_loss` 和预案的移止损两处改止损都走 `StopOrders.move`，只许收紧。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 19 个；行情类的可查任意 Binance USDT 永续。`market_snapshot` 只给各数据源的原始读数（`MarketReadings`），不打分、不贴行情标签；`news_search` 带关键词或小时数时查库里的历史快讯。端点开了联网搜索的 trader 另挂一个 `web_search`（`WebSearchTool`，单独发一次带搜索的请求，用量记在同一轮账上）；那次请求用 trader 自己的系统提示（`trader.wake.searchInstruction`：只留带日期和出处的事实，价格预测、别人的技术分析、喊单和营销不报）。例行轮看整盘的问题和波动警报的问题前面会多问一句本轮有没有要搜的（`trader.wake.searchQuestion`），盯盘命中和持仓事件的轮不问。
+`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`；平台在采的币都能布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）；条件可以带一个预案动作（`WatchAction`：移止损 / 平仓 / 撤单，指的仓位或挂单不必在这个币上，没有开仓）。止损必填、止盈可选：`open_position` 和 `set_take_profit` 的止盈是最多 3 档的 `TargetRung`（价位 + 平掉仓位的百分之几），计划里按同一个形状存。`set_stop_loss` 和预案的移止损两处改止损都走 `StopOrders.move`，只许收紧。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 19 个；行情类的可查任意 Binance USDT 永续。`market_snapshot` 只给各数据源的原始读数（`MarketReadings`），不打分、不贴行情标签；`news_search` 带关键词或小时数时查库里的历史快讯。主人在「我的 Trader」开了联网搜索（`ai_trader.web_search_enabled`）、所用端点也开了的 trader 另挂一个 `web_search`（两道都过才算开，见 `TraderModelFactory.webSearchEnabled`；`WebSearchTool`，单独发一次带搜索的请求，用量记在同一轮账上）；那次请求用 trader 自己的系统提示（`trader.wake.searchInstruction`：只留带日期和出处的事实，价格预测、别人的技术分析、喊单和营销不报）。例行轮看整盘的问题和波动警报的问题前面会多问一句本轮有没有要搜的（`trader.wake.searchQuestion`），盯盘命中和持仓事件的轮不问。
 
 三个设计点：
 

@@ -94,13 +94,13 @@ public class TraderController {
 
     /**
      * 主人视图：公开视图 + 配置回显。llmEndpointId=显式绑定的端点，null=跟随默认端点；wakeWindow null=全天；
-     * learnedRestrictionHold=账本里限制型规律能否作为观望理由
+     * learnedRestrictionHold=账本里限制型规律能否作为观望理由；webSearchEnabled=联网搜索开关，端点也开了才真搜
      */
     public record TraderOwnerView(TraderPublicView pub, Long llmEndpointId,
                                   String customPrompt,
                                   TraderSpec spec, boolean alertEnabled, BigDecimal alertThresholdMult,
                                   boolean reviewEnabled, boolean learnedRestrictionHold,
-                                  String wakeWindow) {
+                                  boolean webSearchEnabled, String wakeWindow) {
     }
 
     /** 仓位规格：配置回显与提示词预览共用一个形状，前端改一处两边同步。 */
@@ -131,6 +131,7 @@ public class TraderController {
                 t.getAlertThresholdMult() == null ? BigDecimal.ONE : t.getAlertThresholdMult(),
                 !Boolean.FALSE.equals(t.getReviewEnabled()),
                 Boolean.TRUE.equals(t.getLearnedRestrictionHold()),
+                Boolean.TRUE.equals(t.getWebSearchEnabled()),
                 t.getWakeWindow()));
     }
 
@@ -170,7 +171,7 @@ public class TraderController {
                                 Long llmEndpointId, TraderSpec spec,
                                 Boolean alertEnabled, BigDecimal alertThresholdMult,
                                 Boolean reviewEnabled, Boolean learnedRestrictionHold,
-                                String wakeWindow) {
+                                Boolean webSearchEnabled, String wakeWindow) {
         TraderService.UpsertReq toReq() {
             TraderSpec s = spec;
             return new TraderService.UpsertReq(name, symbols, intervalCode, customPrompt,
@@ -178,7 +179,8 @@ public class TraderController {
                     s == null ? null : s.leverageMin(), s == null ? null : s.leverageMax(),
                     s == null ? null : s.marginPctMax(),
                     s == null ? null : s.allowMultiPosition(), s == null ? null : s.allowHedge(),
-                    alertEnabled, alertThresholdMult, reviewEnabled, learnedRestrictionHold, wakeWindow);
+                    alertEnabled, alertThresholdMult, reviewEnabled, learnedRestrictionHold,
+                    webSearchEnabled, wakeWindow);
         }
     }
 

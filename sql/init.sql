@@ -706,6 +706,7 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     learned_restriction_hold BOOLEAN NOT NULL DEFAULT FALSE,
     alert_enabled   BOOLEAN NOT NULL DEFAULT TRUE,
     alert_threshold_mult NUMERIC(4,2) NOT NULL DEFAULT 1.0,
+    web_search_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     wake_window     VARCHAR(11),
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -720,7 +721,8 @@ COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日�
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';
 COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/BNB0.6/ETH0.7/SOL0.9/DOGE0.9/XRP0.9/HYPE1.2/ZEC1.6%)×本系数，校准方法见VolatilitySentinel';
-COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
+COMMENT ON COLUMN ai_trader.web_search_enabled IS '主人开关：联网搜索。开了且所用端点也开了联网搜索(user_llm_endpoint.web_search)，唤醒时才挂web_search工具、例行轮和波动警报轮才多问一句要不要搜；保存时所用端点没开搜索的存FALSE';
+COMMENT ON COLUMN ai_trader.wake_window IS'唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：reviewer每日复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
 COMMENT ON COLUMN ai_trader.owner_note_rounds IS '留言剩余注入轮次，0=无待读留言。1即"念一次就清"，上限24（15m档≈6小时）。递减走条件SQL(正文匹配作前置+原子递减)：唤醒读的是调度时刻的快照，以正文匹配保证只递减自己注入的那条';
@@ -925,7 +927,7 @@ CREATE INDEX IF NOT EXISTS idx_user_llm_endpoint_user ON user_llm_endpoint(user_
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_llm_endpoint_default ON user_llm_endpoint(user_id) WHERE is_default;
 COMMENT ON TABLE  user_llm_endpoint IS '用户 BYOK 端点库：一条=协议+URL+key+模型(+思考档位)，一人多条；对话/交易员/复盘教练从中选';
 COMMENT ON COLUMN user_llm_endpoint.reasoning_effort IS '思考档位，任意上游认的值（none/low/medium/high/xhigh…），NULL=不传走模型默认；模型支不支持查不到，由用户自选';
-COMMENT ON COLUMN user_llm_endpoint.web_search IS '服务端联网搜索：请求里声明该协议的服务端搜索工具才搜(opt-in)，勾了的保存前会探测、上游不支持不让存；responses/anthropic/gemini协议可勾(openai归一false)；对话主agent、researcher worker、trader的web_search工具用';
+COMMENT ON COLUMN user_llm_endpoint.web_search IS '服务端联网搜索：请求里声明该协议的服务端搜索工具才搜(opt-in)，勾了的保存前会探测、上游不支持不让存；responses/anthropic/gemini协议可勾(openai归一false)；对话主agent、researcher worker用；trader还要主人开ai_trader.web_search_enabled才用';
 COMMENT ON COLUMN user_llm_endpoint.antigravity IS 'Gemini 来源是 Antigravity(如经 CPA 反代)：只在 gemini 协议且勾了联网搜索时为TRUE，其余归一FALSE；这种来源不收服务端搜索和本地工具在同一请求里，搜索改成本地工具 web_search，调用时单独发一次只带搜索的请求';
 COMMENT ON COLUMN user_llm_endpoint.context_window IS '上下文窗口(token)：对话主模型的上下文用量达到它的90%时，下一轮开始前整理上下文；128000~1000000，默认256000，用户按模型实际窗口填';
 COMMENT ON COLUMN user_llm_endpoint.api_key_enc IS 'AES-256-GCM 密文，密钥来自 WIIB_TRADER_KEY_SECRET';
