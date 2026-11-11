@@ -384,7 +384,8 @@ public class TraderWakeupRunner {
         // 不强制 tool_choice："先读事实、用工具求证"写在开场白的问题里
         // 端点开了联网搜索的多挂一个 web_search：搜索单独发一次请求，用量记在同一轮账上
         LlmClient client = LlmClient.builder().model(model).systemPrompt(prompt)
-                .tools(wakeTools(lang, tradeTools, modelFactory.webSearchEnabled(trader) ? new WebSearchTool(model) : null))
+                .tools(wakeTools(lang, tradeTools, modelFactory.webSearchEnabled(trader)
+                        ? new WebSearchTool(model, prompts.get(lang, "trader.wake.searchInstruction")) : null))
                 .build();
         ReactLoop loop = ReactLoop.builder().client(client)
                 .streaming(true)      // 模型文本逐字推给现场
@@ -565,8 +566,14 @@ public class TraderWakeupRunner {
         return routineHeader(trader, boundaryTime, lang)
                 + observation
                 + facts(trader, boundaryTime, intervalMs, symbols, history, snapshot, calendar, lang)
+                + searchQuestion(trader, lang)
                 + prompts.get(lang, "trader.wake.routineQuestion",
                         Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
+    }
+
+    /** 联网搜索那一问，排在主问题前面单独一行；端点没开搜索的不问 */
+    private String searchQuestion(AiTrader trader, AgentLang lang) {
+        return modelFactory.webSearchEnabled(trader) ? prompts.get(lang, "trader.wake.searchQuestion") + '\n' : "";
     }
 
     /**
@@ -591,6 +598,8 @@ public class TraderWakeupRunner {
                 + observation
                 + (calendar == null ? "" : calendar)
                 + prompts.get(lang, "trader.wake.triggerNotice", Map.of("interval", trader.getIntervalCode())) + '\n'
+                // 被波动警报叫醒的才问要不要搜；盯盘命中和持仓事件要抢时间，不问
+                + (triggers.stream().anyMatch(AlertTrigger.class::isInstance) ? searchQuestion(trader, lang) : "")
                 + prompts.get(lang, "trader.wake.triggerQuestion", Map.of("mark", mark));
     }
 
@@ -606,6 +615,8 @@ public class TraderWakeupRunner {
                 : triggered ? "trader.wake.stageTwoTriggered" : "trader.wake.stageTwoQuestion";
         return prompts.get(lang, "trader.wake.stageTwoHeader") + '\n'
                 + facts(trader, alignedBoundary(wakeTime, intervalMs), intervalMs, symbols, history, snapshot, calendar, lang)
+                // 例行轮看整盘的那一问才带；非例行轮的第二段只收尾，预算用尽的调不了工具
+                + (triggered || exhausted ? "" : searchQuestion(trader, lang))
                 + prompts.get(lang, question, Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
     }
 

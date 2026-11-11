@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
@@ -56,6 +57,7 @@ import java.util.Map;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -86,8 +88,11 @@ class WakeInstructionI18nTest {
             mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts,
             positionPath, crossAssets);
 
+    /** 端点开没开联网搜索由它说了算，默认没开 */
+    private final TraderModelFactory modelFactory = mock(TraderModelFactory.class);
+
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
-            mock(TraderModelFactory.class), new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class)),
+            modelFactory, new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class)),
             mock(SimTradeClient.class), binance,
             new IndicatorToolkit(new KlineFetcher(binance, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
@@ -398,6 +403,36 @@ class WakeInstructionI18nTest {
                 .isEqualTo("第二段。第一段里你做的动作已经生效，下面是整盘事实。\n"
                         + "本段：模型调用预算已用完，不能再调用任何工具，set_watch 也不行。"
                         + "直接用[本轮结论]固定格式收尾（只写有变化的币），要等的条件写进\"等待\"行，下一轮再布。");
+    }
+
+    /**
+     * 端点开了联网搜索：例行轮看整盘的问题（单段、第二段）和波动警报的问题前面多问一句本轮有没有要搜的；
+     * 例行轮第一段、持仓事件、非例行轮第二段、预算用尽的不问。没开搜索的都不问（上面几条逐字钉死的就是没开的样子）
+     */
+    @Test
+    void 开了联网搜索的例行轮和警报轮多问一句要不要搜() {
+        when(modelFactory.webSearchEnabled(any())).thenReturn(true);
+        String ask = "先定一件事：本轮有没有想联网搜的内容";
+        TradeEvent filled = new TradeEvent(TradeEvent.LIMIT_FILLED, 42L, 9L, 100L, "BTCUSDT", "LONG",
+                new BigDecimal("0.01"), new BigDecimal("63120"), null, BOUNDARY);
+
+        String single = runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.ZH);
+        assertThat(single).contains(ask).contains("过滤噪声");
+        assertThat(single.indexOf(ask)).as("排在主问题前面").isLessThan(single.indexOf("本轮：看整盘"));
+        String second = runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, false);
+        assertThat(second.indexOf(ask)).isBetween(0, second.indexOf("本段：看整盘"));
+        String alert = runner.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH);
+        assertThat(alert.indexOf(ask)).isBetween(0, alert.indexOf("本次是非例行唤醒"));
+
+        assertThat(runner.stageOneInstruction(trader(), null, BOUNDARY, null, "", null, "", AgentLang.ZH)).doesNotContain(ask);
+        assertThat(runner.stageOneInstruction(trader(), List.of(new EventTrigger(filled)), BOUNDARY, null, "", null, "", AgentLang.ZH))
+                .doesNotContain(ask);
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, true, false)).doesNotContain(ask);
+        assertThat(runner.stageTwoInstruction(trader(), BOUNDARY, "", "", "", null, AgentLang.ZH, false, true)).doesNotContain(ask);
+
+        PromptI18nAssertions.assertNoCjk("英文单段开场白（带搜索那一问）",
+                runner.routineInstruction(trader(), BOUNDARY, "", "", "", "", null, AgentLang.EN));
+        PromptI18nAssertions.assertNoCjk("英文搜索请求的系统提示", prompts.get(AgentLang.EN, "trader.wake.searchInstruction"));
     }
 
     /** 警报里"距下一次例行唤醒"要看时段：时段末尾的警报，下次醒是时段再开门那一刻，不是下一根 */

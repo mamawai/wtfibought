@@ -47,7 +47,12 @@ public class WebSearchTool {
 
     /** @param model 挂这个工具的 agent 自己的模型：带账本的话，搜索这次也记在它账上 */
     public WebSearchTool(ChatModel model) {
-        this.searcher = LlmClient.builder().model(model).systemPrompt(INSTRUCTION).webSearch(true).build();
+        this(model, INSTRUCTION);
+    }
+
+    /** @param instruction 那次搜索请求的系统提示；trader 用自己那份，观点类内容在搜索这一步就滤掉 */
+    public WebSearchTool(ChatModel model, String instruction) {
+        this.searcher = LlmClient.builder().model(model).systemPrompt(instruction).webSearch(true).build();
     }
 
     // description 只是兜底：发给模型的那份按语言取自词表 tool.web_search（见 LocalizedToolCallbacks）
