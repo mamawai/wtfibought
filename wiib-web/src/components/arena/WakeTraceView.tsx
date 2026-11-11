@@ -24,7 +24,7 @@ function kvArgs(args: Record<string, unknown>): string {
 }
 
 /**
- * 一节思考的工具调用：每个调用一枚 chip（成功素灰、被拒/出错红框、还没回执的标"处理中"），
+ * 一节思考的工具调用：每个调用一枚 chip（成功素灰、被拒/出错红框、还没回执的标"处理中"；带理由的参数很长，在 chip 里折行），
  * 点 chip 展开回执预览（先 3 行，再点展全，再点收起）。预览是块，只能落在 chip 行下面。
  */
 function CallTools({ call, running }: { call: WakeCall; running: boolean }) {
@@ -44,7 +44,8 @@ function CallTools({ call, running }: { call: WakeCall; running: boolean }) {
           return (
             <button key={tc.id} type="button"
                     onClick={() => result?.preview && setLevel(m => ({ ...m, [tc.id]: ((m[tc.id] ?? 0) + 1) % 3 }))}
-                    className={cn('chip', failed ? 'dn' : result ? 'border-border text-muted-foreground' : '')}>
+                    className={cn('chip whitespace-normal text-left wrap-anywhere',
+                      failed ? 'dn' : result ? 'border-border text-muted-foreground' : '')}>
               {toolName(tc.name)} {args}
               {result?.status === 'rejected' ? t('trade.rejected')
                 : result?.status === 'error' ? t('trade.errored')
