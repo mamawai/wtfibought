@@ -134,7 +134,7 @@ class TraderToolI18nTest {
     @Test
     void 唤醒工具全部走词表描述() {
         Map<String, String> zh = descriptions(AgentLang.ZH);
-        for (String name : List.of("get_account", "open_position", "close_position", "set_stop_loss",
+        for (String name : List.of("get_account", "open_position", "close_position", "reverse_position", "set_stop_loss",
                 "set_take_profit", "write_plan", "cancel_order", "set_watch", "klines", "indicators",
                 "kline_structure", "market_snapshot", "option_iv", "funding_history", "orderbook_depth",
                 "derivatives_history", "whale_positions", "cross_asset_snapshot")) {

@@ -1016,8 +1016,8 @@ export interface TraderEquityPoint {
 
 /** 会走实时流的唤醒类型（复盘不进这条通道） */
 export type WakeKind = 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH';
-/** 工具回执状态：按回执前缀 REJECTED: / ERROR: 判，其余 ok */
-export type WakeToolStatus = 'ok' | 'rejected' | 'error';
+/** 工具回执状态：成功、拒绝、失败、未知、部分完成。 */
+export type WakeToolStatus = 'ok' | 'rejected' | 'error' | 'unknown' | 'partial';
 
 /** 模型发起的一次工具调用；args 是解析后的对象，解析不了就是原字符串 */
 export interface WakeToolCall {

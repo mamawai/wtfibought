@@ -711,6 +711,34 @@ class ReviewMaterialAssemblerTest {
                         + "（WATCH）｜ 那轮交易动作：open_position, set_watch（被拒）, close_position（失败） ｜ 那轮该币结论：判断：1h 收盘站上 63000，突破确认 动作：开多 0.01 等待：无");
     }
 
+    @Test
+    void watchFollowUpReportsEachReverseLegWithoutInventingAnOpening() {
+        AiTraderWatch hit = watch(31L, AiTraderWatch.CLOSE_ABOVE, FROM + H);
+        hit.setStatus(AiTraderWatch.STATUS_FIRED);
+        hit.setFiredAt(FROM + 3 * H);
+        hit.setFiredPrice(new BigDecimal("63120"));
+        hit.setWokeAt(FROM + 3 * H + 1);
+        when(watchStore.inWindow(7L, 1, FROM, TO)).thenReturn(List.of(hit));
+        AiTraderDecision woke = new AiTraderDecision();
+        woke.setKind(AiTraderDecision.KIND_WATCH);
+        for (String openStatus : List.of("error", "unknown", "not_attempted")) {
+            woke.setActionsJson("""
+                    [{"tool":"reverse_position","status":"partial","result":{
+                      "close":{"tool":"close_position","status":"ok"},
+                      "open":{"tool":"open_position","status":"%s"}
+                    }}]
+                    """.formatted(openStatus));
+            when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM, "10000"), woke);
+            String label = switch (openStatus) {
+                case "error" -> "失败";
+                case "unknown" -> "结果未知";
+                default -> "未发起";
+            };
+            assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).watchBlock())
+                    .contains("那轮交易动作：close_position, open_position（" + label + "）");
+        }
+    }
+
     /** 窗口里一条都没布也要说（窗口前布下还在盯的币不算没条件）；命中了还没哪轮告诉过它的照样列出来 */
     @Test
     void watchBlockWithoutWatchesOrUnreportedHit() {

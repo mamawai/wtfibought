@@ -85,6 +85,17 @@ class WakeTraceTest {
     }
 
     @Test
+    void 反手半成功与结果未知不能显示为成功() {
+        WakeTrace t = trace();
+        t.callStart();
+        t.callEnd("", List.of(call("c1", "reverse_position", "{}"), call("c2", "reverse_position", "{}")));
+        assertThat(t.toolResult("c1", "reverse_position", receipt("PARTIAL: {}"))
+                .data().path("status").asString()).isEqualTo("partial");
+        assertThat(t.toolResult("c2", "reverse_position", receipt("UNKNOWN: {}"))
+                .data().path("status").asString()).isEqualTo("unknown");
+    }
+
+    @Test
     void 回执预览截2000字且status按前缀判() {
         WakeTrace t = trace();
         t.callStart();

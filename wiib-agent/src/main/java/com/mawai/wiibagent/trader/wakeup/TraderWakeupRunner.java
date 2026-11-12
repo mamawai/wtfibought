@@ -40,6 +40,7 @@ import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.EntryContext;
+import com.mawai.wiibagent.trader.trade.TradeActions;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
@@ -304,7 +305,7 @@ public class TraderWakeupRunner {
             }
             boolean opened = false;
             for (JsonNode a : MAPPER.readTree(decision.getActionsJson())) {
-                if ("open_position".equals(a.path("tool").asString(null)) && "ok".equals(a.path("status").asString(null))) {
+                if (TradeActions.opened(a)) {
                     opened = true;
                 }
             }

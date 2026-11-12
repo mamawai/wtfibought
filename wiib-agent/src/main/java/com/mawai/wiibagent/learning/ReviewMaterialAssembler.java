@@ -8,6 +8,7 @@ import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TargetRung;
+import com.mawai.wiibagent.trader.trade.TradeActions;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
@@ -523,7 +524,8 @@ public class ReviewMaterialAssembler {
     private String tradeActions(String actionsJson, AgentLang lang) {
         List<String> out = new ArrayList<>();
         if (actionsJson != null && !actionsJson.isBlank()) {
-            for (JsonNode a : MAPPER.readTree(actionsJson)) {
+            for (JsonNode a : MAPPER.readTree(actionsJson).valueStream()
+                    .flatMap(a -> TradeActions.legs(a).stream()).toList()) {
                 String tool = a.path("tool").asString(null);
                 if (tool == null || !TradeTools.SERIAL_TOOLS.contains(tool)) {
                     continue;
@@ -531,6 +533,8 @@ public class ReviewMaterialAssembler {
                 String status = a.path("status").asString("");
                 String key = a.has("rejected") ? "watchRejected"
                         : "error".equals(status) ? "watchFailed"
+                        : "not_attempted".equals(status) ? "watchNotAttempted"
+                        : "liquidated".equals(status) ? "watchLiquidated"
                         : "unknown".equals(status) ? "watchUnknown" : null;
                 out.add(key == null ? tool : prompts.get(lang, "reviewer.label." + key, Map.of("tool", tool)));
             }

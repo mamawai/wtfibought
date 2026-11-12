@@ -321,6 +321,19 @@ tool:
     at the stop as a percentage of equity, and — only when take-profit rungs are set — the gain if every
     rung fills and the reward-to-risk after fees (counting only the part the rungs cover).
 
+  reverse_position: |-
+    Fully close positionId at MARKET, then open the opposite side of the same symbol at MARKET.
+    Symbol and side are inferred. quantity and leverage are for the NEW position; quantity need not
+    match the old position. stopLossPrice is REQUIRED for the new side. Optional takeProfits and
+    playType, signalsUsed, invalidationCondition have the same meaning as open_position; signalsUsed
+    also explains the current market evidence for reversing. Uses the same opening rules, cross
+    margin, plans and facts receipts. Existing opposite-side exposure is handled as an add.
+    Checks the new order before closing, then rechecks with the refreshed account and price.
+    These are two orders, not an atomic transaction. partial means execution was incomplete; inspect
+    both leg receipts. unknown means an order may have filled: reconcile with get_account before
+    placing another order. Other pending opening orders and watches are unchanged; manage them
+    with cancel_order / set_watch.
+
   close_position: |-
     Close (part of) an open position by positionId (from the [Account] block in your opening message, or get_account), at market price.
     quantity: coins to close; pass the full position quantity to close it entirely.

@@ -90,7 +90,7 @@ public final class TradePairing {
     /**
      * 了结方式（返回<b>语言无关的码</b>）：强平看仓位状态，其余看 sim 带回来的 closedBy——了结它的那张平仓单的状态。
      * 止损/止盈触发后按盘口成交，成交价不一定越过触发价，不能拿平仓价去猜。
-     * 主动平仓的单子状态是 FILLED（模型自己调 close_position，没有别的入口）；没有平仓单判不出来。
+     * 主动平仓的单子状态是 FILLED（平仓工具、反手中的平仓操作或预案平仓）；没有平仓单判不出来。
      * <p>码与文案分家：竞技场按码做判断（"主动平仓才挂平仓决策"），码不随语言变。
      */
     public static String closeMannerKey(FuturesPositionDTO p) {

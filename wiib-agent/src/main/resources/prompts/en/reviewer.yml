@@ -209,6 +209,8 @@ reviewer:
     watchRejected: "{{tool}} (rejected)"
     watchFailed: "{{tool}} (failed)"
     watchUnknown: "{{tool}} (outcome unknown)"
+    watchNotAttempted: "{{tool}} (not attempted)"
+    watchLiquidated: "{{tool}} (position liquidated)"
 
     # ---- experience ledger ----
     ledgerHeader: "[EXPERIENCE LEDGER] ({{n}} active; #id is what the ledger updates refer to; entries marked under review still get a verdict this period)"

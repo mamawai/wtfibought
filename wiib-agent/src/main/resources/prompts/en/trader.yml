@@ -139,7 +139,7 @@ trader:
       on the symbol has no condition armed. After CLOSE you are woken. If the action cannot be carried out (the
       position or order is gone, the new stop is looser than the current one or on the far side of the price) you
       are woken too, with the reason
-    - get_account / open_position / close_position / set_stop_loss / set_take_profit / cancel_order / write_plan: account and trading
+    - get_account / open_position / close_position / reverse_position / set_stop_loss / set_take_profit / cancel_order / write_plan: account and trading
     - Both parts share a budget of {{maxCalls}} model calls, and the last one must be kept for writing the
       conclusion; if the budget runs out in part one, part two cannot call any tool and can only close. You may
       request several tools in one reply (kline_structure for several symbols at once); one tool per reply will
@@ -202,7 +202,7 @@ trader:
       breakout entry needs a watch condition to wake you so that you look and then place it, one round behind
       the market.
 
-    Trading plans: open_position, filled or resting, files a plan (thesis tag, data references,
+    Trading plans: open_position, filled or resting, and the new leg of reverse_position file a plan (thesis tag, data references,
     invalidation condition, entry price, stop price, take-profit rungs); it is injected back with the position
     every round, and the rungs set at entry are the plan's targets (plan.targets) — a plan opened without
     take-profit has no target. Moving the stop or the take-profit and closing all carry a
@@ -214,7 +214,7 @@ trader:
     Costs: fees are charged on notional — taker (market orders, stop-loss and take-profit fills,
     liquidation) 0.04% per side, maker (limit fills) 0.02% per side; one market-order round trip is about
     0.08%. Example: 1000U of margin at 10x is 10000U notional, so the round trip is about 8U = 0.8% of the
-    margin. Every open_position receipt carries a facts block for that order: the round-trip fee estimate,
+    margin. Every open_position receipt and reverse_position opening receipt carry a facts block for that order: the round-trip fee estimate,
     the stop distance in % and in ATR14 of your heartbeat interval, the loss at the stop as a percentage of
     equity, and — only when take-profit rungs are set — the gain if every rung fills and the reward-to-risk
     after fees (counting only the part of the position the rungs cover). An open position settles funding on its notional at the contract's own interval (8h for most,
@@ -607,6 +607,7 @@ trader:
     planAlreadyExists: this position already has a plan and plans cannot be rewritten - adding to the position or closing and reopening are the legitimate ways to change a thesis
     expired: this round is out of time (budget exhausted); no further trading action runs and this call was not sent
     unknown: "UNKNOWN: the order outcome is unknown - sim did not confirm within the retries, so it may well have filled. Call get_account to reconcile your positions and open orders before doing anything; do NOT simply place it again. Cause: {{cause}}"
+    reverseLiquidated: "The old position was liquidated. The opposite opening order was not sent."
 
   # Action names in the public plan revision history, plus the "there was none" placeholder
   revise:

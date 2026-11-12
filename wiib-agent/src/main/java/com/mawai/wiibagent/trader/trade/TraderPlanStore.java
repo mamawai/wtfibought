@@ -34,7 +34,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 交易计划存取。键 trader+round+symbol+side，LIVE 至多一条（DB 部分唯一索引只约束 LIVE）。
  * <p>
  * 计划跟仓位怎么对上，靠两条事实推，不靠猜：sim 保证同币同向任意时刻至多一个 OPEN 仓位；
- * 模型开仓只有 open_position 一个入口，必立或覆盖计划。所以"这个键上、这份计划立案之后出现的仓位"
+ * 模型通过 open_position 开仓或 reverse_position 反向开仓，必立或覆盖计划。所以"这个键上、这份计划立案之后出现的仓位"
  * 就是它的仓位。一行计划对应一个仓位生命期：仓位了结这行就归档，同键还有新仓或挂单的续立一行接着跟，
  * 一个间隙里连开连平了几笔就各补一行归档。
  * <p>

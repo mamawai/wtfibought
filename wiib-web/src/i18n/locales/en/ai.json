@@ -126,6 +126,7 @@
   "tool": {
     "openPosition": "Open position",
     "closePosition": "Close position",
+    "reversePosition": "Reverse position",
     "setStopLoss": "Change stop",
     "setTakeProfit": "Change take-profit",
     "preset": "Standing order",
@@ -147,6 +148,9 @@
     "webSearch": "Web search"
   },
   "args": {
+    "reverseClosed": "Old position closed",
+    "reverseLiquidated": "Old position liquidated",
+    "reverseOpened": "Opposite position opened",
     "long": "Long",
     "short": "Short",
     "qty": "{{n}} contracts",
@@ -193,6 +197,7 @@
     "rejected": "· rejected",
     "errored": "· errored",
     "unknown": "· outcome unknown",
+    "partial": "· incomplete",
     "openedAt": "opened {{time}}",
     "closedAt": "closed {{time}}",
     "held": "held {{d}}",
@@ -613,6 +618,7 @@
     "desc": {
       "open_position": "Market/limit long or short; a trade plan (thesis · evidence · invalidation) is filed on entry. <0>Stop-loss required</0>; take-profit is optional and may be split into up to 3 rungs, each closing part of the position. Leverage inside your range, new-position margin under your cap; limit price within 5% of mark. The receipt carries the round-trip fee, stop distance and risk as % of equity, plus reward-to-risk after fees when a take-profit is set.",
       "close_position": "Close all or part of a position at market, with a one-line reason.",
+      "reverse_position": "Fully close at market, then open the opposite side with separately chosen size, leverage, stop and thesis.",
       "set_stop_loss": "<0>Tighten only</0>: long stops move up, short stops move down. Reason required; goes into the public plan revision history.",
       "set_take_profit": "Replaces the whole set of take-profit orders: up to 3 rungs, each a price plus the percent of the position it closes; they may move nearer, farther, or be removed. <0>Every rung must stay on the profit side of the current price</0>; to leave right now it has to close.",
       "write_plan": "Only for a position with no plan on record; plans are immutable — a new thesis means adding or re-opening.",

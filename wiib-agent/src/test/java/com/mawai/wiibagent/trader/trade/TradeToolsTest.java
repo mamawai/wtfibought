@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
+import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -16,6 +17,7 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
@@ -26,6 +28,8 @@ import java.util.Arrays;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.web.client.ResourceAccessException;
@@ -126,6 +130,162 @@ class TradeToolsTest {
     /** 一档 100% 的止盈 */
     private static List<TargetRung> oneRung(String price) {
         return List.of(rung(price, "100"));
+    }
+
+    private FuturesOrderResponse reverseCloseReceipt(String status) {
+        FuturesOrderResponse r = new FuturesOrderResponse();
+        r.setPositionId(5L);
+        r.setStatus(status);
+        r.setQuantity(new BigDecimal("0.01"));
+        return r;
+    }
+
+    private String reverseLong() {
+        return tools.reversePosition(5L, 0.02, 10, 105000.0, oneRung("90000"),
+                "REVERSAL", "跌破支撑，反手做空", "重回支撑上方");
+    }
+
+    private void mockReverseClose() {
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()), List.of());
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("FILLED"));
+    }
+
+    @Test
+    void reverseSchemaOnlyTakesTraderParameters() {
+        ToolCallback cb = Arrays.stream(ToolCallbacks.from(tools))
+                .filter(t -> "reverse_position".equals(t.getToolDefinition().name())).findFirst().orElseThrow();
+        JsonNode schema = MAPPER.readTree(cb.getToolDefinition().inputSchema());
+        assertThat(schema.path("properties").propertyNames()).containsExactlyInAnyOrder(
+                "positionId", "quantity", "leverage", "stopLossPrice", "takeProfits", "playType", "signalsUsed", "invalidationCondition");
+        assertThat(schema.path("required").valueStream().map(JsonNode::asString).toList()).containsExactlyInAnyOrder(
+                "positionId", "quantity", "leverage", "stopLossPrice", "playType", "signalsUsed", "invalidationCondition");
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+        cb.call("""
+                {"positionId":5,"quantity":0.02,"leverage":10,"playType":"REVERSAL",
+                 "signalsUsed":"跌破支撑","invalidationCondition":"重回支撑上方"}
+                """);
+        verify(simTradeClient, never()).closePosition(anyLong(), any());
+        assertThat(tools.actions().getFirst().has("rejected")).isTrue();
+    }
+
+    @Test
+    void reverseClosesAllThenOpensChosenSizeWithProtectionAndPlan() {
+        mockReverseClose();
+        FuturesOrderResponse opened = new FuturesOrderResponse();
+        opened.setPositionId(9L);
+        opened.setStatus("FILLED");
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(opened);
+
+        JsonNode result = MAPPER.readTree(reverseLong());
+        assertThat(result.path("status").asString()).isEqualTo("ok");
+        assertThat(tools.actions()).hasSize(1);
+        assertThat(result.path("result").path("open").path("result").has("facts")).isTrue();
+        InOrder order = inOrder(simTradeClient);
+        ArgumentCaptor<FuturesCloseRequest> close = ArgumentCaptor.forClass(FuturesCloseRequest.class);
+        ArgumentCaptor<FuturesOpenRequest> open = ArgumentCaptor.forClass(FuturesOpenRequest.class);
+        order.verify(simTradeClient).closePosition(eq(99L), close.capture());
+        order.verify(simTradeClient).getAllPositions(99L);
+        order.verify(simTradeClient).openPosition(eq(99L), open.capture());
+        assertThat(close.getValue().getQuantity()).isNull();
+        assertThat(open.getValue().getSymbol()).isEqualTo("BTCUSDT");
+        assertThat(open.getValue().getSide()).isEqualTo("SHORT");
+        assertThat(open.getValue().getOrderType()).isEqualTo("MARKET");
+        assertThat(open.getValue().getQuantity()).isEqualByComparingTo("0.02");
+        assertThat(open.getValue().getLeverage()).isEqualTo(10);
+        assertThat(open.getValue().getStopLosses().getFirst().getPrice()).isEqualByComparingTo("105000");
+        assertThat(open.getValue().getTakeProfits().getFirst().getQuantity()).isEqualByComparingTo("0.02");
+        assertThat(open.getValue().getClientRequestId()).isNotBlank().isNotEqualTo(close.getValue().getClientRequestId());
+        ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper).insert(plan.capture());
+        assertThat(plan.getValue().getPositionId()).isEqualTo(9L);
+        assertThat(plan.getValue().getSide()).isEqualTo("SHORT");
+        assertThat(plan.getValue().getSignalsUsed()).isEqualTo("跌破支撑，反手做空");
+    }
+
+    @Test
+    void reverseShortToLongAllowsChangingLeverageUnderSinglePositionNoHedgeRule() {
+        FuturesPositionDTO shortPos = longPosition();
+        shortPos.setSide("SHORT");
+        shortPos.setLeverage(5);
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(shortPos), List.of());
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("FILLED"));
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+        TradeTools single = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT"),
+                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"), planStore, watchStore,
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), false, false), AgentLang.ZH),
+                PROMPTS, MESSAGES, mock(EntryContext.class));
+        String result = single.reversePosition(5L, 0.02, 10, 95000.0, null, "REVERSAL", "反弹突破", "跌回突破位");
+        assertThat(MAPPER.readTree(result).path("status").asString()).isEqualTo("ok");
+        ArgumentCaptor<FuturesOpenRequest> open = ArgumentCaptor.forClass(FuturesOpenRequest.class);
+        verify(simTradeClient).openPosition(eq(99L), open.capture());
+        assertThat(open.getValue().getSide()).isEqualTo("LONG");
+        assertThat(open.getValue().getLeverage()).isEqualTo(10);
+        assertThat(open.getValue().getTakeProfits()).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void reverseValidatesPendingOrdersBeforeAndAfterClose(boolean afterClose) {
+        mockReverseClose();
+        FuturesOrderResponse pending = new FuturesOrderResponse();
+        pending.setSymbol("BTCUSDT");
+        pending.setOrderSide("OPEN_LONG");
+        pending.setLeverage(5);
+        when(simTradeClient.getPendingOrders(99L, null))
+                .thenReturn(afterClose ? List.of() : List.of(pending), List.of(pending));
+        assertThat(reverseLong()).startsWith(afterClose ? "PARTIAL:" : "REJECTED:");
+        verify(simTradeClient, times(afterClose ? 1 : 0)).closePosition(anyLong(), any());
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+    }
+
+    @Test
+    void reverseOpenFailureKeepsSuccessfulCloseInOneCompleteAction() {
+        mockReverseClose();
+        when(simTradeClient.openPosition(eq(99L), any())).thenThrow(new IllegalStateException("余额不足"));
+        assertThat(reverseLong()).startsWith("PARTIAL:");
+        assertThat(tools.actions()).hasSize(1);
+        JsonNode action = tools.actions().getFirst();
+        assertThat(action.path("status").asString()).isEqualTo("partial");
+        assertThat(action.path("result").path("close").path("status").asString()).isEqualTo("ok");
+        assertThat(action.path("result").path("open").path("status").asString()).isEqualTo("error");
+        verify(planMapper, never()).insert(any(AiTraderPlan.class));
+    }
+
+    @Test
+    void reverseDoesNotOpenAfterLiquidationOrDefiniteCloseFailure() {
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("LIQUIDATED"))
+                .thenThrow(new IllegalStateException("仓位已关闭"));
+        assertThat(reverseLong()).startsWith("PARTIAL:");
+        assertThat(reverseLong()).startsWith("ERROR:");
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+    }
+
+    @Test
+    void reverseUnknownCloseNeverOpensAndRetriesWithSameId() {
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+        when(simTradeClient.closePosition(eq(99L), any())).thenThrow(new ResourceAccessException("timeout"));
+        assertThat(reverseLong()).startsWith("UNKNOWN:").contains("get_account");
+        ArgumentCaptor<FuturesCloseRequest> close = ArgumentCaptor.forClass(FuturesCloseRequest.class);
+        verify(simTradeClient, times(3)).closePosition(eq(99L), close.capture());
+        assertThat(close.getAllValues()).extracting(FuturesCloseRequest::getClientRequestId).doesNotContainNull().containsOnly(close.getValue().getClientRequestId());
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+        assertThat(tools.actions().getFirst().path("result").path("open").path("status").asString()).isEqualTo("not_attempted");
+    }
+
+    @Test
+    void reverseUnknownOpenPreservesCloseAndDoesNotReportClosedOnly() {
+        mockReverseClose();
+        when(simTradeClient.openPosition(eq(99L), any()))
+                .thenThrow(new SimOrderRetry.UnknownOutcome(new ResourceAccessException("timeout")));
+        assertThat(reverseLong()).startsWith("UNKNOWN:").contains("get_account");
+        JsonNode action = tools.actions().getFirst();
+        assertThat(action.path("status").asString()).isEqualTo("unknown");
+        assertThat(action.path("result").path("close").path("status").asString()).isEqualTo("ok");
+        assertThat(action.path("result").path("open").path("status").asString()).isEqualTo("unknown");
+        verify(simTradeClient).closePosition(eq(99L), any());
+        verify(simTradeClient).openPosition(eq(99L), any());
     }
 
     /** 盯盘条件：护栏逐条拒（同一路超过一条、kind、周期、已越过的价位、过去的时刻、白名单），通过的整组落库并进动作轨迹 */
@@ -512,7 +672,7 @@ class TradeToolsTest {
         assertThat(facts.path("riskPctOfEquity").asDecimal()).isEqualByComparingTo("0.51");
     }
 
-    /** 限价单的事实按限价算、开仓腿按 maker 0.02%：名义 960 → 往返 0.58；ATR 取不到就没有那两项 */
+    /** 限价单按限价计算、开仓手续费按 maker 0.02%：名义 960 → 往返 0.58；ATR 取不到就没有那两项 */
     @Test
     void limitReceiptUsesLimitPriceAndMakerFee() {
         FuturesOrderResponse resp = new FuturesOrderResponse();

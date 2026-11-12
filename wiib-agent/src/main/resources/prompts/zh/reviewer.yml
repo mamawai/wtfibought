@@ -195,6 +195,8 @@ reviewer:
     watchRejected: "{{tool}}（被拒）"
     watchFailed: "{{tool}}（失败）"
     watchUnknown: "{{tool}}（结果未知）"
+    watchNotAttempted: "{{tool}}（未发起）"
+    watchLiquidated: "{{tool}}（仓位已强平）"
 
     # ---- 经验账本 ----
     ledgerHeader: 【经验账本】（现役 {{n}} 条；#编号用于经验更新；标「待复审」的本期照常给结论）

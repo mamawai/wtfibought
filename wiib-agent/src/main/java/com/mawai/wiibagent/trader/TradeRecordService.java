@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.trade.TradeActions;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -108,7 +109,15 @@ public class TradeRecordService {
     }
 
     private static boolean opened(AiTraderDecision d) {
-        return d.getActionsJson() != null && d.getActionsJson().contains("open_position");
+        if (d.getActionsJson() == null) {
+            return false;
+        }
+        for (JsonNode a : MAPPER.readTree(d.getActionsJson())) {
+            if (TradeActions.opened(a)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -139,11 +148,13 @@ public class TradeRecordService {
             if (actions == null) {
                 continue;
             }
-            for (JsonNode a : actions) {
+            for (JsonNode a : actions.valueStream().flatMap(a -> TradeActions.legs(a).stream()).toList()) {
                 JsonNode args = a.hasNonNull("args") ? a.get("args") : null;
+                // 旧轨迹的 pending/无状态沿用成功语义。
+                String status = a.path("status").asString("pending");
                 if (!"close_position".equals(a.path("tool").asString(null))
                         || args == null || !args.hasNonNull("positionId")
-                        || a.has("rejected") || "error".equals(a.path("status").asString(null))) {
+                        || a.has("rejected") || !("ok".equals(status) || "pending".equals(status))) {
                     continue;
                 }
                 // 升序遍历 + 覆盖 = 留最后一轮

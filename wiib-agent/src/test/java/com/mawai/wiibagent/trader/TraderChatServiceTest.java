@@ -211,6 +211,28 @@ class TraderChatServiceTest {
         assertThat(out.get(0).get("tools")).extracting(JsonNode::asString).containsExactly("klines");
     }
 
+    @Test
+    void 反手旧仓被忽略仍保留新仓动作() {
+        AiTraderPlan old = new AiTraderPlan();
+        old.setPositionId(42L);
+        old.setSymbol("BTCUSDT");
+        old.setSide("LONG");
+        old.setStale(true);
+        AiTraderPlan next = new AiTraderPlan();
+        next.setSymbol("BTCUSDT");
+        next.setSide("SHORT");
+        next.setOpenedWakeTime(2000L);
+        JsonNode action = MAPPER.readTree("""
+                {"tool":"reverse_position","args":{"positionId":42},"result":{
+                  "close":{"tool":"close_position","args":{"positionId":42}},
+                  "open":{"tool":"open_position","args":{"symbol":"BTCUSDT","side":"SHORT"}}
+                }}
+                """);
+        assertThat(DecisionText.staleAction(action, 2000L, List.of(old, next))).isFalse();
+        next.setStale(true);
+        assertThat(DecisionText.staleAction(action, 2000L, List.of(old, next))).isTrue();
+    }
+
     /** plans：recentClosedPlans 滤 stale，宁缺不顶替 */
     @Test
     void plans滤掉stale的最近归档计划() {

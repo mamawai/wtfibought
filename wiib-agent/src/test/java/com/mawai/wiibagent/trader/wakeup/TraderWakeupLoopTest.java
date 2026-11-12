@@ -306,6 +306,57 @@ class TraderWakeupLoopTest {
         assertThat(owner.last("token").path("text").asString(null)).contains("本轮结束");
     }
 
+    @Test
+    void fullLoopReverseThenAccountKeepsActionOrderAndOpeningCitation() {
+        stubHealthyAccount();
+        FuturesPositionDTO old = crossPosition("100", "0");
+        old.setLeverage(10);
+        var positions = new java.util.concurrent.atomic.AtomicReference<>(List.of(old));
+        when(simTradeClient.getAllPositions(99L)).thenAnswer(inv -> positions.get());
+        when(simTradeClient.closePosition(eq(99L), any())).thenAnswer(inv -> {
+            positions.set(List.of());
+            FuturesOrderResponse r = new FuturesOrderResponse();
+            r.setStatus("FILLED");
+            r.setPositionId(349L);
+            r.setQuantity(old.getQuantity());
+            return r;
+        });
+        when(simTradeClient.openPosition(eq(99L), any())).thenAnswer(inv -> {
+            FuturesPositionDTO next = crossPosition("100", "0");
+            next.setId(350L);
+            next.setSide("SHORT");
+            next.setLeverage(10);
+            positions.set(List.of(next));
+            FuturesOrderResponse r = new FuturesOrderResponse();
+            r.setStatus("FILLED");
+            r.setPositionId(350L);
+            return r;
+        });
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AssistantMessage calls = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "reverse_position", """
+                        {"positionId":349,"quantity":0.01,"leverage":10,"stopLossPrice":105000,
+                         "playType":"REVERSAL","signalsUsed":"反弹结束跌破支撑","invalidationCondition":"收复支撑"}
+                        """), new AssistantMessage.ToolCall("c2", "function", "get_account", "{}"))).build();
+        when(model.stream(any(Prompt.class))).thenReturn(frameOf(calls),
+                frameOf(new AssistantMessage("[本轮结论]\n[BTCUSDT]\n参考账本 #3，反手做空。")));
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.wake(trader(), 1785171600000L);
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        JsonNode actions = MAPPER.readTree(dec.getValue().getActionsJson());
+        assertThat(actions).hasSize(2);
+        assertThat(actions.get(0).path("tool").asString()).isEqualTo("reverse_position");
+        assertThat(actions.get(0).path("status").asString()).isEqualTo("ok");
+        assertThat(actions.get(0).path("result").path("close").path("result").path("positionId").asLong()).isEqualTo(349L);
+        assertThat(actions.get(0).path("result").path("open").path("result").path("positionId").asLong()).isEqualTo(350L);
+        assertThat(actions.get(1).path("tool").asString()).isEqualTo("get_account");
+        verify(ledger).recordCitations(eq(7L), eq(1), eq(java.util.Set.of(3L)), eq(true));
+    }
+
     /** 结论块里引用的账本 #编号各计一次引用：本轮开了仓算开仓引用 */
     @Test
     void ledgerCitationsCountedAsOpenWhenPositionOpened() {

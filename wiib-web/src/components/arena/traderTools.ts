@@ -6,7 +6,7 @@ import type { AiTraderDecisionView } from '../../types';
  * 交易动作会动账本，行情数据只读。顺序即展示顺序——时间线的工具名与配置页的 skills 卡共用。
  */
 export const TRADE_TOOLS = [
-  'open_position', 'close_position', 'set_stop_loss', 'set_take_profit', 'write_plan', 'cancel_order', 'set_watch', 'get_account',
+  'open_position', 'close_position', 'reverse_position', 'set_stop_loss', 'set_take_profit', 'write_plan', 'cancel_order', 'set_watch', 'get_account',
 ] as const;
 export const DATA_TOOLS = [
   'klines', 'kline_structure', 'indicators', 'market_snapshot', 'funding_history', 'orderbook_depth', 'option_iv',
@@ -16,6 +16,7 @@ export const DATA_TOOLS = [
 /** 工具 id → 词表 key（存 key 不存文案：模块级常量只算一次，切语言不会失效） */
 const TOOL_KEY: Record<string, string> = {
   open_position: 'tool.openPosition', close_position: 'tool.closePosition', set_stop_loss: 'tool.setStopLoss',
+  reverse_position: 'tool.reversePosition',
   set_take_profit: 'tool.setTakeProfit', cancel_order: 'tool.cancelOrder', write_plan: 'tool.writePlan',
   set_watch: 'tool.setWatch', get_account: 'tool.getAccount', klines: 'tool.klines', kline_structure: 'tool.klineStructure',
   indicators: 'tool.indicators', market_snapshot: 'tool.marketSnapshot', funding_history: 'tool.fundingHistory',
@@ -64,6 +65,7 @@ export interface ActionRow {
   rejected?: string;
   error?: string;
   args?: Record<string, unknown>;
+  result?: { close?: ActionRow; open?: ActionRow };
 }
 
 export function parseActions(json: string | null): ActionRow[] {
@@ -77,10 +79,14 @@ export function parseActions(json: string | null): ActionRow[] {
 /** 不算「动过仓位」的交易工具：布盯盘、查账户 */
 const NOT_ACTING = new Set(['set_watch', 'get_account']);
 
-/** 这轮做成了的交易动作（布盯盘、查账户、被拒、出错的不算） */
+/** 这轮做成的交易动作；未完成的反手按已成交的操作展示。 */
 export function doneTrades(d: AiTraderDecisionView): ActionRow[] {
   return parseActions(d.actionsJson)
-    .filter(a => TRADE_TOOL_SET.has(a.tool) && !NOT_ACTING.has(a.tool) && !a.rejected && a.status !== 'error');
+    .flatMap(a => a.tool === 'reverse_position' && a.status !== 'ok'
+      ? [a.result?.close, a.result?.open].filter((leg): leg is ActionRow => leg?.status === 'ok')
+      : [a])
+    .filter(a => TRADE_TOOL_SET.has(a.tool) && !NOT_ACTING.has(a.tool) && !a.rejected
+      && a.status !== 'error' && a.status !== 'unknown');
 }
 
 /** 交易动作的关键参数一行话（按工具挑重点，不倒整个 JSON）。词表在函数体里现查，切语言即变 */
@@ -88,6 +94,12 @@ export function tradeArgsSummary(a: ActionRow): string {
   const g = (k: string) => a.args?.[k] != null ? String(a.args[k]) : '';
   const tr = (key: string, vars?: Record<string, string>) => i18n.t(`ai:${key}`, vars ?? {});
   switch (a.tool) {
+    case 'reverse_position':
+      return [tr('args.position', { id: g('positionId') }),
+        tradeArgsSummary({ ...a, tool: 'open_position' }),
+        a.result?.close?.status === 'ok' && tr('args.reverseClosed'),
+        a.result?.close?.status === 'liquidated' && tr('args.reverseLiquidated'),
+        a.result?.open?.status === 'ok' && tr('args.reverseOpened')].filter(Boolean).join(' · ');
     case 'open_position': {
       const tp = rungsText(a.args?.takeProfits);
       const parts = [g('symbol'), g('side') === 'LONG' ? tr('args.long') : g('side') === 'SHORT' ? tr('args.short') : g('side'),

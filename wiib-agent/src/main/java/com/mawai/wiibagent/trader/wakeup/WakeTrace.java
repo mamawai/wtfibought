@@ -185,7 +185,8 @@ public final class WakeTrace {
     public synchronized Frame toolResult(String id, String name, String responseData) {
         Call call = calls.getLast();
         String text = plainText(responseData);
-        String status = text.startsWith("REJECTED:") ? "rejected" : text.startsWith("ERROR:") ? "error" : "ok";
+        String status = text.startsWith("REJECTED:") ? "rejected" : text.startsWith("ERROR:") ? "error"
+                : text.startsWith("UNKNOWN:") ? "unknown" : text.startsWith("PARTIAL:") ? "partial" : "ok";
         String preview = text.length() > PREVIEW_CHARS ? text.substring(0, PREVIEW_CHARS) : text;
         ToolResult result = new ToolResult(id, name, status, preview);
         call.results.add(result);

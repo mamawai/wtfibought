@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.trader.trade.TradeActions;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -195,7 +196,12 @@ public class DecisionText {
      * positionId 命中 stale 仓位绑定，或该轮是 stale 计划的开仓轮且动作开的正是该币向。
      */
     public static boolean staleAction(JsonNode action, long wakeTime, List<AiTraderPlan> plans) {
-        JsonNode args = action == null || !action.hasNonNull("args") ? null : action.get("args");
+        // 平仓和反向开仓都被忽略时，隐藏整次反手。
+        var legs = TradeActions.legs(action);
+        if (legs.size() == 2) {
+            return legs.stream().allMatch(a -> staleAction(a, wakeTime, plans));
+        }
+        JsonNode args = !action.hasNonNull("args") ? null : action.get("args");
         for (AiTraderPlan p : plans) {
             if (!Boolean.TRUE.equals(p.getStale())) {
                 continue;

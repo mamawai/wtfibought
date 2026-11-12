@@ -22,7 +22,7 @@ final class OpenFacts {
     /** 纯算术的几项；ATR 那几项成交后另加（{@link #addAtr}） */
     static ObjectNode of(TradeGuard.OpenReq req, BigDecimal entryRef, BigDecimal equity) {
         BigDecimal notional = req.quantity().multiply(entryRef);
-        // 开仓腿按下单方式（限价 maker、市价 taker），平仓腿按 taker：止损止盈触发都是 taker 成交
+        // 开仓手续费：限价按 maker、市价按 taker；平仓手续费按 taker 估算。
         BigDecimal openRate = "LIMIT".equals(req.orderType()) ? FuturesFeeRates.MAKER : FuturesFeeRates.TAKER;
         BigDecimal fee = notional.multiply(openRate.add(FuturesFeeRates.TAKER));
         BigDecimal stopDist = stopDistance(req, entryRef);

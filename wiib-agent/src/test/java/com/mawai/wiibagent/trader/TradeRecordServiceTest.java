@@ -165,6 +165,37 @@ class TradeRecordServiceTest {
         assertThat(r.openDecision().kind()).isEqualTo(AiTraderDecision.KIND_MANUAL);
     }
 
+    @Test
+    void reverseOpeningDecisionIsRecognizedAndPartialCloseStillLinks() {
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(closedLong(7L, "108")));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan(OPEN_MS)));
+        String opened = """
+                [{"tool":"reverse_position","status":"ok","result":{
+                  "close":{"tool":"close_position","status":"ok","args":{"positionId":6}},
+                  "open":{"tool":"open_position","status":"ok","args":{"symbol":"BTCUSDT","side":"LONG"}}
+                }}]
+                """;
+        String partial = """
+                [{"tool":"reverse_position","status":"partial","result":{
+                  "close":{"tool":"close_position","status":"ok","args":{"positionId":7,"reason":"反弹失效"}},
+                  "open":{"tool":"open_position","status":"error"}
+                }}]
+                """;
+        String unknown = """
+                [{"tool":"reverse_position","status":"unknown","result":{
+                  "close":{"tool":"close_position","status":"unknown","args":{"positionId":7,"reason":"不能顶掉已确认成交"}},
+                  "open":{"tool":"open_position","status":"not_attempted"}
+                }}]
+                """;
+        when(decisionMapper.selectList(any())).thenReturn(
+                List.of(decision(100L, OPEN_MS, "反手做多", opened), decision(101L, OPEN_MS, "HOLD", "[]")),
+                List.of(decision(102L, CLOSE_MS, "反手做空但只平掉", partial), decision(103L, CLOSE_MS, "未知", unknown)));
+        var trade = service.closedTrades(trader()).getFirst();
+        assertThat(trade.openDecision().id()).isEqualTo(100L);
+        assertThat(trade.closeDecision().id()).isEqualTo(102L);
+        assertThat(trade.closeDecision().reason()).isEqualTo("反弹失效");
+    }
+
     /** 被拒/出错的 close_position 不算数：仓位早平了之后再对它下的失败动作不能顶掉真正的平仓决策 */
     @Test
     void rejectedOrErrorCloseActionsIgnored() {

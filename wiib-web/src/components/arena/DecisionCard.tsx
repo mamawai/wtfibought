@@ -107,14 +107,14 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
         <div className="mt-1.5">
           {trades.map((a, i) => {
             const failed = a.rejected || a.status === 'error';
-            // unknown=重发确认后仍没问到结果，可能成交也可能没有。不单独标出来就跟成交长得一模一样，
-            // 而这条时间线是对所有人公开的账面事实
+            // unknown：成交结果未确认；partial：反手未完整执行。
             const unknown = a.status === 'unknown';
+            const partial = a.status === 'partial';
             return (
               <div key={i} className="flex gap-2.5 items-baseline py-0.5 text-[13.5px] border-t border-dashed border-border first:border-t-0">
-                <b className={cn('font-extrabold whitespace-nowrap', failed ? 'text-loss' : unknown && 'text-warning')}>
+                <b className={cn('font-extrabold whitespace-nowrap', failed ? 'text-loss' : (unknown || partial) && 'text-warning')}>
                   {toolName(a.tool)}
-                  {a.rejected ? t('trade.rejected') : a.status === 'error' ? t('trade.errored') : unknown ? t('trade.unknown') : ''}
+                  {a.rejected ? t('trade.rejected') : a.status === 'error' ? t('trade.errored') : unknown ? t('trade.unknown') : partial ? t('trade.partial') : ''}
                 </b>
                 <span className="mute">
                   {tradeArgsSummary(a)}

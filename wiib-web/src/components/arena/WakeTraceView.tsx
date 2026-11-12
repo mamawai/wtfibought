@@ -49,6 +49,8 @@ function CallTools({ call, running }: { call: WakeCall; running: boolean }) {
               {toolName(tc.name)} {args}
               {result?.status === 'rejected' ? t('trade.rejected')
                 : result?.status === 'error' ? t('trade.errored')
+                : result?.status === 'unknown' ? t('trade.unknown')
+                : result?.status === 'partial' ? t('trade.partial')
                 : !result && running ? ` · ${t('live.processing')}` : ''}
             </button>
           );

@@ -250,6 +250,16 @@ tool:
     回执带一个 facts 块：这笔的往返手续费估算、止损距离（% 与心跳周期 ATR14 的倍数）、止损打掉亏权益的百分比；
     设了止盈的再给各档全部成交的盈利与扣费后盈亏比（只算止盈档盖住的那部分），没设就没有这两项。
 
+  reverse_position: |-
+    按 positionId 市价全平旧仓，确认后市价开同币反向仓。symbol 与反向 side 从旧仓推导，不传。
+    quantity、leverage 是新仓的数量和杠杆，数量不必等于旧仓；stopLossPrice 是新仓止损，必填。
+    takeProfits 可选，其余 playType、signalsUsed、invalidationCondition 与 open_position 同义；
+    signalsUsed 同时说明当下反手的数据依据。新仓沿用开仓护栏、全仓模式、计划记录和 facts 回执；
+    若反向已有持仓，按普通开仓的加仓语义处理。全平前先预检，平完再按最新账户与价格校验开仓。
+    平仓和反向开仓分别执行。partial 表示未完整执行，查看平仓、开仓的回执确认已完成的部分；
+    unknown 表示某笔订单可能已成交，先 get_account 核对，不能直接重下。其他开仓挂单与盯盘条件保持原样，
+    可通过 cancel_order / set_watch 调整。
+
   close_position: |-
     按 positionId（见开场白【当前账户】的持仓，或 get_account）市价平掉持仓的全部或一部分。
     quantity：要平的币数；传持仓全量即全平。reason：一句话说明为什么现在平。
