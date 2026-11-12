@@ -81,12 +81,13 @@ class TradeToolsTest {
     private final AiTraderWatchMapper watchMapper = mock(AiTraderWatchMapper.class);
     private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper, mock(ApplicationEventPublisher.class));
     private final TraderPlanStore planStore = new TraderPlanStore(planMapper, PROMPTS);
+    private final java.util.concurrent.atomic.AtomicBoolean openingAllowed = new java.util.concurrent.atomic.AtomicBoolean(true);
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
             positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
             planStore, watchStore,
             new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                     new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-            PROMPTS, MESSAGES, mock(EntryContext.class));
+            PROMPTS, MESSAGES, mock(EntryContext.class), openingAllowed::get);
 
     /** 多单：入场10万，当前止损9.5万、止盈11万 */
     private FuturesPositionDTO longPosition() {
@@ -143,6 +144,19 @@ class TradeToolsTest {
     private String reverseLong() {
         return tools.reversePosition(5L, 0.02, 10, 105000.0, oneRung("90000"),
                 "REVERSAL", "跌破支撑，反手做空", "重回支撑上方");
+    }
+
+    @Test
+    void openingBeforeDecisionIsRecordedAndReverseDoesNotCloseFirst() {
+        openingAllowed.set(false);
+
+        assertThat(tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
+                null, 95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"))
+                .startsWith("REJECTED:").contains(PROMPTS.get(AgentLang.ZH, "trader.reject.openingStage"));
+        assertThat(reverseLong()).startsWith("REJECTED:");
+
+        assertThat(tools.actions()).hasSize(2).allSatisfy(action -> assertThat(action.has("rejected")).isTrue());
+        verifyNoInteractions(simTradeClient, planMapper, watchMapper);
     }
 
     private void mockReverseClose() {
@@ -214,7 +228,7 @@ class TradeToolsTest {
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"), planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), false, false), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class));
+                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
         String result = single.reversePosition(5L, 0.02, 10, 95000.0, null, "REVERSAL", "反弹突破", "跌回突破位");
         assertThat(MAPPER.readTree(result).path("status").asString()).isEqualTo("ok");
         ArgumentCaptor<FuturesOpenRequest> open = ArgumentCaptor.forClass(FuturesOpenRequest.class);
@@ -649,7 +663,7 @@ class TradeToolsTest {
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, entryContext);
+                PROMPTS, MESSAGES, entryContext, () -> true);
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setOrderId(890L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
@@ -769,7 +783,7 @@ class TradeToolsTest {
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, entryContext);
+                PROMPTS, MESSAGES, entryContext, () -> true);
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setOrderId(889L);
         resp.setPositionId(43L);
@@ -873,7 +887,7 @@ class TradeToolsTest {
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, System.currentTimeMillis() - 1,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class));
+                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
 
         assertThat(openOnce(late)).startsWith("REJECTED").contains("本轮已超时");
         assertThat(late.closePosition(5L, 0.01, "失效条件触发")).contains("本轮已超时");
@@ -896,7 +910,7 @@ class TradeToolsTest {
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class));
+                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
 
         String r = strict.openPosition(null, "SHORT", "MARKET", 0.64, 20,
                 null, 64980.0, oneRung("64640"), "BREAKOUT", "突破", "收回箱体");
@@ -1055,7 +1069,7 @@ class TradeToolsTest {
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class));
+                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
 
         String r = poorer.openPosition("BTCUSDT", "LONG", "MARKET", 0.4, 10,
                 null, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");

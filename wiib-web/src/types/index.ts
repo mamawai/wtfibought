@@ -1026,7 +1026,7 @@ export interface WakeToolCall {
   args: Record<string, unknown> | string;
 }
 
-/** 一条工具回执；preview 后端已截 2000 字 */
+/** 一条工具回执；web_search 保留全文，其余 preview 最多 2000 字 */
 export interface WakeToolResult {
   id: string;
   name: string;

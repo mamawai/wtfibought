@@ -30,6 +30,9 @@ import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.llm.SearchEvent;
+import com.mawai.wiibagent.llm.ResponsesChatModel;
+import com.sun.net.httpserver.HttpServer;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
@@ -49,24 +52,37 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.model.tool.ToolCallingManager;
 import reactor.core.publisher.Flux;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -77,6 +93,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -126,6 +143,7 @@ class TraderWakeupLoopTest {
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
 
     private final PromptCatalog prompts = new PromptCatalog();
+    private final TraderPlanStore planStore = spy(new TraderPlanStore(planMapper, prompts));
     private final DecisionText decisionText = new DecisionText(prompts);
     /** 默认（未打桩）返回 null = 本局无统计不注入 */
     private final PlayStatsAssembler playStats = mock(PlayStatsAssembler.class);
@@ -149,7 +167,7 @@ class TraderWakeupLoopTest {
             mock(DerivativesToolkit.class), mock(WhaleToolkit.class),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             mock(CrossAssetToolkit.class),
-            traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), watchStore,
+            traderMapper, decisionMapper, planStore, watchStore,
             langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
             wakeObservation,
@@ -240,6 +258,253 @@ class TraderWakeupLoopTest {
         p.setMargin(new BigDecimal(margin));
         p.setUnrealizedPnl(new BigDecimal(unrealizedPnl));
         return p;
+    }
+
+    private ChatModel onlineModel(java.util.function.IntFunction<AssistantMessage> reply) {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger calls = new AtomicInteger();
+        when(model.stream(any(Prompt.class))).thenAnswer(inv -> frameOf(reply.apply(calls.incrementAndGet())));
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        when(modelFactory.webSearchEnabled(any())).thenReturn(true);
+        return model;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ROUTINE", "MANUAL", "ALERT", "EVENT", "WATCH", "MIXED"})
+    void onlineWakeAssessesSearchOncePerBatchAndKeepsOnlyFinalDecision(String kind) {
+        stubHealthyAccount();
+        ChatModel model = onlineModel(n -> new AssistantMessage(switch (n) {
+            case 1 -> "事实核查完成。";
+            case 2 -> "现有材料足够，不需要联网。";
+            default -> "[本轮结论]\nBTCUSDT：继续等待。";
+        }));
+        long at = 1785171600000L;
+        AlertTrigger alert = new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("100000"), AlertTrigger.DOWN, at);
+        EventTrigger event = new EventTrigger(new TradeEvent(TradeEvent.LIMIT_FILLED, 99L, 9L, 100L, "BTCUSDT", "LONG",
+                new BigDecimal("0.01"), new BigDecimal("100000"), null, at));
+        AiTraderWatch watch = new AiTraderWatch();
+        watch.setId(31L);
+        watch.setSymbol("BTCUSDT");
+        watch.setKind("CLOSE_ABOVE");
+        watch.setLevel(new BigDecimal("99000"));
+        watch.setPeriod("1h");
+        watch.setNote("观察突破是否成立");
+        WatchTrigger hit = new WatchTrigger(watch, new BigDecimal("100000"), at);
+        switch (kind) {
+            case "ROUTINE" -> runner.wake(trader(), at);
+            case "MANUAL" -> runner.wakeManual(trader(), at);
+            case "ALERT" -> runner.wakeTriggered(trader(), List.of(alert));
+            case "EVENT" -> runner.wakeTriggered(trader(), List.of(event));
+            case "WATCH" -> runner.wakeTriggered(trader(), List.of(hit));
+            case "MIXED" -> runner.wakeTriggered(trader(), List.of(alert, event, hit));
+        }
+
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, times(3)).stream(sent.capture());
+        List<Message> history = sent.getAllValues().getLast().getInstructions();
+        assertThat(history.stream().filter(UserMessage.class::isInstance).map(Message::getText).toList())
+                .hasSize(3).filteredOn(text -> text.equals(prompts.get(AgentLang.ZH, "trader.wake.searchQuestion"))).hasSize(1);
+        assertThat(sent.getAllValues().getLast().getUserMessage().getText()).contains(prompts.get(AgentLang.ZH,
+                kind.equals("ROUTINE") || kind.equals("MANUAL") ? "trader.wake.routineScope" : "trader.wake.triggeredScope"));
+        verify(model, never()).call(any(Prompt.class));
+        ArgumentCaptor<AiTraderDecision> saved = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        assertThat(saved.getValue().getReasoning()).isEqualTo("[本轮结论]\nBTCUSDT：继续等待。");
+        assertThat(saved.getValue().getTraceJson()).contains("现有材料足够，不需要联网");
+        assertThat(MAPPER.readTree(saved.getValue().getTraceJson()).get("stages")).hasSize(2);
+        assertThat(MAPPER.readTree(saved.getValue().getActionsJson())).isEmpty();
+    }
+
+    @Test
+    void earlyOpeningRejectionsKeepOtherActionsInOrderAndDecisionCanOpen() {
+        stubHealthyAccount();
+        String openArgs = """
+                {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
+                 "stopLossPrice":95000,"playType":"BREAKOUT","signalsUsed":"突破前高",
+                 "invalidationCondition":"1h收盘跌破95000"}""";
+        String reverseArgs = """
+                {"positionId":5,"quantity":0.01,"leverage":10,"stopLossPrice":105000,"playType":"REVERSAL",
+                 "signalsUsed":"跌破支撑","invalidationCondition":"重回支撑"}""";
+        onlineModel(n -> switch (n) {
+            case 1 -> AssistantMessage.builder().content("").toolCalls(List.of(
+                    new AssistantMessage.ToolCall("open-early", "function", "open_position", openArgs),
+                    new AssistantMessage.ToolCall("cancel-first", "function", "cancel_order", "{\"orderId\":77}"))).build();
+            case 2 -> new AssistantMessage("事实：已撤单77，提前开仓被拒绝。");
+            case 3 -> AssistantMessage.builder().content("").toolCalls(List.of(
+                    new AssistantMessage.ToolCall("reverse-early", "function", "reverse_position", reverseArgs),
+                    new AssistantMessage.ToolCall("cancel-second", "function", "cancel_order", "{\"orderId\":78}"))).build();
+            case 4 -> new AssistantMessage("无需搜索，已撤单78，反手未执行。");
+            case 5 -> AssistantMessage.builder().content("").toolCalls(List.of(
+                    new AssistantMessage.ToolCall("open-final", "function", "open_position", openArgs))).build();
+            default -> new AssistantMessage("[本轮结论]\nBTCUSDT：已撤单77、78，并开多。反手未执行。");
+        });
+        when(simTradeClient.cancelOrder(99L, 77L)).thenReturn(new FuturesOrderResponse());
+        when(simTradeClient.cancelOrder(99L, 78L)).thenReturn(new FuturesOrderResponse());
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+
+        runner.wake(trader(), 1785171600000L);
+
+        verify(simTradeClient).openPosition(eq(99L), any());
+        verify(simTradeClient, never()).closePosition(anyLong(), any());
+        var order = org.mockito.Mockito.inOrder(simTradeClient);
+        order.verify(simTradeClient).cancelOrder(99L, 77L);
+        order.verify(simTradeClient).cancelOrder(99L, 78L);
+        order.verify(simTradeClient).openPosition(eq(99L), any());
+        ArgumentCaptor<AiTraderDecision> saved = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(saved.capture());
+        JsonNode actions = MAPPER.readTree(saved.getValue().getActionsJson());
+        assertThat(actions).hasSize(5);
+        assertThat(actions.get(0).path("tool").asString()).isEqualTo("open_position");
+        assertThat(actions.get(0).has("rejected")).isTrue();
+        assertThat(actions.get(1).path("tool").asString()).isEqualTo("cancel_order");
+        assertThat(actions.get(1).has("rejected")).isFalse();
+        assertThat(actions.get(2).path("tool").asString()).isEqualTo("reverse_position");
+        assertThat(actions.get(2).has("rejected")).isTrue();
+        assertThat(actions.get(3).path("tool").asString()).isEqualTo("cancel_order");
+        assertThat(actions.get(4).path("tool").asString()).isEqualTo("open_position");
+        assertThat(actions.get(4).has("rejected")).isFalse();
+        assertThat(saved.getValue().getReasoning()).isEqualTo("[本轮结论]\nBTCUSDT：已撤单77、78，并开多。反手未执行。");
+    }
+
+    @Test
+    void decisionRefreshAfterWebSearchSeesNewPositionWithoutExtraPlanReconciliation() {
+        stubHealthyAccount();
+        ChatModel model = onlineModel(n -> {
+            if (n == 2) {
+                return AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("search", "function", "web_search",
+                                "{\"query\":\"核实公告是否已生效\"}"))).build();
+            }
+            if (n == 3) {
+                when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("2000", "123")));
+                when(binanceRestClient.getPremiumIndex("BTCUSDT"))
+                        .thenReturn("{\"markPrice\":\"100615\",\"nextFundingTime\":0,\"lastFundingRate\":\"0.0001\"}");
+            }
+            return new AssistantMessage(n == 4 ? "已确认新持仓，继续持有。" : "本段完成。");
+        });
+        when(model.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(new Generation(
+                new AssistantMessage("公告没有写明生效时间，暂时无法确认。"),
+                ChatGenerationMetadata.builder().metadata(SearchEvent.KEY, List.of(SearchEvent.searched("公告", List.of(
+                        new SearchEvent.Source("https://example.com/notice", "公告"))))).build()))));
+
+        runner.wake(trader(), 1785171600000L);
+
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, times(4)).stream(sent.capture());
+        assertThat(sent.getAllValues().getLast().getUserMessage().getText())
+                .contains("\"positionId\":349", "\"unrealizedPnl\":123", "100615");
+        ArgumentCaptor<Prompt> search = ArgumentCaptor.forClass(Prompt.class);
+        verify(model).call(search.capture());
+        assertThat(search.getValue().getSystemMessage().getText()).isEqualTo(prompts.get(AgentLang.ZH, "trader.wake.searchInstruction"));
+        ArgumentCaptor<AiTraderDecision> saved = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(saved.capture());
+        JsonNode actions = MAPPER.readTree(saved.getValue().getActionsJson());
+        assertThat(actions).hasSize(1);
+        assertThat(actions.get(0).path("tool").asString()).isEqualTo("web_search");
+        assertThat(saved.getValue().getTraceJson()).contains("https://example.com/notice", "暂时无法确认");
+        verify(planStore).reconcile(eq(7L), eq(1), any(), any(), any(), eq(1785171600000L), eq(AgentLang.ZH));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0,11,false,12", "0,12,true,13", "1,11,false,12", "1,12,true,13", "2,12,true,13", "2,12,false,12"})
+    void onlineBudgetEndsOnceAtEveryStage(int completedStages, int boundary, boolean toolAtBoundary, int expectedCalls) {
+        stubHealthyAccount();
+        ChatModel model = onlineModel(n -> {
+            if (n <= completedStages) {
+                return new AssistantMessage("本段完成。");
+            }
+            if (n > boundary || (n == boundary && !toolAtBoundary)) {
+                return new AssistantMessage("[本轮结论]\nBTCUSDT：保持等待，未交易。");
+            }
+            return AssistantMessage.builder().content("").toolCalls(List.of(
+                    new AssistantMessage.ToolCall("account-" + n, "function", "get_account", "{}"))).build();
+        });
+
+        runner.wake(trader(), 1785171600000L);
+
+        verify(model, times(expectedCalls)).stream(any(Prompt.class));
+        ArgumentCaptor<AiTraderDecision> saved = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        assertThat(saved.getValue().getReasoning()).isEqualTo("[本轮结论]\nBTCUSDT：保持等待，未交易。");
+        JsonNode stages = MAPPER.readTree(saved.getValue().getTraceJson()).get("stages");
+        assertThat(stages).hasSize(completedStages + (completedStages < 2 || toolAtBoundary ? 1 : 0));
+        if (completedStages == 0) {
+            assertThat(stages.toString()).contains(prompts.get(AgentLang.ZH, "trader.wake.searchSkipped"));
+        }
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+    }
+
+    @Test
+    void cancellingWakeInterruptsSearchConnectionAndDoesNotExecuteFollowingTrade() throws Exception {
+        stubHealthyAccount();
+        CountDownLatch received = new CountDownLatch(1);
+        CountDownLatch disconnected = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger requests = new AtomicInteger();
+        CompletableFuture<Boolean> searchEnded = new CompletableFuture<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            server.setExecutor(executor);
+            server.createContext("/v1/responses", exchange -> {
+                requests.incrementAndGet();
+                exchange.getRequestBody().readAllBytes();
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, 0);
+                try (var out = exchange.getResponseBody()) {
+                    out.write("data: {\"type\":\"response.in_progress\"}\n\n".getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                    received.countDown();
+                    while (!release.await(50, TimeUnit.MILLISECONDS)) {
+                        out.write(": keepalive\n\n".getBytes(StandardCharsets.UTF_8));
+                        out.flush();
+                    }
+                } catch (IOException e) {
+                    disconnected.countDown();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            server.start();
+            ResponsesChatModel transport = new ResponsesChatModel("test-key", "http://127.0.0.1:" + server.getAddress().getPort(),
+                    "test-model", null, null, mock(ToolCallingManager.class), true, Duration.ofSeconds(30));
+            ChatModel model = onlineModel(n -> n < 3 ? new AssistantMessage("本段完成。")
+                    : AssistantMessage.builder().content("").toolCalls(List.of(
+                            new AssistantMessage.ToolCall("search", "function", "web_search", "{\"query\":\"核实公告\"}"),
+                            new AssistantMessage.ToolCall("open", "function", "open_position", """
+                                    {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
+                                     "stopLossPrice":95000,"playType":"BREAKOUT","signalsUsed":"突破前高",
+                                     "invalidationCondition":"跌回前高"}"""))).build());
+            when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+                try {
+                    return transport.call(inv.getArgument(0, Prompt.class));
+                } finally {
+                    searchEnded.complete(Thread.currentThread().isInterrupted());
+                }
+            });
+            Thread wake = Thread.startVirtualThread(() -> runner.wake(trader(), 1785171600000L));
+            try {
+                assertThat(received.await(5, TimeUnit.SECONDS)).isTrue();
+                wake.interrupt();
+                wake.join(5_000);
+                assertThat(wake.isAlive()).isFalse();
+                assertThat(searchEnded.get(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(disconnected.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(requests.get()).isEqualTo(1);
+                verify(model, times(3)).stream(any(Prompt.class));
+                verify(simTradeClient, never()).openPosition(anyLong(), any());
+                ArgumentCaptor<AiTraderDecision> saved = ArgumentCaptor.forClass(AiTraderDecision.class);
+                verify(decisionMapper).insert(saved.capture());
+                assertThat(saved.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
+                assertThat(saved.getValue().getReasoning()).isNull();
+            } finally {
+                wake.interrupt();
+                release.countDown();
+                server.stop(0);
+            }
+        }
     }
 
     @Test
@@ -1074,7 +1339,7 @@ class TraderWakeupLoopTest {
         long pressed = boundary + 37 * 60_000L;
         runner.nowMs = () -> pressed;
 
-        String opening = runner.routineInstruction(trader(), pressed, "", "", "", "", null, AgentLang.ZH, false);
+        String opening = runner.routineInstruction(trader(), pressed, "", "", "", "", null, AgentLang.ZH);
 
         assertThat(opening).contains("已收盘（" + java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
                 .withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(boundary)) + "）");

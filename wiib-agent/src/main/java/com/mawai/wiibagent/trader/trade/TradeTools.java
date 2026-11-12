@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -77,13 +78,16 @@ public class TradeTools {
     private final MessageCatalog messages;
     /** 开仓那一刻的上下文快照，随计划落库 */
     private final EntryContext entryContext;
+    /** 本轮是否已进入可以开仓的阶段 */
+    private final BooleanSupplier openingAllowed;
     /** 本次唤醒的动作轨迹，唤醒回路收走序列化进 ai_trader_decision.actions_json */
     private final List<ObjectNode> actions = new ArrayList<>();
 
     public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist, Set<String> watchSymbols,
                       Function<List<FuturesPositionDTO>, BigDecimal> equityOf, Function<String, BigDecimal> markPrice,
                       TraderPlanStore planStore, TraderWatchStore watchStore, WakeCtx ctx,
-                      PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext) {
+                      PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext,
+                      BooleanSupplier openingAllowed) {
         this.simTradeClient = simTradeClient;
         this.simUserId = simUserId;
         this.symbolWhitelist = symbolWhitelist;
@@ -96,6 +100,7 @@ public class TradeTools {
         this.prompts = prompts;
         this.messages = messages;
         this.entryContext = entryContext;
+        this.openingAllowed = openingAllowed;
     }
 
     /** 唤醒回路收轨迹：超时那条路上被中断的工具可能还在往里记，拷一份出去 */
@@ -111,39 +116,44 @@ public class TradeTools {
             side, quantity, entry price, leverage, unrealized PnL, liquidation price, current
             stop-loss/take-profit) and pending limit orders. This same state is already injected into
             your opening message every round (the [Account] block), so you normally do not need to call
-            this; use it only to confirm the account after your own trades within this round.""")
+            this; use it to confirm changes after your trades or fills that occurred while you were checking data.""")
     public String getAccount() {
         try {
-            ObjectNode out = MAPPER.createObjectNode();
-            Map<String, Object> balance = simTradeClient.getBalanceDetail(simUserId);
-            List<FuturesPositionDTO> positions = simTradeClient.getAllPositions(simUserId);
-            // 权益与开场白同一口径；available 是 sim 全仓账本的下单额度，钱包余额里还躺着已占用的保证金，不能当可用
-            out.put("equity", equityOf.apply(positions));
-            out.put("available", decimal(balance.get("available")));
-            out.put("walletBalance", decimal(balance.get("balance")));
-            ArrayNode ps = MAPPER.createArrayNode();
-            for (FuturesPositionDTO p : positions) {
-                ObjectNode row = MAPPER.createObjectNode();
-                row.put("positionId", p.getId());
-                row.put("symbol", p.getSymbol());
-                row.put("side", p.getSide());
-                row.put("quantity", p.getQuantity());
-                row.put("entryPrice", p.getEntryPrice());
-                row.put("leverage", p.getLeverage());
-                row.put("margin", p.getMargin());
-                row.put("unrealizedPnl", p.getUnrealizedPnl());
-                row.put("liquidationPrice", p.getLiquidationPrice());
-                row.set("stopLosses", MAPPER.valueToTree(p.getStopLosses()));
-                row.set("takeProfits", MAPPER.valueToTree(p.getTakeProfits()));
-                ps.add(row);
-            }
-            out.set("positions", ps);
-            List<FuturesOrderResponse> pending = simTradeClient.getPendingOrders(simUserId, null);
-            out.set("pendingOrders", MAPPER.valueToTree(pending));
-            return ok("get_account", null, MAPPER.writeValueAsString(out));
+            return ok("get_account", null, accountSnapshot());
         } catch (Exception e) {
             return fail("get_account", null, e);
         }
+    }
+
+    /** 只读账户快照，不增加模型的工具调用记录 */
+    public String accountSnapshot() {
+        ObjectNode out = MAPPER.createObjectNode();
+        Map<String, Object> balance = simTradeClient.getBalanceDetail(simUserId);
+        List<FuturesPositionDTO> positions = simTradeClient.getAllPositions(simUserId);
+        // 权益与开场白同一口径；available 是 sim 全仓账本的下单额度，钱包余额里还躺着已占用的保证金，不能当可用
+        out.put("equity", equityOf.apply(positions));
+        out.put("available", decimal(balance.get("available")));
+        out.put("walletBalance", decimal(balance.get("balance")));
+        ArrayNode ps = MAPPER.createArrayNode();
+        for (FuturesPositionDTO p : positions) {
+            ObjectNode row = MAPPER.createObjectNode();
+            row.put("positionId", p.getId());
+            row.put("symbol", p.getSymbol());
+            row.put("side", p.getSide());
+            row.put("quantity", p.getQuantity());
+            row.put("entryPrice", p.getEntryPrice());
+            row.put("leverage", p.getLeverage());
+            row.put("margin", p.getMargin());
+            row.put("unrealizedPnl", p.getUnrealizedPnl());
+            row.put("liquidationPrice", p.getLiquidationPrice());
+            row.set("stopLosses", MAPPER.valueToTree(p.getStopLosses()));
+            row.set("takeProfits", MAPPER.valueToTree(p.getTakeProfits()));
+            ps.add(row);
+        }
+        out.set("positions", ps);
+        List<FuturesOrderResponse> pending = simTradeClient.getPendingOrders(simUserId, null);
+        out.set("pendingOrders", MAPPER.valueToTree(pending));
+        return MAPPER.writeValueAsString(out);
     }
 
     private static BigDecimal decimal(Object v) {
@@ -193,6 +203,9 @@ public class TradeTools {
         ObjectNode argSummary = openArgs(req);
         if (roundExpired()) {
             return expired("open_position", argSummary);
+        }
+        if (!openingAllowed.getAsBoolean()) {
+            return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.openingStage"));
         }
         // 白名单挡在行情查询之前：模型重试时会丢参数（真实发生过），空 symbol 打到上游
         // 会拉回全市场 premiumIndex 数组炸掉解析，模型收到的就不是可修正的拒因了
@@ -432,6 +445,9 @@ public class TradeTools {
         try {
             if (roundExpired()) {
                 return expired("reverse_position", args);
+            }
+            if (!openingAllowed.getAsBoolean()) {
+                return rejected("reverse_position", args, prompts.get(ctx.lang(), "trader.reject.openingStage"));
             }
             Account before = account();
             FuturesPositionDTO pos = before.positions().stream()

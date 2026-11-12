@@ -7,6 +7,7 @@ import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -126,6 +127,24 @@ class WakeTraceTest {
         assertThat(unknownTool.data().path("status").asString(null)).isEqualTo("error");
         assertThat(lastCall.data().path("status").asString(null)).isEqualTo("rejected");
         assertThat(lastCall.data().path("preview").asString(null)).isEqualTo("REJECTED: 不行\n\n（预算已用完）");
+    }
+
+    @Test
+    void webSearchKeepsFullReceiptInLiveReplayAndStoredTrace() {
+        WakeTrace t = trace();
+        t.callStart();
+        t.callEnd("核实公告", List.of(call("search", "web_search", "{\"query\":\"公告\"}")));
+        String result = MAPPER.writeValueAsString(Map.of(
+                "answer", "待核实的材料。".repeat(500),
+                "sources", List.of(Map.of("title", "原始公告", "url", "https://example.com/notice"))));
+
+        WakeTrace.Frame live = t.toolResult("search", "web_search", receipt(result));
+
+        assertThat(live.data().path("preview").asString()).isEqualTo(result);
+        assertThat(t.replay().stream().filter(frame -> frame.event().equals("tool_result")).findFirst().orElseThrow()
+                .data().path("preview").asString()).isEqualTo(result);
+        assertThat(MAPPER.readTree(t.toJson()).path("calls").get(0).path("results").get(0)
+                .path("preview").asString()).isEqualTo(result);
     }
 
     @Test

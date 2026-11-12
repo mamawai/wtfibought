@@ -89,7 +89,7 @@ class TraderToolI18nTest {
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
             new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
-            mock(EntryContext.class));
+            mock(EntryContext.class), () -> true);
 
     private Map<String, String> descriptions(AgentLang lang) {
         return runner.wakeTools(lang, tradeTools, null).stream().collect(Collectors.toMap(

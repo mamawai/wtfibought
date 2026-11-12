@@ -13,11 +13,11 @@ tool:
     both searched) or hours (how far back to look, 1-168; 24 when only a keyword is given): search the
     local archive, newest first, at most 30 flashes.
 
-  # Web search as a local tool (only on Gemini endpoints backed by Antigravity): each call sends a
-  # separate search-only request, see WebSearchTool
+  # Local web_search: sends a separate search-only request
   web_search: |-
     Search the web for the query. Returns an answer written from the search results (answer) and the
-    sources it drew on (sources: title and url). Returns available=false when the search found nothing.
+    sources it drew on (sources: title and url). Returns available=false when no search event was received;
+    this does not prove there was no relevant event. Sources do not verify every claim in the answer.
 
   # Deep analysis: one call = 3 deep-model calls; the description nails down "expensive" and "needs the user's nod".
   # Word for word the same as the zh entry apart from the trigger phrases: the description is read by the
@@ -296,8 +296,8 @@ tool:
     Get your full account state: available balance, open positions (with id, side, quantity,
     entry price, leverage, unrealized PnL, liquidation price, current stop-loss/take-profit)
     and pending limit orders. This same state is already injected into your opening message
-    every round (the [Account] block), so you normally do not need to call this; use it only
-    to confirm the account after your own trades within this round.
+    every round (the [Account] block), so you normally do not need to call this. Use it to confirm
+    changes after your trades or fills that occurred while you were checking data.
 
   open_position: |-
     Open a futures position on your sim account (cross margin). Hard rules (violations are rejected

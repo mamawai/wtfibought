@@ -36,7 +36,7 @@ public class WebSearchTool {
     /**
      * 一次搜索的结果。
      *
-     * @param searched 上游真搜了（报了搜索词或命中的站点）；没搜就是模型自己答的，不能当搜索结果
+     * @param searched 收到了上游搜索事件，不代表答案已核实
      * @param answer   据搜索结果写的答复
      * @param sources  来源，按 url 去重
      */
@@ -50,7 +50,7 @@ public class WebSearchTool {
         this(model, INSTRUCTION);
     }
 
-    /** @param instruction 那次搜索请求的系统提示；trader 用自己那份，观点类内容在搜索这一步就滤掉 */
+    /** @param instruction 这次搜索请求的系统提示，trader 使用自己的事实整理要求 */
     public WebSearchTool(ChatModel model, String instruction) {
         this.searcher = LlmClient.builder().model(model).systemPrompt(instruction).webSearch(true).build();
     }
@@ -58,7 +58,8 @@ public class WebSearchTool {
     // description 只是兜底：发给模型的那份按语言取自词表 tool.web_search（见 LocalizedToolCallbacks）
     @Tool(name = NAME, description = """
             Search the web for the query. Returns an answer written from the search results (answer) and the
-            sources it drew on (sources: title and url). Returns available=false when the search found nothing.""")
+            sources it drew on (sources: title and url). Returns available=false when no search event was received;
+            this does not prove there was no relevant event. Sources do not verify every claim in the answer.""")
     public String webSearch(@ToolParam(description = "What to search for: a search query or a question") String query) {
         Result result = search(query);
         ObjectNode out = MAPPER.createObjectNode();

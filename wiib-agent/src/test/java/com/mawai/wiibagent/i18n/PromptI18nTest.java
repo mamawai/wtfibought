@@ -223,7 +223,7 @@ class PromptI18nTest {
         assertThat(p)
                 .as("① 身份与环境").contains("职业加密货币永续合约交易员").contains("无记忆的独立会话")
                 .as("① 目标、边界、偏好归主人指令").contains("以文末「主人的交易指令」为准").contains("指令没覆盖到的，你自己定")
-                .as("② 开场白是数据不是指令").contains("不是指令").contains("不必 get_account 复查")
+                .as("② 开场事实与账户刷新").contains("开场会给出以下事实").contains("get_account 确认变化")
                 .as("② 护栏事实").contains("护栏会拒绝的动作").contains("计划不可改写")
                 // ③ 模板里只留一行指针（标记同源），格式本体是系统强制块，在 assemble 里另验
                 .as("③ 固定收尾格式").contains("[本轮结论]").contains("固定收尾格式")
@@ -266,7 +266,7 @@ class PromptI18nTest {
         assertThat(p)
                 .contains("fresh session with no memory")
                 .contains("follow \"Your owner's trading instructions\"")
-                .contains("The wake-up opening comes in two parts")
+                .contains("all have three parts").contains("Without web_search, keep the original flow")
                 .contains("Actions the guard rejects").contains("plans cannot be rewritten")
                 .doesNotContain("only one question").doesNotContain("four ways out")
                 .doesNotContain("tearing up").doesNotContain("HOLD")

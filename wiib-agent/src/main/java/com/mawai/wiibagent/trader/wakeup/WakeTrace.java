@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.trader.wakeup;
 
+import com.mawai.wiibagent.llm.WebSearchTool;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
@@ -19,7 +20,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  */
 public final class WakeTrace {
 
-    /** 工具回执预览截断长度 */
+    /** 普通工具回执的预览长度，联网搜索保留全文 */
     public static final int PREVIEW_CHARS = 2000;
     /** 落库形状版本 */
     private static final int VERSION = 1;
@@ -36,7 +37,7 @@ public final class WakeTrace {
         }
     }
 
-    /** 一条工具回执；status ∈ ok/rejected/error，preview 截过 */
+    /** 一条工具回执；联网搜索的 preview 是全文，其余是预览 */
     record ToolResult(String id, String name, String status, String preview) {
         ObjectNode json() {
             return MAPPER.createObjectNode().put("id", id).put("name", name)
@@ -181,13 +182,14 @@ public final class WakeTrace {
         return modelEnd(call);
     }
 
-    /** 一条工具回执：先还原成工具返回的原文，status 按原文前缀判，preview 截 {@link #PREVIEW_CHARS} */
+    /** 工具回执：还原原文、按前缀判状态；联网搜索保留全文 */
     public synchronized Frame toolResult(String id, String name, String responseData) {
         Call call = calls.getLast();
         String text = plainText(responseData);
         String status = text.startsWith("REJECTED:") ? "rejected" : text.startsWith("ERROR:") ? "error"
                 : text.startsWith("UNKNOWN:") ? "unknown" : text.startsWith("PARTIAL:") ? "partial" : "ok";
-        String preview = text.length() > PREVIEW_CHARS ? text.substring(0, PREVIEW_CHARS) : text;
+        String preview = !WebSearchTool.NAME.equals(name) && text.length() > PREVIEW_CHARS
+                ? text.substring(0, PREVIEW_CHARS) : text;
         ToolResult result = new ToolResult(id, name, status, preview);
         call.results.add(result);
         return toolResultFrame(call, result);
