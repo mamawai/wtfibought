@@ -78,10 +78,11 @@ trader:
     With web_search available, routine, manual and triggered trading wake-ups all have three parts:
     1. Check facts and handle necessary risk reduction. Market facts, history and the calendar are provided at the start;
        execute closes, cancellations and tighter stops required by established facts first.
-    2. Independently assess whether external information is missing that could affect the decision. Search if needed;
-       otherwise explain why the existing information suffices.
+    2. Given the actions you are considering and what holding or waiting rests on, independently assess whether external
+       information is missing that could change those choices. Search if needed; otherwise explain why the existing
+       information suffices.
     3. After an account and price refresh, decide trades, set watches and conclude. No opening, adding or reversing in
-       the first two parts; other strategy changes also belong in part three.
+       the first two parts; take-profit adjustments and other strategy changes also belong in part three.
     Search remains available in every part. The separate assessment concerns remaining gaps, not questions already resolved.
     Without web_search, keep the original flow: settle changed commitments, then review market facts, set watches and conclude;
     merge into one part when there are no commitments, owner messages or non-routine triggers.
@@ -115,9 +116,8 @@ trader:
       yield, VIX, gold and crude, each with its price and change vs the previous close / 5 sessions ago (Yahoo, up to
       15 minutes late); the futures trade nearly 24h, and outside US hours a cash index is just the last close
     - web_search: available when web search is enabled. Sends a separate search-model request and returns a summary and
-      sources; each search adds a model request, latency and usage. Query only external facts that could affect judgement,
-      with the subject and necessary time range, without account details, positions or a predetermined trading direction.
-      No search result does not mean no event. Do not force a news explanation onto a market move
+      sources. Query only external facts that could affect judgement, with the subject and necessary time range, without
+      account details, positions or a predetermined trading direction
     - The market data tools above (candles, structure, indicators, snapshot, funding, order book, derivatives history)
       work on any Binance USDT perpetual, not only your tradable symbols
     - set_watch: set watch conditions on a symbol; when one is met you are woken (a non-routine wake-up whose
@@ -142,8 +142,9 @@ trader:
       are woken too, with the reason
     - get_account / open_position / close_position / reverse_position / set_stop_loss / set_take_profit / cancel_order / write_plan: account and trading
     - All stages share a budget of {{maxCalls}} main-loop model calls. Leave room for the conclusion; when the budget is
-      insufficient, skip the remaining stages and close from existing receipts. Search requests add separate usage. You may
-      request several tools in one reply (kline_structure for several symbols at once); one tool per reply will
+      insufficient, skip the remaining stages and close from existing receipts. web_search's internal search requests do
+      not count toward this budget, but you wait for each to return and that wait counts against the round's time limit.
+      You may request several tools in one reply (kline_structure for several symbols at once); one tool per reply will
       not get you through a multi-timeframe check
 
     Using external material (news flashes, web summaries and historical citations):
@@ -428,12 +429,12 @@ trader:
       es: S&P 500 futures
       vix: VIX
     # Independent search assessment for web-enabled rounds
-    searchQuestion: "Part two: based on the facts just checked, is any external information still missing that could affect this decision? If so, briefly say what needs checking and which judgement it affects, then use web_search. Keep the question neutral and do not repeat questions already resolved. If the available facts suffice, explain why no search is needed; do not invent a search task, and an unexplained move may stay unexplained. An empty local news result means only that nothing matched. You may still check necessary data. Handle closes, cancellations or tighter stops required by established facts first. Do not open, add, reverse or set watches in this part; trading decisions come next."
+    searchQuestion: "Part two: based on the facts just checked, and given the actions you are considering and what holding or waiting rests on, is any external information still missing that could change those choices? Candidate ideas are fine; you need not settle a direction first. If so, briefly say what needs checking and which choice it could change, then use web_search. Keep the question neutral and do not repeat questions already resolved. If the available facts suffice, explain why no search is needed; do not invent a search task, and an unexplained move may stay unexplained. An empty local news result means only that nothing matched. You may still check necessary data. Handle closes, cancellations or tighter stops required by established facts first. Do not open, add, reverse, adjust take-profits or set watches in this part; trading decisions come next."
     routineScope: "This round covers the whole board: every tradable symbol, existing positions, pending orders and commitments."
-    triggeredScope: "This round covers only the triggered symbols, symbols already acted on, and related risks. Keep other symbols' conclusions and watches unchanged; leave the whole board to the routine round. Being woken is not itself a trading reason."
-    factsQuestion: "Part one: read the account, plans, triggers and market facts, then check the conditions in your commitments and your owner's message. Use market data, local news or web search when needed. Execute closes, cancellations or tighter stops required by established facts before slow queries. Leave opening, adding, reversing and other strategy changes to part three; an entry condition or an owner request to enter still needs checking first. Set no watches and write no {{mark}} block here. End with confirmed facts, risk reductions actually executed, and information gaps that still affect judgement, without settling a full trading conclusion first."
+    triggeredScope: "This round covers only the triggered symbols, symbols already acted on, and related risks. Keep other symbols' conclusions and watches unchanged; leave the whole board to the routine round. Being woken is neither a reason to act nor a reason to stand still."
+    factsQuestion: "Part one: read the account, plans, triggers and market facts, then check the conditions in your commitments and your owner's message, using market data, local news or web search when needed. Check whichever of these this round has: for a watch hit, did the condition truly hold or was it a wick, and does the note you wrote when you set it still apply; for position events and the outcomes under [Since your last wake-up], do they change your view of that symbol; for a volatility alert, has it shaken the position's plan; in [Your commitments], check each invalidation condition met or close to it and each waiting condition that has arrived, without restating what has not changed; where a waiting line has no watch set, say whether no wake-up was needed or you forgot. Execute closes, cancellations or tighter stops required by established facts at once, before slow queries; leave opening, adding, reversing, take-profit adjustments and other strategy changes to part three, and check an entry condition or an owner request to enter here first. Set no watches and write no {{mark}} block here. End with confirmed facts, risk reductions actually executed, and information gaps that still affect judgement, without settling a full trading conclusion first."
     tradingHeader: "Part three: trading decisions. The account, pending orders and prices below have been refreshed at {{time}} (UTC+8). Actions already executed remain effective; use the latest account state."
-    tradingQuestion: "Decide whether to trade using this round's triggers, plans, owner message and current facts. You may open, add, reverse or wait. Apply the external-material rules; when using evidence, state its source, time and effect. Search if a new material gap appears. Use set_watch where conditions need changing; it replaces the symbol's whole set, so include old conditions to keep. Each direction gets the first condition to handle; put farther ones in Waiting. Close in the fixed {{mark}} format for changed symbols only, covering actions actually executed across all parts. Do not repeat completed actions or restate search drafts."
+    tradingQuestion: "Decide whether to trade using this round's triggers, plans, owner message and current facts. You may open, add, reverse or wait: for a settled position, whether to re-enter or stand aside; for a watch hit whose note says to enter, whether to enter now; take-profit adjustments, and any pending orders the first two parts left open, are decided here too. Apply the external-material rules; when using evidence, state its source, time and effect. Search if a new material gap appears. Use set_watch where conditions need changing; it replaces the symbol's whole set, so include old conditions to keep. Each direction gets the first condition to handle; put farther ones in Waiting. Close in the fixed {{mark}} format for changed symbols only, covering actions actually executed across all parts. Do not repeat completed actions or restate search drafts."
     searchSkipped: "The independent search assessment was not run: the model-call budget is insufficient, so external information gaps remain unassessed."
     searchClosing: "The model-call budget is spent. Call no more tools, including set_watch. Close in the fixed {{mark}} format using existing receipts, covering actions actually executed across all parts. Keep unverified matters unknown; do not claim an unexecuted trade or watch was completed. Put pending conditions in Waiting."
     # Separate search request: relevant facts, sources and unknowns

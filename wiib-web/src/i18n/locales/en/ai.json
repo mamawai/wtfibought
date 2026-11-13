@@ -475,7 +475,7 @@
     "model": {
       "hint": "Every wake and daily review burns this endpoint's key; switching endpoints tests the connection when you save.",
       "search": "Web search",
-      "searchDesc": "On: it gets a web_search tool and, on every heartbeat wake and volatility-alert wake, first decides whether to search this round; each search costs one more model request",
+      "searchDesc": "On: it gets a web_search tool and every wake-up runs in three parts: check the facts and cut risk where needed, then decide whether to search, and only then decide on new trades and watches. The three parts run even when nothing is searched, so there are usually more model requests than with this off; each search sends one more model request",
       "searchNeedEndpoint": "The selected endpoint doesn't have web search on, so this can't be turned on; tick web search for it under Model config first"
     },
     "prompt": {
