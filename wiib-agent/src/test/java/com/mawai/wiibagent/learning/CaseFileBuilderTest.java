@@ -26,8 +26,10 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 /**
  * 事实表的路径指标：多空两向、到目标 25%/50% 用时、第一次收回入场价、出场后最有利价与是否到过目标；
@@ -428,13 +430,26 @@ class CaseFileBuilderTest {
         var result = builder.build(position("SHORT", "106", "106", T0 + 3 * M5, T0 + 4 * M5), plan);
         assertThat(result.replay().untouched().r()).isEqualByComparingTo("0.11");
         assertThat(result.path().mfePrice()).isEqualByComparingTo("105");
-        org.mockito.Mockito.verify(store).load(org.mockito.ArgumentMatchers.eq("BTCUSDT"), org.mockito.ArgumentMatchers.eq("5m"),
-                org.mockito.ArgumentMatchers.eq(T0), anyLong());
+        verify(store).load(eq("BTCUSDT"), eq("5m"), eq(T0), anyLong());
+    }
+
+    @Test
+    void actualMarketEntryStartsAtNextBar() {
+        long filledAt = T0 + 3 * 60_000L;
+        AiTraderPlan plan = ladder(entry(null, "1", "98", "104", "FILLED", filledAt, "0.04"));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{99, 100.5, 97.5, 100.2}),
+                bar(T0 + M5, new double[]{100.2, 102, 99.5, 101.8}),
+                bar(T0 + 2 * M5, new double[]{101.8, 104.5, 101.5, 104.2})));
+        var replay = builder.replay(position("LONG", "100", "104", filledAt, T0 + 2 * M5), plan);
+        assertThat(replay.untouched().outcome()).isEqualTo(CaseFileBuilder.Outcome.TARGET);
+        assertThat(replay.untouched().r()).isEqualByComparingTo("1.96");
+        assertThat(replay.adv24R()).isEqualByComparingTo("-0.25");
     }
 
     @Test
     void sameBarEntryStopAndTargetUsesStopAndNewFillsCannotTakeProfit() {
-        AiTraderPlan plan = ladder(entry(null, "1", "98", "104", "FILLED", T0 + M5, "0.2"));
+        AiTraderPlan plan = ladder(entry("100", "1", "98", "104", "FILLED", T0 + M5, "0.2"));
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
                 bar(T0 + M5, new double[]{100, 105, 97, 100}), bar(T0 + 2 * M5, new double[]{100, 103, 95, 99})));
         var replay = builder.replay(position("LONG", "100", "98", T0 + M5, T0 + 2 * M5), plan);
@@ -505,14 +520,18 @@ class CaseFileBuilderTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"863,STOP", "864,OPEN"})
-    void seventyTwoHourLimitStartsAtFirstFill(int offset, CaseFileBuilder.Outcome expected) {
+    @CsvSource({"false,863,STOP", "false,864,OPEN", "true,863,STOP", "true,864,OPEN"})
+    void seventyTwoHourLimitStartsAtFirstFill(boolean market, int offset, CaseFileBuilder.Outcome expected) {
         long fill = T0 + 1000 * M5;
-        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+        long actualFill = market ? fill - M5 : fill;
+        List<KlineBar> bars = List.of(
                 bar(T0, new double[]{100, 101, 97, 100}), bar(fill, new double[]{100, 101, 99, 100}),
-                bar(fill + offset * M5, new double[]{100, 101, 97, 98})));
-        var replay = builder.replay(position("LONG", "100", "98", fill, fill + M5),
-                ladder(entry("100", "1", "98", null, "CANCELLED", T0 + M5, "0")));
+                bar(fill + offset * M5, new double[]{100, 101, 97, 98}));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenAnswer(call -> bars.stream()
+                .filter(b -> b.openTime() >= call.<Long>getArgument(2) && b.openTime() < call.<Long>getArgument(3)).toList());
+        var replay = builder.replay(position("LONG", "100", "98", actualFill, fill + M5),
+                ladder(market ? entry(null, "1", "98", null, "FILLED", actualFill, "0.04")
+                        : entry("100", "1", "98", null, "CANCELLED", T0 + M5, "0")));
         assertThat(replay.untouched().outcome()).isEqualTo(expected);
     }
 

@@ -343,11 +343,11 @@ class TraderWakeupLoopTest {
         onlineModel(n -> switch (n) {
             case 1 -> AssistantMessage.builder().content("").toolCalls(List.of(
                     new AssistantMessage.ToolCall("open-early", "function", "open_position", openArgs),
-                    new AssistantMessage.ToolCall("cancel-first", "function", "cancel_order", "{\"orderId\":77,\"reason\":\"计划失效\"}"))).build();
+                    new AssistantMessage.ToolCall("cancel-first", "function", "cancel_order", "{\"orderIds\":[77],\"reason\":\"计划失效\"}"))).build();
             case 2 -> new AssistantMessage("事实：已撤单77，提前开仓被拒绝。");
             case 3 -> AssistantMessage.builder().content("").toolCalls(List.of(
                     new AssistantMessage.ToolCall("reverse-early", "function", "reverse_position", reverseArgs),
-                    new AssistantMessage.ToolCall("cancel-second", "function", "cancel_order", "{\"orderId\":78,\"reason\":\"计划失效\"}"))).build();
+                    new AssistantMessage.ToolCall("cancel-second", "function", "cancel_order", "{\"orderIds\":[78],\"reason\":\"计划失效\"}"))).build();
             case 4 -> new AssistantMessage("无需搜索，已撤单78，反手未执行。");
             case 5 -> AssistantMessage.builder().content("").toolCalls(List.of(
                     new AssistantMessage.ToolCall("open-final", "function", "open_position", openArgs))).build();

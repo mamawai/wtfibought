@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.entity.AiTraderDecision;
+import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -34,6 +36,7 @@ import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.EntryContext;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibquant.market.service.CrossAssetService;
@@ -44,6 +47,9 @@ import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import tools.jackson.databind.JsonNode;
 
@@ -80,7 +86,7 @@ class WakeInstructionI18nTest {
 
     /** 观察包成文走真实词表；取数侧（决策行/战绩）给 mock，走空数据路径 */
     private final TraderWatchStore watchStore = new TraderWatchStore(mock(AiTraderWatchMapper.class),
-            mock(org.springframework.context.ApplicationEventPublisher.class));
+            mock(ApplicationEventPublisher.class));
     private final PositionPath positionPath = mock(PositionPath.class);
     private final CrossAssetService crossAssets = mock(CrossAssetService.class);
     private final WakeObservation wakeObservation = new WakeObservation(
@@ -99,7 +105,7 @@ class WakeInstructionI18nTest {
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             mock(CrossAssetToolkit.class),
             traderMapper, mock(AiTraderDecisionMapper.class),
-            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class))), watchStore,
+            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new TransactionTemplate(mock(PlatformTransactionManager.class))), watchStore,
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
@@ -116,7 +122,7 @@ class WakeInstructionI18nTest {
     @BeforeAll
     static void initTableInfoCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTrader.class);
-        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), com.mawai.wiibcommon.entity.AiTraderDecision.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderDecision.class);
     }
 
     /** 带一条待读留言的开场白段：注入即消费，每次现造 trader */
@@ -234,10 +240,10 @@ class WakeInstructionI18nTest {
 
     @Test
     void entryEventsShowCountsAndCancellationReasonInBothLanguages() {
-        var plan = new com.mawai.wiibcommon.entity.AiTraderPlan(); plan.setSymbol("BTCUSDT"); plan.setSide("SHORT");
-        var filled = new com.mawai.wiibagent.trader.trade.PlanEntry();
+        var plan = new AiTraderPlan(); plan.setSymbol("BTCUSDT"); plan.setSide("SHORT");
+        var filled = new PlanEntry();
         filled.setLimitPrice(new BigDecimal("102")); filled.setQuantity(new BigDecimal("3")); filled.setFilledPrice(new BigDecimal("102.1"));
-        var cancelled = new com.mawai.wiibagent.trader.trade.PlanEntry();
+        var cancelled = new PlanEntry();
         cancelled.setLimitPrice(new BigDecimal("104")); cancelled.setQuantity(new BigDecimal("4"));
         for (AgentLang lang : AgentLang.values()) {
             cancelled.setReason(prompts.get(lang, "trader.cancelReason.groupClosed"));

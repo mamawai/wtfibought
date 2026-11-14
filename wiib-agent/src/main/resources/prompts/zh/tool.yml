@@ -286,7 +286,8 @@ tool:
     止损价和止盈分档都抄仓位当前挂着的单。
     已有计划的仓位会被拒——计划不可改，改论点的合法途径只有加仓或平掉重开。
 
-  cancel_order: 按 orderId（见开场白【当前账户】的挂单，或 get_account 的 pendingOrders）撤掉一张未成交限价单。reason 必填，撤单理由记入这一档和计划修订史。
+  cancel_order: |-
+    按 orderIds（见开场白【当前账户】的挂单，或 get_account 的 pendingOrders）撤掉一张或多张未成交限价单。reason 必填，撤单理由记入各档和计划修订史。部分撤成以 PARTIAL: 开头。
 
   set_watch: |-
     给一个币整组替换盯盘条件：两次唤醒之间系统盯着它们，命中就把你叫醒（非例行唤醒，开场白写明命中了哪条和你当时的 note）。

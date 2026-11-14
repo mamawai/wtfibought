@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -23,12 +24,16 @@ public final class StopOrders {
     private StopOrders() {
     }
 
-    /** 挪没挪成：{@link Moved} 成了，另两种是被哪条护栏挡下 */
-    public sealed interface Outcome permits Moved, WrongSide, Looser {
+    /** 移止损的结果：成功、仓位修改失败、被护栏挡下 */
+    public sealed interface Outcome permits Moved, PositionFailed, WrongSide, Looser {
     }
 
     /** 挪成了；from 是原来最紧那档，原来没挂止损为 null */
     public record Moved(BigDecimal from, List<PendingProtection.Change> pending) implements Outcome {
+    }
+
+    /** 挂单改了，改仓位那步报错 */
+    public record PositionFailed(BigDecimal from, List<PendingProtection.Change> pending, Exception cause) implements Outcome {
     }
 
     /** 新止损在现价的另一侧 */
@@ -84,6 +89,10 @@ public final class StopOrders {
         return lossAtStops(pending);
     }
 
+    public static BigDecimal pctOfEquity(BigDecimal amount, BigDecimal equity) {
+        return amount.multiply(BigDecimal.valueOf(100)).divide(equity, 2, RoundingMode.HALF_UP);
+    }
+
     /** 仓位现挂止损里最紧的那一档；没挂为 null */
     public static BigDecimal tightest(FuturesPositionDTO pos) {
         return TradeGuard.extremePrice(pos.getStopLosses() == null ? List.of()
@@ -100,7 +109,7 @@ public final class StopOrders {
         if (tightest != null && (isLong ? newStop.compareTo(tightest) < 0 : newStop.compareTo(tightest) > 0)) {
             return new Looser(tightest);
         }
-        // 先改同组还挂着的档，最后改仓位：一档要么挂着时被改好，要么已经成交、被最后那次整仓止损盖住
+        // 先改同组还挂着的档，最后改仓位
         List<PendingProtection.Change> changes = new ArrayList<>();
         for (FuturesOrderResponse order : PendingProtection.orders(sim, simUserId, pos.getSymbol(), pos.getSide(), group)) {
             BigDecimal ownStop = TradeGuard.extremePrice(order.getStopLosses() == null ? List.of()
@@ -125,7 +134,14 @@ public final class StopOrders {
         item.setPrice(newStop);
         // 不传数量：sim 在仓位锁内取整仓现量。
         req.setStopLosses(List.of(item));
-        sim.setStopLoss(simUserId, req);
+        try {
+            sim.setStopLoss(simUserId, req);
+        } catch (Exception e) {
+            if (PendingProtection.count(changes, PendingProtection.UPDATED) > 0) {
+                return new PositionFailed(tightest, changes, e);
+            }
+            throw e;
+        }
         return new Moved(tightest, changes);
     }
 }

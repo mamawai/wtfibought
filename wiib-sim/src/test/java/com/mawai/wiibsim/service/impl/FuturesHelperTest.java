@@ -1,6 +1,7 @@
 package com.mawai.wiibsim.service.impl;
 
 import org.junit.jupiter.api.Test;
+import org.apache.ibatis.annotations.Select;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.FuturesPosition;
@@ -11,6 +12,7 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import java.math.BigDecimal;
 
@@ -63,7 +65,7 @@ class FuturesHelperTest {
 
     @Test
     void fifthDistinctProtectionPriceIsRejected() {
-        var stops = java.util.stream.IntStream.range(0, 4)
+        var stops = IntStream.range(0, 4)
                 .mapToObj(i -> new FuturesStopLoss("s" + i, BigDecimal.valueOf(80 + i), BigDecimal.ONE)).toList();
         assertThatThrownBy(() -> FuturesHelper.mergeSlList(stops,
                 List.of(new FuturesStopLoss("fifth", new BigDecimal("90"), BigDecimal.ONE)), new BigDecimal("4"), "LONG"))
@@ -88,7 +90,6 @@ class FuturesHelperTest {
         FuturesOrder cross = new FuturesOrder();
         cross.setId(2L); cross.setSymbol("BTCUSDT"); cross.setOrderSide("OPEN_SHORT"); cross.setMarginMode("CROSS");
         when(mapper.cancelGroupedOpenOrders(7L, "BTCUSDT", "OPEN_SHORT")).thenReturn(List.of(isolated, cross));
-        when(users.atomicUnfreezeBalance(7L, new BigDecimal("12"))).thenReturn(mock(UserMapper.BalanceFrozen.class));
         TransactionSynchronizationManager.initSynchronization();
         try {
             FuturesHelper.cancelGroupedOpenOrders(pos, mapper, users, cache);
@@ -101,7 +102,7 @@ class FuturesHelperTest {
             TransactionSynchronizationManager.clearSynchronization();
         }
         String sql = String.join(" ", FuturesOrderMapper.class.getMethod("cancelGroupedOpenOrders", Long.class, String.class, String.class)
-                .getAnnotation(org.apache.ibatis.annotations.Select.class).value());
+                .getAnnotation(Select.class).value());
         assertThat(sql).contains("group_id IS NOT NULL", "status IN ('PENDING', 'TRIGGERED')", "GROUP_CLOSED");
     }
 

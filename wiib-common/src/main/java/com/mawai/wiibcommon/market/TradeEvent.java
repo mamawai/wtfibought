@@ -3,7 +3,7 @@ package com.mawai.wiibcommon.market;
 import java.math.BigDecimal;
 
 /**
- * sim → agent 的持仓事件（Redis Pub/Sub，频道 {@link #CHANNEL}）：止损 / 止盈 / 强平 / 全仓爆仓 / 限价开仓成交。
+ * sim → agent 的持仓事件（Redis Pub/Sub，频道 {@link #CHANNEL}）：止损 / 止盈 / 强平 / 全仓爆仓 / 限价单开出新仓。
  * 载荷就是本记录的 JSON。sim 在落库事务提交后发，agent 收到后把对应 trader 叫醒。
  * Pub/Sub 不存消息：agent 不在线时丢掉的事件，由它下一次唤醒开头的对账兜底。
  *

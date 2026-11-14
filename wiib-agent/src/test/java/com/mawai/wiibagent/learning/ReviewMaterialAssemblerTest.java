@@ -147,14 +147,14 @@ class ReviewMaterialAssemblerTest {
         AiTraderPlan plan = planOf("BTCUSDT", "PULLBACK", opened, false);
         plan.setPositionId(1L); plan.setEntryPrice(new BigDecimal("105")); plan.setStopLossPrice(new BigDecimal("100"));
         plan.setTakeProfitsJson("[{\"price\":110,\"percent\":100}]");
-        List<PlanEntry> entries = new java.util.ArrayList<>();
-        String[] prices = {"100", "98", "97", "105"}, quantities = {"3", "4", "3", "2"};
-        for (int i = 0; i < 4; i++) {
+        List<PlanEntry> entries = new ArrayList<>();
+        String[] prices = {"100", "98", "97", "105", "103"}, quantities = {"3", "4", "3", "2", "1"};
+        for (int i = 0; i < 5; i++) {
             var entry = new PlanEntry();
             entry.setLimitPrice(new BigDecimal(prices[i])); entry.setQuantity(new BigDecimal(quantities[i]));
-            entry.setStop(new BigDecimal(i == 3 ? "100" : "96"));
-            entry.setTargets(List.of(new TargetRung(new BigDecimal(i == 3 ? "110" : "104"), new BigDecimal("100"))));
-            entry.setPlacedAt(opened); entry.setClosedAt(opened + i * M5); entry.setAdd(i == 3);
+            entry.setStop(new BigDecimal(i >= 3 ? "100" : "96"));
+            entry.setTargets(List.of(new TargetRung(new BigDecimal(i >= 3 ? "110" : "104"), new BigDecimal("100"))));
+            entry.setPlacedAt(opened); entry.setClosedAt(opened + i * M5); entry.setAdd(i >= 3);
             entry.setStatus(i == 0 || i == 3 ? "FILLED" : "CANCELLED");
             if ("FILLED".equals(entry.getStatus())) { entry.setFilledPrice(entry.getLimitPrice()); entry.setFee(new BigDecimal("0.06")); }
             else entry.setReason("cancel-reason-" + i);
@@ -168,10 +168,11 @@ class ReviewMaterialAssemblerTest {
                 bar5m(opened, "100", "101", "99", "100"), bar5m(opened + 4 * M5, "100", "106", "97", "105")));
         String zh = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
         assertThat(zh).contains("入场安排", "100 × 3", "98 × 4", "97 × 3", "105 × 2（加仓）",
-                "计划合计 12，实际成交 5", "cancel-reason-1", "cancel-reason-2", "含加仓",
-                "限价 98 止损 96 目标 104(100%)", "限价 97 止损 96 目标 104(100%)");
+                "计划合计 13，实际成交 5", "cancel-reason-1", "cancel-reason-2", "含加仓",
+                "限价 98 止损 96 目标 104(100%)", "限价 97 止损 96 目标 104(100%)", "限价 103 止损 100 目标 110(100%)");
         String en = assembler.assemble(trader(), FROM, TO, AgentLang.EN).casesBlock();
-        assertThat(en).contains("Entry arrangement", "planned total 12, actually filled 5", "includes adds", "cancel-reason-2");
+        assertThat(en).contains("Entry arrangement", "planned total 13, actually filled 5", "includes adds", "cancel-reason-2",
+                "limit 103 stop 100 target 110(100%)");
         PlanEntry.save(plan, List.of(entries.getFirst()));
         // 只有一档且已成交：不出入场安排那一行（块头的说明里也有这四个字，认行首）
         assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock()).doesNotContain("  入场安排：");

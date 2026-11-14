@@ -71,9 +71,7 @@ final class FuturesHelper {
     }
 
     /**
-     * 仓位全平了：这个币这个方向带组标识、还没成交的开仓单一起撤掉，还挂着的和已触发在等锁的都算
-     * （等锁的那张拿到锁后抢状态失败，不会成交）。逐仓单退冻结；全仓单没冻结过钱。
-     * 限价索引等事务提交后再摘，回滚了单子还在索引里
+     * 仓位全平了：这个币这个方向带组标识、还没成交的开仓单（挂着的和已触发的）一起撤掉。逐仓单退冻结，全仓单只改状态。限价索引在事务提交后摘
      */
     static void cancelGroupedOpenOrders(FuturesPosition position, FuturesOrderMapper orderMapper,
                                         UserMapper userMapper, CacheService cacheService) {
@@ -82,9 +80,7 @@ final class FuturesHelper {
         for (FuturesOrder order : cancelled) {
             if (!FuturesPosition.CROSS.equals(order.getMarginMode())) {
                 LedgerCtx.mark(FUTURES_LIMIT_UNFREEZE, "FUTURES_ORDER", order.getId());
-                if (userMapper.atomicUnfreezeBalance(order.getUserId(), order.getFrozenAmount()) == null) {
-                    throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-                }
+                userMapper.atomicUnfreezeBalance(order.getUserId(), order.getFrozenAmount());
             }
         }
         if (!cancelled.isEmpty()) {
@@ -316,8 +312,7 @@ final class FuturesHelper {
 
     /**
      * 合并SL档位（开仓并入同向仓位用）。新增为空返回 null＝不改库。
-     * 旧档先按触发先后（最紧的先）摊到加仓前的持仓量上，摊不到的去掉：部分平仓后 sim 不缩减保护单数量，
-     * 不先摊一遍，过期的数量会把新档的分配挤掉。再并入新档：同价的合进旧档（沿用旧档的 id 和生效时刻），不同价才追加。条数≤4
+     * 旧档先按触发先后（最紧的先）摊到加仓前的持仓量上，摊不到的去掉。再并入新档：同价的合进旧档（沿用旧档的 id 和生效时刻），不同价才追加。条数≤4
      */
     static List<FuturesStopLoss> mergeSlList(List<FuturesStopLoss> existing, List<FuturesStopLoss> added,
                                              BigDecimal oldQty, String side) {
@@ -390,8 +385,8 @@ final class FuturesHelper {
                     .filter(x -> sls.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
             List<FuturesStopLoss> added = sls.stream()
                     .filter(x -> old.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
-            if (!removed.isEmpty()) index.unregisterStopLosses(position.getId(), position.getSymbol(), position.getSide(), removed);
-            if (!added.isEmpty()) index.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), added);
+            index.unregisterStopLosses(position.getId(), position.getSymbol(), position.getSide(), removed);
+            index.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), added);
         }
         if (tps != null) {
             List<FuturesTakeProfit> old = position.getTakeProfits() == null ? List.of() : position.getTakeProfits();
@@ -399,8 +394,8 @@ final class FuturesHelper {
                     .filter(x -> tps.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
             List<FuturesTakeProfit> added = tps.stream()
                     .filter(x -> old.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
-            if (!removed.isEmpty()) index.unregisterTakeProfits(position.getId(), position.getSymbol(), position.getSide(), removed);
-            if (!added.isEmpty()) index.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), added);
+            index.unregisterTakeProfits(position.getId(), position.getSymbol(), position.getSide(), removed);
+            index.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), added);
         }
     }
 }

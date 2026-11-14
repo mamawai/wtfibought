@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader.trade;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -10,19 +11,34 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.BeanUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -46,12 +62,12 @@ class TraderPlanStoreTest {
     }
 
     private final AiTraderPlanMapper mapper = mock(AiTraderPlanMapper.class);
-    private final TraderPlanStore store = new TraderPlanStore(mapper, PROMPTS, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class)));
+    private final TraderPlanStore store = new TraderPlanStore(mapper, PROMPTS, new TransactionTemplate(mock(PlatformTransactionManager.class)));
 
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void lockedRows() {
-        when(mapper.selectByIdForUpdate(org.mockito.ArgumentMatchers.anyLong())).thenAnswer(call ->
-                mapper.selectList((com.baomidou.mybatisplus.core.conditions.Wrapper<AiTraderPlan>) null).stream()
+        when(mapper.selectByIdForUpdate(anyLong())).thenAnswer(call ->
+                mapper.selectList((Wrapper<AiTraderPlan>) null).stream()
                         .filter(p -> p.getId().equals(call.getArgument(0))).findFirst()
                         .orElseGet(() -> mapper.selectOne(null)));
     }
@@ -62,29 +78,35 @@ class TraderPlanStoreTest {
 
     @Test
     void concurrentRevisionsMergeAfterLockedReread() throws Exception {
-        var tx = mock(org.springframework.transaction.support.TransactionTemplate.class);
-        var lock = new java.util.concurrent.locks.ReentrantLock();
-        org.mockito.Mockito.doAnswer(call -> {
+        var tx = mock(TransactionTemplate.class);
+        var lock = new ReentrantLock();
+        doAnswer(call -> {
             lock.lock();
             try {
-                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> work = call.getArgument(0);
-                work.accept(mock(org.springframework.transaction.TransactionStatus.class));
+                Consumer<TransactionStatus> work = call.getArgument(0);
+                work.accept(mock(TransactionStatus.class));
                 return null;
             } finally { lock.unlock(); }
         }).when(tx).executeWithoutResult(any());
-        var row = new java.util.concurrent.atomic.AtomicReference<>(livePlan("BTCUSDT", "LONG", 42L));
+        var row = new AtomicReference<>(livePlan("BTCUSDT", "LONG", 42L));
+        row.get().setUpdatedAt(at(FILED));
         when(mapper.selectByIdForUpdate(21L)).thenAnswer(_ -> {
             assertThat(lock.isHeldByCurrentThread()).isTrue();
-            AiTraderPlan fresh = new AiTraderPlan(); org.springframework.beans.BeanUtils.copyProperties(row.get(), fresh); return fresh;
+            AiTraderPlan fresh = new AiTraderPlan(); BeanUtils.copyProperties(row.get(), fresh); return fresh;
         });
-        when(mapper.updateById(any(AiTraderPlan.class))).thenAnswer(call -> { row.set(call.getArgument(0)); return 1; });
+        when(mapper.updateById(any(AiTraderPlan.class))).thenAnswer(call -> {
+            AiTraderPlan updated = call.getArgument(0);
+            assertThat(updated.getUpdatedAt()).isNull();
+            row.set(updated);
+            return 1;
+        });
         var concurrent = new TraderPlanStore(mapper, PROMPTS, tx);
-        try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
             var a = pool.submit(() -> concurrent.appendRevision(21L, 1L, "stop", "95→96", "preset"));
             var b = pool.submit(() -> concurrent.appendRevision(21L, 2L, "target", "110→112", "wake"));
             a.get(); b.get();
         }
-        assertThat(com.mawai.wiibcommon.util.JsonUtils.MAPPER.readTree(row.get().getRevisionsJson())).hasSize(2);
+        assertThat(MAPPER.readTree(row.get().getRevisionsJson())).hasSize(2);
         assertThat(row.get().getRevisionsJson()).contains("preset", "wake");
     }
 
@@ -163,9 +185,25 @@ class TraderPlanStoreTest {
     }
 
     @Test
-    void groupReconcileReportsEachFillAndCancellation() {
+    void cancelledEntriesShareOneRevisionPerPlan() {
+        AiTraderPlan plan = grouped(null, entry(1L, "PENDING"), entry(2L, "PENDING"));
+        when(mapper.selectOne(any())).thenReturn(plan);
+        store.cancelEntries(7L, 1, List.of(groupOrder(1, "CANCELLED"), groupOrder(2, "CANCELLED")),
+                "计划失效", BOUNDARY, AgentLang.ZH);
+        assertThat(PlanEntry.read(plan)).allSatisfy(e -> {
+            assertThat(e.getStatus()).isEqualTo("CANCELLED");
+            assertThat(e.getClosedAt()).isEqualTo(BOUNDARY - 1000);
+        });
+        assertThat(MAPPER.readTree(plan.getRevisionsJson())).hasSize(1);
+        assertThat(plan.getRevisionsJson()).contains("99000 × 0.01 / 99000 × 0.01", "计划失效");
+        verify(mapper, times(1)).updateById(any(AiTraderPlan.class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"GROUP_CLOSED", "CROSS_LIQUIDATED"})
+    void groupReconcileReportsEachFillAndCancellation(String cancelCode) {
         AiTraderPlan plan = grouped(null, entry(1L, "PENDING"), entry(2L, "PENDING"), entry(3L, "PENDING"));
-        FuturesOrderResponse cancelled = groupOrder(2L, "CANCELLED"); cancelled.setCancelReason("GROUP_CLOSED");
+        FuturesOrderResponse cancelled = groupOrder(2L, "CANCELLED"); cancelled.setCancelReason(cancelCode);
         AtomicInteger calls = new AtomicInteger();
         var result = store.reconcile(7, 1, List.of(position(42, "BTCUSDT", "LONG", FILED)), List.of(), NEVER,
                 group -> { assertThat(group).isEqualTo("group"); calls.incrementAndGet();
@@ -175,16 +213,16 @@ class TraderPlanStoreTest {
         assertThat(result.events().getFirst()).isInstanceOf(TraderPlanStore.EntryFilled.class);
         var event = (TraderPlanStore.EntryCancelled) result.events().getLast();
         assertThat(event.counts()).isEqualTo(new TraderPlanStore.EntryCounts(3, 1, 1));
-        assertThat(event.entry().getReason()).isEqualTo("仓位了结，平台撤单");
+        assertThat(event.entry().getReason()).isEqualTo("GROUP_CLOSED".equals(cancelCode) ? "仓位了结，平台撤单" : "全仓爆仓，平台撤单");
         assertThat(PlanEntry.read(plan).getFirst().getFee()).isEqualByComparingTo("0.20");
         assertThat(plan.getPositionId()).isEqualTo(42);
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 2})
     void unknownOrderIsClaimedOnlyWithOneMatch(int matches) {
         AiTraderPlan plan = grouped(null, entry(null, "UNKNOWN"));
-        List<FuturesOrderResponse> orders = java.util.stream.IntStream.range(0, matches)
+        List<FuturesOrderResponse> orders = IntStream.range(0, matches)
                 .mapToObj(i -> groupOrder(i + 1, "PENDING")).toList();
         var result = store.reconcile(7, 1, List.of(), List.of(), closed(), _ -> orders, BOUNDARY, AgentLang.EN);
         if (matches == 0) {
@@ -198,8 +236,29 @@ class TraderPlanStoreTest {
         }
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"TRIGGERED", "PROCESSING", "QUERY_FAILED"})
+    @ParameterizedTest
+    @ValueSource(strings = {"CANCELLED", "PENDING"})
+    void ambiguousEntriesOnlyWaitForActiveCandidates(String secondStatus) {
+        AiTraderPlan plan = grouped(42L, entry(null, "UNKNOWN"));
+        FuturesPositionDTO ended = position(42L, "BTCUSDT", "LONG", FILED + 1000);
+        var result = store.reconcile(7, 1, List.of(), List.of(), closed(ended),
+                _ -> List.of(groupOrder(1, "FILLED"), groupOrder(2, secondStatus)), BOUNDARY, AgentLang.EN);
+        assertThat(PlanEntry.read(plan)).singleElement().satisfies(e -> {
+            assertThat(e.getStatus()).isEqualTo("UNKNOWN");
+            assertThat(e.getOrderId()).isNull();
+        });
+        if ("PENDING".equals(secondStatus)) {
+            assertThat(result.live()).containsExactly(plan);
+            assertThat(result.events()).isEmpty();
+        } else {
+            assertThat(result.live()).isEmpty();
+            assertThat(plan.getStatus()).isEqualTo(AiTraderPlan.STATUS_CLOSED);
+            assertThat(result.events()).singleElement().satisfies(e -> assertThat(closedOf(e).position()).isSameAs(ended));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"TRIGGERED", "PROCESSING", "QUERY_FAILED"})
     void unresolvedEntriesAreNotArchived(String state) {
         AiTraderPlan plan = grouped(null, entry(1L, "PENDING"));
         var result = store.reconcile(7, 1, List.of(), List.of(), closed(), _ -> {

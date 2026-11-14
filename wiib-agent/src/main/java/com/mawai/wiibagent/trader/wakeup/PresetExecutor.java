@@ -156,6 +156,14 @@ public class PresetExecutor {
                 yield new Done(true, prompts.get(lang, "trader.preset.movedStop", Map.of(
                         "symbol", pos.getSymbol(), "side", pos.getSide(), "from", from, "to", WatchText.num(stop))) + synced);
             }
+            case StopOrders.PositionFailed f -> {
+                String from = f.from() == null ? prompts.get(lang, "trader.revise.none") : WatchText.num(f.from());
+                String suffix = PendingProtection.summary(f.pending(), prompts, lang)
+                        + prompts.get(lang, "trader.revise.positionUnconfirmed");
+                revise(trader, pos, at, prompts.get(lang, "trader.revise.presetMoveStop"),
+                        from + "→" + WatchText.num(stop) + suffix, w.getNote());
+                yield new Done(false, SimTradeClient.describe(f.cause(), messages, lang) + suffix);
+            }
             case StopOrders.WrongSide _ -> new Done(false, prompts.get(lang, "trader.preset.stopWrongSide", Map.of(
                     "stop", WatchText.num(stop), "mark", WatchText.num(pos.getMarkPrice()))));
             case StopOrders.Looser l -> new Done(false, prompts.get(lang, "trader.preset.stopLooser", Map.of(
@@ -186,7 +194,7 @@ public class PresetExecutor {
         String symbol = action.path("symbol").asString();
         String orderSide = action.path("side").asString();
         FuturesOrderResponse response = simTradeClient.cancelOrder(trader.getSimUserId(), action.path("orderId").asLong());
-        planStore.cancelEntry(trader.getId(), trader.getRoundNo(), response, w.getNote(), at, lang);
+        planStore.cancelEntries(trader.getId(), trader.getRoundNo(), List.of(response), w.getNote(), at, lang);
         return new Done(true, prompts.get(lang, "trader.preset.cancelled", Map.of(
                 "symbol", symbol, "side", orderSide, "orderId", action.path("orderId").asLong())));
     }

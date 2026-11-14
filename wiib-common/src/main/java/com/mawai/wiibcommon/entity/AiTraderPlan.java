@@ -1,6 +1,7 @@
 package com.mawai.wiibcommon.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -58,7 +59,7 @@ public class AiTraderPlan {
     private BigDecimal stopLossPrice;
 
     /** 最近一次开仓或加仓的止盈分档 [{price,percent}]，没设为 null；现挂止盈以 sim 为准。 */
-    @TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String takeProfitsJson;
 
     /** 开仓所在唤醒边界(ms)，回注时计算已持有时长 */

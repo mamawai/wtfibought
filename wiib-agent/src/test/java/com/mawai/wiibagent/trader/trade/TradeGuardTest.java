@@ -2,11 +2,15 @@ package com.mawai.wiibagent.trader.trade;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibquant.external.sim.SimTradeApi;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -95,7 +99,7 @@ class TradeGuardTest {
         assertThat(validateOpen(withEntries(base()), EQUITY, MARK, WL, cfg(), List.of())).contains("1到5");
         var market = new EntryRung(new BigDecimal("0.01"), null);
         assertThat(validateOpen(withEntries(base(), market, market), EQUITY, MARK, WL, cfg(), List.of())).contains("最多一档");
-        assertThat(validateOpen(withEntries(base(), java.util.Collections.nCopies(6,
+        assertThat(validateOpen(withEntries(base(), Collections.nCopies(6,
                 new EntryRung(new BigDecimal("0.01"), new BigDecimal("99000"))).toArray(EntryRung[]::new)),
                 EQUITY, MARK, WL, cfg(), List.of())).contains("1到5");
     }
@@ -116,15 +120,15 @@ class TradeGuardTest {
         assertThat(reject).contains("合计保证金");
         assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.01")), EQUITY, MARK, WL, cfg(false, false), pending)).isNull();
         // 拒因里的建议数量先扣掉了挂单已占的保证金，照抄能过
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
+        Matcher m = Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
         assertThat(m.find()).isTrue();
         assertThat(validateOpen(withQuantity(base(), new BigDecimal(m.group(1))), EQUITY, MARK, WL, cfg(false, false), pending)).isNull();
     }
 
     @Test
     void bracketCapIsExclusiveAndReportsAllowedNotional() {
-        var brackets = List.of(new com.mawai.wiibquant.external.sim.SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000"), 20, BigDecimal.ZERO, BigDecimal.ZERO),
-                new com.mawai.wiibquant.external.sim.SimTradeApi.Bracket(2, new BigDecimal("1000"), new BigDecimal("2000"), 10, BigDecimal.ZERO, BigDecimal.ZERO));
+        var brackets = List.of(new SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000"), 20, BigDecimal.ZERO, BigDecimal.ZERO),
+                new SimTradeApi.Bracket(2, new BigDecimal("1000"), new BigDecimal("2000"), 10, BigDecimal.ZERO, BigDecimal.ZERO));
         assertThat(TradeGuard.validateBracket(new BigDecimal("999"), 20, brackets, PROMPTS, AgentLang.ZH)).isNull();
         assertThat(TradeGuard.validateBracket(new BigDecimal("1000"), 20, brackets, PROMPTS, AgentLang.ZH)).contains("1000");
     }
@@ -214,7 +218,7 @@ class TradeGuardTest {
         TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("15"), true, false);
         String reject = validateOpen(withQuantity(base(), new BigDecimal("0.3")),
                 EQUITY, MARK, WL, tight, List.of());
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
+        Matcher m = Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
         assertThat(m.find()).isTrue();
 
         assertThat(validateOpen(withQuantity(base(), new BigDecimal(m.group(1))),
@@ -268,7 +272,7 @@ class TradeGuardTest {
         TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("15"), true, false);
         BigDecimal equity = new BigDecimal("12345.67");
         String reject = validateOpen(withQuantity(base(), new BigDecimal("0.3")), equity, MARK, WL, tight, List.of());
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
+        Matcher m = Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
         assertThat(m.find()).isTrue();
 
         BigDecimal q = new BigDecimal(m.group(1));

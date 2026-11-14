@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
+import static com.mawai.wiibagent.trader.trade.StopOrders.pctOfEquity;
 
 /**
  * 开场白里的账户状态块：持仓（带计划与修订史）+ 挂单（带挂出时刻与已挂时长）。盯盘条件不在这儿，在承诺块里。
@@ -69,10 +70,6 @@ final class WakeAccountState {
             out.set("pendingOrders", pendingOrdersJson(prompts, lang, equity, pendingOrders, planByKey, boundaryTime));
         }
         return MAPPER.writeValueAsString(out);
-    }
-
-    private static BigDecimal pctOfEquity(BigDecimal amount, BigDecimal equity) {
-        return amount.multiply(BigDecimal.valueOf(100)).divide(equity, 2, RoundingMode.HALF_UP);
     }
 
     /**

@@ -316,7 +316,7 @@ class FuturesOpenMergeTest {
                 && l.getFirst().getId().equals("tight") && l.getFirst().getCreatedAt() == 123L
                 && l.getFirst().getQuantity().compareTo(new BigDecimal("2")) == 0));
         verify(positionIndexService).unregisterStopLosses(1L, SYMBOL, "LONG", List.of(wide));
-        verify(positionIndexService, never()).registerStopLosses(anyLong(), anyString(), anyString(), any());
+        verify(positionIndexService).registerStopLosses(1L, SYMBOL, "LONG", List.of());
     }
 
     @Test
@@ -336,10 +336,12 @@ class FuturesOpenMergeTest {
         service.setOrderProtection(UID, 8L, req);
         verify(orderMapper).updatePendingProtection(UID, 8L, List.of(), null);
         when(orderMapper.updatePendingProtection(eq(UID), eq(8L), anyList(), isNull())).thenReturn(0);
-        assertThatThrownBy(() -> service.setOrderProtection(UID, 8L, req)).isInstanceOf(BizException.class);
+        assertThatThrownBy(() -> service.setOrderProtection(UID, 8L, req)).isInstanceOf(BizException.class)
+                .extracting("code").isEqualTo(ErrorCode.ORDER_NOT_PENDING.getCode());
         order.setStatus("TRIGGERED");
         clearInvocations(orderMapper);
-        assertThatThrownBy(() -> service.setOrderProtection(UID, 8L, req)).isInstanceOf(BizException.class);
+        assertThatThrownBy(() -> service.setOrderProtection(UID, 8L, req)).isInstanceOf(BizException.class)
+                .extracting("code").isEqualTo(ErrorCode.ORDER_NOT_PENDING.getCode());
         verify(orderMapper, never()).updatePendingProtection(anyLong(), anyLong(), any(), any());
     }
 }

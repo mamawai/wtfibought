@@ -183,7 +183,7 @@
     "basis": "依据：{{s}}",
     "invalidation": "失效条件",
     "entry": "入场",
-    "origSl": "原始止损",
+    "origSl": "下单时止损",
     "target": "目标",
     "entries": "入场各档",
     "marketEntry": "市价",

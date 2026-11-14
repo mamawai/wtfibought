@@ -20,6 +20,8 @@ import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
@@ -32,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -103,9 +106,10 @@ class PresetExecutorTest {
         return row.getValue();
     }
 
-    /** 移止损：走只许收紧那条路挪到 100，整仓一档；不叫醒；三处留痕 */
-    @Test
-    void moveStopCarriedOutWithoutWaking() {
+    /** 移止损：挂单同步、仓位修改结果和三处留痕 */
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void moveStopReportsPositionResult(boolean positionFailed) {
         holding();
         AiTraderPlan plan = new AiTraderPlan(); plan.setId(40L); plan.setOrderGroup("group");
         when(planStore.liveFor(7L, 1, "BTCUSDT", "LONG")).thenReturn(plan);
@@ -115,34 +119,39 @@ class PresetExecutorTest {
         pending.setLimitPrice(new BigDecimal("102")); pending.setQuantity(new BigDecimal("2"));
         pending.setStopLosses(List.of(new FuturesStopLoss("s2", new BigDecimal("98"), new BigDecimal("2"))));
         when(sim.getPendingOrders(99L, "BTCUSDT")).thenReturn(List.of(pending));
+        if (positionFailed) {
+            doThrow(new IllegalStateException("仓位已平")).when(sim).setStopLoss(eq(99L), any());
+        }
         AiTraderWatch w = watch("{\"type\":\"MOVE_STOP\",\"positionId\":5,\"stopLossPrice\":100,\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"}");
 
         boolean wake = executor.execute(w, new BigDecimal("1899"), AT);
 
-        assertThat(wake).isFalse();
+        assertThat(wake).isEqualTo(positionFailed);
         ArgumentCaptor<FuturesStopLossRequest> req = ArgumentCaptor.forClass(FuturesStopLossRequest.class);
         verify(sim).setStopLoss(eq(99L), req.capture());
         assertThat(req.getValue().getStopLosses()).singleElement().satisfies(i -> {
             assertThat(i.getPrice()).isEqualByComparingTo("100");
             assertThat(i.getQuantity()).isNull();
         });
-        var calls = org.mockito.Mockito.inOrder(sim);
+        var calls = inOrder(sim);
         calls.verify(sim).setOrderProtection(eq(99L), eq(600L), any());
         calls.verify(sim).setStopLoss(eq(99L), any());
         // 结果是一句人话：挂单同步情况跟在后面，不带原始 JSON
-        verify(watchStore).recordAction(31L, true,
-                "BTCUSDT LONG 止损 98→100；同组挂单改了 1 档，保留原样 0 档，没改成 0 档");
-        assertThat(w.getActionOk()).isTrue();
+        String suffix = "；同组挂单改了 1 档，保留原样 0 档，没改成 0 档" + (positionFailed ? "；仓位没确认改成" : "");
+        String result = (positionFailed ? "仓位已平" : "BTCUSDT LONG 止损 98→100") + suffix;
+        verify(watchStore).recordAction(31L, !positionFailed, result);
+        assertThat(w.getActionOk()).isEqualTo(!positionFailed);
         verify(planStore).appendRevision(40L, AT, "预案移止损",
-                "98→100；同组挂单改了 1 档，保留原样 0 档，没改成 0 档", "大盘破位先保本");
+                "98→100" + suffix, "大盘破位先保本");
         AiTraderDecision row = timelineRow();
         assertThat(row.getKind()).isEqualTo(AiTraderDecision.KIND_PRESET);
-        assertThat(row.getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        assertThat(row.getStatus()).isEqualTo(positionFailed ? AiTraderDecision.STATUS_ERROR : AiTraderDecision.STATUS_OK);
         assertThat(row.getWakeTime()).isEqualTo(AT);
         assertThat(row.getEquity()).isNull();
         assertThat(row.getReasoning()).contains("ETHUSDT 标记价 1899 触及 1900 以下").contains("大盘破位先保本")
-                .contains("BTCUSDT LONG 止损 98→100");
-        assertThat(row.getActionsJson()).contains("\"tool\":\"preset\"").contains("\"status\":\"ok\"");
+                .contains(result);
+        assertThat(row.getActionsJson()).contains("\"tool\":\"preset\"")
+                .contains(positionFailed ? "\"status\":\"error\"" : "\"status\":\"ok\"");
     }
 
     /** 平仓：按命中这一刻的仓位折数量（10 的 50% = 5），市价平；做成了叫醒 */
@@ -188,7 +197,7 @@ class PresetExecutorTest {
 
         assertThat(executor.execute(w, new BigDecimal("1899"), AT)).isFalse();
         verify(sim).cancelOrder(99L, 600L);
-        verify(planStore).cancelEntry(7L, 1, cancelled, "大盘破位先保本", AT, AgentLang.ZH);
+        verify(planStore).cancelEntries(7L, 1, List.of(cancelled), "大盘破位先保本", AT, AgentLang.ZH);
         verify(watchStore).recordAction(31L, true, "BTCUSDT OPEN_LONG 挂单 600 已撤");
 
         when(sim.cancelOrder(99L, 600L)).thenThrow(new IllegalStateException("订单不可撤"));

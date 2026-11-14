@@ -34,7 +34,7 @@ public final class PendingProtection {
                 .toList();
     }
 
-    /** 改一张挂单带的保护单；sim 拒了（多半是它刚触发或成交）记成没改成，不往外抛 */
+    /** 改一张挂单带的保护单；sim 拒了记成没改成，不往外抛 */
     public static Change update(SimTradeClient sim, long userId, FuturesOrderResponse order,
                                 FuturesOrderProtectionRequest request, Object previous, Function<Exception, String> describe) {
         try {

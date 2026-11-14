@@ -367,7 +367,7 @@ tool:
     legal ways to change a thesis are adding to the position or closing and reopening.
 
   cancel_order: |-
-    Cancel a pending limit order by orderId (from the [Account] block's pendingOrders in your opening message, or get_account). reason is REQUIRED and records why this entry was cancelled in the plan and its revision history.
+    Cancel one or more pending limit orders by orderIds (from the [Account] block's pendingOrders in your opening message, or get_account). reason is REQUIRED and records why these entries were cancelled in the plan and its revision history. Partial success starts with PARTIAL:.
 
   set_watch: |-
     Replace ALL your watch conditions on one symbol. The symbol may be any coin the platform tracks, not

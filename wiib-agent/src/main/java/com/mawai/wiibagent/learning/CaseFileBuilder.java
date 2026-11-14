@@ -113,7 +113,7 @@ public class CaseFileBuilder {
                                 BigDecimal actualR, BigDecimal untouchedR, long withAdds) {
     }
 
-    /** 没成交就撤掉的限价单：从最后一次见它还挂着的那轮起 24 小时内，价格到没到过限价位、到过计划里的几档止盈 */
+    /** 没成交就撤掉的限价档：撤单后 24 小时内（没有逐档记录的旧计划，从最后一次见它还挂着的那轮起），价格到没到过限价位、到过计划里的几档止盈 */
     public record CancelledLimit(AiTraderPlan plan, PlanEntry entry, BigDecimal limit, BigDecimal stop,
                                  List<TargetRung> targets, long cancelledAt, boolean touchedLimit, int reachedTargets) {
     }
@@ -141,7 +141,7 @@ public class CaseFileBuilder {
         long openBar = openMs - Math.floorMod(openMs, BAR_MS);
         long closeBar = closeMs - Math.floorMod(closeMs, BAR_MS);
         List<KlineBar> bars = historyStore.load(pos.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
-                replayStart(plan, openBar), Math.max(closeBar + AFTER_LONG_MS, openBar + REPLAY_MS));
+                replayStart(plan, openBar), Math.max(closeBar + AFTER_LONG_MS, openBar + BAR_MS + REPLAY_MS));
         return new TradeCase(pos, plan, entryCtx(plan),
                 path(pos, plan, bars.stream().filter(b -> b.openTime() >= openBar).toList(), openMs, openBar, closeBar), replay(pos, plan, bars, openBar));
     }
@@ -151,7 +151,7 @@ public class CaseFileBuilder {
         long openMs = TradePairing.msOf(pos.getCreatedAt());
         long openBar = openMs - Math.floorMod(openMs, BAR_MS);
         return replay(pos, plan, historyStore.load(pos.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
-                replayStart(plan, openBar), openBar + REPLAY_MS), openBar);
+                replayStart(plan, openBar), openBar + BAR_MS + REPLAY_MS), openBar);
     }
 
     private static long replayStart(AiTraderPlan plan, long openBar) {
@@ -172,10 +172,8 @@ public class CaseFileBuilder {
     }
 
     public CancelledLimit cancelledLimit(AiTraderPlan plan, PlanEntry entry) {
-        PlanEntry initial = PlanEntry.read(plan).stream().filter(e -> !e.isAdd()).findFirst().orElse(null);
         return cancelledLimit(plan, entry, entry.getClosedAt(), entry.getLimitPrice(),
-                initial == null ? plan.getStopLossPrice() : initial.getStop(),
-                initial == null ? TargetRung.of(plan) : initial.getTargets() == null ? List.of() : initial.getTargets());
+                entry.getStop(), entry.getTargets() == null ? List.of() : entry.getTargets());
     }
 
     private CancelledLimit cancelledLimit(AiTraderPlan plan, PlanEntry entry, long fromMs,

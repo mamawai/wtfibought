@@ -58,7 +58,6 @@ public class TraderPlanStore {
 
     /**
      * 改已有计划行的唯一入口：短事务里锁住这一行、重读、把本次变更合并进去再写回，写完把最新的行抄回调用方手里那份。
-     * 预案线程和唤醒线程不串行，各自读了再整行写回会互相盖掉
      */
     private void mutate(AiTraderPlan plan, Consumer<AiTraderPlan> change) {
         transactionTemplate.executeWithoutResult(_ -> {
@@ -67,6 +66,8 @@ public class TraderPlanStore {
                 return;
             }
             change.accept(row);
+            // 置空让自动填充写当前时间
+            row.setUpdatedAt(null);
             mapper.updateById(row);
             BeanUtils.copyProperties(row, plan);
         });
@@ -151,7 +152,6 @@ public class TraderPlanStore {
             if (plan.getEntriesJson() != null) {
                 List<PlanEntry> entries = PlanEntry.read(current);
                 List<PlanEntry> added = PlanEntry.read(plan);
-                added.forEach(e -> e.setAdd(true));
                 entries.addAll(added);
                 PlanEntry.save(current, entries);
             }
@@ -168,7 +168,7 @@ public class TraderPlanStore {
                 current.setPositionId(plan.getPositionId());
             }
         });
-        // 调用方手里那份换成库里的最新行，后面补入场上下文要用它的 id
+        // 调用方手里那份换成库里的最新行
         BeanUtils.copyProperties(old, plan);
     }
 
@@ -182,33 +182,46 @@ public class TraderPlanStore {
         revise(reference(planId), time, type, change, reason);
     }
 
-    /** 模型或预案撤了一张入场挂单：计划里那一档标成已撤、记下理由，修订史加一条。不是分档计划里的单不管 */
-    public void cancelEntry(long traderId, int roundNo, FuturesOrderResponse order, String reason, long time, AgentLang lang) {
-        if (order.getGroupId() == null || !order.getOrderSide().startsWith("OPEN_")) {
-            return;
-        }
-        AiTraderPlan plan = liveFor(traderId, roundNo, order.getSymbol(), order.getOrderSide().substring("OPEN_".length()));
-        if (plan == null) {
-            return;
-        }
-        mutate(plan, p -> {
-            if (!AiTraderPlan.STATUS_LIVE.equals(p.getStatus()) || !order.getGroupId().equals(p.getOrderGroup())) {
-                return;
+    /** 撤掉的入场档标成已撤、记下理由，每份计划追加一条修订 */
+    public void cancelEntries(long traderId, int roundNo, List<FuturesOrderResponse> orders, String reason, long time, AgentLang lang) {
+        Map<String, List<FuturesOrderResponse>> groups = new LinkedHashMap<>();
+        for (FuturesOrderResponse order : orders) {
+            if (order.getGroupId() != null && order.getOrderSide().startsWith("OPEN_")) {
+                groups.computeIfAbsent(key(order.getSymbol(), order.getOrderSide()), _ -> new ArrayList<>()).add(order);
             }
-            List<PlanEntry> entries = PlanEntry.read(p);
-            for (PlanEntry e : entries) {
-                if (!Objects.equals(e.getOrderId(), order.getOrderId())) {
-                    continue;
+        }
+        for (List<FuturesOrderResponse> group : groups.values()) {
+            FuturesOrderResponse first = group.getFirst();
+            AiTraderPlan plan = liveFor(traderId, roundNo, first.getSymbol(), first.getOrderSide().substring("OPEN_".length()));
+            if (plan == null) {
+                continue;
+            }
+            mutate(plan, p -> {
+                if (!AiTraderPlan.STATUS_LIVE.equals(p.getStatus())) {
+                    return;
                 }
-                e.setStatus("CANCELLED");
-                e.setClosedAt(TradePairing.msOf(order.getUpdatedAt()));
-                e.setReason(reason);
-                appendRevision(p, time, prompts.get(lang, "trader.revise.cancelEntry"),
-                        e.getLimitPrice().stripTrailingZeros().toPlainString() + " × "
-                                + e.getQuantity().stripTrailingZeros().toPlainString(), reason);
-            }
-            PlanEntry.save(p, entries);
-        });
+                List<PlanEntry> entries = PlanEntry.read(p);
+                List<String> changes = new ArrayList<>();
+                for (FuturesOrderResponse order : group) {
+                    if (!order.getGroupId().equals(p.getOrderGroup())) {
+                        continue;
+                    }
+                    for (PlanEntry e : entries) {
+                        if (Objects.equals(e.getOrderId(), order.getOrderId())) {
+                            e.setStatus("CANCELLED");
+                            e.setClosedAt(TradePairing.msOf(order.getUpdatedAt()));
+                            e.setReason(reason);
+                            changes.add(e.getLimitPrice().stripTrailingZeros().toPlainString() + " × "
+                                    + e.getQuantity().stripTrailingZeros().toPlainString());
+                        }
+                    }
+                }
+                if (!changes.isEmpty()) {
+                    appendRevision(p, time, prompts.get(lang, "trader.revise.cancelEntry"), String.join(" / ", changes), reason);
+                    PlanEntry.save(p, entries);
+                }
+            });
+        }
     }
 
     // ==================== 对账：唤醒开头 ====================
@@ -305,7 +318,7 @@ public class TraderPlanStore {
             }
             // 绑着的仓不在持仓里就是了结了，哪怕已平列表里找不到它的详情（窗口外）也照样归档
             List<FuturesPositionDTO> outcomes = outcomes(p, k, closed, claimed);
-            // 有档还没定论（订单在触发中、查不到、认领不了）先不归档；刚按订单绑上的仓，持仓快照里还没有也先等一轮
+            // 有档还没定论（订单在触发中、查不到、认领不了且还有活单）先不归档；刚按订单绑上的仓，持仓快照里还没有也先等一轮
             if (sync.unresolved() || (outcomes.isEmpty() && sync.boundFromOrder() && open == null)) {
                 live.add(p);
                 continue;
@@ -367,7 +380,8 @@ public class TraderPlanStore {
     /**
      * 拿 sim 里这个订单组的全部订单，把计划里还没定论的档（挂着的、下单结果未知的）对一遍：
      * 成交的记成交价、手续费、时刻；撤掉的记时刻和原因；还挂着的留着；订单在触发中的算没定论。
-     * 结果未知的档按价位和数量在没被认领的同组订单里找：找到一张就认领，一张都没有说明当时没挂上、去掉，有几张分不清就留着不猜。
+     * 结果未知的档按价位和数量在没被认领的同组订单里找：找到一张就认领，一张都没有说明当时没挂上、去掉，有几张分不清就留 UNKNOWN。
+     * 分不清的候选单都已成交或撤掉，不挡归档；还有活单、查询失败或订单在触发中，等下一轮。
      * 新定论的成交和撤单各加一条事件。没有订单组的旧计划、各档都已定论的计划不查
      */
     private EntrySync syncEntries(AiTraderPlan plan, Function<String, List<FuturesOrderResponse>> groupOrders,
@@ -375,7 +389,7 @@ public class TraderPlanStore {
         if (plan.getOrderGroup() == null || PlanEntry.read(plan).stream().noneMatch(TraderPlanStore::unsettled)) {
             return new EntrySync(false, Set.of(), false);
         }
-        // 查订单要出网，放在锁行的事务外面
+        // 查订单在锁行事务外面
         List<FuturesOrderResponse> orders;
         try {
             orders = groupOrders.apply(plan.getOrderGroup());
@@ -414,7 +428,7 @@ public class TraderPlanStore {
                         continue;
                     }
                     if (candidates.size() > 1) {
-                        unresolved[0] = true;
+                        unresolved[0] |= candidates.stream().anyMatch(o -> !"FILLED".equals(o.getStatus()) && !"CANCELLED".equals(o.getStatus()));
                         continue;
                     }
                     entry.setOrderId(candidates.getFirst().getOrderId());
@@ -425,7 +439,7 @@ public class TraderPlanStore {
                     unresolved[0] = true;
                     continue;
                 }
-                // 判成交只看状态：已触发又被撤的单子上还留着触发价
+                // 判成交只看订单状态
                 switch (order.getStatus()) {
                     case "FILLED" -> {
                         entry.setStatus("FILLED");
@@ -433,7 +447,7 @@ public class TraderPlanStore {
                         entry.setFee(order.getCommission());
                         entry.setClosedAt(TradePairing.msOf(order.getUpdatedAt()));
                         filled.add(entry);
-                        // 持仓快照可能早于这笔成交，计划没绑仓就按订单上的仓位 id 绑
+                        // 计划没绑仓就按订单上的仓位 id 绑
                         if (row.getPositionId() == null && order.getPositionId() != null) {
                             row.setPositionId(order.getPositionId());
                             bound[0] = true;
@@ -478,11 +492,11 @@ public class TraderPlanStore {
             case "GROUP_CLOSED" -> "groupClosed";
             case "USER" -> "user";
             case "BANKRUPT" -> "bankrupt";
+            case "CROSS_LIQUIDATED" -> "crossLiquidated";
             case "insufficient_available", "insufficient_balance" -> "margin";
             case "leverage_not_allowed", "leverage_mismatch" -> "leverage";
             case "sltp_split_limit" -> "protectionLimit";
             case "margin_mode_conflict" -> "marginMode";
-            case "increase_removed" -> "increaseRemoved";
             default -> "unknown";
         };
         return prompts.get(lang, "trader.cancelReason." + reason);
@@ -668,7 +682,7 @@ public class TraderPlanStore {
      * 其余标着挂着却对不上订单的记成未知
      */
     private void archive(AiTraderPlan plan, long closedAt, Set<Long> pendingIds, List<PlanEntry> carried) {
-        // 对账里刚给它认上的结局仓位还只在内存里，随归档一起写进去
+        // 对账时认上的结局仓位随归档一起写进去
         Long positionId = plan.getPositionId();
         mutate(plan, p -> {
             p.setStatus(AiTraderPlan.STATUS_CLOSED);

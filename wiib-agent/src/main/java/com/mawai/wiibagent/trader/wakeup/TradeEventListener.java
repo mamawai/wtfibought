@@ -19,7 +19,7 @@ import java.util.List;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价成交），
+ * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价单开出新仓），
  * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就把它叫醒；不是 trader 的用户直接忽略。
  * 准入（冷静期 / 互斥 / 时段 / 交接）全在调度器，这里只认人。
  */

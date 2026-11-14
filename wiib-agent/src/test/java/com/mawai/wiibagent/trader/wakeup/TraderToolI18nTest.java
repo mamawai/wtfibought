@@ -1,6 +1,8 @@
 package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.dto.FuturesOpenRequest;
+import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -15,6 +17,7 @@ import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibquant.external.sim.SimTradeApi;
 import com.mawai.wiibquant.whale.WhaleQueryService;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -29,17 +32,23 @@ import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibquant.market.service.CrossAssetService;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibquant.market.service.NewsCache;
 import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +56,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 
 /**
  * 唤醒挂的那批工具的双语契约。工具描述与提示词一样是模型逐字读的输入：混一句中文，
@@ -72,7 +85,7 @@ class TraderToolI18nTest {
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             new CrossAssetToolkit(mock(CrossAssetService.class)),
             mock(AiTraderMapper.class), mock(AiTraderDecisionMapper.class),
-            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class))),
+            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new TransactionTemplate(mock(PlatformTransactionManager.class))),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
@@ -86,7 +99,7 @@ class TraderToolI18nTest {
     private final TradeTools tradeTools = new TradeTools(
             mock(SimTradeClient.class), 1L, Set.of("BTCUSDT"), Set.of("BTCUSDT"), positions -> BigDecimal.TEN,
             sym -> BigDecimal.ONE,
-            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class))),
+            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new TransactionTemplate(mock(PlatformTransactionManager.class))),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
             new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
             mock(EntryContext.class), () -> true);
@@ -161,7 +174,7 @@ class TraderToolI18nTest {
                 .findFirst().orElseThrow();
         assertThat(open.getToolDefinition().inputSchema())
                 .contains("symbol").contains("stopLossPrice").contains("invalidationCondition");
-        var schema = com.mawai.wiibcommon.util.JsonUtils.MAPPER.readTree(open.getToolDefinition().inputSchema());
+        var schema = MAPPER.readTree(open.getToolDefinition().inputSchema());
         assertThat(schema.path("properties").path("entries").path("items").path("required").toString()).isEqualTo("[\"quantity\"]");
         assertThat(schema.path("properties").has("quantity")).isFalse();
         assertThat(schema.path("properties").has("orderType")).isFalse();
@@ -170,34 +183,35 @@ class TraderToolI18nTest {
         }
         var cancel = runner.wakeTools(AgentLang.EN, tradeTools, null).stream()
                 .filter(cb -> "cancel_order".equals(cb.getToolDefinition().name())).findFirst().orElseThrow();
-        assertThat(com.mawai.wiibcommon.util.JsonUtils.MAPPER.readTree(cancel.getToolDefinition().inputSchema()).path("required").toString())
-                .contains("orderId", "reason");
+        assertThat(MAPPER.readTree(cancel.getToolDefinition().inputSchema()).path("required").toString())
+                .isEqualTo("[\"orderIds\",\"reason\"]");
+        assertThat(MAPPER.readTree(cancel.getToolDefinition().inputSchema()).path("properties").path("orderIds").path("type").asString()).isEqualTo("array");
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {
+    @ParameterizedTest
+    @ValueSource(strings = {
             "[{\"quantity\":0.01}]", "[{\"quantity\":0.01,\"limitPrice\":98000}]",
             "[{\"quantity\":0.01},{\"quantity\":0.02,\"limitPrice\":98000}]", "[]"})
     void wakeToolCallbackBindsEntryArrays(String entries) {
         var sim = mock(SimTradeClient.class);
-        org.mockito.Mockito.when(sim.getBrackets(org.mockito.ArgumentMatchers.any())).thenReturn(Map.of("BTCUSDT", List.of(
-                new com.mawai.wiibquant.external.sim.SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000000000"), 150, BigDecimal.ZERO, BigDecimal.ZERO))));
-        org.mockito.Mockito.when(sim.openPosition(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any())).thenAnswer(call -> {
-            com.mawai.wiibcommon.dto.FuturesOpenRequest req = call.getArgument(1);
-            var r = new com.mawai.wiibcommon.dto.FuturesOrderResponse(); r.setOrderId(1L);
-            r.setStatus(req.getLimitPrice() == null ? "FILLED" : "PENDING"); r.setUpdatedAt(java.time.LocalDateTime.now());
+        when(sim.getBrackets(any())).thenReturn(Map.of("BTCUSDT", List.of(
+                new SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000000000"), 150, BigDecimal.ZERO, BigDecimal.ZERO))));
+        when(sim.openPosition(anyLong(), any())).thenAnswer(call -> {
+            FuturesOpenRequest req = call.getArgument(1);
+            var r = new FuturesOrderResponse(); r.setOrderId(1L);
+            r.setStatus(req.getLimitPrice() == null ? "FILLED" : "PENDING"); r.setUpdatedAt(LocalDateTime.now());
             return r;
         });
         TradeTools bound = new TradeTools(sim, 1L, Set.of("BTCUSDT"), Set.of("BTCUSDT"), _ -> new BigDecimal("10000"),
                 _ -> new BigDecimal("100000"), mock(TraderPlanStore.class), mock(TraderWatchStore.class),
                 new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE,
-                        new com.mawai.wiibagent.trader.trade.TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.EN),
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.EN),
                 prompts, new MessageCatalog(), mock(EntryContext.class), () -> true);
         ToolCallback cb = runner.wakeTools(AgentLang.EN, bound, null).stream()
                 .filter(t -> "open_position".equals(t.getToolDefinition().name())).findFirst().orElseThrow();
         String result = cb.call("{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\",\"entries\":" + entries
                 + ",\"leverage\":10,\"stopLossPrice\":95000,\"playType\":\"PULLBACK\",\"signalsUsed\":\"support\",\"invalidationCondition\":\"support breaks\"}");
         if (entries.equals("[]")) assertThat(result).contains("REJECTED");
-        else assertThat(com.mawai.wiibcommon.util.JsonUtils.MAPPER.readTree(result).path("status").asString()).isEqualTo("ok");
+        else assertThat(MAPPER.readTree(result).path("status").asString()).isEqualTo("ok");
     }
 }

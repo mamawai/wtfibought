@@ -39,7 +39,7 @@ class TraderWakeupRunnerAccountStateTest {
     @Test
     void pendingEntriesExposeProtectionAndAdditionalStopScenario() {
         AiTraderPlan plan = new AiTraderPlan(); plan.setSymbol("BTCUSDT"); plan.setSide("SHORT");
-        plan.setEntriesJson("[{\"limitPrice\":104,\"quantity\":4,\"status\":\"PENDING\"}]");
+        plan.setEntriesJson("[{\"limitPrice\":104,\"quantity\":4,\"status\":\"PENDING\",\"add\":false},{\"limitPrice\":105,\"quantity\":1,\"status\":\"PENDING\",\"add\":true}]");
         FuturesOrderResponse order = new FuturesOrderResponse();
         order.setOrderId(1L); order.setSymbol("BTCUSDT"); order.setOrderSide("OPEN_SHORT");
         order.setQuantity(new BigDecimal("4")); order.setLimitPrice(new BigDecimal("104")); order.setLeverage(10);
@@ -54,6 +54,8 @@ class TraderWakeupRunnerAccountStateTest {
         assertThat(pending.path("stopLosses")).hasSize(1);
         assertThat(pending.path("takeProfits")).hasSize(1);
         assertThat(pending.path("plan").path("entries").get(0).path("status").asString()).isEqualTo("PENDING");
+        assertThat(pending.path("plan").path("entries").get(0).path("add").asBoolean()).isFalse();
+        assertThat(pending.path("plan").path("entries").get(1).path("add").asBoolean()).isTrue();
     }
 
     /** 挂出时刻按订单自己的 createdAt，不按计划的（同键几张挂单共用一份计划） */

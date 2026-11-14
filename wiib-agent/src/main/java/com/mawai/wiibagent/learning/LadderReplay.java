@@ -136,20 +136,23 @@ final class LadderReplay {
             if (firstFill != null && bar.openTime() >= firstFill + REPLAY_MS) {
                 break;
             }
-            // 入场：实际成交过、成交时刻落在这根或之前的，用实际成交价和实际手续费；
+            // 入场：实际市价档从成交那根的下一根起，实际限价档从成交那根起，用实际成交价和手续费；
             // 其余限价档从挂出那根的下一根起，碰到限价就按限价成交、手续费按 maker 估
             for (Entry entry : entries) {
                 if (entry.price != null) {
                     continue;
                 }
                 PlanEntry original = entry.original;
-                boolean actual = "FILLED".equals(original.getStatus()) && bar.openTime() + BAR_MS > original.getClosedAt();
+                boolean market = original.getLimitPrice() == null;
+                boolean actual = "FILLED".equals(original.getStatus()) && (market
+                        ? bar.openTime() > floorBar(original.getClosedAt())
+                        : bar.openTime() + BAR_MS > original.getClosedAt());
                 if (!actual && !touchesLimit(original, bar, isLong)) {
                     continue;
                 }
                 entry.price = actual ? original.getFilledPrice() : original.getLimitPrice();
                 entry.left = original.getQuantity();
-                entry.filledBar = bar.openTime();
+                entry.filledBar = market ? floorBar(original.getClosedAt()) : bar.openTime();
                 fees = fees.add(actual ? original.getFee()
                         : entry.price.multiply(entry.left).multiply(FuturesFeeRates.MAKER));
                 if (firstFill == null) {

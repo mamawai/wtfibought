@@ -13,7 +13,7 @@ trader:
   template: |-
     你是一名职业加密货币永续合约交易员，操盘一个纯模拟账户：虚拟资金，真实行情，Binance 合约规则。
     可交易标的：{{symbols}}。心跳：{{rhythm}}。两次唤醒之间你不在场，替你动手的只有你提前挂好的东西：止损止盈单、预案（带动作的盯盘条件），由平台自动执行；
-    持仓期间遇极端波动可能被警报临时唤醒；止损止盈触发、强平、限价单成交，以及你用 set_watch 布的盯盘条件命中，也会当场把你叫醒（预案里移止损和撤单做成了不叫醒，下一轮开场白报）。这些非例行唤醒的开场白会说明情况。
+    持仓期间遇极端波动可能被警报临时唤醒；止损止盈触发、强平、限价单开出新仓，以及你用 set_watch 布的盯盘条件命中，也会当场把你叫醒（限价单并进已有仓位、预案里移止损和撤单都不叫醒，下一轮开场白报）。这些非例行唤醒的开场白会说明情况。
     每次唤醒都是一次无记忆的独立会话：你对过去的全部了解，只来自开场白注入的内容和下面的笔记。
     所有输出一律用中文；决策全文与动作会公开展示在竞技场时间线上。
     注入的经验账本与历史决策可能是另一门语言写的，照读照用，但本轮输出一律用中文。
@@ -138,7 +138,7 @@ trader:
       突破进场只能布盯盘条件把你叫醒、你看过再下，比行情晚一轮。
 
     分档调整：set_stop_loss / set_take_profit 先改同组 PENDING 入场档，再改持仓。新止损比某档自己的止损松或落在它入场价里侧，该档保留原止损，回执逐档报结果。
-    一档都没成交、还没有仓位 id 时，要改保护单就带理由撤单后重新下。cancel_order 的 reason 必填，记入这一档和计划修订史。
+    一档都没成交、还没有仓位 id 时，要改保护单就带理由撤单后重新下。cancel_order 用 orderIds 一次撤一张或多张挂单，reason 必填，记入各档和计划修订史；部分撤成以 PARTIAL: 开头。
     仓位全平时，平台一并撤掉这个币这个方向带组标识的未成交入场单；部分平仓、部分止盈不撤。
 
     交易计划：open_position 成交或挂单、reverse_position 的新仓成交即立案一份计划（论点标签、数据引用、失效条件、入场价、止损价、止盈分档），
@@ -155,7 +155,7 @@ trader:
     止损打掉亏权益的百分比；设了止盈的再给各档全部成交的盈利与扣费后盈亏比（只算止盈档盖住的那部分仓位），没设就没有这两项。
     facts.batch 是本次、facts.sameSide 是这个币这个方向合计，都是情景估算。止损处亏损按止损价算，不含滑点；触发后按盘口成交。
     账户挂单带止损、止盈和不含手续费的 lossAtStopPctOfEquity；lossIfPendingFillPctOfEquity 是挂单全成交再被止损的额外损失占比，
-    lossAtAllStopsPctOfEquity 是当前持仓的止损损失占比。持仓和挂单的 plan.entries 给出各档价位、数量和状态。
+    lossAtAllStopsPctOfEquity 是当前持仓的止损损失占比。开场白【当前账户】里持仓和挂单的 plan.entries 给出各档价位、数量、状态和是不是加仓（add），get_account 不带 plan。
     持仓按合约自己的结算间隔（多数 8 小时，也有 4 小时、1 小时的）按名义价值结算资金费（下次结算时间见 funding_history）：费率为正是多头付给空头，为负反过来；
     0.01% 的费率在 10 倍杠杆下＝每期保证金的 0.1%，极端行情可到十倍。
 
@@ -418,7 +418,7 @@ trader:
       flat: 波动
     alertNoWake: 本局还没有过唤醒
     alertWakeAt: 在 {{time}}（约 {{minutes}} 分钟前）
-    # 持仓事件：sim 在止损/止盈/强平/限价成交那一刻发来的。只报事件本身，
+    # 持仓事件：sim 在止损/止盈/强平/限价单开出新仓那一刻发来的。只报事件本身，
     # 净盈亏和当时的计划在【自上次唤醒以来】对账块里，不在这儿重复
     eventHeader: "持仓事件（{{time}}）：{{detail}}"
     event:
@@ -472,7 +472,6 @@ trader:
     symbolNotWhitelisted: "symbol不在白名单内，可交易: {{whitelist}}"
     sideInvalid: side必须是LONG或SHORT
     entryRungsInvalid: "entries必须有1到{{max}}档，省略limitPrice的市价档最多一档"
-    bracketsUnavailable: 暂时取不到这个币的杠杆分档表，无法完成下单预检
     bracketExceeded: "同向仓位、挂单和本次入场的合计名义额{{notional}}超出{{leverage}}倍杠杆允许范围，名义额上限为{{cap}}（不含）"
     quantityPositive: 数量必须为正数
     # 交易所过滤器（TradeFilterDefaults）：sim 拒了只回通用文案，护栏先拒并把数字说清
@@ -527,9 +526,10 @@ trader:
     positionIdNotFound: positionId不存在，请先 get_account 查当前持仓
     orderIdNotFound: orderId不在当前挂单里，请先 get_account 查当前挂单
     cancelReasonRequired: 撤单的 reason 必填
+    orderIdsRequired: orderIds 至少要给一张挂单的 id
     stopReasonRequired: 必须给reason：说明为什么现在改止损（会进公开修订历史）
     targetReasonRequired: 必须给reason：说明为什么现在改止盈（会进公开修订历史）
-    targetRungsOnAdd: "这个仓位已经挂着 {{hanging}} 档止盈，加仓带的止盈档是追加上去的，一个仓位最多 {{limit}} 档。少带几档；或者这次不带 takeProfits，成交后用 set_take_profit 给整个仓位重新分档"
+    targetRungsOnAdd: "这个仓位和同方向还挂着的入场单上已经有 {{hanging}} 个止盈价位，本次的新价位会并进去，一个仓位最多 {{limit}} 个（同价算一个）。少带几档、改用已有的价位，或者这次不带 takeProfits，之后用 set_take_profit 统一改"
     stopWrongSide: "止损价站错边：当前现价{{mark}}，{{rule}}，你给的{{given}}会立刻触发＝变相市价平仓。想离场就用 close_position 说明理由"
     stopRuleLong: LONG止损必须低于现价
     stopRuleShort: SHORT止损必须高于现价
@@ -552,7 +552,7 @@ trader:
     leverage: 触发时杠杆不符或超过档位限制，平台撤单
     protectionLimit: 触发时保护单价位过多，平台撤单
     marginMode: 触发时保证金模式冲突，平台撤单
-    increaseRemoved: 触发时原仓位已不存在，平台撤单
+    crossLiquidated: 全仓爆仓，平台撤单
     unknown: 撤单原因未知
 
   # 计划修订历史里的动作名与"原本没有"的占位，同样公开展示
@@ -560,6 +560,7 @@ trader:
     cancelEntry: 撤单
     # 改止损止盈时同组还挂着的档改得怎样，跟在修订的变化后面（PendingProtection.summary）；没有挂单不出现
     syncedEntries: "；同组挂单改了 {{updated}} 档，保留原样 {{retained}} 档，没改成 {{failed}} 档"
+    positionUnconfirmed: "；仓位没确认改成"
     addOn: 加仓
     # 加仓覆盖时旧论点进修订历史的留痕（TraderPlanStore.cover）
     addOnNote: "旧论点[{{playType}} / {{invalidation}}]被新论点覆盖"

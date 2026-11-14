@@ -35,6 +35,7 @@ public enum ErrorCode {
     ORDER_NOT_FOUND(1007, "error.orderNotFound"),
     ORDER_CANNOT_CANCEL(1008, "error.orderCannotCancel"),
     DUPLICATE_REQUEST(1009, "error.duplicateRequest"),
+    ORDER_NOT_PENDING(1010, "error.orderNotPending"),
     LIMIT_PRICE_INVALID(1011, "error.limitPriceInvalid"),
 
     // 并发控制错误码 1100+

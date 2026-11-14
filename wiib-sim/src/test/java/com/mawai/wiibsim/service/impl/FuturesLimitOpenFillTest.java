@@ -149,6 +149,15 @@ class FuturesLimitOpenFillTest {
     }
 
     @Test
+    void bankruptTriggeredEntryRecordsCancellationReason() {
+        User user = new User(); user.setId(UID); user.setIsBankrupt(true);
+        when(userService.getById(UID)).thenReturn(user);
+        service.doProcessTriggeredOrder(openOrder("OPEN_LONG", FuturesPosition.CROSS, 10, "1", "100", null));
+        verify(orderMapper).casCancel(100L, "PROCESSING", "BANKRUPT");
+        verifyNoInteractions(positionMapper, userMapper, eventPublisher);
+    }
+
+    @Test
     void 成交时同向仓位在_杠杆一致_并入回填positionId() {
         FuturesPosition lp = pos(1L, "LONG", FuturesPosition.CROSS, 50, "90", "1", "1.80");
         when(positionMapper.selectList(any())).thenReturn(List.of(lp));
@@ -164,10 +173,8 @@ class FuturesLimitOpenFillTest {
         verify(orderMapper).casUpdateToFilled(eq(100L), eq(1L), argThat(q -> q.compareTo(BigDecimal.ONE) == 0),
                 any(), any(), any(), any(), any());
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
-        // 成交即告诉 agent：事件带仓位 id、订单 id 和这次成交的量
-        verify(eventPublisher).publishAfterCommit(argThat(e -> TradeEvent.LIMIT_FILLED.equals(e.type())
-                && e.userId() == UID && e.positionId() == 1L && e.orderId() == 100L
-                && e.quantity().compareTo(BigDecimal.ONE) == 0));
+        // 并入已有仓位不叫醒
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -183,7 +190,7 @@ class FuturesLimitOpenFillTest {
         verify(positionMapper).updateStopLosses(eq(1L), argThat(l -> l.size() == 1
                 && l.getFirst().getId().equals("old") && l.getFirst().getCreatedAt() == 1000L
                 && l.getFirst().getQuantity().compareTo(bd("2")) == 0));
-        verify(positionIndexService, never()).registerStopLosses(anyLong(), anyString(), anyString(), any());
+        verify(positionIndexService).registerStopLosses(1L, SYMBOL, "LONG", List.of());
     }
 
     /** 并进老仓位：随单止损止盈按成交那一刻起算（挂单时刻是 1000） */
@@ -256,6 +263,8 @@ class FuturesLimitOpenFillTest {
         verify(positionIndexService).registerPositionIndex(any(FuturesPosition.class));
         verify(positionMapper, never()).atomicIncreasePosition(anyLong(), any(), any(), any());
         verify(crossMarginService, never()).snapshot(anyLong());
+        verify(eventPublisher).publishAfterCommit(argThat(e -> TradeEvent.LIMIT_FILLED.equals(e.type())
+                && e.userId() == UID && e.orderId() == 100L && e.quantity().compareTo(BigDecimal.ONE) == 0));
     }
 
     /** 冻结 9000、成交成本 9001.80：超出的 1.80 从余额扣 */

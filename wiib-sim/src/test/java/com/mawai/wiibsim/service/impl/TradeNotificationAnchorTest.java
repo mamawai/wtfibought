@@ -53,6 +53,7 @@ import static org.mockito.Mockito.when;
 class TradeNotificationAnchorTest {
 
     private FuturesPositionMapper positionMapper;
+    private FuturesOrderMapper orderMapper;
     private TradeNotificationService tradeNotification;
     private CacheService cacheService;
     private CrossMarginService crossMarginService;
@@ -75,7 +76,7 @@ class TradeNotificationAnchorTest {
         positionMapper = mock(FuturesPositionMapper.class);
         tradeNotification = mock(TradeNotificationService.class);
         cacheService = mock(CacheService.class);
-        FuturesOrderMapper orderMapper = mock(FuturesOrderMapper.class);
+        orderMapper = mock(FuturesOrderMapper.class);
         UserMapper userMapper = mock(UserMapper.class);
         TradingConfig tradingConfig = mock(TradingConfig.class);
         FuturesPositionIndexService indexService = mock(FuturesPositionIndexService.class);
@@ -218,8 +219,15 @@ class TradeNotificationAnchorTest {
         when(cacheService.getMarkPrice(anyString())).thenReturn(new BigDecimal("90"));
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
 
+        FuturesOrder pending = new FuturesOrder();
+        pending.setId(30L); pending.setUserId(7L); pending.setSymbol("SOLUSDT");
+        pending.setOrderSide("OPEN_LONG"); pending.setStatus("PENDING"); pending.setMarginMode(FuturesPosition.CROSS);
+        when(orderMapper.selectList(any())).thenReturn(List.of(pending));
+        when(orderMapper.casCancel(30L, "PENDING", "CROSS_LIQUIDATED")).thenReturn(1);
         crossLiquidation.liquidateAll(7L, null, null, System.currentTimeMillis(), List.of(9L, 10L));
 
+        verify(orderMapper).casCancel(30L, "PENDING", "CROSS_LIQUIDATED");
+        verify(cacheService).zRemove("futures:limit:open_long:SOLUSDT", "30");
         ArgumentCaptor<BigDecimal> settle = ArgumentCaptor.forClass(BigDecimal.class);
         verify(tradeNotification).crossLiquidation(eq(7L), eq(2), settle.capture());
         // 两仓各 (90-100)*0.5 = -5，手续费 mock 成 0 → 净结算 -10

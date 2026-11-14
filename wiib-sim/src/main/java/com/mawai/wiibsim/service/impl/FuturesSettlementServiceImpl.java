@@ -197,7 +197,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         User user = userService.getById(order.getUserId());
         if (user != null && Boolean.TRUE.equals(user.getIsBankrupt())) {
-            orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
+            orderMapper.casCancel(order.getId(), "PROCESSING", "BANKRUPT");
             return;
         }
 
@@ -292,6 +292,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     /**
      * 限价开仓单成交并入同向仓位（Binance 语义：同向下单即合并，均价加权）。
      * 随单SL/TP追加到仓位现有档位；合计条数超4撤单退款（总量恒不超：仓位≤持仓、订单≤订单量）。
+     * 并入不发成交事件，不叫醒 trader
      */
     private void fillOpenOrderIntoPosition(FuturesOrder order, FuturesPosition position, BigDecimal executePrice) {
         BigDecimal addQty = order.getQuantity();
@@ -339,8 +340,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), addQty, executePrice, addValue,
                 commission, addMargin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-        eventPublisher.publishAfterCommit(new TradeEvent(TradeEvent.LIMIT_FILLED, order.getUserId(), position.getId(),
-                order.getId(), order.getSymbol(), position.getSide(), addQty, executePrice, null, System.currentTimeMillis()));
 
         log.info("futures限价开仓并入 orderId={} posId={} price={} addMargin={} 新均价={}",
                 order.getId(), position.getId(), executePrice, addMargin, newEntryPrice);

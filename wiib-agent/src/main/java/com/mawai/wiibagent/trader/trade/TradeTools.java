@@ -28,6 +28,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.List;
@@ -38,6 +39,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
+import static com.mawai.wiibagent.trader.trade.StopOrders.pctOfEquity;
 
 /**
  * 交易工具（非 Spring bean）：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与白名单。
@@ -158,7 +160,6 @@ public class TradeTools {
             row.set("stopLosses", MAPPER.valueToTree(p.getStopLosses()));
             row.set("takeProfits", MAPPER.valueToTree(p.getTakeProfits()));
             row.put("lossAtStopPctOfEquity", pctOfEquity(StopOrders.lossAtStops(p), equity));
-            addAccountPlan(row, p.getSymbol(), p.getSide());
             ps.add(row);
         }
         out.set("positions", ps);
@@ -168,35 +169,11 @@ public class TradeTools {
             FuturesOrderResponse order = pending.get(i);
             ObjectNode row = (ObjectNode) orders.get(i);
             row.put("lossAtStopPctOfEquity", pctOfEquity(StopOrders.lossAtStops(order), equity));
-            if (order.getOrderSide() != null && order.getOrderSide().startsWith("OPEN_")) {
-                addAccountPlan(row, order.getSymbol(), order.getOrderSide().substring("OPEN_".length()));
-            }
         }
         out.set("pendingOrders", orders);
         out.put("lossIfPendingFillPctOfEquity", pctOfEquity(pending.stream().map(StopOrders::lossAtStops)
                 .reduce(BigDecimal.ZERO, BigDecimal::add), equity));
         return MAPPER.writeValueAsString(out);
-    }
-
-    /** 持仓行、挂单行带上所属计划的轻量版 */
-    private void addAccountPlan(ObjectNode row, String symbol, String side) {
-        AiTraderPlan plan = planStore.liveFor(ctx.traderId(), ctx.roundNo(), symbol, side);
-        if (plan == null) {
-            return;
-        }
-        ObjectNode json = MAPPER.createObjectNode()
-                .put("playType", plan.getPlayType())
-                .put("invalidationCondition", plan.getInvalidationCondition())
-                .put("entryPrice", plan.getEntryPrice())
-                .put("originalStop", plan.getStopLossPrice());
-        if (plan.getEntriesJson() != null) {
-            json.set("entries", PlanEntry.summary(plan));
-        }
-        row.set("plan", json);
-    }
-
-    private static BigDecimal pctOfEquity(BigDecimal amount, BigDecimal equity) {
-        return amount.multiply(BigDecimal.valueOf(100)).divide(equity, 2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal decimal(Object v) {
@@ -274,7 +251,6 @@ public class TradeTools {
 
     /**
      * 开仓回执：每档都成了照常回；部分成功、结果未知带状态前缀；整批被 sim 拒且什么都没留下的按失败回。
-     * 前缀和动作行顶层的 error 是过程回放、时间线认状态的地方
      */
     private String openResult(ObjectNode args, ObjectNode receipt) {
         String status = receipt.path("status").asString();
@@ -300,7 +276,7 @@ public class TradeTools {
             return reject;
         }
         FuturesPositionDTO sameSide = acct.sameSide(req.symbol(), req.side());
-        // 止盈价位数按 sim 并单后的算：仓位上还摊得到数量的旧价位，加本次的新价位，同价算一档
+        // 止盈价位数按 sim 并单后的算：仓位上还摊得到数量的旧价位、同方向挂单带的价位，加本次的新价位，同价算一档
         Set<BigDecimal> prices = new TreeSet<>();
         if (sameSide != null && sameSide.getTakeProfits() != null) {
             Comparator<FuturesTakeProfit> byPrice = Comparator.comparing(FuturesTakeProfit::getPrice);
@@ -312,6 +288,12 @@ public class TradeTools {
                 }
                 prices.add(tp.getPrice());
                 left = left.subtract(tp.getQuantity());
+            }
+        }
+        for (FuturesOrderResponse order : acct.pending()) {
+            if (req.symbol().equals(order.getSymbol()) && ("OPEN_" + req.side()).equals(order.getOrderSide())
+                    && order.getTakeProfits() != null) {
+                order.getTakeProfits().forEach(tp -> prices.add(tp.getPrice()));
             }
         }
         int hanging = prices.size();
@@ -377,7 +359,7 @@ public class TradeTools {
             try {
                 resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
             } catch (SimOrderRetry.UnknownOutcome e) {
-                // 这档可能已经挂上或成交：不撤别的档，记成未知留给对账认领
+                // 结果未知：不撤别的档，记成未知留给对账认领
                 status = "unknown";
                 error = prompts.get(ctx.lang(), "trader.reject.orderUnknown");
                 saved.setStatus("UNKNOWN");
@@ -645,9 +627,11 @@ public class TradeTools {
                     stopLossPrice == null ? null : BigDecimal.valueOf(stopLossPrice),
                     takeProfits == null ? List.of() : takeProfits, playType, signalsUsed, invalidationCondition);
             args.put("symbol", req.symbol()).put("side", req.side());
-            // 预检占位扣掉原仓，权益按完整账户计算。
+            // 预演平仓：扣掉旧仓，和平仓时 sim 会一起撤掉的同方向分组入场单
             Account afterClose = new Account(before.positions().stream()
-                    .filter(p -> !Long.valueOf(positionId).equals(p.getId())).toList(), before.pending());
+                    .filter(p -> !Long.valueOf(positionId).equals(p.getId())).toList(), before.pending().stream()
+                    .filter(o -> !(pos.getSymbol().equals(o.getSymbol())
+                            && ("OPEN_" + pos.getSide()).equals(o.getOrderSide()) && o.getGroupId() != null)).toList());
             String reject = validateOpen(req, afterClose, equityOf.apply(before.positions()), markPrice.apply(req.symbol()));
             if (reject != null) {
                 return rejected("reverse_position", args, reject);
@@ -770,6 +754,13 @@ public class TradeTools {
                                     + "→" + newStop.stripTrailingZeros().toPlainString() + syncedText(m.pending()), reason);
                     return ok("set_stop_loss", args, protectionReceipt(m.pending()));
                 }
+                case StopOrders.PositionFailed f -> {
+                    String suffix = syncedText(f.pending()) + prompts.get(ctx.lang(), "trader.revise.positionUnconfirmed");
+                    revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.moveStop"),
+                            (f.from() == null ? prompts.get(ctx.lang(), "trader.revise.none") : f.from().stripTrailingZeros().toPlainString())
+                                    + "→" + newStop.stripTrailingZeros().toPlainString() + suffix, reason);
+                    return fail("set_stop_loss", args, simReason(f.cause()) + suffix);
+                }
             }
         } catch (Exception e) {
             return fail("set_stop_loss", args, e);
@@ -796,8 +787,10 @@ public class TradeTools {
         if (roundExpired()) {
             return expired("set_take_profit", args);
         }
+        FuturesPositionDTO pos = null;
+        String partial = "";
         try {
-            FuturesPositionDTO pos = findPosition(positionId);
+            pos = findPosition(positionId);
             if (pos == null) {
                 return rejected("set_take_profit", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
             }
@@ -850,15 +843,17 @@ public class TradeTools {
                         this::simReason));
             }
             // 挂单处理完，再读持仓现量折算止盈。
-            pos = findPosition(positionId);
-            if (pos == null) {
-                return rejected("set_take_profit", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
+            if (PendingProtection.count(changes, PendingProtection.UPDATED) > 0) {
+                partial = syncedText(changes) + prompts.get(ctx.lang(), "trader.revise.positionUnconfirmed");
             }
-            invalid = TradeGuard.targetQuantities(rungs, pos.getQuantity(), pos.getSymbol(), prompts, ctx.lang());
+            FuturesPositionDTO current = findPosition(positionId);
+            invalid = current == null ? prompts.get(ctx.lang(), "trader.reject.positionIdNotFound")
+                    : TradeGuard.targetQuantities(rungs, current.getQuantity(), current.getSymbol(), prompts, ctx.lang());
             if (invalid != null) {
-                return rejected("set_take_profit", args, invalid);
+                return partial.isEmpty() ? rejected("set_take_profit", args, invalid)
+                        : targetPositionFailed(pos, rungs, reason, args, invalid, partial);
             }
-            List<BigDecimal> rungQty = TargetRung.quantities(rungs, pos.getQuantity(), pos.getSymbol());
+            List<BigDecimal> rungQty = TargetRung.quantities(rungs, current.getQuantity(), current.getSymbol());
             List<FuturesTakeProfitRequest.TakeProfitItem> items = new ArrayList<>();
             for (int i = 0; i < rungQty.size(); i++) {
                 FuturesTakeProfitRequest.TakeProfitItem item = new FuturesTakeProfitRequest.TakeProfitItem();
@@ -871,11 +866,20 @@ public class TradeTools {
             req.setTakeProfits(items);
             simTradeClient.setTakeProfit(simUserId, req);
             revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.moveTarget"),
-                    targetsText(TargetRung.of(pos)) + "→" + targetsText(rungs) + syncedText(changes), reason);
+                    targetsText(TargetRung.of(current)) + "→" + targetsText(rungs) + syncedText(changes), reason);
             return ok("set_take_profit", args, protectionReceipt(changes));
         } catch (Exception e) {
-            return fail("set_take_profit", args, e);
+            return partial.isEmpty() ? fail("set_take_profit", args, e)
+                    : targetPositionFailed(pos, rungs, reason, args, simReason(e), partial);
         }
+    }
+
+    /** 同组挂单改了、仓位那步没成：记修订，按失败回，都带上挂单改了几档 */
+    private String targetPositionFailed(FuturesPositionDTO pos, List<TargetRung> rungs, String reason, ObjectNode args,
+                                        String cause, String partial) {
+        revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.moveTarget"),
+                targetsText(rungs) + partial, reason);
+        return fail("set_take_profit", args, cause + partial);
     }
 
     private String orderGroup(FuturesPositionDTO pos) {
@@ -1048,23 +1052,54 @@ public class TradeTools {
         return "REJECTED: " + reason;
     }
 
-    @Tool(name = "cancel_order", description = "Cancel a pending limit order by orderId (from the [Account] block's pendingOrders in your opening message, or get_account). reason is REQUIRED and records why this entry was cancelled in the plan and its revision history.")
-    public String cancelOrder(@ToolParam(description = "Order id from the [Account] block's pendingOrders in your opening message (or get_account)") long orderId,
-                              @ToolParam(description = "Why this pending order should be cancelled") String reason) {
-        ObjectNode args = MAPPER.createObjectNode().put("orderId", orderId).put("reason", reason);
+    @Tool(name = "cancel_order", description = "Cancel one or more pending limit orders by orderIds (from the [Account] block's pendingOrders in your opening message, or get_account). reason is REQUIRED and records why these entries were cancelled in the plan and its revision history. Partial success starts with PARTIAL:.")
+    public String cancelOrder(@ToolParam(description = "One or more order ids from the [Account] block's pendingOrders in your opening message (or get_account)") List<Long> orderIds,
+                              @ToolParam(description = "Why these pending orders should be cancelled") String reason) {
+        ObjectNode args = MAPPER.createObjectNode().put("reason", reason);
+        args.set("orderIds", MAPPER.valueToTree(orderIds));
         if (roundExpired()) {
             return expired("cancel_order", args);
         }
-        try {
-            if (reason == null || reason.isBlank()) {
-                return rejected("cancel_order", args, prompts.get(ctx.lang(), "trader.reject.cancelReasonRequired"));
-            }
-            FuturesOrderResponse resp = simTradeClient.cancelOrder(simUserId, orderId);
-            planStore.cancelEntry(ctx.traderId(), ctx.roundNo(), resp, reason, ctx.boundaryTime(), ctx.lang());
-            return ok("cancel_order", args, MAPPER.writeValueAsString(resp));
-        } catch (Exception e) {
-            return fail("cancel_order", args, e);
+        if (reason == null || reason.isBlank()) {
+            return rejected("cancel_order", args, prompts.get(ctx.lang(), "trader.reject.cancelReasonRequired"));
         }
+        if (orderIds == null || orderIds.isEmpty()) {
+            return rejected("cancel_order", args, prompts.get(ctx.lang(), "trader.reject.orderIdsRequired"));
+        }
+        ObjectNode receipt = MAPPER.createObjectNode();
+        ArrayNode orders = receipt.putArray("orders");
+        List<FuturesOrderResponse> cancelled = new ArrayList<>();
+        List<String> failures = new ArrayList<>();
+        for (long orderId : new LinkedHashSet<>(orderIds)) {
+            ObjectNode row = orders.addObject().put("orderId", orderId);
+            try {
+                FuturesOrderResponse response = simTradeClient.cancelOrder(simUserId, orderId);
+                cancelled.add(response);
+                row.put("symbol", response.getSymbol()).put("orderSide", response.getOrderSide())
+                        .put("limitPrice", response.getLimitPrice()).put("quantity", response.getQuantity())
+                        .put("status", "cancelled");
+            } catch (Exception e) {
+                String message = simReason(e);
+                row.put("status", "failed").put("reason", message);
+                failures.add("#" + orderId + " " + message);
+            }
+        }
+        if (!cancelled.isEmpty()) {
+            try {
+                planStore.cancelEntries(ctx.traderId(), ctx.roundNo(), cancelled, reason, ctx.boundaryTime(), ctx.lang());
+            } catch (Exception e) {
+                log.warn("[TradeTools] 撤单标档失败 traderId={}", ctx.traderId(), e);
+            }
+        }
+        if (failures.isEmpty()) {
+            return ok("cancel_order", args, receipt);
+        }
+        String error = String.join(" / ", failures);
+        if (cancelled.isEmpty()) {
+            return fail("cancel_order", args, error);
+        }
+        record(action("cancel_order", args).put("status", "partial").put("error", error).set("result", receipt));
+        return "PARTIAL: " + MAPPER.writeValueAsString(receipt);
     }
 
     @Tool(name = "set_watch", description = """
@@ -1197,7 +1232,7 @@ public class TradeTools {
     private String ok(String tool, ObjectNode args, Object payload) {
         String s = payload instanceof String str ? str : MAPPER.writeValueAsString(payload);
         ObjectNode action = action(tool, args).put("status", "ok");
-        // 轨迹里只存摘要，防止 get_account 大 JSON 把决策行撑爆；开仓回执整条存，时间线要读里面逐档的结果
+        // 轨迹里只存摘要，防止 get_account 大 JSON 把决策行撑爆；开仓回执整条存
         if (s.length() > 1000 && !"open_position".equals(tool)) {
             action.put("result", s.substring(0, 1000) + "…");
         } else {
@@ -1212,7 +1247,10 @@ public class TradeTools {
     }
 
     private String fail(String tool, ObjectNode args, Exception e) {
-        String msg = simReason(e);
+        return fail(tool, args, simReason(e));
+    }
+
+    private String fail(String tool, ObjectNode args, String msg) {
         record(action(tool, args).put("status", "error").put("error", msg));
         log.warn("[TradeTools] {} 失败 simUserId={} msg={}", tool, simUserId, msg);
         return "ERROR: " + msg;

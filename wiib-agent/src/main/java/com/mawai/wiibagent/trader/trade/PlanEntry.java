@@ -49,7 +49,7 @@ public class PlanEntry {
         plan.setEntriesJson(MAPPER.writeValueAsString(entries));
     }
 
-    /** 给模型看的轻量版：每档的限价、成交价、数量、状态 */
+    /** 给模型看的轻量版：每档的限价、成交价、数量、状态、是不是加仓 */
     public static ArrayNode summary(AiTraderPlan plan) {
         ArrayNode out = MAPPER.createArrayNode();
         for (PlanEntry e : read(plan)) {
@@ -57,7 +57,8 @@ public class PlanEntry {
                     .put("limitPrice", e.limitPrice)
                     .put("filledPrice", e.filledPrice)
                     .put("quantity", e.quantity)
-                    .put("status", e.status));
+                    .put("status", e.status)
+                    .put("add", e.add));
         }
         return out;
     }

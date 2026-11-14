@@ -77,7 +77,7 @@ export interface ActionRow {
   rejected?: string;
   error?: string;
   args?: Record<string, unknown>;
-  result?: { close?: ActionRow; open?: ActionRow; entries?: EntryResult[] };
+  result?: { close?: ActionRow; open?: ActionRow; entries?: EntryResult[]; orders?: { status: string }[] };
 }
 
 interface EntryResult {
@@ -105,6 +105,7 @@ function acceptedEntry(entry: EntryResult): boolean {
 function doneAction(action: ActionRow): boolean {
   if (action.rejected || action.status === 'error' || action.status === 'rejected') return false;
   if (action.status === 'partial' || action.status === 'unknown') {
+    if (action.tool === 'cancel_order') return action.result?.orders?.some(o => o.status === 'cancelled') ?? false;
     return action.result?.entries?.some(acceptedEntry) ?? false;
   }
   return action.status == null || action.status === 'ok';
@@ -125,7 +126,8 @@ export function tradeArgsSummary(a: ActionRow): string {
   const tr = (key: string, vars?: Record<string, string>) => i18n.t(`ai:${key}`, vars ?? {});
   switch (a.tool) {
     case 'reverse_position':
-      return [tr('args.position', { id: g('positionId') }),
+      return [tr('args.position', { id: g('positionId') }), g('symbol'),
+        g('side') === 'LONG' ? tr('args.long') : g('side') === 'SHORT' ? tr('args.short') : g('side'),
         g('quantity') && tr('args.qty', { n: g('quantity') }), g('leverage') && `${g('leverage')}x`,
         g('stopLossPrice') && tr('args.sl', { p: g('stopLossPrice') }),
         rungsText(a.args?.takeProfits) && tr('args.tp', { p: rungsText(a.args?.takeProfits) }), g('playType'),
@@ -163,7 +165,9 @@ export function tradeArgsSummary(a: ActionRow): string {
       return [g('playType'), g('invalidationCondition') && tr('args.invalidation', { c: g('invalidationCondition') })]
         .filter(Boolean).join(' · ');
     case 'cancel_order':
-      return [tr('args.order', { id: g('orderId') }), g('reason')].filter(Boolean).join(' · ');
+      return [Array.isArray(a.args?.orderIds)
+        ? a.args.orderIds.map(id => tr('args.order', { id: String(id) })).join(' / ')
+        : tr('args.order', { id: g('orderId') }), g('reason')].filter(Boolean).join(' · ');
     case 'set_watch': {
       const n = Array.isArray(a.args?.watches) ? (a.args.watches as unknown[]).length : 0;
       return [g('symbol'), tr('args.watches', { n: String(n) })].filter(Boolean).join(' · ');

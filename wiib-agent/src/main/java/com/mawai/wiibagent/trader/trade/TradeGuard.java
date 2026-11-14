@@ -91,9 +91,6 @@ public final class TradeGuard {
      */
     public static String validateBracket(BigDecimal notional, int leverage, List<SimTradeApi.Bracket> brackets,
                                          PromptCatalog prompts, AgentLang lang) {
-        if (brackets == null || brackets.isEmpty()) {
-            return prompts.get(lang, "trader.guard.bracketsUnavailable");
-        }
         boolean allowed = brackets.stream().anyMatch(b -> notional.compareTo(b.notionalFloor()) >= 0
                 && notional.compareTo(b.notionalCap()) < 0 && leverage <= b.maxLeverage());
         if (allowed) {
@@ -223,7 +220,7 @@ public final class TradeGuard {
             }
         }
         for (EntryRung entry : req.entries()) {
-            entryRef = entry.price(markPrice);
+            BigDecimal price = entry.price(markPrice);
             if (filter != null) {
                 if (entry.quantity().compareTo(filter.minQty()) < 0
                         || entry.quantity().remainder(filter.stepSize()).signum() != 0) {
@@ -233,7 +230,7 @@ public final class TradeGuard {
                             "min", plain(filter.minQty()),
                             "given", plain(entry.quantity())));
                 }
-                BigDecimal notional = entry.quantity().multiply(entryRef);
+                BigDecimal notional = entry.quantity().multiply(price);
                 if (notional.compareTo(filter.minNotional()) < 0) {
                     return prompts.get(lang, "trader.guard.minNotional", Map.of(
                             "symbol", req.symbol(),
@@ -241,34 +238,37 @@ public final class TradeGuard {
                             "min", plain(filter.minNotional())));
                 }
             }
-            if (req.stopLossPrice() == null) {
-                return prompts.get(lang, "trader.guard.stopLossRequired");
-            }
-            // 零/负必须挡在方向校验之前：LONG 的「0 >= 入场价」为假会直接放行，
-            // 开出止损价为0（永不触发）的裸单——真实成因多半是重试时漏传了这个参数
-            if (req.stopLossPrice().signum() <= 0) {
-                return prompts.get(lang, "trader.guard.stopLossPositive", Map.of(
-                        "given", req.stopLossPrice().stripTrailingZeros().toPlainString(),
-                        "entry", entryRef.stripTrailingZeros().toPlainString(),
-                        "hint", isLong
-                                ? prompts.get(lang, "trader.guard.stopLossHintLong",
-                                        Map.of("example", pctOf(entryRef, "0.98")))
-                                : prompts.get(lang, "trader.guard.stopLossHintShort",
-                                        Map.of("example", pctOf(entryRef, "1.02")))));
-            }
-            if (isLong ? req.stopLossPrice().compareTo(entryRef) >= 0
-                    : req.stopLossPrice().compareTo(entryRef) <= 0) {
+        }
+        if (req.stopLossPrice() == null) {
+            return prompts.get(lang, "trader.guard.stopLossRequired");
+        }
+        // 零/负必须挡在方向校验之前：LONG 的「0 >= 入场价」为假会直接放行，
+        // 开出止损价为0（永不触发）的裸单——真实成因多半是重试时漏传了这个参数
+        if (req.stopLossPrice().signum() <= 0) {
+            return prompts.get(lang, "trader.guard.stopLossPositive", Map.of(
+                    "given", req.stopLossPrice().stripTrailingZeros().toPlainString(),
+                    "entry", entryRef.stripTrailingZeros().toPlainString(),
+                    "hint", isLong
+                            ? prompts.get(lang, "trader.guard.stopLossHintLong",
+                                    Map.of("example", pctOf(entryRef, "0.98")))
+                            : prompts.get(lang, "trader.guard.stopLossHintShort",
+                                    Map.of("example", pctOf(entryRef, "1.02")))));
+        }
+        String targets = validateTargets(req.takeProfits(), prompts, lang);
+        if (targets != null) {
+            return targets;
+        }
+        for (EntryRung entry : req.entries()) {
+            BigDecimal price = entry.price(markPrice);
+            if (isLong ? req.stopLossPrice().compareTo(price) >= 0
+                    : req.stopLossPrice().compareTo(price) <= 0) {
                 return prompts.get(lang, "trader.guard.stopLossDirection", Map.of(
                         "rule", prompts.get(lang, isLong ? "trader.guard.stopLossRuleLong" : "trader.guard.stopLossRuleShort"),
-                        "entry", entryRef.stripTrailingZeros().toPlainString()));
+                        "entry", price.stripTrailingZeros().toPlainString()));
             }
             // 止盈可以不设；设了的每档都要在入场价有利一侧
-            String targets = validateTargets(req.takeProfits(), prompts, lang);
-            if (targets != null) {
-                return targets;
-            }
             for (TargetRung rung : req.takeProfits()) {
-                if (isLong ? rung.price().compareTo(entryRef) <= 0 : rung.price().compareTo(entryRef) >= 0) {
+                if (isLong ? rung.price().compareTo(price) <= 0 : rung.price().compareTo(price) >= 0) {
                     return prompts.get(lang, "trader.guard.takeProfitDirection", Map.of("rule",
                             prompts.get(lang, isLong ? "trader.guard.takeProfitRuleLong" : "trader.guard.takeProfitRuleShort")));
                 }

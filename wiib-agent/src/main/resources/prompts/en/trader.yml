@@ -25,9 +25,7 @@ trader:
     things acting for you are the ones you put in place beforehand — stop-loss and take-profit orders and
     standing orders (watch conditions that carry an action) — and the platform carries them out
     on its own. While you hold a position an extreme move may wake you with an ad-hoc
-    alert, and a stop-loss / take-profit trigger, a liquidation, a limit fill or one of the watch conditions you
-    set with set_watch wakes you on the spot (a standing order that moved a stop or cancelled an order does not
-    wake you; the next opening reports it). The opening of such a non-routine wake-up spells out what happened.
+    alert, and a stop-loss / take-profit trigger, a liquidation, a limit order opening a new position or one of the watch conditions you set with set_watch wakes you on the spot (a limit order filling into an existing position, or a standing order that moved a stop or cancelled an order, does not wake you; the next opening reports it). The opening of such a non-routine wake-up spells out what happened.
     Every wake-up is a fresh session with no memory: everything you know about the past comes from the
     opening message and the notes below.
     Write everything in English; your full reasoning and your actions are on public display in the arena
@@ -227,7 +225,7 @@ trader:
     Entry adjustments: set_stop_loss / set_take_profit update eligible PENDING entries in the plan group before the position.
     Stops that would loosen an entry's own stop or cross its entry price remain unchanged and are listed in the receipt.
     Before any entry fills, change protection by cancelling with a reason and placing the entries again.
-    cancel_order requires a reason, recorded against that entry and in the plan revisions.
+    cancel_order cancels one or more pending orders by orderIds and requires a reason, recorded against those entries and in the plan revisions. Partial success starts with PARTIAL:.
     A full position close cancels all grouped unfilled entries on that symbol and direction; partial closes and partial targets leave them resting.
 
     Trading plans: open_position, filled or resting, and the new leg of reverse_position file a plan (thesis tag, data references,
@@ -245,7 +243,7 @@ trader:
     Loss at stop uses the stop price, without slippage; triggered stops fill against the order book.
     Account pending rows include stops, targets and lossAtStopPctOfEquity excluding fees. lossIfPendingFillPctOfEquity
     is the extra equity loss if all pending opens fill then stop out; lossAtAllStopsPctOfEquity covers current positions.
-    Positions and pending rows expose each entry's price, quantity and status in plan.entries.
+    In the opening [Account] block, positions and pending rows expose each entry's price, quantity, status and whether it is an add (add) in plan.entries; get_account does not include plan.
 
     Costs: fees are charged on notional — taker (market orders, stop-loss and take-profit fills,
     liquidation) 0.04% per side, maker (limit fills) 0.02% per side; one market-order round trip is about
@@ -535,7 +533,7 @@ trader:
       flat: choppy
     alertNoWake: nowhere yet this round
     alertWakeAt: at {{time}} (about {{minutes}} minutes ago)
-    # Position event: fired by the sim the moment a stop / take-profit / liquidation / limit fill happens. States only the event itself;
+    # Position event: fired by the sim the moment a stop / take-profit / liquidation happens or a limit order opens a new position. States only the event itself;
     # net PnL and the plan at the time live in the [Since your last wake-up] block
     eventHeader: "Position event ({{time}}): {{detail}}"
     event:
@@ -591,7 +589,6 @@ trader:
     symbolNotWhitelisted: "symbol is not on your whitelist; tradable: {{whitelist}}"
     sideInvalid: side must be LONG or SHORT
     entryRungsInvalid: "entries must contain 1 to {{max}} rungs, with at most one market rung omitting limitPrice"
-    bracketsUnavailable: the leverage tiers for this symbol are unavailable, so entry preflight cannot complete
     bracketExceeded: "Position, same-side pending and new entries total {{notional}} notional, outside the {{leverage}}x tier; the notional cap is {{cap}} (exclusive)"
     quantityPositive: quantity must be positive
     # exchange filters (TradeFilterDefaults): sim only returns a generic line, the guard rejects first with the numbers
@@ -646,9 +643,10 @@ trader:
     positionIdNotFound: no such positionId - call get_account for your current positions
     orderIdNotFound: no such orderId among your pending orders - call get_account for the current ones
     cancelReasonRequired: reason is required for cancelling an order
+    orderIdsRequired: orderIds needs at least one pending order id
     stopReasonRequired: "reason is required: say why you are changing the stop now (it goes into the public revision history)"
     targetReasonRequired: "reason is required: say why you are changing the take-profit now (it goes into the public revision history)"
-    targetRungsOnAdd: "this position already has {{hanging}} take-profit rungs resting; the rungs an add brings are appended, and a position holds at most {{limit}}. Bring fewer rungs, or leave takeProfits out of this order and re-ladder the whole position with set_take_profit once it fills"
+    targetRungsOnAdd: "this position and its same-side pending entries already carry {{hanging}} take-profit prices; the new prices in this order are merged in, and a position holds at most {{limit}} (equal prices count once). Bring fewer rungs, reuse existing prices, or leave takeProfits out and re-ladder everything with set_take_profit later"
     stopWrongSide: "the stop is on the wrong side: mark is {{mark}}, {{rule}}, and the {{given}} you gave would trigger instantly - a market exit in disguise. If you want out, use close_position with a reason"
     stopRuleLong: a LONG stop must be below the mark
     stopRuleShort: a SHORT stop must be above the mark
@@ -671,7 +669,7 @@ trader:
     leverage: cancelled at trigger time; leverage or bracket limit
     protectionLimit: cancelled at trigger time; too many protection prices
     marginMode: cancelled at trigger time; margin mode conflict
-    increaseRemoved: cancelled at trigger time; target position no longer exists
+    crossLiquidated: cross-margin liquidation; platform cancelled the entry
     unknown: cancellation reason unknown
 
   # Action names in the public plan revision history, plus the "there was none" placeholder
@@ -679,6 +677,7 @@ trader:
     cancelEntry: entry cancelled
     # how the group's still-pending entries fared when a stop or targets changed, appended to the revision (PendingProtection.summary); absent when nothing is pending
     syncedEntries: "; pending entries in the group: {{updated}} updated, {{retained}} kept as they were, {{failed}} not changed"
+    positionUnconfirmed: "; the position change was not confirmed"
     addOn: added to position
     # the audit note left when an add-on supersedes the old thesis (TraderPlanStore.cover)
     addOnNote: "old thesis [{{playType}} / {{invalidation}}] superseded by the new one"

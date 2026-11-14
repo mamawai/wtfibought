@@ -15,6 +15,7 @@ error:
   marketClosed: 市场已休市
   orderNotFound: 订单不存在
   orderCannotCancel: 订单无法取消
+  orderNotPending: 这张挂单已触发、成交或撤销，改不了它带的止损止盈
   duplicateRequest: 重复请求
   limitPriceInvalid: 限价无效
   # 并发控制错误码 1100+

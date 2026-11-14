@@ -16,6 +16,7 @@ error:
   marketClosed: The market is closed
   orderNotFound: No such order
   orderCannotCancel: This order cannot be cancelled
+  orderNotPending: This order is no longer pending (triggered, filled or cancelled), so its stop-loss and take-profit cannot be changed
   duplicateRequest: Duplicate request
   limitPriceInvalid: Invalid limit price
   # Concurrency codes 1100+

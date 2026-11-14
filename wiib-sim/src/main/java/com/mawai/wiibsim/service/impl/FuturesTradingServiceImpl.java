@@ -662,7 +662,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (order == null || !order.getUserId().equals(userId)) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
         if (!"PENDING".equals(order.getStatus()) || !"LIMIT".equals(order.getOrderType())
                 || !List.of("OPEN_LONG", "OPEN_SHORT").contains(order.getOrderSide())) {
-            throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);
+            throw new BizException(ErrorCode.ORDER_NOT_PENDING);
         }
         String side = order.getOrderSide().substring(5);
         List<FuturesStopLoss> sls = request.getStopLosses() == null ? null : request.getStopLosses().isEmpty()
@@ -670,7 +670,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         List<FuturesTakeProfit> tps = request.getTakeProfits() == null ? null : request.getTakeProfits().isEmpty()
                 ? List.of() : buildTakeProfits(request.getTakeProfits(), side, order.getLimitPrice(), order.getQuantity());
         if (orderMapper.updatePendingProtection(userId, orderId, sls, tps) == 0) {
-            throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);
+            throw new BizException(ErrorCode.ORDER_NOT_PENDING);
         }
     }
 
