@@ -331,6 +331,11 @@ export interface FuturesOrder {
   realizedPnl?: number;
   status: string;
   createdAt: string;
+  updatedAt?: string;
+  groupId?: string;
+  cancelReason?: string;
+  stopLosses?: FuturesSLEntry[];
+  takeProfits?: FuturesTPEntry[];
   isAiTrader?: boolean;
 }
 
@@ -884,7 +889,22 @@ export interface PlanRevision {
   reason: string;
 }
 
-/** 持仓交易计划：开仓立的论点/失效条件/原始快照 + 修订历史；当前生效止损止盈以仓位为准 */
+export interface TraderPlanEntry {
+  orderId?: number;
+  limitPrice?: number;
+  quantity: number;
+  stop: number;
+  targets?: { price: number; percent: number }[];
+  placedAt: number;
+  add: boolean;
+  status: 'PENDING' | 'FILLED' | 'CANCELLED' | 'UNKNOWN';
+  filledPrice?: number;
+  fee?: number;
+  closedAt?: number;
+  reason?: string;
+}
+
+/** 交易计划：最近开仓或加仓的快照、逐档原始安排和修订历史。 */
 export interface AiTraderPlanView {
   id: number;
   traderId: number;
@@ -896,8 +916,9 @@ export interface AiTraderPlanView {
   invalidationCondition: string;
   entryPrice: number | null;
   stopLossPrice: number | null;
-  /** 开仓时的止盈分档 [{price,percent}]，percent=这一档平掉仓位的百分之几；没设止盈为 null */
+  /** 最近开仓或加仓的止盈分档 [{price,percent}]；没设止盈为 null */
   takeProfitsJson: string | null;
+  entriesJson: string | null;
   openedWakeTime: number;
   /** [{time,type,change,reason}] */
   revisionsJson: string | null;

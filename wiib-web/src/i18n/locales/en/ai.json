@@ -154,6 +154,7 @@
     "long": "Long",
     "short": "Short",
     "qty": "{{n}} contracts",
+    "limit": "Limit {{p}}",
     "sl": "SL {{p}}",
     "tp": "TP {{p}}",
     "tpNone": "take-profit removed",
@@ -189,6 +190,18 @@
     "entry": "Entry",
     "origSl": "Initial SL",
     "target": "Target",
+    "entries": "Entry rungs",
+    "marketEntry": "Market",
+    "addEntry": "Add",
+    "filledAt": "Filled at {{price}}",
+    "entryStatus": {
+      "pending": "Pending",
+      "filled": "Filled",
+      "cancelled": "Cancelled",
+      "unknown": "Outcome unknown",
+      "rejected": "Rejected",
+      "not_attempted": "Not submitted"
+    },
     "setAt": "set {{time}}",
     "revisions_one": "revised once",
     "revisions_other": "revised {{count}}×"

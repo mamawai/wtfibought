@@ -110,6 +110,10 @@ trader:
       止损必须落在强平价之内（多单止损高于强平价、空单低于），否则先被强平、止损永远不触发
 
     护栏会拒绝的动作（拒因回给你，可修正后重试）：
+    - open_position 的 entries 必须有 1–5 档，每档 {quantity, limitPrice}；省略 limitPrice 就是市价，每次最多一档。
+      每档各自过数量、最小名义额和止盈分量校验；共同止损在所有档外侧，目标在所有档有利一侧。
+      没有同向成交仓位时，本次与同向挂单的保证金合计受上限约束；同币同向挂单在单仓模式里只占一个位置。
+      杠杆还会按同向仓位、同向挂单与本次各档的合计名义额预检，成交时 sim 继续复检。
     - 限价偏离现价超过 5%，或挂在会当场成交的一侧（做多限价须低于现价、做空须高于）；想立即进场用市价单
     - 开仓不带止损价，或止损方向不对（做多在入场价下方、做空在上方）
     - 止盈可以不设；设了的最多 3 档，每档一个价位加平掉仓位的百分之几，占比合计不超过 100，每档都得在有利一侧
@@ -125,6 +129,7 @@ trader:
     - 本轮预算耗尽后的任何交易动作
 
     两次唤醒之间的执行手段（事实，用不用、怎么用由你定）：
+    - 分档入场：按你选择的价位和数量先挂限价档，最后下市价档，各档独立成交并入同向仓位。
     - 止损单：必填，一直在 sim 里挂着，标的最新成交价触及就市价平掉整个仓位。
     - 止盈单：可选。不挂，价格到过你想落袋的位置又回来，这中间没有人替你平；挂了固定止盈，到价就平，之后价格再走多远都和这部分仓位无关。
       分档可以只平一部分，剩下的没有止盈单。
@@ -132,16 +137,25 @@ trader:
     - 开新仓只有两条路：你醒着的时候自己下，或者你挂的限价单成交。限价单只能等价格回来（做多挂在现价下方、做空挂在现价上方）；
       突破进场只能布盯盘条件把你叫醒、你看过再下，比行情晚一轮。
 
+    分档调整：set_stop_loss / set_take_profit 先改同组 PENDING 入场档，再改持仓。新止损比某档自己的止损松或落在它入场价里侧，该档保留原止损，回执逐档报结果。
+    一档都没成交、还没有仓位 id 时，要改保护单就带理由撤单后重新下。cancel_order 的 reason 必填，记入这一档和计划修订史。
+    仓位全平时，平台一并撤掉这个币这个方向带组标识的未成交入场单；部分平仓、部分止盈不撤。
+
     交易计划：open_position 成交或挂单、reverse_position 的新仓成交即立案一份计划（论点标签、数据引用、失效条件、入场价、止损价、止盈分档），
     随持仓每轮回注给你；开仓时的止盈分档就是计划的目标位（plan.targets），没设止盈的计划没有目标位。
     移动止损止盈与平仓都要带 reason，进该计划的公开修订史；预案执行也记在里面。
     仓位了结后，下一轮开场白报结局并附当时的论点。close_position 随时可用，全平或部分。
     持仓没有计划记录的（旧仓），用 write_plan 补立。
+    每次分档入场只立或覆盖一份计划；plan.entries 保留各档价位、数量与状态，加仓的档追加保存。
+    计划的价格、止损、止盈是最近一次开仓或加仓的快照，首批原始安排在 entries 的 add=false 档里。
 
     成本：手续费按名义价值计，taker（市价单、止损止盈触发、强平）单边 0.04%，maker（限价成交）单边 0.02%，
     市价开平一次往返约 0.08%。例：保证金 1000U 开 10 倍，名义 10000U，往返约 8U＝保证金的 0.8%。
     每笔 open_position 或 reverse_position 新仓的回执都带一个 facts 块：这笔的往返手续费估算、止损距离（% 与心跳周期 ATR14 的倍数）、
     止损打掉亏权益的百分比；设了止盈的再给各档全部成交的盈利与扣费后盈亏比（只算止盈档盖住的那部分仓位），没设就没有这两项。
+    facts.batch 是本次、facts.sameSide 是这个币这个方向合计，都是情景估算。止损处亏损按止损价算，不含滑点；触发后按盘口成交。
+    账户挂单带止损、止盈和不含手续费的 lossAtStopPctOfEquity；lossIfPendingFillPctOfEquity 是挂单全成交再被止损的额外损失占比，
+    lossAtAllStopsPctOfEquity 是当前持仓的止损损失占比。持仓和挂单的 plan.entries 给出各档价位、数量和状态。
     持仓按合约自己的结算间隔（多数 8 小时，也有 4 小时、1 小时的）按名义价值结算资金费（下次结算时间见 funding_history）：费率为正是多头付给空头，为负反过来；
     0.01% 的费率在 10 倍杠杆下＝每期保证金的 0.1%，极端行情可到十倍。
 
@@ -191,14 +205,17 @@ trader:
     playStatsEntrySep: " ｜ "
     playStatsEntryUnknown: "；另 {{n}} 笔未记录入场方式"
     playStatsEntry:
+      ladder: 分档
       limit: 限价
       market: 市价
     # 开仓后不动的重放汇总（CaseFileBuilder.summarize）：每档止损宽度一段，再加一行实际对不动
-    playStatsReplayLine: "开仓后不动重放 {{n}}笔（R＝入场价到原始止损的距离；按 5m K线从开仓走到 72 小时后，同一根里止损和止盈档都碰到算止损；分批止盈按各档占比折算，「到目标」是到过止盈档并且整仓了结，没设止盈的单子只会是止损或未决；放宽止损时止盈档不变、仓位按同样的风险金额缩小；不计手续费）：{{rows}}"
+    playStatsReplayLine: "原计划不动重放 {{n}}笔（假设下单后什么都不改：各入场档按原价位等成交，止损和止盈档按下单时的原样。1R＝首批各档全部成交、再全部按原止损了结的价差亏损。按 5m K线从首档成交走到 72 小时后，同一根里止损和止盈档都碰到算止损；分批止盈各档按自己的数量了结；仓位全部了结后，还没成交的入场档不再算成交。「到目标」是到过止盈档并且成交的部分全部了结，没设止盈的单子只会是止损或未决；放宽止损时止盈档不变、仓位按同样的风险金额缩小。已扣手续费，不含资金费和滑点）：{{rows}}"
     playStatsReplayRow: "止损{{width}} 到目标{{target}} 止损{{stop}} 未决{{open}} 合计{{r}}R"
     playStatsReplayOriginal: 原样
     playStatsReplayWidth: "{{width}}倍"
-    playStatsManageLine: "管理动作 {{n}}笔：实际合计{{actual}}R，开仓后不动合计{{untouched}}R"
+    playStatsManageLine: "管理动作 {{n}}笔：实际合计{{actual}}R，原计划不动合计{{untouched}}R（两边都已扣手续费、都不含资金费）{{adds}}"
+    # 有中途加过仓的单子才跟在上一行后面
+    playStatsManageAdds: "；其中 {{n}} 笔中途加过仓，实际一边含加仓部分的盈亏，原计划一边不含"
     playStatsFooter: （统计仅覆盖上表所列的最近了结记录，不区分期间的配置调整；样本少时运气与方法不可分，禁止把小样本当规律。）
     memory: ————— 经验账本（你复盘沉淀的经验，代码记账；账本里的 #编号可在结论里引用）—————
     # 账本渲染文本（ExperienceLedger.render）：首行标题是"这段 memory 是账本"的识别标记，两门语言都认
@@ -372,7 +389,9 @@ trader:
     eventsHeader: 【自上次唤醒以来】
     eventClosed: "- {{symbol}} {{side}} 已{{manner}} @{{price}}，净盈亏 {{pnl}} USDT（已计入手续费与资金费；当时计划：{{playType}} / 失效条件：{{invalidation}}）"
     eventFilled: "- {{symbol}} {{side}} 限价单已成交，计划生效"
-    eventCancelled: "- {{symbol}} {{side}} 挂单已不在（主动撤单，或 sim 触发时因保证金/杠杆/档位限制撤单退款），计划归档"
+    eventCancelled: "- {{symbol}} {{side}} 已无仓位和未成交入场单，计划归档"
+    eventEntryFilled: "- {{symbol}} {{side}} 入场档 {{price}} × {{qty}} 已成交，成交价 {{detail}}；共 {{total}} 档，已成交 {{filled}} 档，还挂 {{pending}} 档"
+    eventEntryCancelled: "- {{symbol}} {{side}} 入场档 {{price}} × {{qty}} 已撤：{{detail}}；共 {{total}} 档，已成交 {{filled}} 档，还挂 {{pending}} 档"
     # 盯盘条件命中了、还没哪轮告诉过它（停工期 / 休眠时段里命中的，或上一轮在跑时排上队的）
     eventWatchFired: "- 盯盘条件在 {{time}} 命中（本轮才告诉你）：{{detail}}；你的备注：{{note}}"
     # 例行轮：这根收盘刚命中的收盘类条件，单起一块念
@@ -452,7 +471,9 @@ trader:
   guard:
     symbolNotWhitelisted: "symbol不在白名单内，可交易: {{whitelist}}"
     sideInvalid: side必须是LONG或SHORT
-    orderTypeInvalid: orderType必须是MARKET或LIMIT
+    entryRungsInvalid: "entries必须有1到{{max}}档，省略limitPrice的市价档最多一档"
+    bracketsUnavailable: 暂时取不到这个币的杠杆分档表，无法完成下单预检
+    bracketExceeded: "同向仓位、挂单和本次入场的合计名义额{{notional}}超出{{leverage}}倍杠杆允许范围，名义额上限为{{cap}}（不含）"
     quantityPositive: 数量必须为正数
     # 交易所过滤器（TradeFilterDefaults）：sim 拒了只回通用文案，护栏先拒并把数字说清
     qtyStep: "{{symbol}} 的数量必须是 {{step}} 的整数倍且不低于 {{min}}，你给了 {{given}}"
@@ -460,7 +481,6 @@ trader:
     leverageRange: 杠杆必须在{{min}}~{{max}}倍之间（主人设定，不可协商），你给了{{given}}
     playTypeInvalid: "playType必须是: {{types}}"
     invalidationRequired: 必须给invalidationCondition失效条件：一句话说明什么市场状况会证明这个论点错了（市场条件，不是盈亏数字）
-    limitPriceRequired: 限价单必须给limitPrice
     limitTooFar: 限价偏离现价{{pct}}%，超过5%上限（现价{{mark}}）
     # set_watch 的拒因
     watchSymbolInvalid: "这个币平台没在采，布不了盯盘条件。可以布的: {{symbols}}"
@@ -485,7 +505,7 @@ trader:
     symbolLeverageMismatch: "{{symbol}}已有{{lev}}倍仓位/挂单，同币杠杆必须一致（交易所规则），本次也得用{{lev}}倍"
     singlePositionOnly: "主人设定只允许同时持有一个仓位，当前已占用：{{occupied}}。要换标的先平掉现有仓位"
     hedgeNotAllowed: "{{symbol}}已有反向仓位，主人未开启多空双开——同一个币不能同时做多做空"
-    marginOverMax: 开仓保证金{{margin}}占权益{{pct}}%，超过主人设定的上限{{max}}%。{{lev}}倍杠杆下数量最多 {{qtyMax}}
+    marginOverMax: 本次与同向挂单的合计保证金{{margin}}占权益{{pct}}%，超过主人设定的上限{{max}}%。扣掉同向挂单已占的部分，按本次加权均价和{{lev}}倍杠杆，本次各档合计数量最多 {{qtyMax}}
     stopLossRequired: 必须设置止损价（每笔交易先想好在哪认错）
     stopLossPositive: "止损价必须为正数，你给了{{given}}（多半是重试时漏传了stopLossPrice）：入场参考{{entry}}，{{hint}}"
     stopLossHintLong: LONG止损须落在0与入场价之间，例如 {{example}}
@@ -501,9 +521,12 @@ trader:
 
   # 写工具自己的拒因（护栏之外的那些）
   reject:
+    orderUnknown: 这档下单结果未知，可能已经成交。先调用 get_account 核对持仓和挂单，切勿直接重复下单
+    entriesWithdrawn: "{{reason}}；本次已挂上的 {{n}} 档已全部撤回，没有留下任何订单"
     symbolNotWhitelisted: "symbol不在白名单内，可交易: {{whitelist}}，你给了{{given}}。重试时必须完整给出全部参数，不能只给改动项"
     positionIdNotFound: positionId不存在，请先 get_account 查当前持仓
     orderIdNotFound: orderId不在当前挂单里，请先 get_account 查当前挂单
+    cancelReasonRequired: 撤单的 reason 必填
     stopReasonRequired: 必须给reason：说明为什么现在改止损（会进公开修订历史）
     targetReasonRequired: 必须给reason：说明为什么现在改止盈（会进公开修订历史）
     targetRungsOnAdd: "这个仓位已经挂着 {{hanging}} 档止盈，加仓带的止盈档是追加上去的，一个仓位最多 {{limit}} 档。少带几档；或者这次不带 takeProfits，成交后用 set_take_profit 给整个仓位重新分档"
@@ -520,8 +543,23 @@ trader:
     unknown: "UNKNOWN: 下单结果未知，sim 未在重试内确认，这笔单可能已经成交。请先调用 get_account 核对持仓/挂单，切勿直接重复下单。原因: {{cause}}"
     reverseLiquidated: "旧仓已被强平，未发起反向开仓。"
 
+  # 入场档被撤的原因：sim 的撤单原因码成文（TraderPlanStore.cancelReason），你自己撤单时写的理由不走这里
+  cancelReason:
+    groupClosed: 仓位了结，平台撤单
+    user: 主动撤单，没记下理由
+    bankrupt: 破产清理，平台撤单
+    margin: 触发时保证金不足，平台撤单
+    leverage: 触发时杠杆不符或超过档位限制，平台撤单
+    protectionLimit: 触发时保护单价位过多，平台撤单
+    marginMode: 触发时保证金模式冲突，平台撤单
+    increaseRemoved: 触发时原仓位已不存在，平台撤单
+    unknown: 撤单原因未知
+
   # 计划修订历史里的动作名与"原本没有"的占位，同样公开展示
   revise:
+    cancelEntry: 撤单
+    # 改止损止盈时同组还挂着的档改得怎样，跟在修订的变化后面（PendingProtection.summary）；没有挂单不出现
+    syncedEntries: "；同组挂单改了 {{updated}} 档，保留原样 {{retained}} 档，没改成 {{failed}} 档"
     addOn: 加仓
     # 加仓覆盖时旧论点进修订历史的留痕（TraderPlanStore.cover）
     addOnNote: "旧论点[{{playType}} / {{invalidation}}]被新论点覆盖"

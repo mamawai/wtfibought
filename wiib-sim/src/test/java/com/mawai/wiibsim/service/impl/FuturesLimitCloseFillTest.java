@@ -100,6 +100,7 @@ class FuturesLimitCloseFillTest {
                 argThat(p -> p.compareTo(new BigDecimal("110")) == 0), argThat(p -> p.compareTo(new BigDecimal("5")) == 0));
         verify(orderMapper).casUpdateToFilled(eq(100L), isNull(), argThat(q -> q.compareTo(new BigDecimal("0.5")) == 0),
                 any(), any(), any(), any(), any());
-        verify(orderMapper, never()).casUpdateStatus(anyLong(), anyString(), eq("CANCELLED"));
+        verify(orderMapper, never()).casCancel(anyLong(), anyString(), anyString());
+        verify(orderMapper).cancelGroupedOpenOrders(UID, "BTCUSDT", "OPEN_LONG");
     }
 }

@@ -181,6 +181,11 @@ trader:
       below), or you get liquidated first and the stop never fires
 
     Actions the guard rejects (the reason comes back to you; fix it and retry):
+    - open_position entries must contain 1–5 {quantity, limitPrice} rungs. Omit limitPrice for market, at most one per call.
+      Each entry must meet quantity, minimum notional and target quantity steps. The common stop is beyond all entries,
+      and targets are favorable to all. Without a filled same-side position, this batch plus same-side pending margin
+      must fit the equity cap. Same-symbol, same-side pending entries take one slot in single-position mode.
+      Leverage tiers are prechecked on position + same-side pending + new entries; sim still rechecks at fill time.
     - A limit price more than 5% from the current price, or resting on the side that would fill at once
       (a long limit must be below the current price, a short limit above); use a market order to enter now
     - Opening without a stop-loss price, or with the stop on the wrong side (long: below entry; short: above)
@@ -206,6 +211,7 @@ trader:
     - Any trading action after this round's budget has run out
 
     What can act between two wake-ups (facts; whether and how to use them is your call):
+    - Ladder entry: limits at your chosen prices and quantities go first, then the market rung; fills merge into the same-side position.
     - Stop-loss order: required, always resting in the sim; when the last traded price touches it the whole
       position is closed at market.
     - Take-profit orders: optional. Without one, if price reaches the level where you wanted to bank and comes
@@ -218,6 +224,12 @@ trader:
       breakout entry needs a watch condition to wake you so that you look and then place it, one round behind
       the market.
 
+    Entry adjustments: set_stop_loss / set_take_profit update eligible PENDING entries in the plan group before the position.
+    Stops that would loosen an entry's own stop or cross its entry price remain unchanged and are listed in the receipt.
+    Before any entry fills, change protection by cancelling with a reason and placing the entries again.
+    cancel_order requires a reason, recorded against that entry and in the plan revisions.
+    A full position close cancels all grouped unfilled entries on that symbol and direction; partial closes and partial targets leave them resting.
+
     Trading plans: open_position, filled or resting, and the new leg of reverse_position file a plan (thesis tag, data references,
     invalidation condition, entry price, stop price, take-profit rungs); it is injected back with the position
     every round, and the rungs set at entry are the plan's targets (plan.targets) — a plan opened without
@@ -226,6 +238,14 @@ trader:
     there too. Once a position is settled,
     the next opening message reports the outcome together with the thesis at the time. close_position is available
     at any time, in full or in part. A position with no plan record (a legacy one) gets its plan filed with write_plan.
+    Each entry batch creates or covers one plan; plan.entries retains prices, quantities and states, with later adds appended.
+    Plan prices, stop and targets are the latest open/add snapshot; initial arrangements are the add=false entries.
+
+    facts.batch estimates this batch; facts.sameSide estimates this symbol and direction in total. These are scenarios.
+    Loss at stop uses the stop price, without slippage; triggered stops fill against the order book.
+    Account pending rows include stops, targets and lossAtStopPctOfEquity excluding fees. lossIfPendingFillPctOfEquity
+    is the extra equity loss if all pending opens fill then stop out; lossAtAllStopsPctOfEquity covers current positions.
+    Positions and pending rows expose each entry's price, quantity and status in plan.entries.
 
     Costs: fees are charged on notional — taker (market orders, stop-loss and take-profit fills,
     liquidation) 0.04% per side, maker (limit fills) 0.02% per side; one market-order round trip is about
@@ -289,14 +309,17 @@ trader:
     playStatsEntrySep: " | "
     playStatsEntryUnknown: "; entry type not recorded for {{n}} more"
     playStatsEntry:
+      ladder: ladder
       limit: limit
       market: market
     # Replay of "left untouched after entry" (CaseFileBuilder.summarize): one segment per stop width, then actual vs untouched
-    playStatsReplayLine: "Untouched-after-entry replay, {{n}} trades (R = distance from entry to the original stop; walked on 5m candles from entry out to 72h later, a bar touching both the stop and a take-profit rung counts as the stop; a laddered take-profit settles rung by rung in proportion, target means a rung was reached and the whole position settled, and a trade with no take-profit can only end as stopped or unresolved; at a wider stop the rungs are unchanged and size shrinks to keep the same risk amount; fees ignored): {{rows}}"
+    playStatsReplayLine: "Original-plan replay, {{n}} trades (assumes nothing is changed after the order: each entry rung waits to fill at its original price, and the stop and take-profit rungs stay as placed. 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop. Walked on 5m candles from the first fill out to 72h later; a bar touching both the stop and a take-profit rung counts as the stop; laddered take-profits settle rung by rung at their own quantities; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled, and a trade with no take-profit can only end as stopped or unresolved; at a wider stop the rungs are unchanged and size shrinks to keep the same risk amount. Trading fees deducted; funding and slippage not included): {{rows}}"
     playStatsReplayRow: "stop {{width}}: target {{target}}, stopped {{stop}}, unresolved {{open}}, total {{r}}R"
     playStatsReplayOriginal: as placed
     playStatsReplayWidth: "{{width}}x"
-    playStatsManageLine: "Managing the position, {{n}} trades: actual total {{actual}}R, untouched total {{untouched}}R"
+    playStatsManageLine: "Managing the position, {{n}} trades: actual total {{actual}}R, original-plan total {{untouched}}R (both after trading fees, neither includes funding){{adds}}"
+    # follows the line above only when some trades were added to along the way
+    playStatsManageAdds: "; {{n}} of them were added to along the way: the actual side includes the PnL of the adds, the original-plan side does not"
     playStatsFooter: "(Covers only the recent settled trades listed above, regardless of config changes in between; with few samples luck and skill look identical - never treat a small sample as a pattern.)"
     memory: "————— Experience ledger (what your reviews have distilled, kept by code; cite entries by #id in your conclusion) —————"
     # Rendered ledger text (ExperienceLedger.render): the first line is the marker that says "this memory is a ledger", recognised in both languages
@@ -483,7 +506,9 @@ trader:
     eventsHeader: "[Since your last wake-up]"
     eventClosed: "- {{symbol}} {{side}} closed: {{manner}} @{{price}}, net PnL {{pnl}} USDT (after fees and funding; plan at the time: {{playType}} / invalidation: {{invalidation}})"
     eventFilled: "- {{symbol}} {{side}} limit order filled, plan is now live"
-    eventCancelled: "- {{symbol}} {{side}} open order is gone (cancelled by you, or by the sim at trigger time over margin / leverage / bracket limits), plan archived"
+    eventCancelled: "- {{symbol}} {{side}} no position or pending entry remains; plan archived"
+    eventEntryFilled: "- {{symbol}} {{side}} entry {{price}} × {{qty}} filled at {{detail}}; {{total}} entries, {{filled}} filled, {{pending}} pending"
+    eventEntryCancelled: "- {{symbol}} {{side}} entry {{price}} × {{qty}} cancelled: {{detail}}; {{total}} entries, {{filled}} filled, {{pending}} pending"
     # A watch condition that hit and no round has told you about yet (hit during the handover / sleep window, or queued while the previous round ran)
     eventWatchFired: "- Watch condition hit at {{time}} (you are hearing it now): {{detail}}; your note: {{note}}"
     # Routine round: close conditions that this very close just met, in a block of their own
@@ -565,7 +590,9 @@ trader:
   guard:
     symbolNotWhitelisted: "symbol is not on your whitelist; tradable: {{whitelist}}"
     sideInvalid: side must be LONG or SHORT
-    orderTypeInvalid: orderType must be MARKET or LIMIT
+    entryRungsInvalid: "entries must contain 1 to {{max}} rungs, with at most one market rung omitting limitPrice"
+    bracketsUnavailable: the leverage tiers for this symbol are unavailable, so entry preflight cannot complete
+    bracketExceeded: "Position, same-side pending and new entries total {{notional}} notional, outside the {{leverage}}x tier; the notional cap is {{cap}} (exclusive)"
     quantityPositive: quantity must be positive
     # exchange filters (TradeFilterDefaults): sim only returns a generic line, the guard rejects first with the numbers
     qtyStep: "{{symbol}} quantity must be a multiple of {{step}} and at least {{min}}; you gave {{given}}"
@@ -573,7 +600,6 @@ trader:
     leverageRange: leverage must land within {{min}}~{{max}}x (set by your owner, not negotiable); you gave {{given}}
     playTypeInvalid: "playType must be one of: {{types}}"
     invalidationRequired: invalidationCondition is required - one line on what market condition would prove this thesis wrong (a market condition, not a P&L number)
-    limitPriceRequired: a LIMIT order needs limitPrice
     limitTooFar: the limit price is {{pct}}% away from the mark, over the 5% cap (mark {{mark}})
     # set_watch rejections
     watchSymbolInvalid: "the platform does not track this symbol, so no watch condition can be set on it. Watchable: {{symbols}}"
@@ -598,7 +624,7 @@ trader:
     symbolLeverageMismatch: "{{symbol}} already has a position/order at {{lev}}x; leverage must match across one symbol (exchange rule), so use {{lev}}x here too"
     singlePositionOnly: "your owner allows only one position at a time and the slot is taken: {{occupied}}. Close it before switching symbols"
     hedgeNotAllowed: "{{symbol}} already has an opposite position and your owner has not enabled hedging - one symbol cannot be long and short at once"
-    marginOverMax: margin {{margin}} is {{pct}}% of equity, above your owner's {{max}}% cap. At {{lev}}x the quantity can be at most {{qtyMax}}
+    marginOverMax: batch plus same-side pending margin {{margin}} is {{pct}}% of equity, above your owner's {{max}}% cap. After the margin same-side pending orders already take, at this batch's weighted entry and {{lev}}x this batch can total at most {{qtyMax}}
     stopLossRequired: a stop-loss price is required (decide where you are wrong before you enter)
     stopLossPositive: "the stop-loss price must be positive; you gave {{given}} (most likely stopLossPrice was dropped on a retry). Entry reference {{entry}}, {{hint}}"
     stopLossHintLong: a LONG stop must sit between 0 and the entry price, e.g. {{example}}
@@ -614,9 +640,12 @@ trader:
 
   # Rejections the write tools raise themselves (everything the guard does not cover)
   reject:
+    orderUnknown: this entry's outcome is unknown and may have filled; call get_account to reconcile positions and pending orders before resubmitting
+    entriesWithdrawn: "{{reason}}; the {{n}} entries already resting from this call were all withdrawn, no order is left"
     symbolNotWhitelisted: "symbol is not on your whitelist; tradable: {{whitelist}}, you gave {{given}}. On a retry you must pass every parameter again, not only the ones you changed"
     positionIdNotFound: no such positionId - call get_account for your current positions
     orderIdNotFound: no such orderId among your pending orders - call get_account for the current ones
+    cancelReasonRequired: reason is required for cancelling an order
     stopReasonRequired: "reason is required: say why you are changing the stop now (it goes into the public revision history)"
     targetReasonRequired: "reason is required: say why you are changing the take-profit now (it goes into the public revision history)"
     targetRungsOnAdd: "this position already has {{hanging}} take-profit rungs resting; the rungs an add brings are appended, and a position holds at most {{limit}}. Bring fewer rungs, or leave takeProfits out of this order and re-ladder the whole position with set_take_profit once it fills"
@@ -633,8 +662,23 @@ trader:
     unknown: "UNKNOWN: the order outcome is unknown - sim did not confirm within the retries, so it may well have filled. Call get_account to reconcile your positions and open orders before doing anything; do NOT simply place it again. Cause: {{cause}}"
     reverseLiquidated: "The old position was liquidated. The opposite opening order was not sent."
 
+  # Why an entry was cancelled: the sim's cancel reason code in words (TraderPlanStore.cancelReason); reasons you gave yourself do not go through here
+  cancelReason:
+    groupClosed: position fully closed; platform cancelled the entry
+    user: cancelled on request, no reason recorded
+    bankrupt: platform cancelled during bankruptcy cleanup
+    margin: cancelled at trigger time; insufficient margin
+    leverage: cancelled at trigger time; leverage or bracket limit
+    protectionLimit: cancelled at trigger time; too many protection prices
+    marginMode: cancelled at trigger time; margin mode conflict
+    increaseRemoved: cancelled at trigger time; target position no longer exists
+    unknown: cancellation reason unknown
+
   # Action names in the public plan revision history, plus the "there was none" placeholder
   revise:
+    cancelEntry: entry cancelled
+    # how the group's still-pending entries fared when a stop or targets changed, appended to the revision (PendingProtection.summary); absent when nothing is pending
+    syncedEntries: "; pending entries in the group: {{updated}} updated, {{retained}} kept as they were, {{failed}} not changed"
     addOn: added to position
     # the audit note left when an add-on supersedes the old thesis (TraderPlanStore.cover)
     addOnNote: "old thesis [{{playType}} / {{invalidation}}] superseded by the new one"

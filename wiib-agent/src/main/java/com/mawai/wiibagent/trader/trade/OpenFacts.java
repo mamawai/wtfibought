@@ -20,14 +20,16 @@ final class OpenFacts {
     }
 
     /** 纯算术的几项；ATR 那几项成交后另加（{@link #addAtr}） */
-    static ObjectNode of(TradeGuard.OpenReq req, BigDecimal entryRef, BigDecimal equity) {
-        BigDecimal notional = req.quantity().multiply(entryRef);
-        // 开仓手续费：限价按 maker、市价按 taker；平仓手续费按 taker 估算。
-        BigDecimal openRate = "LIMIT".equals(req.orderType()) ? FuturesFeeRates.MAKER : FuturesFeeRates.TAKER;
-        BigDecimal fee = notional.multiply(openRate.add(FuturesFeeRates.TAKER));
+    static ObjectNode of(TradeGuard.OpenReq req, BigDecimal mark, BigDecimal equity) {
+        BigDecimal entryRef = req.entryPrice(mark);
+        BigDecimal notional = req.notional(mark);
+        BigDecimal fee = req.entries().stream().map(e -> e.quantity().multiply(e.price(mark))
+                .multiply((e.limitPrice() == null ? FuturesFeeRates.TAKER : FuturesFeeRates.MAKER).add(FuturesFeeRates.TAKER)))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal stopDist = stopDistance(req, entryRef);
         BigDecimal lossAtStop = stopDist.multiply(req.quantity()).add(fee);
         ObjectNode f = MAPPER.createObjectNode();
+        f.put("quantity", req.quantity());
         f.put("entryRef", entryRef);
         f.put("notional", usdt(notional));
         f.put("feeRoundTrip", usdt(fee));
@@ -36,17 +38,16 @@ final class OpenFacts {
         f.put("riskPctOfEquity", pct(lossAtStop, equity));
         if (!req.takeProfits().isEmpty()) {
             // 各档都成交的盈利；占比合计不到 100 的，剩下那部分仓位不算
-            List<BigDecimal> quantities = TargetRung.quantities(req.takeProfits(), req.quantity(), req.symbol());
             BigDecimal gain = fee.negate();
-            BigDecimal covered = BigDecimal.ZERO;
-            for (int i = 0; i < quantities.size(); i++) {
-                TargetRung rung = req.takeProfits().get(i);
-                gain = gain.add(rung.price().subtract(entryRef).abs().multiply(quantities.get(i)));
-                covered = covered.add(rung.percent());
+            for (EntryRung entry : req.entries()) {
+                List<BigDecimal> quantities = TargetRung.quantities(req.takeProfits(), entry.quantity(), req.symbol());
+                for (int i = 0; i < quantities.size(); i++) {
+                    gain = gain.add(req.takeProfits().get(i).price().subtract(entry.price(mark)).abs().multiply(quantities.get(i)));
+                }
             }
             f.put("gainAtTargets", usdt(gain));
             f.put("rewardRiskAfterFees", gain.divide(lossAtStop, 2, RoundingMode.HALF_UP));
-            f.put("targetsCoverPct", covered);
+            f.put("targetsCoverPct", req.takeProfits().stream().map(TargetRung::percent).reduce(BigDecimal.ZERO, BigDecimal::add));
         }
         return f;
     }

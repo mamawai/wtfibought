@@ -56,6 +56,9 @@ public class FuturesOrder {
 
     private String status; // PENDING待触发 TRIGGERED已触发 PROCESSING处理中 FILLED已成交 CANCELLED已取消 LIQUIDATED强平
 
+    private String groupId;
+    private String cancelReason;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

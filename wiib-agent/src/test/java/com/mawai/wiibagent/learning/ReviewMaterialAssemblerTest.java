@@ -17,6 +17,8 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.entity.AiTraderExperienceVerdict;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
+import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
@@ -41,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -136,6 +139,42 @@ class ReviewMaterialAssemblerTest {
     private static KlineBar bar5m(long openTime, String o, String h, String l, String c) {
         return new KlineBar(openTime, openTime + M5 - 1,
                 new BigDecimal(o), new BigDecimal(h), new BigDecimal(l), new BigDecimal(c), BigDecimal.ZERO);
+    }
+
+    @Test
+    void ladderMaterialListsEntriesAddsAndCancelledLegsOfFilledPlan() {
+        long opened = FROM + H;
+        AiTraderPlan plan = planOf("BTCUSDT", "PULLBACK", opened, false);
+        plan.setPositionId(1L); plan.setEntryPrice(new BigDecimal("105")); plan.setStopLossPrice(new BigDecimal("100"));
+        plan.setTakeProfitsJson("[{\"price\":110,\"percent\":100}]");
+        List<PlanEntry> entries = new java.util.ArrayList<>();
+        String[] prices = {"100", "98", "97", "105"}, quantities = {"3", "4", "3", "2"};
+        for (int i = 0; i < 4; i++) {
+            var entry = new PlanEntry();
+            entry.setLimitPrice(new BigDecimal(prices[i])); entry.setQuantity(new BigDecimal(quantities[i]));
+            entry.setStop(new BigDecimal(i == 3 ? "100" : "96"));
+            entry.setTargets(List.of(new TargetRung(new BigDecimal(i == 3 ? "110" : "104"), new BigDecimal("100"))));
+            entry.setPlacedAt(opened); entry.setClosedAt(opened + i * M5); entry.setAdd(i == 3);
+            entry.setStatus(i == 0 || i == 3 ? "FILLED" : "CANCELLED");
+            if ("FILLED".equals(entry.getStatus())) { entry.setFilledPrice(entry.getLimitPrice()); entry.setFee(new BigDecimal("0.06")); }
+            else entry.setReason("cancel-reason-" + i);
+            entries.add(entry);
+        }
+        PlanEntry.save(plan, entries);
+        FuturesPositionDTO position = closedPos("LONG", "102", "104", "8", opened, opened + H); position.setId(1L);
+        when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(position));
+        when(historyStore.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar5m(opened, "100", "101", "99", "100"), bar5m(opened + 4 * M5, "100", "106", "97", "105")));
+        String zh = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
+        assertThat(zh).contains("入场安排", "100 × 3", "98 × 4", "97 × 3", "105 × 2（加仓）",
+                "计划合计 12，实际成交 5", "cancel-reason-1", "cancel-reason-2", "含加仓",
+                "限价 98 止损 96 目标 104(100%)", "限价 97 止损 96 目标 104(100%)");
+        String en = assembler.assemble(trader(), FROM, TO, AgentLang.EN).casesBlock();
+        assertThat(en).contains("Entry arrangement", "planned total 12, actually filled 5", "includes adds", "cancel-reason-2");
+        PlanEntry.save(plan, List.of(entries.getFirst()));
+        // 只有一档且已成交：不出入场安排那一行（块头的说明里也有这四个字，认行首）
+        assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock()).doesNotContain("  入场安排：");
     }
 
     // ==================== 战绩表 ====================
@@ -244,15 +283,15 @@ class ReviewMaterialAssemblerTest {
                 + TIME.format(Instant.ofEpochMilli(closeMs))
                 + "（持有 5小时）｜ 入场 100000 止损 95500 目标 110000(100%) 出场 95000，止损带走 ｜ 净 -50，资金费 —");
         // R = 4500：最大浮盈 2500 是 +0.56R、最大逆向 5000 是 -1.11R；第一根就到了 +0.5R，+1R 没到过
-        assertThat(cases).contains("  路径：最大浮盈 102500（" + HM.format(Instant.ofEpochMilli(openMs + M5))
+        assertThat(cases).contains("  价格路径（以最终均价为参照）：最大浮盈 102500（" + HM.format(Instant.ofEpochMilli(openMs + M5))
                 + "，+0.56R）｜ 最大逆向 95000（-1.11R）｜ 到 +0.5R / +1R 用时 5 / — 分 ｜ 首次收回入场价 "
                 + HM.format(Instant.ofEpochMilli(FROM + 2 * H)) + " ｜ 出场后 4h / 24h 最有利 97000 / 99000，到过原目标 0/1 档");
         // R = 4500：净 -50 ÷（0.01 × 4500）；24h 内最高 102500、最低 95000、第 20 小时那根收 98000；止损原样在 95000 那根被打，放宽后都没碰到
-        assertThat(cases).contains("  重放：实际 -1.11R ｜ 入场后 24h 内最大顺向 +0.56R、最大逆向 -1.11R，不设止损拿满 24h -0.44R"
-                + " ｜ 止损原样 止损（-1R）、1.5 倍 未决、2 倍 未决、3 倍 未决");
-        assertThat(cases).contains("本期重放汇总：\n开仓后不动重放 1笔（")
-                .contains("：止损原样 到目标0 止损1 未决0 合计-1R ｜ 止损1.5倍 到目标0 止损0 未决1 合计+0R ｜ ")
-                .contains("管理动作 1笔：实际合计-1.11R，开仓后不动合计-1R");
+        assertThat(cases).contains("  重放：实际 -1.11R ｜ 首档成交后 24h 内最大顺向 +0.56R、最大逆向 -1.11R，不设止损拿满 24h -0.44R"
+                + " ｜ 止损原样 止损（-1.02R）、1.5 倍 未决、2 倍 未决、3 倍 未决");
+        assertThat(cases).contains("本期重放汇总：\n原计划不动重放 1笔（")
+                .contains("：止损原样 到目标0 止损1 未决0 合计-1.02R ｜ 止损1.5倍 到目标0 止损0 未决1 合计+0R ｜ ")
+                .contains("管理动作 1笔：实际合计-1.11R，原计划不动合计-1.02R");
         assertThat(cases).contains("  1h 收盘：102000 99700 95200");
         assertThat(cases).contains("  计划：论点 突破前高+量比1.8 ｜ 失效 1h收盘跌回98000下方 ｜ 修订 stop_loss 95500→96000（锁利）");
         assertThat(cases).contains("  入场上下文：1h ADX 31.2 ｜ 1h 布林带宽 2.8 ｜ 1h ATR 350.5 ｜ 止损 12.8 个 ATR（4.5%）｜ 距最近的美国 High 事件 -90 分 CPI"
@@ -292,7 +331,7 @@ class ReviewMaterialAssemblerTest {
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("★ 未标类型（1 笔，1 胜，净 +10）");
-        assertThat(cases).contains("  路径：最大浮盈 —（—，—）｜ 最大逆向 —（—）｜ 到 +0.5R / +1R 用时 — / — 分 ｜ 首次收回入场价 — ｜ 出场后 4h / 24h 最有利 — / —，没设止盈");
+        assertThat(cases).contains("  价格路径（以最终均价为参照）：最大浮盈 —（—，—）｜ 最大逆向 —（—）｜ 到 +0.5R / +1R 用时 — / — 分 ｜ 首次收回入场价 — ｜ 出场后 4h / 24h 最有利 — / —，没设止盈");
         assertThat(cases).doesNotContain("1h 收盘");
         assertThat(cases).contains("  计划：（无计划记录）");
         assertThat(cases).doesNotContain("入场上下文");
@@ -334,8 +373,8 @@ class ReviewMaterialAssemblerTest {
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("窗口内无已了结交易");
-        assertThat(cases).contains("没成交就撤掉的限价单（从最后一次见它还挂着的那轮起 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000(100%)，"
-                + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 归档 ｜ 之后价格没到过限价位，到过原目标 1/1 档");
+        assertThat(cases).contains("没成交就撤掉的限价档（撤单后 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000(100%)，"
+                + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 结束：撤单原因未知 ｜ 之后价格没到过限价位，到过原目标 1/1 档");
     }
 
     // ==================== 案例素材：分组与选案 ====================

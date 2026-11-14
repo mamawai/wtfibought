@@ -107,6 +107,14 @@ class PresetExecutorTest {
     @Test
     void moveStopCarriedOutWithoutWaking() {
         holding();
+        AiTraderPlan plan = new AiTraderPlan(); plan.setId(40L); plan.setOrderGroup("group");
+        when(planStore.liveFor(7L, 1, "BTCUSDT", "LONG")).thenReturn(plan);
+        FuturesOrderResponse pending = new FuturesOrderResponse();
+        pending.setOrderId(600L); pending.setGroupId("group"); pending.setStatus("PENDING");
+        pending.setSymbol("BTCUSDT"); pending.setOrderSide("OPEN_LONG");
+        pending.setLimitPrice(new BigDecimal("102")); pending.setQuantity(new BigDecimal("2"));
+        pending.setStopLosses(List.of(new FuturesStopLoss("s2", new BigDecimal("98"), new BigDecimal("2"))));
+        when(sim.getPendingOrders(99L, "BTCUSDT")).thenReturn(List.of(pending));
         AiTraderWatch w = watch("{\"type\":\"MOVE_STOP\",\"positionId\":5,\"stopLossPrice\":100,\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"}");
 
         boolean wake = executor.execute(w, new BigDecimal("1899"), AT);
@@ -116,11 +124,17 @@ class PresetExecutorTest {
         verify(sim).setStopLoss(eq(99L), req.capture());
         assertThat(req.getValue().getStopLosses()).singleElement().satisfies(i -> {
             assertThat(i.getPrice()).isEqualByComparingTo("100");
-            assertThat(i.getQuantity()).isEqualByComparingTo("10");
+            assertThat(i.getQuantity()).isNull();
         });
-        verify(watchStore).recordAction(31L, true, "BTCUSDT LONG 止损 98→100");
+        var calls = org.mockito.Mockito.inOrder(sim);
+        calls.verify(sim).setOrderProtection(eq(99L), eq(600L), any());
+        calls.verify(sim).setStopLoss(eq(99L), any());
+        // 结果是一句人话：挂单同步情况跟在后面，不带原始 JSON
+        verify(watchStore).recordAction(31L, true,
+                "BTCUSDT LONG 止损 98→100；同组挂单改了 1 档，保留原样 0 档，没改成 0 档");
         assertThat(w.getActionOk()).isTrue();
-        verify(planStore).appendRevision(40L, AT, "预案移止损", "98→100", "大盘破位先保本");
+        verify(planStore).appendRevision(40L, AT, "预案移止损",
+                "98→100；同组挂单改了 1 档，保留原样 0 档，没改成 0 档", "大盘破位先保本");
         AiTraderDecision row = timelineRow();
         assertThat(row.getKind()).isEqualTo(AiTraderDecision.KIND_PRESET);
         assertThat(row.getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
@@ -168,10 +182,13 @@ class PresetExecutorTest {
     /** 撤单做成了不叫醒；sim 拒了（单子已经不在）按没做成报，叫醒 */
     @Test
     void cancelOrderQuietWhenDoneAndWakesWhenSimRefuses() {
+        FuturesOrderResponse cancelled = new FuturesOrderResponse(); cancelled.setOrderId(600L);
+        when(sim.cancelOrder(99L, 600L)).thenReturn(cancelled);
         AiTraderWatch w = watch("{\"type\":\"CANCEL_ORDER\",\"orderId\":600,\"symbol\":\"BTCUSDT\",\"side\":\"OPEN_LONG\"}");
 
         assertThat(executor.execute(w, new BigDecimal("1899"), AT)).isFalse();
         verify(sim).cancelOrder(99L, 600L);
+        verify(planStore).cancelEntry(7L, 1, cancelled, "大盘破位先保本", AT, AgentLang.ZH);
         verify(watchStore).recordAction(31L, true, "BTCUSDT OPEN_LONG 挂单 600 已撤");
 
         when(sim.cancelOrder(99L, 600L)).thenThrow(new IllegalStateException("订单不可撤"));

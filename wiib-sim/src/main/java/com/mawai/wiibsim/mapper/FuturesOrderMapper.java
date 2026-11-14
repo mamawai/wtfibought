@@ -2,6 +2,8 @@ package com.mawai.wiibsim.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.mawai.wiibcommon.entity.FuturesOrder;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
@@ -21,6 +23,38 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
     int casUpdateStatus(@Param("orderId") Long orderId,
                         @Param("oldStatus") String oldStatus,
                         @Param("newStatus") String newStatus);
+
+    @Update("UPDATE futures_order SET status = 'CANCELLED', cancel_reason = #{reason}, updated_at = NOW() " +
+            "WHERE id = #{orderId} AND status = #{oldStatus}")
+    int casCancel(@Param("orderId") Long orderId, @Param("oldStatus") String oldStatus,
+                  @Param("reason") String reason);
+
+    @Select("""
+            UPDATE futures_order SET status = 'CANCELLED', cancel_reason = 'GROUP_CLOSED', updated_at = NOW()
+            WHERE user_id = #{userId} AND symbol = #{symbol} AND order_side = #{orderSide}
+              AND group_id IS NOT NULL AND status IN ('PENDING', 'TRIGGERED')
+            RETURNING id, user_id, symbol, order_side, margin_mode, frozen_amount
+            """)
+    @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+    List<FuturesOrder> cancelGroupedOpenOrders(@Param("userId") Long userId, @Param("symbol") String symbol,
+                                              @Param("orderSide") String orderSide);
+
+    @Update("""
+            <script>
+            UPDATE futures_order SET updated_at = NOW()
+            <if test="stopLosses != null">
+              , stop_losses = #{stopLosses,typeHandler=com.mawai.wiibcommon.handler.FuturesStopLossListTypeHandler}
+            </if>
+            <if test="takeProfits != null">
+              , take_profits = #{takeProfits,typeHandler=com.mawai.wiibcommon.handler.FuturesTakeProfitListTypeHandler}
+            </if>
+            WHERE id = #{orderId} AND user_id = #{userId} AND status = 'PENDING'
+              AND order_type = 'LIMIT' AND order_side IN ('OPEN_LONG', 'OPEN_SHORT')
+            </script>
+            """)
+    int updatePendingProtection(@Param("userId") Long userId, @Param("orderId") Long orderId,
+                                @Param("stopLosses") List<FuturesStopLoss> stopLosses,
+                                @Param("takeProfits") List<FuturesTakeProfit> takeProfits);
 
     /**
      * CAS更新为FILLED；quantity 是实际成交量（限价平仓时剩下的仓位不够，就只平剩下的）；
@@ -132,7 +166,7 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             "WHERE user_id = #{userId} AND status = 'FILLED' GROUP BY symbol")
     List<Map<String, Object>> countFilledOrdersBySymbol(@Param("userId") Long userId);
 
-    @Update("UPDATE futures_order SET status = 'CANCELLED', updated_at = NOW() " +
+    @Update("UPDATE futures_order SET status = 'CANCELLED', cancel_reason = 'BANKRUPT', updated_at = NOW() " +
             "WHERE user_id = #{userId} AND status IN ('PENDING', 'TRIGGERED', 'PROCESSING')")
     int cancelOpenOrdersByUserId(@Param("userId") Long userId);
 

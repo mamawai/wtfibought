@@ -3,6 +3,7 @@ package com.mawai.wiibquant.external.sim;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
+import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -70,6 +71,18 @@ public class SimTradeClient {
 
     public FuturesOrderResponse getOrder(Long userId, Long orderId) {
         return unwrap(api.order(userId, orderId));
+    }
+
+    public void setOrderProtection(Long userId, Long orderId, FuturesOrderProtectionRequest request) {
+        unwrap(api.setOrderProtection(userId, orderId, request));
+    }
+
+    public List<FuturesOrderResponse> getGroupOrders(Long userId, String groupId) {
+        return unwrap(api.groupOrders(userId, groupId));
+    }
+
+    public Map<String, List<SimTradeApi.Bracket>> getBrackets(List<String> symbols) {
+        return unwrap(api.brackets(symbols));
     }
 
     public List<FuturesOrderResponse> getPendingOrders(Long userId, String symbol) {

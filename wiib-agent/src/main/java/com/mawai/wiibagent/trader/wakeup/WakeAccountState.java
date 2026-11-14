@@ -12,6 +12,7 @@ import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.trade.StopOrders;
 import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
@@ -57,28 +58,17 @@ final class WakeAccountState {
         out.put("nowBeijing", BeijingTime.format(boundaryTime));
         // 全部持仓的止损同时被打掉，合计亏权益的百分之几
         out.put("lossAtAllStopsPctOfEquity", pctOfEquity(
-                positions.stream().map(WakeAccountState::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
+                positions.stream().map(StopOrders::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
+        // 还挂着的开仓单全部成交、再全部被各自带的止损打掉，还要多亏权益的百分之几
+        out.put("lossIfPendingFillPctOfEquity", pctOfEquity(pendingOrders == null ? BigDecimal.ZERO
+                : pendingOrders.stream().map(StopOrders::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
         out.set("positions", positionsJson(prompts, lang, equity, positions, planByKey, boundaryTime, paths));
         // 挂单同样给足：开仓挂单占坑且带着计划（成交后计划全文随持仓回注，这里给轻量版）。
         // 挂出时刻与已挂时长必须在：限价单挂了多久只有代码知道，模型据此执行自己写的作废条件
         if (pendingOrders != null && !pendingOrders.isEmpty()) {
-            out.set("pendingOrders", pendingOrdersJson(prompts, lang, pendingOrders, planByKey, boundaryTime));
+            out.set("pendingOrders", pendingOrdersJson(prompts, lang, equity, pendingOrders, planByKey, boundaryTime));
         }
         return MAPPER.writeValueAsString(out);
-    }
-
-    /**
-     * 这个仓位当前的止损单全被打掉，相对开仓价亏多少（止损已经挪过成本的是负数，即锁住的利润）；不计手续费，没挂止损的仓位算 0。
-     * 数量按仓位现量封顶：分批止盈之后止损单上的数量还是旧的
-     */
-    private static BigDecimal lossAtStops(FuturesPositionDTO p) {
-        BigDecimal loss = BigDecimal.ZERO;
-        for (FuturesStopLoss sl : StopOrders.effective(p)) {
-            BigDecimal perUnit = "LONG".equals(p.getSide())
-                    ? p.getEntryPrice().subtract(sl.getPrice()) : sl.getPrice().subtract(p.getEntryPrice());
-            loss = loss.add(perUnit.multiply(sl.getQuantity()));
-        }
-        return loss;
     }
 
     private static BigDecimal pctOfEquity(BigDecimal amount, BigDecimal equity) {
@@ -113,7 +103,7 @@ final class WakeAccountState {
                         .min(Comparator.comparing(price -> price.subtract(p.getMarkPrice()).abs())).orElseThrow();
                 row.put("stopDistancePct", nearest.subtract(p.getMarkPrice()).abs().multiply(BigDecimal.valueOf(100))
                         .divide(p.getMarkPrice(), 2, RoundingMode.HALF_UP));
-                row.put("lossAtStopPctOfEquity", pctOfEquity(lossAtStops(p), equity));
+                row.put("lossAtStopPctOfEquity", pctOfEquity(StopOrders.lossAtStops(p), equity));
             }
             if (p.getTakeProfits() != null && !p.getTakeProfits().isEmpty()) {
                 ArrayNode tps = MAPPER.createArrayNode();
@@ -168,6 +158,10 @@ final class WakeAccountState {
                     }
                     planJson.set("revisions", revisions);
                 }
+                // 分档入场的各档：价位、数量、状态
+                if (plan.getEntriesJson() != null) {
+                    planJson.set("entries", PlanEntry.summary(plan));
+                }
                 row.set("plan", planJson);
             }
             ps.add(row);
@@ -176,7 +170,7 @@ final class WakeAccountState {
     }
 
     /** 挂单行：订单事实 + 开仓挂单所属计划的轻量版。 */
-    private static ArrayNode pendingOrdersJson(PromptCatalog prompts, AgentLang lang,
+    private static ArrayNode pendingOrdersJson(PromptCatalog prompts, AgentLang lang, BigDecimal equity,
                                                List<FuturesOrderResponse> pendingOrders,
                                                Map<String, AiTraderPlan> planByKey, long boundaryTime) {
         ArrayNode po = MAPPER.createArrayNode();
@@ -188,17 +182,25 @@ final class WakeAccountState {
                     .put("quantity", o.getQuantity())
                     .put("limitPrice", o.getLimitPrice())
                     .put("leverage", o.getLeverage());
+            // 这张单带的止损止盈，和它成交后被止损打掉亏权益的百分之几
+            row.set("stopLosses", MAPPER.valueToTree(o.getStopLosses()));
+            row.set("takeProfits", MAPPER.valueToTree(o.getTakeProfits()));
+            row.put("lossAtStopPctOfEquity", pctOfEquity(StopOrders.lossAtStops(o), equity));
             if (o.getOrderSide() != null && o.getOrderSide().startsWith("OPEN_")) {
                 AiTraderPlan plan = planByKey.get(
                         TraderPlanStore.key(o.getSymbol(), o.getOrderSide().substring("OPEN_".length())));
                 if (plan != null) {
                     // 挂出时刻按订单自己的
                     long placed = TradePairing.msOf(o.getCreatedAt());
-                    row.set("plan", MAPPER.createObjectNode()
+                    ObjectNode planJson = MAPPER.createObjectNode()
                             .put("playType", plan.getPlayType())
                             .put("invalidationCondition", plan.getInvalidationCondition())
                             .put("placedAt", TIME_FMT.format(Instant.ofEpochMilli(placed)))
-                            .put("pendingFor", humanizeHeld(prompts, lang, boundaryTime - placed)));
+                            .put("pendingFor", humanizeHeld(prompts, lang, boundaryTime - placed));
+                    if (plan.getEntriesJson() != null) {
+                        planJson.set("entries", PlanEntry.summary(plan));
+                    }
+                    row.set("plan", planJson);
                 }
             }
             po.add(row);

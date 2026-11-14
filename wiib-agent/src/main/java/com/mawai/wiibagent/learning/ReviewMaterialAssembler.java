@@ -8,6 +8,7 @@ import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TargetRung;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.trade.TradeActions;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
@@ -139,12 +140,20 @@ public class ReviewMaterialAssembler {
                 idsByPlay.computeIfAbsent(Objects.toString(c.playType(), ""), k -> new ArrayList<>()).add(c.pos().getId());
             }
         }
-        // 没绑过仓位就归档的计划 = 没成交就撤掉的限价单（没存仓位 id 的旧计划靠时间配上了仓位，不算）
-        List<CaseFileBuilder.CancelledLimit> cancelled = plans.stream()
-                .filter(p -> AiTraderPlan.STATUS_CLOSED.equals(p.getStatus()) && p.getPositionId() == null && !isStale(p))
-                .filter(p -> !planByPos.containsValue(p))
-                .filter(p -> p.getClosedWakeTime() > fromMs && p.getClosedWakeTime() <= toMs)
-                .map(p -> caseFiles.cancelledLimit(p, lastSeenPending(trader, p))).filter(Objects::nonNull).toList();
+        List<CaseFileBuilder.CancelledLimit> cancelled = new ArrayList<>();
+        for (AiTraderPlan plan : plans) {
+            if (isStale(plan)) continue;
+            List<PlanEntry> entries = PlanEntry.read(plan);
+            if (!entries.isEmpty()) {
+                entries.stream().filter(e -> "CANCELLED".equals(e.getStatus()) && e.getLimitPrice() != null
+                                && e.getClosedAt() > fromMs && e.getClosedAt() <= toMs)
+                        .map(e -> caseFiles.cancelledLimit(plan, e)).filter(Objects::nonNull).forEach(cancelled::add);
+            } else if (AiTraderPlan.STATUS_CLOSED.equals(plan.getStatus()) && plan.getPositionId() == null
+                    && !planByPos.containsValue(plan) && plan.getClosedWakeTime() > fromMs && plan.getClosedWakeTime() <= toMs) {
+                CaseFileBuilder.CancelledLimit item = caseFiles.cancelledLimit(plan, lastSeenPending(trader, plan));
+                if (item != null) cancelled.add(item);
+            }
+        }
         String stats = playStats.assemble(trader, lang);
         return new ReviewMaterial(
                 statsBlock(trader, fromMs, toMs, visible, maybeTruncated, lang),
@@ -265,12 +274,13 @@ public class ReviewMaterialAssembler {
                 AiTraderPlan plan = c.plan();
                 sb.append(prompts.get(lang, "reviewer.label.cancelledRow", Map.of(
                         "symbol", plan.getSymbol(), "side", plan.getSide(),
-                        "limit", plain(plan.getEntryPrice()),
-                        "stop", plain(plan.getStopLossPrice()),
-                        "target", targets(plan, lang),
-                        "closed", TIME_FMT.format(Instant.ofEpochMilli(plan.getClosedWakeTime())),
+                        "limit", plain(c.limit()),
+                        "stop", plain(c.stop()),
+                        "target", targets(c.targets(), lang),
+                        "closed", TIME_FMT.format(Instant.ofEpochMilli(c.cancelledAt())),
+                        "reason", c.entry() == null ? prompts.get(lang, "trader.cancelReason.unknown") : nullSafe(c.entry().getReason()),
                         "touched", prompts.get(lang, c.touchedLimit() ? "reviewer.label.reached" : "reviewer.label.notReached"),
-                        "targetsAfter", targetsAfter(plan, c.reachedTargets(), lang)))).append('\n');
+                        "targetsAfter", targetsAfter(c.targets(), c.reachedTargets(), lang)))).append('\n');
             }
         }
         return sb.toString();
@@ -294,13 +304,20 @@ public class ReviewMaterialAssembler {
 
     /** 计划里的止盈档写法；没计划或没设止盈写"无" */
     private String targets(AiTraderPlan plan, AgentLang lang) {
-        List<TargetRung> rungs = TargetRung.of(plan);
+        return targets(TargetRung.of(plan), lang);
+    }
+
+    private String targets(List<TargetRung> rungs, AgentLang lang) {
         return rungs.isEmpty() ? prompts.get(lang, "reviewer.label.none") : TargetRung.text(rungs);
     }
 
     /** "之后到过原目标 1/2 档"；没设止盈、数据不够各有一句。reached 为 null＝出场后数据不够 24 小时 */
     private String targetsAfter(AiTraderPlan plan, Integer reached, AgentLang lang) {
-        int total = TargetRung.of(plan).size();
+        return targetsAfter(TargetRung.of(plan), reached, lang);
+    }
+
+    private String targetsAfter(List<TargetRung> targets, Integer reached, AgentLang lang) {
+        int total = targets.size();
         if (total == 0) {
             return prompts.get(lang, "reviewer.label.caseNoTarget");
         }
@@ -312,7 +329,9 @@ public class ReviewMaterialAssembler {
         AiTraderPlan plan = c.plan();
         CaseFileBuilder.Path p = c.path();
         String none = prompts.get(lang, "reviewer.label.none");
-        StringBuilder sb = new StringBuilder(tradeLine(c.pos(), plan, lang)).append('\n');
+        StringBuilder sb = new StringBuilder(tradeLine(c.pos(), plan, lang));
+        if (CaseFileBuilder.hasFilledAdds(plan)) sb.append(prompts.get(lang, "reviewer.label.caseWithAdds"));
+        sb.append('\n').append(entriesLine(plan, lang));
         sb.append(prompts.get(lang, "reviewer.label.casePath", Map.ofEntries(
                 Map.entry("mfe", or(p.mfePrice(), none)),
                 Map.entry("mfeAt", p.mfeAt() == null ? none : HM_FMT.format(Instant.ofEpochMilli(p.mfeAt()))),
@@ -354,6 +373,33 @@ public class ReviewMaterialAssembler {
         return sb.toString();
     }
 
+    private String entriesLine(AiTraderPlan plan, AgentLang lang) {
+        List<PlanEntry> entries = PlanEntry.read(plan);
+        if (entries.isEmpty() || entries.size() == 1 && "FILLED".equals(entries.getFirst().getStatus())) return "";
+        List<String> rows = new ArrayList<>();
+        BigDecimal planned = BigDecimal.ZERO, filled = BigDecimal.ZERO;
+        for (PlanEntry entry : entries) {
+            planned = planned.add(entry.getQuantity());
+            String state = switch (entry.getStatus()) {
+                case "FILLED" -> {
+                    filled = filled.add(entry.getQuantity());
+                    yield prompts.get(lang, "reviewer.label.entryFilled", Map.of("price", plain(entry.getFilledPrice()),
+                            "time", TIME_FMT.format(Instant.ofEpochMilli(entry.getClosedAt()))));
+                }
+                case "CANCELLED" -> prompts.get(lang, "reviewer.label.entryCancelled",
+                        Map.of("time", TIME_FMT.format(Instant.ofEpochMilli(entry.getClosedAt())), "reason",
+                                entry.getReason() == null ? prompts.get(lang, "trader.cancelReason.unknown") : entry.getReason()));
+                case "UNKNOWN" -> prompts.get(lang, "reviewer.label.entryUnknown");
+                default -> prompts.get(lang, "reviewer.label.entryPending");
+            };
+            rows.add(prompts.get(lang, "reviewer.label.entryRow", Map.of(
+                    "price", entry.getLimitPrice() == null ? prompts.get(lang, "reviewer.label.entryMarket") : plain(entry.getLimitPrice()),
+                    "qty", plain(entry.getQuantity()), "add", entry.isAdd() ? prompts.get(lang, "reviewer.label.entryAdd") : "", "state", state)));
+        }
+        return prompts.get(lang, "reviewer.label.caseEntries", Map.of("entries", String.join(" / ", rows),
+                "planned", plain(planned), "filled", plain(filled))) + "\n";
+    }
+
     /** 一笔的重放行：实际几 R、开仓后 24 小时的顺向逆向与拿满的位置、每档止损宽度的结局 */
     private String replayLine(CaseFileBuilder.Replay r, AgentLang lang) {
         List<String> widths = new ArrayList<>();
@@ -369,8 +415,8 @@ public class ReviewMaterialAssembler {
         }
         return prompts.get(lang, "reviewer.label.caseReplay", Map.of(
                 "actual", r.actualR() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.actualR()),
-                "fav", signedR(r.fav24R()),
-                "adv", signedR(r.adv24R()),
+                "fav", r.fav24R() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.fav24R()),
+                "adv", r.adv24R() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.adv24R()),
                 "hold", r.hold24R() == null ? prompts.get(lang, "reviewer.label.replayHoldShort") : signedR(r.hold24R()),
                 "widths", String.join(prompts.get(lang, "reviewer.label.replaySep"), widths)));
     }

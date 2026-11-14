@@ -36,6 +36,26 @@ class TraderWakeupRunnerAccountStateTest {
 
     private final PromptCatalog prompts = new PromptCatalog();
 
+    @Test
+    void pendingEntriesExposeProtectionAndAdditionalStopScenario() {
+        AiTraderPlan plan = new AiTraderPlan(); plan.setSymbol("BTCUSDT"); plan.setSide("SHORT");
+        plan.setEntriesJson("[{\"limitPrice\":104,\"quantity\":4,\"status\":\"PENDING\"}]");
+        FuturesOrderResponse order = new FuturesOrderResponse();
+        order.setOrderId(1L); order.setSymbol("BTCUSDT"); order.setOrderSide("OPEN_SHORT");
+        order.setQuantity(new BigDecimal("4")); order.setLimitPrice(new BigDecimal("104")); order.setLeverage(10);
+        order.setCreatedAt(LocalDateTime.now());
+        order.setStopLosses(List.of(new FuturesStopLoss("s", new BigDecimal("108"), new BigDecimal("4"))));
+        order.setTakeProfits(List.of(new FuturesTakeProfit("t", new BigDecimal("90"), new BigDecimal("4"))));
+        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("1000"),
+                List.of(), List.of(order), List.of(plan), BOUNDARY, Map.of()));
+        assertThat(out.path("lossIfPendingFillPctOfEquity").asDecimal()).isEqualByComparingTo("1.6");
+        var pending = out.path("pendingOrders").get(0);
+        assertThat(pending.path("lossAtStopPctOfEquity").asDecimal()).isEqualByComparingTo("1.6");
+        assertThat(pending.path("stopLosses")).hasSize(1);
+        assertThat(pending.path("takeProfits")).hasSize(1);
+        assertThat(pending.path("plan").path("entries").get(0).path("status").asString()).isEqualTo("PENDING");
+    }
+
     /** 挂出时刻按订单自己的 createdAt，不按计划的（同键几张挂单共用一份计划） */
     @Test
     void pendingOpenOrderCarriesPlacedAtAndPendingFor() {

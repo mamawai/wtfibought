@@ -302,8 +302,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         List<FuturesStopLoss> mergedSl;
         List<FuturesTakeProfit> mergedTp;
         try {
-            mergedSl = mergeSlList(position.getStopLosses(), order.getStopLosses(), newQty);
-            mergedTp = mergeTpList(position.getTakeProfits(), order.getTakeProfits(), newQty);
+            mergedSl = mergeSlList(position.getStopLosses(), order.getStopLosses(), oldQty, position.getSide());
+            mergedTp = mergeTpList(position.getTakeProfits(), order.getTakeProfits(), oldQty, position.getSide());
         } catch (BizException e) {
             // 动钱之前拦住：档位超限不硬成交，撤单退款
             cancelTriggeredOrderAndRefund(order, "sltp_split_limit");
@@ -324,13 +324,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         if (mergedSl != null) positionMapper.updateStopLosses(position.getId(), mergedSl);
         if (mergedTp != null) positionMapper.updateTakeProfits(position.getId(), mergedTp);
-        // 只注册新增档位的触发索引（存量已在册）
-        if (order.getStopLosses() != null && !order.getStopLosses().isEmpty()) {
-            positionIndexService.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), order.getStopLosses());
-        }
-        if (order.getTakeProfits() != null && !order.getTakeProfits().isEmpty()) {
-            positionIndexService.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), order.getTakeProfits());
-        }
+        syncProtectionIndex(position, mergedSl, mergedTp, positionIndexService);
 
         if (!position.isCross()) {
             BigDecimal newMargin = position.getMargin().add(addMargin);
@@ -431,6 +425,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
             positionIndexService.unregisterAll(position);
             cancelCloseOrders(position.getId(), orderMapper, cacheService);
+            cancelGroupedOpenOrders(position, orderMapper, userMapper, cacheService);
         } else {
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) {
@@ -471,7 +466,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     }
 
     private void cancelTriggeredOrderAndRefund(FuturesOrder order, String reason) {
-        int affected = orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
+        int affected = orderMapper.casCancel(order.getId(), "PROCESSING", reason);
         if (affected == 0) return;
 
         // 全仓单没冻结过钱，状态翻转后挂单占用自动消失，无需退款

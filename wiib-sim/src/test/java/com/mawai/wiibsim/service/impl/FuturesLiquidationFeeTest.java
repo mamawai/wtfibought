@@ -158,6 +158,7 @@ class FuturesLiquidationFeeTest {
         ArgumentCaptor<BigDecimal> back = ArgumentCaptor.forClass(BigDecimal.class);
         verify(userMapper).atomicUpdateBalance(eq(7L), back.capture());
         assertThat(back.getValue()).isEqualByComparingTo("38.82");
+        verify(orderMapper).cancelGroupedOpenOrders(7L, "BTCUSDT", "OPEN_LONG");
         verify(bankruptcy).bankruptIfNothingLeft(7L);
     }
 
@@ -222,6 +223,7 @@ class FuturesLiquidationFeeTest {
 
         assertThat(resp.getStatus()).isEqualTo("FILLED");
         verify(positionMapper).casClosePosition(eq(9L), eq("CLOSED"), any(), any());
+        verify(orderMapper).cancelGroupedOpenOrders(7L, "BTCUSDT", "OPEN_LONG");
         verify(positionMapper, never()).casClosePosition(anyLong(), eq("LIQUIDATED"), any(), any());
     }
 
@@ -296,6 +298,7 @@ class FuturesLiquidationFeeTest {
         // 盈亏 −10、手续费 0.05，清算费 1.13 → 结算 −11.18
         assertThat(insertedOrders(1).getFirst().getLiquidationFee()).isEqualByComparingTo("1.13");
         assertThat(settled()).isEqualByComparingTo("-11.18");
+        verify(orderMapper).cancelGroupedOpenOrders(7L, "BTCUSDT", "OPEN_LONG");
         verify(userMapper).selectByIdForUpdate(7L);
         verify(bankruptcy).bankruptIfNothingLeft(7L);
     }

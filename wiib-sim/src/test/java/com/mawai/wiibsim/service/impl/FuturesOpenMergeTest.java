@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
+import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
@@ -295,5 +296,50 @@ class FuturesOpenMergeTest {
 
         verify(positionMapper).insert(any(FuturesPosition.class));
         verify(positionIndexService).registerPositionIndex(any(FuturesPosition.class));
+    }
+
+    @Test
+    void samePriceAddUsesOldIndexAndRemovesExhaustedOldStop() {
+        FuturesPosition p = pos(1L, "LONG", "CROSS", 50, "90", "1", "1.80");
+        FuturesStopLoss tight = new FuturesStopLoss("tight", new BigDecimal("85"), BigDecimal.ONE);
+        tight.setCreatedAt(123L);
+        FuturesStopLoss wide = new FuturesStopLoss("wide", new BigDecimal("80"), BigDecimal.ONE);
+        p.setStopLosses(List.of(tight, wide));
+        when(positionMapper.selectList(any())).thenReturn(List.of(p));
+        FuturesOpenRequest req = marketReq("LONG", "CROSS", 50, "1");
+        req.setGroupId("group");
+        FuturesOpenRequest.StopLoss sl = new FuturesOpenRequest.StopLoss();
+        sl.setPrice(new BigDecimal("85")); sl.setQuantity(BigDecimal.ONE);
+        req.setStopLosses(List.of(sl));
+        assertThat(service.doOpenPosition(UID, req).getGroupId()).isEqualTo("group");
+        verify(positionMapper).updateStopLosses(eq(1L), argThat(l -> l.size() == 1
+                && l.getFirst().getId().equals("tight") && l.getFirst().getCreatedAt() == 123L
+                && l.getFirst().getQuantity().compareTo(new BigDecimal("2")) == 0));
+        verify(positionIndexService).unregisterStopLosses(1L, SYMBOL, "LONG", List.of(wide));
+        verify(positionIndexService, never()).registerStopLosses(anyLong(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void pendingProtectionOnlyChangesProvidedListAndRejectsTriggerRace() {
+        FuturesOrder order = new FuturesOrder();
+        order.setUserId(UID); order.setStatus("PENDING"); order.setOrderType("LIMIT");
+        order.setOrderSide("OPEN_LONG"); order.setQuantity(BigDecimal.ONE); order.setLimitPrice(new BigDecimal("100"));
+        when(orderMapper.selectById(8L)).thenReturn(order);
+        when(orderMapper.updatePendingProtection(eq(UID), eq(8L), anyList(), isNull())).thenReturn(1);
+        FuturesOrderProtectionRequest req = new FuturesOrderProtectionRequest();
+        FuturesOpenRequest.StopLoss sl = new FuturesOpenRequest.StopLoss();
+        sl.setPrice(new BigDecimal("90")); sl.setQuantity(BigDecimal.ONE);
+        req.setStopLosses(List.of(sl));
+        service.setOrderProtection(UID, 8L, req);
+        verify(orderMapper).updatePendingProtection(eq(UID), eq(8L), argThat(l -> l.getFirst().getPrice().compareTo(sl.getPrice()) == 0), isNull());
+        req.setStopLosses(List.of());
+        service.setOrderProtection(UID, 8L, req);
+        verify(orderMapper).updatePendingProtection(UID, 8L, List.of(), null);
+        when(orderMapper.updatePendingProtection(eq(UID), eq(8L), anyList(), isNull())).thenReturn(0);
+        assertThatThrownBy(() -> service.setOrderProtection(UID, 8L, req)).isInstanceOf(BizException.class);
+        order.setStatus("TRIGGERED");
+        clearInvocations(orderMapper);
+        assertThatThrownBy(() -> service.setOrderProtection(UID, 8L, req)).isInstanceOf(BizException.class);
+        verify(orderMapper, never()).updatePendingProtection(anyLong(), anyLong(), any(), any());
     }
 }

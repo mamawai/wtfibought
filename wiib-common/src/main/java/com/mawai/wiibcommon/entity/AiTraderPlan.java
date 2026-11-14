@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
  * 每次唤醒把活着的计划原样塞回提示词——没记忆的模型才看得见这仓当初为什么开、什么情况算论点错了、
  * 止损为什么在这个价格。invalidationCondition 是"什么市场状况说明论点错了"，什么时候平仓由模型自己定。
  * <p>
- * 价格字段是开仓时的快照永不改，当前生效的止损止盈单在 sim 仓位上；移止损、加仓、平仓、补立
+ * 价格字段是最近一次开仓或加仓的快照，当前生效的止损止盈单在 sim 上；移止损、加仓、平仓、补立
  * 都往 revisionsJson 追加一条带理由的记录。平了归档不删，论点配结局喂复盘和论点战绩；
  * stale=主人说这笔不算数，退出统计。
  * <p>
@@ -51,13 +51,14 @@ public class AiTraderPlan {
     /** 失效条件：什么市场状况证明论点错了（市场条件而非盈亏数字），触发才允许主动平仓 */
     private String invalidationCondition;
 
-    /** 开仓时点入场参考价快照（市价=当时现价，限价=限价） */
+    /** 最近一次开仓或加仓的加权入场参照价。 */
     private BigDecimal entryPrice;
 
-    /** 原始止损快照；当前生效止损以 sim 仓位为准（可能已上移锁盈） */
+    /** 最近一次开仓或加仓的止损快照；现挂止损以 sim 为准。 */
     private BigDecimal stopLossPrice;
 
-    /** 开仓时的止盈分档快照 JSON [{price,percent}]，由近到远；没设止盈为 null。当前挂着的止盈单以 sim 仓位为准 */
+    /** 最近一次开仓或加仓的止盈分档 [{price,percent}]，没设为 null；现挂止盈以 sim 为准。 */
+    @TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
     private String takeProfitsJson;
 
     /** 开仓所在唤醒边界(ms)，回注时计算已持有时长 */
@@ -65,7 +66,7 @@ public class AiTraderPlan {
 
     /**
      * 修订历史追加式 JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行。
-     * 修改必须留痕带理由（回注给下轮无记忆的模型看）；计划本体价格字段永远是原始快照，当前生效单在 sim 仓位上。
+     * 修改必须留痕带理由（回注给下轮无记忆的模型看）；价格字段是最近一次开仓或加仓的快照，当前生效单在 sim 仓位上。
      */
     private String revisionsJson;
 
@@ -88,10 +89,15 @@ public class AiTraderPlan {
     private Long positionId;
 
     /**
-     * 开仓那一刻的上下文快照 JSON：orderType / leverage / placedAt / hourBj / stopPct / atr1h / stopAtr / adx1h / bollBw1h /
+     * 最近一次开仓或加仓的上下文快照 JSON：orderType / leverage / placedAt / hourBj / stopPct / atr1h / stopAtr / adx1h / bollBw1h /
      * eventMin / eventTitle / funding（见 EntryContext）。复盘按维度对照用；取不到的字段缺席，整体可为 null
      */
     private String entryCtxJson;
+
+    private String orderGroup;
+
+    /** 逐档原始安排与执行状态，首批档的 add 为 false。 */
+    private String entriesJson;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

@@ -1,11 +1,15 @@
 package com.mawai.wiibagent.learning;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
+import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.math.BigDecimal;
 import java.nio.file.Files;
@@ -174,10 +178,10 @@ class CaseFileBuilderTest {
         assertThat(r.widths()).extracting(CaseFileBuilder.WidthOutcome::outcome).containsExactly(
                 CaseFileBuilder.Outcome.STOP, CaseFileBuilder.Outcome.STOP,
                 CaseFileBuilder.Outcome.TARGET, CaseFileBuilder.Outcome.TARGET);
-        // 到目标按同样风险折算：目标距离 6 ÷ 止损距离 4、6
-        assertThat(r.widths().get(2).r()).isEqualByComparingTo("1.5");
-        assertThat(r.widths().get(3).r()).isEqualByComparingTo("1");
-        assertThat(r.untouched().r()).isEqualByComparingTo("-1");
+        // 等风险折算后的净收益。
+        assertThat(r.widths().get(2).r()).isEqualByComparingTo("1.48");
+        assertThat(r.widths().get(3).r()).isEqualByComparingTo("0.99");
+        assertThat(r.untouched().r()).isEqualByComparingTo("-1.04");
     }
 
     /**
@@ -202,10 +206,33 @@ class CaseFileBuilderTest {
         List<CaseFileBuilder.WidthOutcome> noTarget = builder.replay(pos, plan("98", null, null)).widths();
 
         assertThat(laddered).allMatch(w -> w.outcome() == CaseFileBuilder.Outcome.TARGET);
-        assertThat(laddered).extracting(w -> w.r().toPlainString()).containsExactly("0.00", "-0.17", "1.00", "0.67");
+        assertThat(laddered).extracting(w -> w.r().toPlainString()).containsExactly("-0.04", "-0.19", "0.98", "0.65");
         assertThat(noTarget).extracting(CaseFileBuilder.WidthOutcome::outcome).containsExactly(
                 CaseFileBuilder.Outcome.STOP, CaseFileBuilder.Outcome.STOP,
                 CaseFileBuilder.Outcome.OPEN, CaseFileBuilder.Outcome.OPEN);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"LIMIT,-1.03", "MARKET,-1.04", "MISSING,-1.04"})
+    void replayChargesEntryAndStopFees(String orderType, String expected) {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 + M5, new double[]{100, 101, 97, 98})));
+        String ctx = "MISSING".equals(orderType) ? null : "{\"orderType\":\"" + orderType + "\"}";
+
+        var replay = builder.replay(position("LONG", "100", "98", T0, T0 + M5), plan("98", null, ctx));
+
+        assertThat(replay.untouched().r()).isEqualByComparingTo(expected);
+    }
+
+    @Test
+    void actualReplayReturnExcludesFunding() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 + M5, new double[]{100, 101, 97, 98})));
+        FuturesPositionDTO pos = position("LONG", "100", "98", T0, T0 + M5);
+        pos.setOpenedQuantity(BigDecimal.TEN);
+        pos.setFundingFeeTotal(BigDecimal.TEN);
+
+        assertThat(builder.replay(pos, plan("98", null, null)).actualR()).isEqualByComparingTo("-2.00");
     }
 
     /** 撤掉的限价单：从给的那一刻起，价格到没到过限价位、到过几档止盈 */
@@ -342,6 +369,151 @@ class CaseFileBuilderTest {
 
         assertThat(builder.changes("BTCUSDT", T0 + 120_000L, hour, 4 * hour))
                 .containsExactly(new BigDecimal("10.00"), null);
+    }
+
+    private static PlanEntry entry(String limit, String quantity, String stop, String target, String status, long time, String fee) {
+        PlanEntry entry = new PlanEntry();
+        entry.setLimitPrice(limit == null ? null : new BigDecimal(limit)); entry.setQuantity(new BigDecimal(quantity));
+        entry.setStop(new BigDecimal(stop)); entry.setTargets(target == null ? List.of() : List.of(new TargetRung(new BigDecimal(target), new BigDecimal("100"))));
+        entry.setPlacedAt(T0); entry.setStatus(status); entry.setClosedAt(time);
+        if ("FILLED".equals(status)) {
+            entry.setFilledPrice(new BigDecimal(limit == null ? "100" : limit)); entry.setFee(new BigDecimal(fee));
+        }
+        return entry;
+    }
+
+    private static AiTraderPlan ladder(PlanEntry... entries) {
+        AiTraderPlan plan = plan(entries[0].getStop().toPlainString(), null, "{\"orderType\":\"LADDER\"}");
+        PlanEntry.save(plan, List.of(entries)); return plan;
+    }
+
+    @Test
+    void partialActualFillUsesWholeInitialBudgetAndReplayCanFillAllThree() {
+        PlanEntry first = entry("102", "3", "108", null, "FILLED", T0 + M5, "0.1");
+        first.setFilledPrice(new BigDecimal("101.9"));
+        AiTraderPlan plan = ladder(first, entry("104", "4", "108", null, "CANCELLED", T0 + M5, "0"),
+                entry("106", "3", "108", null, "CANCELLED", T0 + M5, "0"));
+        FuturesPositionDTO pos = position("SHORT", "101.9", "108", T0 + M5, T0 + 3 * M5);
+        pos.setOpenedQuantity(new BigDecimal("3")); pos.setClosedPnl(new BigDecimal("-21.5296")); pos.setFundingFeeTotal(new BigDecimal("3"));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 + M5, new double[]{102, 103, 101, 102}), bar(T0 + 2 * M5, new double[]{104, 107, 103, 106}),
+                bar(T0 + 3 * M5, new double[]{108, 109, 107, 108}), bar(T0 + 4 * M5, new double[]{110, 111, 109, 110}),
+                bar(T0 + 5 * M5, new double[]{112, 113, 111, 112}), bar(T0 + 6 * M5, new double[]{116, 117, 115, 116})));
+        var replay = builder.replay(pos, plan);
+        assertThat(replay.actualR()).isEqualByComparingTo("-0.46");
+        assertThat(replay.untouched().r()).isEqualByComparingTo("-1.02");
+        assertThat(replay.widths().get(2).r()).isEqualByComparingTo("-1.01");
+        assertThat(replay.widths()).allMatch(w -> w.outcome() == CaseFileBuilder.Outcome.STOP);
+    }
+
+    @Test
+    void remainingLimitsLapseAfterFirstEntryFullyTakesProfit() {
+        AiTraderPlan plan = ladder(entry("102", "3", "110", "100", "FILLED", T0 + M5, "0.0612"),
+                entry("106", "7", "110", "100", "CANCELLED", T0 + M5, "0"));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 + M5, new double[]{102, 103, 101, 102}), bar(T0 + 2 * M5, new double[]{102, 103, 100, 100}),
+                bar(T0 + 3 * M5, new double[]{106, 111, 105, 110})));
+        var replay = builder.replay(position("SHORT", "102", "100", T0 + M5, T0 + 2 * M5), plan);
+        assertThat(replay.untouched().outcome()).isEqualTo(CaseFileBuilder.Outcome.TARGET);
+        assertThat(replay.untouched().r()).isEqualByComparingTo("0.11");
+    }
+
+    @Test
+    void cancelledEntryCanFillAndFinishBeforeActualFirstFillWithoutChangingActualPath() {
+        AiTraderPlan plan = ladder(entry("102", "3", "110", "100", "CANCELLED", T0 + M5, "0"),
+                entry("106", "7", "110", "100", "FILLED", T0 + 3 * M5, "0.1484"));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{103, 111, 99, 102}), bar(T0 + M5, new double[]{102, 103, 99.5, 102}),
+                bar(T0 + 2 * M5, new double[]{102, 103, 100, 100}), bar(T0 + 3 * M5, new double[]{106, 107, 105, 106})));
+        var result = builder.build(position("SHORT", "106", "106", T0 + 3 * M5, T0 + 4 * M5), plan);
+        assertThat(result.replay().untouched().r()).isEqualByComparingTo("0.11");
+        assertThat(result.path().mfePrice()).isEqualByComparingTo("105");
+        org.mockito.Mockito.verify(store).load(org.mockito.ArgumentMatchers.eq("BTCUSDT"), org.mockito.ArgumentMatchers.eq("5m"),
+                org.mockito.ArgumentMatchers.eq(T0), anyLong());
+    }
+
+    @Test
+    void sameBarEntryStopAndTargetUsesStopAndNewFillsCannotTakeProfit() {
+        AiTraderPlan plan = ladder(entry(null, "1", "98", "104", "FILLED", T0 + M5, "0.2"));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 + M5, new double[]{100, 105, 97, 100}), bar(T0 + 2 * M5, new double[]{100, 103, 95, 99})));
+        var replay = builder.replay(position("LONG", "100", "98", T0 + M5, T0 + 2 * M5), plan);
+        assertThat(replay.untouched().outcome()).isEqualTo(CaseFileBuilder.Outcome.STOP);
+        assertThat(replay.untouched().r()).isEqualByComparingTo("-1.12");
+        assertThat(replay.widths().get(2).outcome()).isEqualTo(CaseFileBuilder.Outcome.STOP);
+        assertThat(replay.widths().get(2).r()).isEqualByComparingTo("-1.06");
+        assertThat(replay.widths().get(3).outcome()).isEqualTo(CaseFileBuilder.Outcome.OPEN);
+    }
+
+    @Test
+    void smallEntryTargetUsesQuantityStepsAndLastRungRemainder() {
+        PlanEntry entry = entry("100", "0.003", "98", null, "FILLED", T0, "0");
+        entry.setTargets(List.of(new TargetRung(new BigDecimal("102"), new BigDecimal("50")),
+                new TargetRung(new BigDecimal("106"), new BigDecimal("50"))));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 101, 99, 100}), bar(T0 + M5, new double[]{100, 103, 99, 101}),
+                bar(T0 + 2 * M5, new double[]{101, 101, 97, 98})));
+        var replay = builder.replay(position("LONG", "100", "98", T0, T0 + 2 * M5), ladder(entry));
+        assertThat(replay.untouched().outcome()).isEqualTo(CaseFileBuilder.Outcome.TARGET);
+        assertThat(replay.untouched().r()).isEqualByComparingTo("-0.35");
+    }
+
+    @Test
+    void addedEntriesStayInActualAndAreCountedButNotReplayed() {
+        PlanEntry add = entry("105", "2", "99", null, "FILLED", T0 + M5, "0.084"); add.setAdd(true);
+        AiTraderPlan plan = ladder(entry("100", "1", "98", "104", "FILLED", T0, "0.04"), add);
+        plan.setStopLossPrice(new BigDecimal("99"));
+        FuturesPositionDTO pos = position("LONG", "103.33", "104", T0, T0 + 2 * M5);
+        pos.setClosedPnl(new BigDecimal("4")); pos.setFundingFeeTotal(BigDecimal.ONE);
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 101, 99, 100}), bar(T0 + M5, new double[]{100, 105, 99, 104})));
+        var replay = builder.replay(pos, plan);
+        assertThat(replay.actualR()).isEqualByComparingTo("2.50");
+        assertThat(replay.untouched().r()).isEqualByComparingTo("1.96");
+        assertThat(replay.withAdds()).isTrue();
+        assertThat(CaseFileBuilder.summarize(List.of(replay)).withAdds()).isEqualTo(1);
+    }
+
+    @Test
+    void plansWithOnlyAddsStillUseLegacyReplay() {
+        AiTraderPlan plan = plan("98", null, null);
+        FuturesPositionDTO pos = position("LONG", "100", "98", T0, T0 + M5); pos.setOpenedQuantity(BigDecimal.TEN);
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(bar(T0 + M5, new double[]{100, 101, 97, 98})));
+        var before = builder.replay(pos, plan);
+        PlanEntry add = entry("101", "1", "97", null, "FILLED", T0, "0.04"); add.setAdd(true);
+        PlanEntry.save(plan, List.of(add));
+        var after = builder.replay(pos, plan);
+        assertThat(after.actualR()).isEqualByComparingTo(before.actualR());
+        assertThat(after.widths()).isEqualTo(before.widths());
+    }
+
+    @Test
+    void unknownInitialEntryExcludesTheReplay() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(bar(T0 + M5, new double[]{100, 101, 97, 98})));
+        assertThat(builder.replay(position("LONG", "100", "98", T0, T0 + M5),
+                ladder(entry("100", "1", "98", null, "UNKNOWN", T0, "0")))).isNull();
+    }
+
+    @Test
+    void limitCanHypotheticallyFillBeforeItsRecordedFillTime() {
+        PlanEntry entry = entry("100", "1", "98", null, "FILLED", T0 + 3 * M5, "0.5");
+        entry.setFilledPrice(new BigDecimal("100.2"));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 + M5, new double[]{100, 101, 99, 100}), bar(T0 + 2 * M5, new double[]{100, 101, 97, 98})));
+        assertThat(builder.replay(position("LONG", "100.2", "98", T0 + 3 * M5, T0 + 4 * M5), ladder(entry))
+                .untouched().r()).isEqualByComparingTo("-1.03");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"863,STOP", "864,OPEN"})
+    void seventyTwoHourLimitStartsAtFirstFill(int offset, CaseFileBuilder.Outcome expected) {
+        long fill = T0 + 1000 * M5;
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 101, 97, 100}), bar(fill, new double[]{100, 101, 99, 100}),
+                bar(fill + offset * M5, new double[]{100, 101, 97, 98})));
+        var replay = builder.replay(position("LONG", "100", "98", fill, fill + M5),
+                ladder(entry("100", "1", "98", null, "CANCELLED", T0 + M5, "0")));
+        assertThat(replay.untouched().outcome()).isEqualTo(expected);
     }
 
     private static KlineBar bar(long openTime, double[] ohlc) {

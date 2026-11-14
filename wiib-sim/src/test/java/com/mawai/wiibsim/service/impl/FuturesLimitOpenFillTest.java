@@ -78,7 +78,7 @@ class FuturesLimitOpenFillTest {
         when(userService.getById(UID)).thenReturn(user);
         when(bracketRegistry.getEffectiveMaxLeverage(anyString(), any())).thenReturn(150);
         when(orderMapper.casMarkProcessing(anyLong())).thenReturn(1);
-        when(orderMapper.casUpdateStatus(anyLong(), anyString(), anyString())).thenReturn(1);
+        when(orderMapper.casCancel(anyLong(), anyString(), anyString())).thenReturn(1);
         when(orderMapper.casUpdateToFilled(anyLong(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(positionMapper.atomicIncreasePosition(anyLong(), any(), any(), any())).thenReturn(1);
         // 资金方法返"变动后余额"，非 null 即成功；具体数值本类不断言，给个占位即可。
@@ -170,6 +170,22 @@ class FuturesLimitOpenFillTest {
                 && e.quantity().compareTo(BigDecimal.ONE) == 0));
     }
 
+    @Test
+    void samePriceFillKeepsOldProtectionIndexAndTimestamp() {
+        FuturesPosition p = pos(1L, "LONG", "CROSS", 50, "90", "1", "1.80");
+        FuturesStopLoss old = new FuturesStopLoss("old", bd("100"), BigDecimal.ONE);
+        old.setCreatedAt(1000L);
+        p.setStopLosses(List.of(old));
+        when(positionMapper.selectList(any())).thenReturn(List.of(p));
+        FuturesOrder order = openOrder("OPEN_LONG", "CROSS", 50, "1", "110", "2.22");
+        order.setStopLosses(List.of(new FuturesStopLoss("new", bd("100"), BigDecimal.ONE)));
+        service.doProcessTriggeredOrder(order);
+        verify(positionMapper).updateStopLosses(eq(1L), argThat(l -> l.size() == 1
+                && l.getFirst().getId().equals("old") && l.getFirst().getCreatedAt() == 1000L
+                && l.getFirst().getQuantity().compareTo(bd("2")) == 0));
+        verify(positionIndexService, never()).registerStopLosses(anyLong(), anyString(), anyString(), any());
+    }
+
     /** 并进老仓位：随单止损止盈按成交那一刻起算（挂单时刻是 1000） */
     @Test
     void 成交并入老仓位_随单止损止盈从成交这一刻起算() {
@@ -198,7 +214,7 @@ class FuturesLimitOpenFillTest {
 
         service.doProcessTriggeredOrder(openOrder("OPEN_LONG", "ISOLATED", 50, "1", "110", "2.24"));
 
-        verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
+        verify(orderMapper).casCancel(100L, "PROCESSING", "leverage_mismatch");
         verify(userMapper).atomicDeductFrozenBalance(eq(UID), argThat(f -> f.compareTo(new BigDecimal("2.24")) == 0));
         verify(userMapper).atomicUpdateBalance(eq(UID), argThat(f -> f.compareTo(new BigDecimal("2.24")) == 0));
         verify(positionMapper, never()).atomicIncreasePosition(anyLong(), any(), any(), any());
@@ -213,7 +229,7 @@ class FuturesLimitOpenFillTest {
 
         service.doProcessTriggeredOrder(openOrder("OPEN_SHORT", "CROSS", 50, "1", "110", null));
 
-        verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
+        verify(orderMapper).casCancel(100L, "PROCESSING", "margin_mode_conflict");
         verify(userMapper, never()).atomicDeductFrozenBalance(anyLong(), any());
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
     }
@@ -266,7 +282,7 @@ class FuturesLimitOpenFillTest {
 
         service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("ISOLATED"));
 
-        verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
+        verify(orderMapper).casCancel(100L, "PROCESSING", "insufficient_balance");
         verify(userMapper).atomicDeductFrozenBalance(eq(UID), argThat(f -> f.compareTo(bd("9000")) == 0));
         verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("9000")) == 0));
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
@@ -280,7 +296,7 @@ class FuturesLimitOpenFillTest {
 
         service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("ISOLATED"));
 
-        verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
+        verify(orderMapper).casCancel(100L, "PROCESSING", "insufficient_available");
         verify(userMapper, never()).atomicUpdateBalance(eq(UID), argThat(a -> a.signum() < 0));
         verify(userMapper).atomicUpdateBalance(eq(UID), argThat(a -> a.compareTo(bd("9000")) == 0));
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
@@ -294,7 +310,7 @@ class FuturesLimitOpenFillTest {
 
         service.doProcessTriggeredOrder(shortFrozenBeforeFeeRaise("CROSS"));
 
-        verify(orderMapper).casUpdateStatus(100L, "PROCESSING", "CANCELLED");
+        verify(orderMapper).casCancel(100L, "PROCESSING", "insufficient_available");
         verify(positionMapper, never()).insert(any(FuturesPosition.class));
         verify(userMapper, never()).atomicSettleBalance(anyLong(), any());
         verify(userMapper, never()).atomicDeductFrozenBalance(anyLong(), any());

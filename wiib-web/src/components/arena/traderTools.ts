@@ -1,5 +1,5 @@
 import i18n from '../../i18n';
-import type { AiTraderDecisionView } from '../../types';
+import type { AiTraderDecisionView, TraderPlanEntry } from '../../types';
 
 /**
  * trader agent 每次唤醒拿到的全部工具（与后端 TraderWakeupRunner.wakeTools 同一份清单）：
@@ -51,6 +51,18 @@ export function planTargets(json: string | null | undefined): TargetRung[] {
   }
 }
 
+export function planEntries(json: string | null | undefined): TraderPlanEntry[] {
+  try {
+    return json ? JSON.parse(json) as TraderPlanEntry[] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function entryStatus(status: string): string {
+  return i18n.t(`ai:plan.entryStatus.${status.toLowerCase()}`);
+}
+
 /** 止盈档写成「105000(50%) / 110000(50%)」 */
 function rungsText(rungs: unknown): string {
   return Array.isArray(rungs)
@@ -65,7 +77,14 @@ export interface ActionRow {
   rejected?: string;
   error?: string;
   args?: Record<string, unknown>;
-  result?: { close?: ActionRow; open?: ActionRow };
+  result?: { close?: ActionRow; open?: ActionRow; entries?: EntryResult[] };
+}
+
+interface EntryResult {
+  quantity: number;
+  limitPrice?: number;
+  filledPrice?: number;
+  status?: string;
 }
 
 export function parseActions(json: string | null): ActionRow[] {
@@ -79,14 +98,25 @@ export function parseActions(json: string | null): ActionRow[] {
 /** 不算「动过仓位」的交易工具：布盯盘、查账户 */
 const NOT_ACTING = new Set(['set_watch', 'get_account']);
 
-/** 这轮做成的交易动作；未完成的反手按已成交的操作展示。 */
+function acceptedEntry(entry: EntryResult): boolean {
+  return entry.status === 'filled' || entry.status === 'pending';
+}
+
+function doneAction(action: ActionRow): boolean {
+  if (action.rejected || action.status === 'error' || action.status === 'rejected') return false;
+  if (action.status === 'partial' || action.status === 'unknown') {
+    return action.result?.entries?.some(acceptedEntry) ?? false;
+  }
+  return action.status == null || action.status === 'ok';
+}
+
+/** 已做成的动作；分档和反手保留实际成功的部分。 */
 export function doneTrades(d: AiTraderDecisionView): ActionRow[] {
   return parseActions(d.actionsJson)
     .flatMap(a => a.tool === 'reverse_position' && a.status !== 'ok'
-      ? [a.result?.close, a.result?.open].filter((leg): leg is ActionRow => leg?.status === 'ok')
+      ? [a.result?.close, a.result?.open].filter((leg): leg is ActionRow => leg != null)
       : [a])
-    .filter(a => TRADE_TOOL_SET.has(a.tool) && !NOT_ACTING.has(a.tool) && !a.rejected
-      && a.status !== 'error' && a.status !== 'unknown');
+    .filter(a => TRADE_TOOL_SET.has(a.tool) && !NOT_ACTING.has(a.tool) && doneAction(a));
 }
 
 /** 交易动作的关键参数一行话（按工具挑重点，不倒整个 JSON）。词表在函数体里现查，切语言即变 */
@@ -96,14 +126,20 @@ export function tradeArgsSummary(a: ActionRow): string {
   switch (a.tool) {
     case 'reverse_position':
       return [tr('args.position', { id: g('positionId') }),
-        tradeArgsSummary({ ...a, tool: 'open_position' }),
+        g('quantity') && tr('args.qty', { n: g('quantity') }), g('leverage') && `${g('leverage')}x`,
+        g('stopLossPrice') && tr('args.sl', { p: g('stopLossPrice') }),
+        rungsText(a.args?.takeProfits) && tr('args.tp', { p: rungsText(a.args?.takeProfits) }), g('playType'),
         a.result?.close?.status === 'ok' && tr('args.reverseClosed'),
         a.result?.close?.status === 'liquidated' && tr('args.reverseLiquidated'),
-        a.result?.open?.status === 'ok' && tr('args.reverseOpened')].filter(Boolean).join(' · ');
+        a.result?.open?.status === 'ok' && tr('args.reverseOpened'),
+        a.result?.open?.result?.entries && entriesText(a.result.open.result.entries)].filter(Boolean).join(' · ');
     case 'open_position': {
       const tp = rungsText(a.args?.takeProfits);
+      const entries = a.result?.entries ?? (Array.isArray(a.args?.entries) ? a.args.entries as EntryResult[] : undefined);
       const parts = [g('symbol'), g('side') === 'LONG' ? tr('args.long') : g('side') === 'SHORT' ? tr('args.short') : g('side'),
-        g('quantity') && tr('args.qty', { n: g('quantity') }), g('leverage') && `${g('leverage')}x`,
+        entries ? entriesText(entries) : [g('quantity') && tr('args.qty', { n: g('quantity') }),
+          g('limitPrice') && tr('args.limit', { p: g('limitPrice') })].filter(Boolean).join(' · '),
+        g('leverage') && `${g('leverage')}x`,
         g('stopLossPrice') && tr('args.sl', { p: g('stopLossPrice') }),
         tp && tr('args.tp', { p: tp }),
         g('playType')];
@@ -127,7 +163,7 @@ export function tradeArgsSummary(a: ActionRow): string {
       return [g('playType'), g('invalidationCondition') && tr('args.invalidation', { c: g('invalidationCondition') })]
         .filter(Boolean).join(' · ');
     case 'cancel_order':
-      return tr('args.order', { id: g('orderId') });
+      return [tr('args.order', { id: g('orderId') }), g('reason')].filter(Boolean).join(' · ');
     case 'set_watch': {
       const n = Array.isArray(a.args?.watches) ? (a.args.watches as unknown[]).length : 0;
       return [g('symbol'), tr('args.watches', { n: String(n) })].filter(Boolean).join(' · ');
@@ -135,6 +171,14 @@ export function tradeArgsSummary(a: ActionRow): string {
     default:
       return '';
   }
+}
+
+function entriesText(entries: EntryResult[]): string {
+  return entries.map(entry => [
+    `${entry.limitPrice ?? i18n.t('ai:plan.marketEntry')} × ${entry.quantity}`,
+    entry.status && entryStatus(entry.status),
+    entry.filledPrice != null && i18n.t('ai:plan.filledAt', { price: entry.filledPrice }),
+  ].filter(Boolean).join(' ')).join(' / ');
 }
 
 /**

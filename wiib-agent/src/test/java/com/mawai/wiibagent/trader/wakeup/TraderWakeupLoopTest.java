@@ -143,7 +143,7 @@ class TraderWakeupLoopTest {
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
 
     private final PromptCatalog prompts = new PromptCatalog();
-    private final TraderPlanStore planStore = spy(new TraderPlanStore(planMapper, prompts));
+    private final TraderPlanStore planStore = spy(new TraderPlanStore(planMapper, prompts, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class))));
     private final DecisionText decisionText = new DecisionText(prompts);
     /** 默认（未打桩）返回 null = 本局无统计不注入 */
     private final PlayStatsAssembler playStats = mock(PlayStatsAssembler.class);
@@ -211,7 +211,20 @@ class TraderWakeupLoopTest {
         return model;
     }
 
+    private static FuturesOrderResponse filledReceipt() {
+        FuturesOrderResponse response = new FuturesOrderResponse();
+        response.setStatus("FILLED"); response.setOrderId(1L);
+        response.setFilledPrice(new BigDecimal("100000")); response.setCommission(new BigDecimal("0.4"));
+        response.setUpdatedAt(java.time.LocalDateTime.now());
+        return response;
+    }
+
     private void stubHealthyAccount() {
+        when(simTradeClient.getBrackets(any())).thenReturn(Map.of("BTCUSDT", List.of(
+                new com.mawai.wiibquant.external.sim.SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000000000"), 150, BigDecimal.ZERO, BigDecimal.ZERO))));
+        when(planMapper.selectByIdForUpdate(anyLong())).thenAnswer(call ->
+                planMapper.selectList((com.baomidou.mybatisplus.core.conditions.Wrapper<AiTraderPlan>) null).stream()
+                        .filter(p -> p.getId().equals(call.getArgument(0))).findFirst().orElse(null));
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "10000", "frozenBalance", "0"));
         when(simTradeClient.getPendingOrders(99L, null)).thenReturn(List.of());
@@ -321,7 +334,7 @@ class TraderWakeupLoopTest {
     void earlyOpeningRejectionsKeepOtherActionsInOrderAndDecisionCanOpen() {
         stubHealthyAccount();
         String openArgs = """
-                {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
+                {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":10,
                  "stopLossPrice":95000,"playType":"BREAKOUT","signalsUsed":"突破前高",
                  "invalidationCondition":"1h收盘跌破95000"}""";
         String reverseArgs = """
@@ -330,19 +343,19 @@ class TraderWakeupLoopTest {
         onlineModel(n -> switch (n) {
             case 1 -> AssistantMessage.builder().content("").toolCalls(List.of(
                     new AssistantMessage.ToolCall("open-early", "function", "open_position", openArgs),
-                    new AssistantMessage.ToolCall("cancel-first", "function", "cancel_order", "{\"orderId\":77}"))).build();
+                    new AssistantMessage.ToolCall("cancel-first", "function", "cancel_order", "{\"orderId\":77,\"reason\":\"计划失效\"}"))).build();
             case 2 -> new AssistantMessage("事实：已撤单77，提前开仓被拒绝。");
             case 3 -> AssistantMessage.builder().content("").toolCalls(List.of(
                     new AssistantMessage.ToolCall("reverse-early", "function", "reverse_position", reverseArgs),
-                    new AssistantMessage.ToolCall("cancel-second", "function", "cancel_order", "{\"orderId\":78}"))).build();
+                    new AssistantMessage.ToolCall("cancel-second", "function", "cancel_order", "{\"orderId\":78,\"reason\":\"计划失效\"}"))).build();
             case 4 -> new AssistantMessage("无需搜索，已撤单78，反手未执行。");
             case 5 -> AssistantMessage.builder().content("").toolCalls(List.of(
                     new AssistantMessage.ToolCall("open-final", "function", "open_position", openArgs))).build();
             default -> new AssistantMessage("[本轮结论]\nBTCUSDT：已撤单77、78，并开多。反手未执行。");
         });
-        when(simTradeClient.cancelOrder(99L, 77L)).thenReturn(new FuturesOrderResponse());
-        when(simTradeClient.cancelOrder(99L, 78L)).thenReturn(new FuturesOrderResponse());
-        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+        when(simTradeClient.cancelOrder(99L, 77L)).thenReturn(filledReceipt());
+        when(simTradeClient.cancelOrder(99L, 78L)).thenReturn(filledReceipt());
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
         runner.wake(trader(), 1785171600000L);
 
@@ -404,7 +417,7 @@ class TraderWakeupLoopTest {
         assertThat(actions).hasSize(1);
         assertThat(actions.get(0).path("tool").asString()).isEqualTo("web_search");
         assertThat(saved.getValue().getTraceJson()).contains("https://example.com/notice", "暂时无法确认");
-        verify(planStore).reconcile(eq(7L), eq(1), any(), any(), any(), eq(1785171600000L), eq(AgentLang.ZH));
+        verify(planStore).reconcile(eq(7L), eq(1), any(), any(), any(), any(), eq(1785171600000L), eq(AgentLang.ZH));
     }
 
     @ParameterizedTest
@@ -474,7 +487,7 @@ class TraderWakeupLoopTest {
                     : AssistantMessage.builder().content("").toolCalls(List.of(
                             new AssistantMessage.ToolCall("search", "function", "web_search", "{\"query\":\"核实公告\"}"),
                             new AssistantMessage.ToolCall("open", "function", "open_position", """
-                                    {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
+                                    {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":10,
                                      "stopLossPrice":95000,"playType":"BREAKOUT","signalsUsed":"突破前高",
                                      "invalidationCondition":"跌回前高"}"""))).build());
             when(model.call(any(Prompt.class))).thenAnswer(inv -> {
@@ -512,12 +525,12 @@ class TraderWakeupLoopTest {
         stubHealthyAccount();
         // 先建好再 stub：thenReturn 参数里嵌套 when() 是 UnfinishedStubbing
         ChatModel model = modelOpeningThenSummary("""
-                {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
+                {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":10,
+                 "stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                  "invalidationCondition":"1h收盘跌回前高98000下方"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
-        FuturesOrderResponse resp = new FuturesOrderResponse();
+        FuturesOrderResponse resp = filledReceipt();
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         // 真库 insert 回填自增 id，run_end 帧要带它
         when(decisionMapper.insert(any(AiTraderDecision.class))).thenAnswer(inv -> {
@@ -580,7 +593,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.getAllPositions(99L)).thenAnswer(inv -> positions.get());
         when(simTradeClient.closePosition(eq(99L), any())).thenAnswer(inv -> {
             positions.set(List.of());
-            FuturesOrderResponse r = new FuturesOrderResponse();
+            FuturesOrderResponse r = filledReceipt();
             r.setStatus("FILLED");
             r.setPositionId(349L);
             r.setQuantity(old.getQuantity());
@@ -592,7 +605,7 @@ class TraderWakeupLoopTest {
             next.setSide("SHORT");
             next.setLeverage(10);
             positions.set(List.of(next));
-            FuturesOrderResponse r = new FuturesOrderResponse();
+            FuturesOrderResponse r = filledReceipt();
             r.setStatus("FILLED");
             r.setPositionId(350L);
             return r;
@@ -617,7 +630,7 @@ class TraderWakeupLoopTest {
         assertThat(actions.get(0).path("tool").asString()).isEqualTo("reverse_position");
         assertThat(actions.get(0).path("status").asString()).isEqualTo("ok");
         assertThat(actions.get(0).path("result").path("close").path("result").path("positionId").asLong()).isEqualTo(349L);
-        assertThat(actions.get(0).path("result").path("open").path("result").path("positionId").asLong()).isEqualTo(350L);
+        assertThat(actions.get(0).path("result").path("open").path("result").path("entries").get(0).path("positionId").asLong()).isEqualTo(350L);
         assertThat(actions.get(1).path("tool").asString()).isEqualTo("get_account");
         verify(ledger).recordCitations(eq(7L), eq(1), eq(java.util.Set.of(3L)), eq(true));
     }
@@ -630,8 +643,8 @@ class TraderWakeupLoopTest {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         AssistantMessage openCall = AssistantMessage.builder().content("")
                 .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "open_position", """
-                        {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                         "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
+                        {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":10,
+                         "stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                          "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                          "invalidationCondition":"1h收盘跌回前高98000下方"}""")))
                 .build();
@@ -639,7 +652,7 @@ class TraderWakeupLoopTest {
                 frameOf(openCall),
                 frameOf(new AssistantMessage("放量突破。[本轮结论]\n判断：账本 #3 的入场条件成立，#7 的限制没触发，#3 再提一次\n动作：开多\n等待：无")));
         when(modelFactory.modelFor(any())).thenReturn(model);
-        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
         runner.wake(trader(), 1785171600000L);
 
@@ -814,8 +827,8 @@ class TraderWakeupLoopTest {
         stubHealthyAccount();
         // 杠杆50违规 → TradeGuard 拒绝 → 模型收到拒绝原因后给总结
         ChatModel model = modelOpeningThenSummary("""
-                {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":50,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[],
+                {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":50,
+                 "stopLossPrice":95000,"takeProfits":[],
                  "playType":"BREAKOUT","signalsUsed":"x","invalidationCondition":"跌回箱体"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
@@ -914,12 +927,12 @@ class TraderWakeupLoopTest {
         when(decisionMapper.selectList(any())).thenReturn(List.of());
         when(planMapper.selectList(any())).thenReturn(List.of());
         ChatModel model = modelOpeningThenSummary("""
-                {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
+                {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":10,
+                 "stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高",
                  "invalidationCondition":"1h收盘跌回98000下方"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
-        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
         runner.wake(trader(), 1785171600000L);
 
@@ -987,12 +1000,12 @@ class TraderWakeupLoopTest {
     void openPersistsPlanWithInvalidationCondition() {
         stubHealthyAccount();
         ChatModel model = modelOpeningThenSummary("""
-                {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
-                 "limitPrice":null,"stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
+                {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":10,
+                 "stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                  "invalidationCondition":"1h收盘跌回前高98000下方"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
-        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
         when(planMapper.selectOne(any())).thenReturn(null);
 
         runner.wake(trader(), 1785171600000L);

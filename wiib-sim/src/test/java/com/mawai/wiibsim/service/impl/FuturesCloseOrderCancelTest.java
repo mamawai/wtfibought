@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
@@ -86,6 +87,7 @@ class FuturesCloseOrderCancelTest {
         risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
 
         verify(cacheService).zRemove("futures:limit:close_long:BTCUSDT", "5");
+        verify(orderMapper).cancelGroupedOpenOrders(7L, "BTCUSDT", "OPEN_LONG");
     }
 
     @Test
@@ -95,5 +97,32 @@ class FuturesCloseOrderCancelTest {
         risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
 
         verify(orderMapper, never()).cancelPendingCloseOrders(anyLong());
+        verify(orderMapper, never()).cancelGroupedOpenOrders(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void omittedStopQuantityCoversCurrentPosition() {
+        when(positionMapper.selectById(1L)).thenReturn(withStopLoss("1"));
+        when(cacheService.getFuturesPrice("BTCUSDT")).thenReturn(new BigDecimal("100"));
+        FuturesStopLossRequest request = new FuturesStopLossRequest();
+        request.setPositionId(1L);
+        FuturesStopLossRequest.StopLossItem item = new FuturesStopLossRequest.StopLossItem();
+        item.setPrice(new BigDecimal("96"));
+        request.setStopLosses(List.of(item));
+        risk.doSetStopLoss(7L, request);
+        verify(positionMapper).updateStopLosses(eq(1L), argThat(l -> l.size() == 1
+                && l.getFirst().getQuantity().compareTo(BigDecimal.ONE) == 0));
+    }
+
+    @Test
+    void oldStopTriggerClosesQuantityMergedAtSamePrice() {
+        FuturesPosition pos = withStopLoss("1");
+        pos.setStopLosses(FuturesHelper.mergeSlList(pos.getStopLosses(),
+                List.of(new FuturesStopLoss("new", new BigDecimal("95"), BigDecimal.ONE)), BigDecimal.ONE, "LONG"));
+        pos.setQuantity(new BigDecimal("2")); pos.setMargin(new BigDecimal("20"));
+        when(positionMapper.selectById(1L)).thenReturn(pos);
+        risk.batchTriggerStopLoss(1L, List.of("sl1"), new BigDecimal("95"), System.currentTimeMillis());
+        verify(positionMapper).casClosePosition(eq(1L), eq("CLOSED"), any(), any());
+        verify(orderMapper).insert(argThat((FuturesOrder o) -> o.getQuantity().compareTo(new BigDecimal("2")) == 0));
     }
 }

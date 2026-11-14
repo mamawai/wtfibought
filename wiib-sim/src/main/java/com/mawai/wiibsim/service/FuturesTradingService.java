@@ -29,6 +29,10 @@ public interface FuturesTradingService {
 
     FuturesOrderResponse cancelOrder(Long userId, Long orderId);
 
+    void setOrderProtection(Long userId, Long orderId, FuturesOrderProtectionRequest request);
+
+    List<FuturesOrderResponse> getGroupOrders(Long userId, String groupId);
+
     void addMargin(Long userId, FuturesAddMarginRequest request);
 
     void reduceMargin(Long userId, FuturesReduceMarginRequest request);

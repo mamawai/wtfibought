@@ -89,9 +89,10 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             newList = new ArrayList<>();
             for (FuturesStopLossRequest.StopLossItem item : items) {
                 validateSlPrice(item.getPrice(), position.getSide(), lastPrice);
-                validateQty(item.getQuantity());
-                totalQty = totalQty.add(item.getQuantity());
-                FuturesStopLoss sl = new FuturesStopLoss(genId(), item.getPrice(), item.getQuantity());
+                BigDecimal quantity = item.getQuantity() == null ? position.getQuantity() : item.getQuantity();
+                validateQty(quantity);
+                totalQty = totalQty.add(quantity);
+                FuturesStopLoss sl = new FuturesStopLoss(genId(), item.getPrice(), quantity);
                 sl.setCreatedAt(System.currentTimeMillis());
                 newList.add(sl);
             }
@@ -223,6 +224,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         positionIndexService.unregisterAll(position);
         cancelCloseOrders(position.getId(), orderMapper, cacheService);
+        cancelGroupedOpenOrders(position, orderMapper, userMapper, cacheService);
 
         if (returnAmount.signum() > 0) {
             // 这笔是强平返还（手动平仓转成强平时外层是平仓结算的类型）
@@ -379,6 +381,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             if (affected == 0) return;
             positionIndexService.unregisterAll(position);
             cancelCloseOrders(positionId, orderMapper, cacheService);
+            cancelGroupedOpenOrders(position, orderMapper, userMapper, cacheService);
         } else {
             int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginPart);
             if (affected == 0) return;

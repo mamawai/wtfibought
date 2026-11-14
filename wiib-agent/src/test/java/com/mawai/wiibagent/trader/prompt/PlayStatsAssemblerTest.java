@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
@@ -84,6 +85,34 @@ class PlayStatsAssemblerTest {
         pl.setOpenedWakeTime(openedWakeTime);
         pl.setStale(stale);
         return pl;
+    }
+
+    @Test
+    void ladderBucketAndManagementSummaryUseInitialEntriesAndCountAdds() {
+        AiTraderPlan plan = plan("PULLBACK", T0, false); plan.setPositionId(1L);
+        plan.setEntryCtxJson("{\"orderType\":\"MARKET\"}"); plan.setStopLossPrice(new BigDecimal("99"));
+        List<PlanEntry> entries = new ArrayList<>();
+        String[] prices = {"100", "98", "96", "101"}, quantities = {"3", "4", "3", "1"};
+        for (int i = 0; i < 4; i++) {
+            var entry = new PlanEntry();
+            entry.setLimitPrice(new BigDecimal(prices[i])); entry.setQuantity(new BigDecimal(quantities[i]));
+            entry.setStop(new BigDecimal(i == 3 ? "99" : "94")); entry.setPlacedAt(T0); entry.setClosedAt(T0);
+            entry.setStatus(i == 0 || i == 3 ? "FILLED" : "CANCELLED"); entry.setAdd(i == 3);
+            if ("FILLED".equals(entry.getStatus())) { entry.setFilledPrice(entry.getLimitPrice()); entry.setFee(new BigDecimal("0.06")); }
+            entries.add(entry);
+        }
+        PlanEntry.save(plan, entries);
+        FuturesPositionDTO position = pos("-10", T0); position.setId(1L); position.setEntryPrice(new BigDecimal("100.25"));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(position));
+        when(historyStore.load(eq("BTCUSDT"), eq("5m"), eq(T0), anyLong())).thenReturn(List.of(
+                new KlineBar(T0, T0 + 299999, new BigDecimal("100"), new BigDecimal("101"), new BigDecimal("99"), new BigDecimal("100"), BigDecimal.ONE),
+                new KlineBar(T0 + 300000, T0 + 599999, new BigDecimal("100"), new BigDecimal("101"), new BigDecimal("93"), new BigDecimal("94"), BigDecimal.ONE)));
+        assertThat(assembler.assemble(trader(), AgentLang.ZH)).contains("分档 1笔");
+        assertThat(assembler.assemble(trader(), AgentLang.EN)).contains("ladder 1 trades");
+        var replays = List.of(new CaseFileBuilder(historyStore).replay(position, plan));
+        assertThat(assembler.replayLines(replays, AgentLang.ZH)).contains("实际合计-0.25R", "其中 1 笔中途加过仓");
+        assertThat(assembler.replayLines(replays, AgentLang.EN)).contains("actual total -0.25R", "1 of them were added to along the way");
     }
 
     /** 按标签聚合：达样本线的给胜负与盈亏合计，不足的只列笔数 */
@@ -177,10 +206,11 @@ class PlayStatsAssemblerTest {
 
         String out = assembler.assemble(trader(), AgentLang.ZH);
 
-        assertThat(out).contains("开仓后不动重放 5笔（")
-                .contains("：止损原样 到目标0 止损5 未决0 合计-5R ｜ 止损1.5倍 到目标0 止损0 未决5 合计+0R ｜ "
+        assertThat(out).contains("原计划不动重放 5笔（")
+                .contains("：止损原样 到目标0 止损5 未决0 合计-5.20R ｜ 止损1.5倍 到目标0 止损0 未决5 合计+0R ｜ "
                         + "止损2倍 到目标0 止损0 未决5 合计+0R ｜ 止损3倍 到目标0 止损0 未决5 合计+0R\n")
-                .contains("管理动作 5笔：实际合计-5.00R，开仓后不动合计-5R\n");
+                // 没有加过仓的单子，管理动作行不带加仓那半句
+                .contains("管理动作 5笔：实际合计-5.00R，原计划不动合计-5.20R（两边都已扣手续费、都不含资金费）\n");
         assertThat(out.indexOf("管理动作")).isLessThan(out.indexOf("样本少时"));
     }
 

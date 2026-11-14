@@ -5,6 +5,7 @@ import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.StopOrders;
+import com.mawai.wiibagent.trader.trade.PendingProtection;
 import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
@@ -112,7 +113,7 @@ public class PresetExecutor {
             done = switch (type) {
                 case AiTraderWatch.ACTION_MOVE_STOP -> moveStop(trader, w, action, at, lang);
                 case AiTraderWatch.ACTION_CLOSE -> close(trader, w, action, at, lang);
-                default -> cancel(trader, action, lang);
+                default -> cancel(trader, w, action, at, lang);
             };
         } catch (SimOrderRetry.UnknownOutcome e) {
             // 重发也没问到结果：可能已经成交，不能说成没做成，不然模型照备注再平一次
@@ -143,13 +144,17 @@ public class PresetExecutor {
             return new Done(false, prompts.get(lang, "trader.preset.positionGone"));
         }
         BigDecimal stop = action.path("stopLossPrice").asDecimal();
-        return switch (StopOrders.move(simTradeClient, trader.getSimUserId(), pos, stop, pos.getMarkPrice())) {
+        AiTraderPlan plan = planStore.liveFor(trader.getId(), trader.getRoundNo(), pos.getSymbol(), pos.getSide());
+        return switch (StopOrders.move(simTradeClient, trader.getSimUserId(), pos, stop, pos.getMarkPrice(),
+                plan == null ? null : plan.getOrderGroup(), e -> SimTradeClient.describe(e, messages, lang))) {
             case StopOrders.Moved m -> {
                 String from = m.from() == null ? prompts.get(lang, "trader.revise.none") : WatchText.num(m.from());
+                // 同组还挂着的档改得怎样，跟在修订和结果后面；没有挂单就没有这半句
+                String synced = PendingProtection.summary(m.pending(), prompts, lang);
                 revise(trader, pos, at, prompts.get(lang, "trader.revise.presetMoveStop"),
-                        from + "→" + WatchText.num(stop), w.getNote());
+                        from + "→" + WatchText.num(stop) + synced, w.getNote());
                 yield new Done(true, prompts.get(lang, "trader.preset.movedStop", Map.of(
-                        "symbol", pos.getSymbol(), "side", pos.getSide(), "from", from, "to", WatchText.num(stop))));
+                        "symbol", pos.getSymbol(), "side", pos.getSide(), "from", from, "to", WatchText.num(stop))) + synced);
             }
             case StopOrders.WrongSide _ -> new Done(false, prompts.get(lang, "trader.preset.stopWrongSide", Map.of(
                     "stop", WatchText.num(stop), "mark", WatchText.num(pos.getMarkPrice()))));
@@ -177,10 +182,11 @@ public class PresetExecutor {
                 "qty", WatchText.num(qty), "price", WatchText.num(resp.getFilledPrice()))));
     }
 
-    private Done cancel(AiTrader trader, JsonNode action, AgentLang lang) {
+    private Done cancel(AiTrader trader, AiTraderWatch w, JsonNode action, long at, AgentLang lang) {
         String symbol = action.path("symbol").asString();
         String orderSide = action.path("side").asString();
-        simTradeClient.cancelOrder(trader.getSimUserId(), action.path("orderId").asLong());
+        FuturesOrderResponse response = simTradeClient.cancelOrder(trader.getSimUserId(), action.path("orderId").asLong());
+        planStore.cancelEntry(trader.getId(), trader.getRoundNo(), response, w.getNote(), at, lang);
         return new Done(true, prompts.get(lang, "trader.preset.cancelled", Map.of(
                 "symbol", symbol, "side", orderSide, "orderId", action.path("orderId").asLong())));
     }

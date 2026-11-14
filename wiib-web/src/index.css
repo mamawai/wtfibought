@@ -1268,7 +1268,7 @@ html.dark .cr-ov.is-full ~ .cr-halo { opacity: .24; }
   .tr-pc-ends .r{text-align:right}
   .tr-pc-ord{margin:10px 0 0;font-size:13.5px;line-height:1.6}
   .tr-pc-why{display:flex;flex-direction:column;gap:4px;margin-top:12px;padding-top:10px;border-top:1px solid var(--color-border);font-size:13px;line-height:1.6}
-  .tr-pc-why span{display:inline-block;min-width:72px;margin-right:8px;color:var(--color-muted-foreground);font-weight:600}
+  .tr-pc-why > div > span{display:inline-block;min-width:72px;margin-right:8px;color:var(--color-muted-foreground);font-weight:600}
 
   /* 它的盯盘：离触发近的排前面，快到了标橙 */
   .tr-al{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:4px 12px;align-items:start;padding:12px 0;border-bottom:1px solid var(--color-border)}

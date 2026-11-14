@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -64,7 +65,7 @@ public class PlayStatsAssembler {
             // 配对走 pairAll 统一入口；sim 按 updatedAt 倒序返回，顺序遍历即最近优先
             Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
             Map<String, List<BigDecimal>> byPlay = new LinkedHashMap<>();
-            // 同一批了结再按入场方式（限价 / 市价）分一次桶；入场上下文里没记的另计笔数
+            // 同一批了结再按入场方式（限价 / 市价 / 分档）分一次桶；入场上下文里没记的另计笔数
             Map<String, List<BigDecimal>> byEntry = new LinkedHashMap<>();
             int unknownEntry = 0;
             List<CaseFileBuilder.Replay> replays = new ArrayList<>();
@@ -114,13 +115,16 @@ public class PlayStatsAssembler {
         }
     }
 
-    /** 入场方式从计划的入场上下文里取（EntryContext 记的 orderType）：LIMIT / MARKET，没记返回 null */
+    /** 首批档的入场方式；旧计划从入场上下文取。 */
     private static String entryType(AiTraderPlan plan) {
+        var initial = PlanEntry.read(plan).stream().filter(e -> !e.isAdd()).toList();
+        if (initial.size() > 1) return "LADDER";
+        if (initial.size() == 1) return initial.getFirst().getLimitPrice() == null ? "MARKET" : "LIMIT";
         if (plan.getEntryCtxJson() == null) {
             return null;
         }
         String type = MAPPER.readTree(plan.getEntryCtxJson()).path("orderType").asString(null);
-        return "LIMIT".equals(type) || "MARKET".equals(type) ? type : null;
+        return "LIMIT".equals(type) || "MARKET".equals(type) || "LADDER".equals(type) ? type : null;
     }
 
     private String row(String play, List<BigDecimal> pnls, AgentLang lang) {
@@ -175,8 +179,10 @@ public class PlayStatsAssembler {
         StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.label.playStatsReplayLine",
                 Map.of("n", s.trades(), "rows", rows.toString()))).append('\n');
         if (s.managed() > 0) {
+            String adds = s.withAdds() == 0 ? ""
+                    : prompts.get(lang, "trader.label.playStatsManageAdds", Map.of("n", s.withAdds()));
             sb.append(prompts.get(lang, "trader.label.playStatsManageLine", Map.of(
-                    "n", s.managed(), "actual", signed(s.actualR()), "untouched", signed(s.untouchedR())))).append('\n');
+                    "n", s.managed(), "actual", signed(s.actualR()), "untouched", signed(s.untouchedR()), "adds", adds))).append('\n');
         }
         return sb.toString();
     }

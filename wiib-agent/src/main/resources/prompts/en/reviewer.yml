@@ -159,18 +159,18 @@ reviewer:
       days: "{{n}}d"
 
     # ---- case material ----
-    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line; R = the distance from entry to the plan's original stop, the unit of both the path row and the replay row. A target is written as price(percent of the position it closes), several rungs for a laddered take-profit, none when no take-profit was set. Replay: walked bar by bar on 5m candles from the first one after entry out to 72h after entry, a bar touching both the stop and a take-profit rung counts as the stop; each rung reached settles its share and the rest of the position walks on, and the trade is decided only once the whole position is settled — target means a rung was reached and the whole position settled (a remainder stopped out later is in the P&L), and a trade with no take-profit can only end as stop or undecided; at the wider stops the rungs are unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms, fees ignored)"
+    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line. A target is written as price(percent of the position it closes), several rungs for a laddered take-profit, none when no take-profit was set. A trade entered in rungs has an extra entry-plan row: each rung's price × quantity, followed by when it filled or was cancelled and why. The path row is measured from the position's final average entry, and its R = the distance from that average to the plan's stop. The replay row asks what would have happened had nothing been changed after the order: each entry rung waits to fill at its original price (rungs that did fill use the actual fill price), and the stop and take-profit rungs stay as placed; 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop — actual and replay are both in that unit, so a trade that filled only in part shows a small actual R. Walked bar by bar on 5m candles from the first fill out to 72h, a bar touching both the stop and a take-profit rung counts as the stop; each rung reached settles its share and the rest walks on; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled (a remainder stopped out later is in the P&L), and a trade with no take-profit can only end as stop or undecided; at the wider stops the rungs are unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms. Actual and replay are both after trading fees and neither includes funding; replay exits at the stop and target prices, without slippage. For a trade marked as including adds, the actual side includes the PnL of the adds while the replay looks at the initial batch only)"
     casesNone: No closed trades in the window
     caseGroup: "★ {{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGroupOther: "{{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGeneral: untyped
     caseTrade: "- {{symbol}} {{side}} {{opened}} → {{closed}} (held {{held}}) | entry {{entry}} stop {{stop}} target {{target}} exit {{exit}}, {{manner}} | net {{pnl}}, funding {{funding}}"
-    casePath: "  Path: max favourable {{mfe}} ({{mfeAt}}, {{mfeR}}) | max adverse {{mae}} ({{maeR}}) | minutes to +0.5R / +1R {{tHalf}} / {{t1}} | first close back through entry {{firstBack}} | best price 4h / 24h after exit {{best4}} / {{best24}}, {{targetsAfter}}"
+    casePath: "  Price path (relative to final average entry): max favourable {{mfe}} ({{mfeAt}}, {{mfeR}}) | max adverse {{mae}} ({{maeR}}) | minutes to +0.5R / +1R {{tHalf}} / {{t1}} | first close back through entry {{firstBack}} | best price 4h / 24h after exit {{best4}} / {{best24}}, {{targetsAfter}}"
     caseTargetsAfter: reached {{hit}}/{{total}} of the original targets
     caseNoTarget: no take-profit was set
     caseAfterShort: not enough data after the exit
     # Replay row (CaseFileBuilder.Replay): actual R, direction over the 24h after entry, outcome per stop width
-    caseReplay: "  Replay: actual {{actual}} | within 24h of entry max favourable {{fav}}, max adverse {{adv}}, held 24h with no stop {{hold}} | stop {{widths}}"
+    caseReplay: "  Replay: actual {{actual}} | within 24h of the first fill max favourable {{fav}}, max adverse {{adv}}, held 24h with no stop {{hold}} | stop {{widths}}"
     replayOriginal: "as placed {{outcome}}"
     replayWidth: "{{width}}x {{outcome}}"
     replaySep: ", "
@@ -181,12 +181,21 @@ reviewer:
     # Replay summary over all of this period's trades; the rows come from PlayStatsAssembler.replayLines
     caseReplaySummary: "This period's replay summary:"
     # Plans archived without ever binding a position
-    cancelledHeader: "Limit orders cancelled unfilled (5m candles over the 24h from the last round that still saw the order resting):"
-    cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, archived {{closed}} | afterwards price {{touched}} the limit level; {{targetsAfter}}"
+    cancelledHeader: "Limit entries cancelled unfilled (5m candles over the 24h after the cancellation):"
+    cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, ended {{closed}}: {{reason}} | afterwards price {{touched}} the limit level; {{targetsAfter}}"
     reached: reached
     notReached: never reached
     caseHourly: "  1h closes: {{closes}}"
     casePlan: "  Plan: thesis {{signals}} | invalidation {{invalidation}} | revisions {{revisions}}"
+    caseWithAdds: " (includes adds; actual includes their PnL, replay uses initial entries only)"
+    caseEntries: "  Entry arrangement: {{entries}} | planned total {{planned}}, actually filled {{filled}}"
+    entryRow: "{{price}} × {{qty}}{{add}}: {{state}}"
+    entryFilled: "filled at {{price}} ({{time}})"
+    entryCancelled: "cancelled ({{time}}, {{reason}})"
+    entryUnknown: outcome unknown
+    entryPending: pending
+    entryMarket: market
+    entryAdd: " (add)"
     caseNoPlan: "  Plan: (no plan record)"
     caseRevision: "{{type}} {{change}} ({{reason}})"
     caseCtx: "  Entry context: 1h ADX {{adx}} | 1h Bollinger bandwidth {{bollBw}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest US High event {{eventMin}} min {{eventTitle}} | Beijing hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x{{pending}}"

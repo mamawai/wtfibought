@@ -46,10 +46,46 @@ class TraderPlanStoreTest {
     }
 
     private final AiTraderPlanMapper mapper = mock(AiTraderPlanMapper.class);
-    private final TraderPlanStore store = new TraderPlanStore(mapper, PROMPTS);
+    private final TraderPlanStore store = new TraderPlanStore(mapper, PROMPTS, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class)));
+
+    @org.junit.jupiter.api.BeforeEach
+    void lockedRows() {
+        when(mapper.selectByIdForUpdate(org.mockito.ArgumentMatchers.anyLong())).thenAnswer(call ->
+                mapper.selectList((com.baomidou.mybatisplus.core.conditions.Wrapper<AiTraderPlan>) null).stream()
+                        .filter(p -> p.getId().equals(call.getArgument(0))).findFirst()
+                        .orElseGet(() -> mapper.selectOne(null)));
+    }
 
     private static LocalDateTime at(long ms) {
         return LocalDateTime.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault());
+    }
+
+    @Test
+    void concurrentRevisionsMergeAfterLockedReread() throws Exception {
+        var tx = mock(org.springframework.transaction.support.TransactionTemplate.class);
+        var lock = new java.util.concurrent.locks.ReentrantLock();
+        org.mockito.Mockito.doAnswer(call -> {
+            lock.lock();
+            try {
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> work = call.getArgument(0);
+                work.accept(mock(org.springframework.transaction.TransactionStatus.class));
+                return null;
+            } finally { lock.unlock(); }
+        }).when(tx).executeWithoutResult(any());
+        var row = new java.util.concurrent.atomic.AtomicReference<>(livePlan("BTCUSDT", "LONG", 42L));
+        when(mapper.selectByIdForUpdate(21L)).thenAnswer(_ -> {
+            assertThat(lock.isHeldByCurrentThread()).isTrue();
+            AiTraderPlan fresh = new AiTraderPlan(); org.springframework.beans.BeanUtils.copyProperties(row.get(), fresh); return fresh;
+        });
+        when(mapper.updateById(any(AiTraderPlan.class))).thenAnswer(call -> { row.set(call.getArgument(0)); return 1; });
+        var concurrent = new TraderPlanStore(mapper, PROMPTS, tx);
+        try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = pool.submit(() -> concurrent.appendRevision(21L, 1L, "stop", "95→96", "preset"));
+            var b = pool.submit(() -> concurrent.appendRevision(21L, 2L, "target", "110→112", "wake"));
+            a.get(); b.get();
+        }
+        assertThat(com.mawai.wiibcommon.util.JsonUtils.MAPPER.readTree(row.get().getRevisionsJson())).hasSize(2);
+        assertThat(row.get().getRevisionsJson()).contains("preset", "wake");
     }
 
     /** 一小时前立案的 LIVE 计划，行创建时刻同立案时刻 */
@@ -105,6 +141,112 @@ class TraderPlanStoreTest {
         return (TraderPlanStore.Closed) e;
     }
 
+    private static PlanEntry entry(Long id, String status) {
+        PlanEntry e = new PlanEntry();
+        e.setOrderId(id); e.setStatus(status); e.setLimitPrice(new BigDecimal("99000"));
+        e.setQuantity(new BigDecimal("0.01")); e.setStop(new BigDecimal("95000")); e.setPlacedAt(FILED);
+        return e;
+    }
+
+    private static FuturesOrderResponse groupOrder(long id, String status) {
+        FuturesOrderResponse o = pendingOpen("BTCUSDT", "LONG");
+        o.setOrderId(id); o.setGroupId("group"); o.setStatus(status); o.setPositionId(42L);
+        o.setLimitPrice(new BigDecimal("99000.00")); o.setQuantity(new BigDecimal("0.010"));
+        o.setFilledPrice(new BigDecimal("98990")); o.setCommission(new BigDecimal("0.20")); o.setUpdatedAt(at(BOUNDARY - 1000));
+        return o;
+    }
+
+    private AiTraderPlan grouped(Long positionId, PlanEntry... entries) {
+        AiTraderPlan plan = livePlan("BTCUSDT", "LONG", positionId); plan.setOrderGroup("group");
+        PlanEntry.save(plan, List.of(entries)); when(mapper.selectList(any())).thenReturn(List.of(plan));
+        return plan;
+    }
+
+    @Test
+    void groupReconcileReportsEachFillAndCancellation() {
+        AiTraderPlan plan = grouped(null, entry(1L, "PENDING"), entry(2L, "PENDING"), entry(3L, "PENDING"));
+        FuturesOrderResponse cancelled = groupOrder(2L, "CANCELLED"); cancelled.setCancelReason("GROUP_CLOSED");
+        AtomicInteger calls = new AtomicInteger();
+        var result = store.reconcile(7, 1, List.of(position(42, "BTCUSDT", "LONG", FILED)), List.of(), NEVER,
+                group -> { assertThat(group).isEqualTo("group"); calls.incrementAndGet();
+                    return List.of(groupOrder(1, "FILLED"), cancelled, groupOrder(3, "PENDING")); }, BOUNDARY, AgentLang.ZH);
+        assertThat(calls.get()).isEqualTo(1);
+        assertThat(result.events()).hasSize(2);
+        assertThat(result.events().getFirst()).isInstanceOf(TraderPlanStore.EntryFilled.class);
+        var event = (TraderPlanStore.EntryCancelled) result.events().getLast();
+        assertThat(event.counts()).isEqualTo(new TraderPlanStore.EntryCounts(3, 1, 1));
+        assertThat(event.entry().getReason()).isEqualTo("仓位了结，平台撤单");
+        assertThat(PlanEntry.read(plan).getFirst().getFee()).isEqualByComparingTo("0.20");
+        assertThat(plan.getPositionId()).isEqualTo(42);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
+    void unknownOrderIsClaimedOnlyWithOneMatch(int matches) {
+        AiTraderPlan plan = grouped(null, entry(null, "UNKNOWN"));
+        List<FuturesOrderResponse> orders = java.util.stream.IntStream.range(0, matches)
+                .mapToObj(i -> groupOrder(i + 1, "PENDING")).toList();
+        var result = store.reconcile(7, 1, List.of(), List.of(), closed(), _ -> orders, BOUNDARY, AgentLang.EN);
+        if (matches == 0) {
+            assertThat(PlanEntry.read(plan)).isEmpty();
+            assertThat(result.live()).isEmpty();
+        } else {
+            PlanEntry found = PlanEntry.read(plan).getFirst();
+            assertThat(found.getStatus()).isEqualTo(matches == 1 ? "PENDING" : "UNKNOWN");
+            assertThat(found.getOrderId()).isEqualTo(matches == 1 ? 1L : null);
+            assertThat(result.live()).containsExactly(plan);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"TRIGGERED", "PROCESSING", "QUERY_FAILED"})
+    void unresolvedEntriesAreNotArchived(String state) {
+        AiTraderPlan plan = grouped(null, entry(1L, "PENDING"));
+        var result = store.reconcile(7, 1, List.of(), List.of(), closed(), _ -> {
+            if ("QUERY_FAILED".equals(state)) throw new IllegalStateException("offline");
+            return List.of(groupOrder(1, state));
+        }, BOUNDARY, AgentLang.ZH);
+        assertThat(result.live()).containsExactly(plan);
+        assertThat(result.events()).isEmpty();
+        assertThat(PlanEntry.read(plan).getFirst().getStatus()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void fillBindsFromOrderWhenPositionSnapshotPredatesFill() {
+        AiTraderPlan plan = grouped(null, entry(1L, "PENDING"));
+        var result = store.reconcile(7, 1, List.of(), List.of(), closed(),
+                _ -> List.of(groupOrder(1, "FILLED")), BOUNDARY, AgentLang.ZH);
+        assertThat(plan.getPositionId()).isEqualTo(42);
+        assertThat(result.live()).containsExactly(plan);
+        assertThat(result.events()).singleElement().isInstanceOf(TraderPlanStore.EntryFilled.class);
+    }
+
+    @Test
+    void closedGroupArchivesSettledEntriesAndCarriesOnlyStillPending() {
+        AiTraderPlan plan = grouped(42L, entry(1L, "FILLED"), entry(2L, "PENDING"), entry(3L, "PENDING"));
+        FuturesOrderResponse cancelled = groupOrder(2L, "CANCELLED"); cancelled.setCancelReason("GROUP_CLOSED");
+        var result = store.reconcile(7, 1, List.of(), List.of(), closed(position(42, "BTCUSDT", "LONG", FILED)),
+                _ -> List.of(groupOrder(1, "FILLED"), cancelled, groupOrder(3, "PENDING")), BOUNDARY, AgentLang.ZH);
+        assertThat(plan.getStatus()).isEqualTo(AiTraderPlan.STATUS_CLOSED);
+        assertThat(PlanEntry.read(plan)).extracting(PlanEntry::getStatus).containsExactly("FILLED", "CANCELLED");
+        assertThat(result.live()).hasSize(1);
+        assertThat(PlanEntry.read(result.live().getFirst())).singleElement().satisfies(e -> {
+            assertThat(e.getOrderId()).isEqualTo(3); assertThat(e.getStatus()).isEqualTo("PENDING");
+        });
+    }
+
+    @Test
+    void reopeningInSameWakeSyncsOldEntryFactsBeforeArchiving() {
+        AiTraderPlan old = grouped(42L, entry(1L, "FILLED"), entry(2L, "PENDING"));
+        when(mapper.selectOne(any())).thenReturn(old);
+        FuturesOrderResponse cancelled = groupOrder(2L, "CANCELLED"); cancelled.setCancelReason("GROUP_CLOSED");
+        AiTraderPlan next = livePlan("BTCUSDT", "LONG", 43L); next.setId(null); next.setOrderGroup("new");
+        store.open(next, _ -> List.of(cancelled), AgentLang.ZH);
+        assertThat(PlanEntry.read(old)).extracting(PlanEntry::getStatus).containsExactly("FILLED", "CANCELLED");
+        assertThat(PlanEntry.read(old).getLast().getReason()).isEqualTo("仓位了结，平台撤单");
+        assertThat(old.getStatus()).isEqualTo(AiTraderPlan.STATUS_CLOSED);
+    }
+
     // ==================== 对账：没事 / 成交 / 挂着 ====================
 
     /** 绑着的仓还在：什么都不动，已平仓位也不查 */
@@ -113,7 +255,7 @@ class TraderPlanStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(livePlan("BTCUSDT", "LONG", 42L)));
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1,
-                List.of(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), List.of(), NEVER, BOUNDARY, AgentLang.ZH);
+                List.of(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), List.of(), NEVER, _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.live()).hasSize(1);
         assertThat(r.events()).isEmpty();
@@ -127,7 +269,7 @@ class TraderPlanStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(livePlan("BTCUSDT", "LONG", null)));
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1,
-                List.of(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), List.of(), closed(), BOUNDARY, AgentLang.ZH);
+                List.of(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), List.of(), closed(), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.live()).hasSize(1);
         assertThat(r.live().getFirst().getPositionId()).isEqualTo(42L);
@@ -145,7 +287,7 @@ class TraderPlanStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(livePlan("ETHUSDT", "SHORT", null)));
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1,
-                List.of(), List.of(pendingOpen("ETHUSDT", "SHORT")), closed(), BOUNDARY, AgentLang.ZH);
+                List.of(), List.of(pendingOpen("ETHUSDT", "SHORT")), closed(), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.live()).hasSize(1);
         assertThat(r.live().getFirst().getPositionId()).isNull();
@@ -161,7 +303,7 @@ class TraderPlanStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(livePlan("BTCUSDT", "LONG", 42L)));
         FuturesPositionDTO closedPos = position(42L, "BTCUSDT", "LONG", FILED + 600_000L);
 
-        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(closedPos), BOUNDARY, AgentLang.ZH);
+        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(closedPos), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.live()).isEmpty();
         assertThat(r.events()).hasSize(1);
@@ -183,7 +325,7 @@ class TraderPlanStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(livePlan("BTCUSDT", "LONG", 42L)));
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(pendingOpen("BTCUSDT", "LONG")),
-                closed(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), BOUNDARY, AgentLang.ZH);
+                closed(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.events()).singleElement().isInstanceOf(TraderPlanStore.Closed.class);
         ArgumentCaptor<AiTraderPlan> archived = ArgumentCaptor.forClass(AiTraderPlan.class);
@@ -210,7 +352,7 @@ class TraderPlanStoreTest {
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1,
                 List.of(position(43L, "BTCUSDT", "LONG", BOUNDARY - 600_000L)), List.of(),
-                closed(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), BOUNDARY, AgentLang.ZH);
+                closed(position(42L, "BTCUSDT", "LONG", FILED + 600_000L)), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.events()).hasSize(2);
         assertThat(r.events().get(0)).isInstanceOf(TraderPlanStore.Closed.class);
@@ -227,7 +369,7 @@ class TraderPlanStoreTest {
         FuturesPositionDTO first = position(42L, "BTCUSDT", "LONG", FILED + 600_000L);
         FuturesPositionDTO second = position(43L, "BTCUSDT", "LONG", FILED + 2400_000L);
 
-        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(second, first), BOUNDARY, AgentLang.ZH);
+        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(second, first), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.live()).isEmpty();
         assertThat(r.events()).hasSize(2);
@@ -253,7 +395,7 @@ class TraderPlanStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(livePlan("BTCUSDT", "LONG", 42L)));
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(pendingOpen("BTCUSDT", "LONG")),
-                closed(), BOUNDARY, AgentLang.ZH);
+                closed(), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.events()).isEmpty();
         ArgumentCaptor<AiTraderPlan> archived = ArgumentCaptor.forClass(AiTraderPlan.class);
@@ -273,7 +415,7 @@ class TraderPlanStoreTest {
         FuturesPositionDTO stopped = position(42L, "BTCUSDT", "LONG", FILED + 300_000L);
         FuturesPositionDTO open = position(43L, "BTCUSDT", "LONG", FILED + 1800_000L);
 
-        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(open), List.of(), closed(stopped), BOUNDARY, AgentLang.ZH);
+        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(open), List.of(), closed(stopped), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.events()).hasSize(2);
         assertThat(closedOf(r.events().get(0)).position()).isSameAs(stopped);
@@ -296,7 +438,7 @@ class TraderPlanStoreTest {
         FuturesPositionDTO stopped = position(42L, "BTCUSDT", "LONG", FILED + 300_000L);
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(pendingOpen("BTCUSDT", "LONG")),
-                closed(stopped), BOUNDARY, AgentLang.ZH);
+                closed(stopped), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.events()).hasSize(1);
         assertThat(closedOf(r.events().getFirst()).position()).isSameAs(stopped);
@@ -323,7 +465,7 @@ class TraderPlanStoreTest {
         FuturesPositionDTO older = position(1059L, "BTCUSDT", "SHORT", filed - 60_000L);
         FuturesPositionDTO mine = position(1060L, "BTCUSDT", "SHORT", filed + 240_000L);
 
-        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(older, mine), BOUNDARY, AgentLang.ZH);
+        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(older, mine), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.live()).isEmpty();
         assertThat(r.events()).hasSize(1);
@@ -347,7 +489,7 @@ class TraderPlanStoreTest {
         when(mapper.selectList(any())).thenReturn(List.of(archived, live));
 
         TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(),
-                closed(position(41L, "BTCUSDT", "LONG", BOUNDARY - 1500_000L)), BOUNDARY, AgentLang.ZH);
+                closed(position(41L, "BTCUSDT", "LONG", BOUNDARY - 1500_000L)), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.events()).singleElement().isInstanceOf(TraderPlanStore.Cancelled.class);
         verify(mapper, times(1)).updateById(any(AiTraderPlan.class));
@@ -359,7 +501,7 @@ class TraderPlanStoreTest {
     void unboundNoExposureWithoutPositionsIsCancelled() {
         when(mapper.selectList(any())).thenReturn(List.of(livePlan("BTCUSDT", "LONG", null)));
 
-        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(), BOUNDARY, AgentLang.ZH);
+        TraderPlanStore.Reconcile r = store.reconcile(7L, 1, List.of(), List.of(), closed(), _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(r.live()).isEmpty();
         assertThat(r.events()).singleElement().isInstanceOf(TraderPlanStore.Cancelled.class);
@@ -382,7 +524,7 @@ class TraderPlanStoreTest {
                 () -> {
                     fetches.incrementAndGet();
                     return List.of();
-                }, BOUNDARY, AgentLang.ZH);
+                }, _ -> List.of(), BOUNDARY, AgentLang.ZH);
 
         assertThat(fetches.get()).isEqualTo(1);
     }
@@ -399,7 +541,7 @@ class TraderPlanStoreTest {
         neu.setSignalsUsed("重新突破，独立新仓");
         neu.setOpenedWakeTime(BOUNDARY);
 
-        store.open(neu);
+        store.open(neu, _ -> List.of(), AgentLang.ZH);
 
         ArgumentCaptor<AiTraderPlan> archived = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(mapper).updateById(archived.capture());

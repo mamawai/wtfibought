@@ -342,7 +342,8 @@ public class TraderWakeupRunner {
                 () -> searchStages == null || searchStages.stage == SearchStage.DECISION);
         // 计划对照 sim 持仓/挂单：了结的归档并报结局、限价成交的绑上仓位，存活的随持仓注入账户状态；已平仓位只在有事时才查
         TraderPlanStore.Reconcile reconcile = planStore.reconcile(trader.getId(), trader.getRoundNo(), positions, pendingOrders,
-                () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT), boundaryTime, lang);
+                () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT),
+                group -> simTradeClient.getGroupOrders(trader.getSimUserId(), group), boundaryTime, lang);
         // 本局全部计划（含归档）：最近轮的 stale 过滤要按计划生命期判段落归属
         List<AiTraderPlan> plans = planStore.listAll(trader.getId(), trader.getRoundNo());
         // 获取最近的唤醒轮，并过滤掉stale内容

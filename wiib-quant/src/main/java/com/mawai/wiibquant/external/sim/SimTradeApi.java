@@ -3,6 +3,7 @@ package com.mawai.wiibquant.external.sim;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
+import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
@@ -47,6 +48,19 @@ public interface SimTradeApi {
 
     @GetExchange("/{userId}/order/{orderId}")
     Result<FuturesOrderResponse> order(@PathVariable Long userId, @PathVariable Long orderId);
+
+    @PostExchange("/{userId}/order/{orderId}/protection")
+    Result<Void> setOrderProtection(@PathVariable Long userId, @PathVariable Long orderId,
+                                    @RequestBody FuturesOrderProtectionRequest request);
+
+    @GetExchange("/{userId}/orders")
+    Result<List<FuturesOrderResponse>> groupOrders(@PathVariable Long userId, @RequestParam String groupId);
+
+    @GetExchange("/brackets")
+    Result<Map<String, List<Bracket>>> brackets(@RequestParam List<String> symbols);
+
+    record Bracket(int tier, BigDecimal notionalFloor, BigDecimal notionalCap,
+                   int maxLeverage, BigDecimal mmr, BigDecimal maintAmount) {}
 
     @GetExchange("/{userId}/pending-orders")
     Result<List<FuturesOrderResponse>> pendingOrders(@PathVariable Long userId, @RequestParam(required = false) String symbol);

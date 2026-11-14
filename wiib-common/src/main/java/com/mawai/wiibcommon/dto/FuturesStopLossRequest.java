@@ -13,6 +13,6 @@ public class FuturesStopLossRequest {
     @Data
     public static class StopLossItem {
         private BigDecimal price;
-        private BigDecimal quantity;
+        private BigDecimal quantity; // 不传就是锁内的整仓现量
     }
 }

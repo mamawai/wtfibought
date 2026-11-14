@@ -214,11 +214,15 @@ CREATE TABLE IF NOT EXISTS futures_order (
     stop_losses JSONB,
     take_profits JSONB,
     status VARCHAR(20) NOT NULL,
+    group_id VARCHAR(36),
+    cancel_reason VARCHAR(32),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE futures_order IS '永续合约订单表';
+COMMENT ON COLUMN futures_order.group_id IS '入场订单组标识';
+COMMENT ON COLUMN futures_order.cancel_reason IS '撤单原因码';
 COMMENT ON COLUMN futures_order.user_id IS '用户ID';
 COMMENT ON COLUMN futures_order.position_id IS '关联仓位ID';
 COMMENT ON COLUMN futures_order.symbol IS '交易对';
@@ -792,23 +796,27 @@ CREATE TABLE IF NOT EXISTS ai_trader_plan (
     stale           BOOLEAN NOT NULL DEFAULT FALSE,
     position_id     BIGINT,
     entry_ctx_json  TEXT,
+    order_group    VARCHAR(36),
+    entries_json   TEXT,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 -- 同键同一时刻至多一份存活计划；归档行不占键——同轮重开/跨轮重开都能再立新计划
 CREATE UNIQUE INDEX IF NOT EXISTS uq_atp_live ON ai_trader_plan (trader_id, round_no, symbol, side)
     WHERE status = 'LIVE';
-COMMENT ON COLUMN ai_trader_plan.take_profits_json IS '开仓时的止盈分档快照JSON [{price,percent}]，由近到远，percent=这一档平掉仓位的百分之几；没设止盈为NULL。当前挂着的止盈单以sim仓位为准';
+COMMENT ON COLUMN ai_trader_plan.take_profits_json IS '最近一次开仓或加仓的止盈分档快照JSON [{price,percent}]；没设为NULL，现挂止盈以sim为准';
 COMMENT ON TABLE ai_trader_plan IS 'AI Trader持仓交易计划：开仓立的论点/失效条件/止损止盈快照，每次唤醒原样回注提示词（nof1式plan reinjection）——退出纪律的记忆载体。键(symbol,side)：sim同向开仓自动并入，任意时刻至多一仓，加仓=新论点覆盖';
 COMMENT ON COLUMN ai_trader_plan.invalidation_condition IS '失效条件：什么市场状况证明论点错了（市场条件而非盈亏数字），触发才允许主动平仓';
-COMMENT ON COLUMN ai_trader_plan.stop_loss_price IS '原始止损快照；当前生效止损以sim仓位为准（可能已上移锁盈）';
+COMMENT ON COLUMN ai_trader_plan.stop_loss_price IS '最近一次开仓或加仓的止损快照；现挂止损以sim为准';
 COMMENT ON COLUMN ai_trader_plan.opened_wake_time IS '开仓所在唤醒边界(ms)，回注时计算已持有时长';
-COMMENT ON COLUMN ai_trader_plan.revisions_json IS '修订历史追加式JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行——修改必须留痕带理由，计划本体价格字段永远是原始快照';
+COMMENT ON COLUMN ai_trader_plan.revisions_json IS '修订历史追加式JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立/预案执行——修改必须留痕带理由，价格字段是最近一次开仓或加仓的快照';
 COMMENT ON COLUMN ai_trader_plan.status IS 'LIVE=仓位/挂单存活 CLOSED=已了结归档。归档不删：论点→结局的配对数据是reviewer每日复盘的原料（结局按position_id join sim已平仓位，历史无id行按symbol/side/时间就近兜底）';
 COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：唤醒开头对账发现仓位已了结的边界/重置时刻，与opened_wake_time围出计划生命期';
 COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜照常。仅CLOSED可标,可随时取消';
 COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒开头对账补绑;一行计划对应一个仓位生命期,同论点下一笔另起一行;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
-COMMENT ON COLUMN ai_trader_plan.entry_ctx_json IS '开仓那一刻的上下文快照JSON：orderType/leverage/placedAt/hourBj/stopPct/atr1h/stopAtr/adx1h/bollBw1h/eventMin/eventTitle/funding（EntryContext）；复盘按维度对照用，取不到的字段缺席';
+COMMENT ON COLUMN ai_trader_plan.entry_ctx_json IS '最近一次开仓或加仓的上下文快照JSON：orderType/leverage/placedAt/hourBj/stopPct/atr1h/stopAtr/adx1h/bollBw1h/eventMin/eventTitle/funding（EntryContext）；复盘按维度对照用，取不到的字段缺席';
+COMMENT ON COLUMN ai_trader_plan.order_group IS '入场订单组标识';
+COMMENT ON COLUMN ai_trader_plan.entries_json IS '逐档原始安排与成交撤单事实，add=false是首批入场';
 
 CREATE TABLE IF NOT EXISTS ai_trader_watch (
     id              BIGSERIAL PRIMARY KEY,

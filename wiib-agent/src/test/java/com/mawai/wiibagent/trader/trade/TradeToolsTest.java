@@ -46,6 +46,7 @@ import static org.assertj.core.api.Assertions.as;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.BIG_DECIMAL;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -80,7 +81,7 @@ class TradeToolsTest {
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
     private final AiTraderWatchMapper watchMapper = mock(AiTraderWatchMapper.class);
     private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper, mock(ApplicationEventPublisher.class));
-    private final TraderPlanStore planStore = new TraderPlanStore(planMapper, PROMPTS);
+    private final TraderPlanStore planStore = new TraderPlanStore(planMapper, PROMPTS, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class)));
     private final java.util.concurrent.atomic.AtomicBoolean openingAllowed = new java.util.concurrent.atomic.AtomicBoolean(true);
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
             positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
@@ -88,6 +89,13 @@ class TradeToolsTest {
             new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                     new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
             PROMPTS, MESSAGES, mock(EntryContext.class), openingAllowed::get);
+
+    @org.junit.jupiter.api.BeforeEach
+    void ladderFixtures() {
+        when(simTradeClient.getBrackets(any())).thenReturn(java.util.Map.of("BTCUSDT", List.of(
+                new com.mawai.wiibquant.external.sim.SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000000000"), 150, BigDecimal.ZERO, BigDecimal.ZERO))));
+        when(planMapper.selectByIdForUpdate(anyLong())).thenAnswer(_ -> planMapper.selectOne(null));
+    }
 
     /** 多单：入场10万，当前止损9.5万、止盈11万 */
     private FuturesPositionDTO longPosition() {
@@ -119,6 +127,92 @@ class TradeToolsTest {
         return plan;
     }
 
+    private FuturesOrderResponse pendingEntry(long id, String price, String stop, String qty) {
+        FuturesOrderResponse order = new FuturesOrderResponse();
+        order.setOrderId(id); order.setSymbol("BTCUSDT"); order.setOrderSide("OPEN_LONG");
+        order.setGroupId("group"); order.setStatus("PENDING"); order.setLimitPrice(new BigDecimal(price)); order.setQuantity(new BigDecimal(qty));
+        order.setStopLosses(List.of(new FuturesStopLoss("s" + id, new BigDecimal(stop), order.getQuantity())));
+        order.setUpdatedAt(LocalDateTime.of(2026, 8, 6, 18, 5));
+        return order;
+    }
+
+    private AiTraderPlan groupPlan() {
+        AiTraderPlan plan = existingPlan(); plan.setOrderGroup("group"); plan.setStatus(AiTraderPlan.STATUS_LIVE);
+        when(planMapper.selectOne(any())).thenReturn(plan);
+        return plan;
+    }
+
+    @Test
+    void cancelOrderRequiresReasonAndMarksEntryWithRevision() {
+        AiTraderPlan plan = groupPlan();
+        PlanEntry entry = new PlanEntry(); entry.setOrderId(11L); entry.setStatus("PENDING");
+        entry.setLimitPrice(new BigDecimal("99000")); entry.setQuantity(new BigDecimal("0.01"));
+        PlanEntry.save(plan, List.of(entry));
+        FuturesOrderResponse cancelled = pendingEntry(11, "99000", "95000", "0.01"); cancelled.setStatus("CANCELLED");
+        when(simTradeClient.cancelOrder(99L, 11L)).thenReturn(cancelled);
+        assertThat(tools.cancelOrder(11, " ")).startsWith("REJECTED");
+        verify(simTradeClient, never()).cancelOrder(anyLong(), anyLong());
+        assertThat(tools.cancelOrder(11, "突破失败")).contains("CANCELLED");
+        assertThat(PlanEntry.read(plan)).singleElement().satisfies(e -> {
+            assertThat(e.getStatus()).isEqualTo("CANCELLED"); assertThat(e.getReason()).isEqualTo("突破失败");
+            assertThat(e.getClosedAt()).isEqualTo(com.mawai.wiibagent.trader.TradePairing.msOf(cancelled.getUpdatedAt()));
+        });
+        assertThat(plan.getRevisionsJson()).contains("撤单", "99000 × 0.01", "突破失败");
+    }
+
+    @Test
+    void stopUpdatesEligiblePendingEntriesBeforeWholePosition() {
+        AiTraderPlan plan = groupPlan();
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+        when(simTradeClient.getPendingOrders(99L, "BTCUSDT")).thenReturn(List.of(
+                pendingEntry(1, "99000", "95000", "0.01"), pendingEntry(2, "99000", "98500", "0.01"),
+                pendingEntry(3, "97000", "95000", "0.01"), pendingEntry(4, "99500", "94000", "0.01")));
+        org.mockito.Mockito.doThrow(new IllegalStateException("already triggered")).when(simTradeClient).setOrderProtection(eq(99L), eq(4L), any());
+        String result = tools.setStopLoss(5, 98000, "收紧");
+        var order = org.mockito.Mockito.inOrder(simTradeClient);
+        ArgumentCaptor<com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest> pending = ArgumentCaptor.forClass(com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest.class);
+        order.verify(simTradeClient).setOrderProtection(eq(99L), eq(1L), pending.capture());
+        order.verify(simTradeClient).setOrderProtection(eq(99L), eq(4L), any());
+        ArgumentCaptor<FuturesStopLossRequest> position = ArgumentCaptor.forClass(FuturesStopLossRequest.class);
+        order.verify(simTradeClient).setStopLoss(eq(99L), position.capture());
+        assertThat(pending.getValue().getStopLosses().getFirst().getQuantity()).isEqualByComparingTo("0.01");
+        assertThat(pending.getValue().getTakeProfits()).isNull();
+        assertThat(position.getValue().getStopLosses().getFirst().getQuantity()).isNull();
+        verify(simTradeClient, never()).setOrderProtection(eq(99L), eq(2L), any());
+        verify(simTradeClient, never()).setOrderProtection(eq(99L), eq(3L), any());
+        assertThat(result).contains("updated", "retained", "failed", "already triggered");
+        assertThat(plan.getRevisionsJson()).contains("同组挂单改了 1 档", "保留原样 2 档", "没改成 1 档");
+    }
+
+    @Test
+    void targetsUpdatePendingThenRereadPositionQuantity() {
+        AiTraderPlan plan = groupPlan();
+        FuturesPositionDTO refreshed = longPosition(); refreshed.setQuantity(new BigDecimal("0.02"));
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()), List.of(refreshed));
+        when(simTradeClient.getPendingOrders(99L, "BTCUSDT")).thenReturn(List.of(pendingEntry(1, "99000", "95000", "0.004")));
+        assertThat(tools.setTakeProfit(5, List.of(rung("105000", "50"), rung("110000", "50")), "分批止盈")).contains("updated");
+        var order = org.mockito.Mockito.inOrder(simTradeClient);
+        order.verify(simTradeClient).getAllPositions(99L);
+        ArgumentCaptor<com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest> pending = ArgumentCaptor.forClass(com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest.class);
+        order.verify(simTradeClient).setOrderProtection(eq(99L), eq(1L), pending.capture());
+        order.verify(simTradeClient).getAllPositions(99L);
+        ArgumentCaptor<FuturesTakeProfitRequest> position = ArgumentCaptor.forClass(FuturesTakeProfitRequest.class);
+        order.verify(simTradeClient).setTakeProfit(eq(99L), position.capture());
+        assertThat(pending.getValue().getTakeProfits()).extracting(t -> t.getQuantity().stripTrailingZeros().toPlainString()).containsExactly("0.002", "0.002");
+        assertThat(pending.getValue().getStopLosses()).isNull();
+        assertThat(position.getValue().getTakeProfits()).extracting(t -> t.getQuantity().stripTrailingZeros().toPlainString()).containsExactly("0.01", "0.01");
+        assertThat(plan.getRevisionsJson()).contains("同组挂单改了 1 档");
+    }
+
+    @Test
+    void targetBelowPendingEntryStepRejectsBeforeAnyMutation() {
+        groupPlan(); when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+        when(simTradeClient.getPendingOrders(99L, "BTCUSDT")).thenReturn(List.of(pendingEntry(1, "99000", "95000", "0.001")));
+        assertThat(tools.setTakeProfit(5, List.of(rung("105000", "50"), rung("110000", "50")), "分档")).startsWith("REJECTED");
+        verify(simTradeClient, never()).setOrderProtection(anyLong(), anyLong(), any());
+        verify(simTradeClient, never()).setTakeProfit(anyLong(), any());
+    }
+
     /** 不带预案动作的盯盘条件 */
     private static WatchSpec watch(String kind, Double level, String period, String at, String note) {
         return new WatchSpec(kind, level, period, at, note, null);
@@ -135,6 +229,8 @@ class TradeToolsTest {
 
     private FuturesOrderResponse reverseCloseReceipt(String status) {
         FuturesOrderResponse r = new FuturesOrderResponse();
+        r.setStatus("FILLED");
+        r.setUpdatedAt(LocalDateTime.now());
         r.setPositionId(5L);
         r.setStatus(status);
         r.setQuantity(new BigDecimal("0.01"));
@@ -146,12 +242,97 @@ class TradeToolsTest {
                 "REVERSAL", "跌破支撑，反手做空", "重回支撑上方");
     }
 
+    private String ladderOpen() {
+        return tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(new BigDecimal("0.01"), null),
+                new EntryRung(new BigDecimal("0.02"), new BigDecimal("98000")),
+                new EntryRung(new BigDecimal("0.03"), new BigDecimal("97000"))), 10, 95000.0,
+                oneRung("110000"), "PULLBACK", "回踩", "跌破支撑");
+    }
+
+    private static FuturesOrderResponse entryReceipt(long id, String status, FuturesOpenRequest req) {
+        FuturesOrderResponse r = new FuturesOrderResponse();
+        r.setOrderId(id); r.setStatus(status); r.setQuantity(req.getQuantity());
+        r.setLimitPrice(req.getLimitPrice()); r.setGroupId(req.getGroupId());
+        r.setUpdatedAt(LocalDateTime.now());
+        if ("FILLED".equals(status)) { r.setPositionId(42L); r.setFilledPrice(new BigDecimal("100000")); r.setCommission(new BigDecimal("0.4")); }
+        return r;
+    }
+
+    @Test
+    void ladderSendsLimitsBeforeMarketWithSharedGroupAndPerLegProtection() {
+        var id = new java.util.concurrent.atomic.AtomicLong(10);
+        when(simTradeClient.openPosition(eq(99L), any())).thenAnswer(call -> {
+            FuturesOpenRequest req = call.getArgument(1);
+            return entryReceipt(id.incrementAndGet(), req.getLimitPrice() == null ? "FILLED" : "PENDING", req);
+        });
+        JsonNode out = MAPPER.readTree(ladderOpen());
+        assertThat(out.path("status").asString()).isEqualTo("ok");
+        ArgumentCaptor<FuturesOpenRequest> requests = ArgumentCaptor.forClass(FuturesOpenRequest.class);
+        verify(simTradeClient, times(3)).openPosition(eq(99L), requests.capture());
+        assertThat(requests.getAllValues()).extracting(FuturesOpenRequest::getOrderType).containsExactly("LIMIT", "LIMIT", "MARKET");
+        assertThat(requests.getAllValues().stream().map(FuturesOpenRequest::getGroupId).distinct()).hasSize(1);
+        assertThat(requests.getAllValues().stream().map(FuturesOpenRequest::getClientRequestId).distinct()).hasSize(3);
+        requests.getAllValues().forEach(r -> {
+            assertThat(r.getStopLosses().getFirst().getQuantity()).isEqualByComparingTo(r.getQuantity());
+            assertThat(r.getTakeProfits().getFirst().getQuantity()).isEqualByComparingTo(r.getQuantity());
+        });
+        ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper).insert(plan.capture());
+        assertThat(PlanEntry.read(plan.getValue())).hasSize(3);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void ladderRejectionRollsBackPendingButKeepsFills(boolean filled) {
+        var sent = new java.util.concurrent.atomic.AtomicInteger();
+        when(simTradeClient.openPosition(eq(99L), any())).thenAnswer(call -> {
+            if (sent.incrementAndGet() == 2) throw new SimTradeClient.SimBizException(1100, "rejected");
+            return entryReceipt(10, filled ? "FILLED" : "PENDING", call.getArgument(1));
+        });
+        FuturesOrderResponse cancelled = new FuturesOrderResponse(); cancelled.setUpdatedAt(LocalDateTime.now());
+        when(simTradeClient.cancelOrder(99L, 10L)).thenReturn(cancelled);
+        String out = ladderOpen();
+        JsonNode action = tools.actions().getFirst();
+        if (filled) {
+            // 先挂的那档已经成交撤不掉：带 PARTIAL 前缀，动作行顶层有原因，回执里逐档列结果
+            assertThat(out).startsWith("PARTIAL: ");
+            assertThat(action.path("status").asString()).isEqualTo("partial");
+            assertThat(action.path("error").asString()).isNotBlank();
+            JsonNode entries = MAPPER.readTree(out.substring("PARTIAL: ".length())).path("entries");
+            assertThat(entries.get(0).path("status").asString()).isEqualTo("filled");
+            assertThat(entries.get(1).path("status").asString()).isEqualTo("rejected");
+            assertThat(entries.get(2).path("status").asString()).isEqualTo("not_attempted");
+        } else {
+            // 先挂的那档撤回来了，什么都没留下：按失败回，说明撤回了几档
+            assertThat(out).startsWith("ERROR: ").contains("已挂上的 1 档已全部撤回");
+            assertThat(action.path("status").asString()).isEqualTo("error");
+            assertThat(action.path("error").asString()).contains("已挂上的 1 档已全部撤回");
+        }
+        verify(planMapper, times(filled ? 1 : 0)).insert(any(AiTraderPlan.class));
+        verify(simTradeClient, times(filled ? 0 : 1)).cancelOrder(99L, 10L);
+        assertThat(TradeActions.opened(action)).isEqualTo(filled);
+    }
+
+    @Test
+    void firstUnknownEntryStillPersistsGroupAndStopsSending() {
+        when(simTradeClient.openPosition(eq(99L), any())).thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+        String out = ladderOpen();
+        assertThat(out).startsWith("UNKNOWN: ");
+        assertThat(tools.actions().getFirst().path("status").asString()).isEqualTo("unknown");
+        ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper).insert(plan.capture());
+        assertThat(plan.getValue().getOrderGroup()).isNotBlank();
+        assertThat(PlanEntry.read(plan.getValue())).singleElement().satisfies(e -> {
+            assertThat(e.getStatus()).isEqualTo("UNKNOWN"); assertThat(e.getOrderId()).isNull();
+        });
+        verify(simTradeClient, never()).cancelOrder(anyLong(), anyLong());
+    }
+
     @Test
     void openingBeforeDecisionIsRecordedAndReverseDoesNotCloseFirst() {
         openingAllowed.set(false);
 
-        assertThat(tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"))
+        assertThat(tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"))
                 .startsWith("REJECTED:").contains(PROMPTS.get(AgentLang.ZH, "trader.reject.openingStage"));
         assertThat(reverseLong()).startsWith("REJECTED:");
 
@@ -186,6 +367,8 @@ class TradeToolsTest {
     void reverseClosesAllThenOpensChosenSizeWithProtectionAndPlan() {
         mockReverseClose();
         FuturesOrderResponse opened = new FuturesOrderResponse();
+        opened.setStatus("FILLED");
+        opened.setUpdatedAt(LocalDateTime.now());
         opened.setPositionId(9L);
         opened.setStatus("FILLED");
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(opened);
@@ -223,7 +406,7 @@ class TradeToolsTest {
         shortPos.setLeverage(5);
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(shortPos), List.of());
         when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("FILLED"));
-        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+        when(simTradeClient.openPosition(eq(99L), any())).thenAnswer(call -> entryReceipt(9, "FILLED", call.getArgument(1)));
         TradeTools single = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT"),
                 positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"), planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
@@ -243,6 +426,10 @@ class TradeToolsTest {
     void reverseValidatesPendingOrdersBeforeAndAfterClose(boolean afterClose) {
         mockReverseClose();
         FuturesOrderResponse pending = new FuturesOrderResponse();
+        pending.setStatus("PENDING");
+        pending.setQuantity(new BigDecimal("0.01"));
+        pending.setLimitPrice(new BigDecimal("98000"));
+        pending.setUpdatedAt(LocalDateTime.now());
         pending.setSymbol("BTCUSDT");
         pending.setOrderSide("OPEN_LONG");
         pending.setLeverage(5);
@@ -262,7 +449,7 @@ class TradeToolsTest {
         JsonNode action = tools.actions().getFirst();
         assertThat(action.path("status").asString()).isEqualTo("partial");
         assertThat(action.path("result").path("close").path("status").asString()).isEqualTo("ok");
-        assertThat(action.path("result").path("open").path("status").asString()).isEqualTo("error");
+        assertThat(action.path("result").path("open").path("status").asString()).isEqualTo("rejected");
         verify(planMapper, never()).insert(any(AiTraderPlan.class));
     }
 
@@ -522,8 +709,7 @@ class TradeToolsTest {
     }
 
     /**
-     * 止损一律覆盖全仓：覆盖量归代码从仓位现取，
-     * 模型说了不算——它照抄旧数量（加仓后仓位已变大）就会让一半仓位裸奔。
+     * 止损不传数量，sim 在锁内取全仓。
      */
     @Test
     void stopLossAlwaysCoversWholePosition() {
@@ -539,8 +725,8 @@ class TradeToolsTest {
         ArgumentCaptor<FuturesStopLossRequest> cap = ArgumentCaptor.forClass(FuturesStopLossRequest.class);
         verify(simTradeClient).setStopLoss(eq(99L), cap.capture());
         assertThat(cap.getValue().getStopLosses()).singleElement()
-                .extracting(FuturesStopLossRequest.StopLossItem::getQuantity, as(BIG_DECIMAL))
-                .isEqualByComparingTo("0.02");
+                .extracting(FuturesStopLossRequest.StopLossItem::getQuantity)
+                .isNull();
     }
 
     /** 止盈分档：占比按仓位当前数量折成数量、按步长向下取整，合计 100% 时最后一档拿余数 */
@@ -565,7 +751,8 @@ class TradeToolsTest {
     @Test
     void emptyTakeProfitsClearsThem() {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
-        when(planMapper.selectOne(any())).thenReturn(existingPlan());
+        groupPlan();
+        when(simTradeClient.getPendingOrders(99L, "BTCUSDT")).thenReturn(List.of(pendingEntry(1, "99000", "95000", "0.01")));
 
         String r = tools.setTakeProfit(5L, List.of(), "不设目标");
 
@@ -573,6 +760,10 @@ class TradeToolsTest {
         ArgumentCaptor<FuturesTakeProfitRequest> cap = ArgumentCaptor.forClass(FuturesTakeProfitRequest.class);
         verify(simTradeClient).setTakeProfit(eq(99L), cap.capture());
         assertThat(cap.getValue().getTakeProfits()).isEmpty();
+        ArgumentCaptor<com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest> pending = ArgumentCaptor.forClass(com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest.class);
+        verify(simTradeClient).setOrderProtection(eq(99L), eq(1L), pending.capture());
+        assertThat(pending.getValue().getTakeProfits()).isEmpty();
+        assertThat(pending.getValue().getStopLosses()).isNull();
         ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).updateById(plan.capture());
         assertThat(plan.getValue().getRevisionsJson()).contains("110000(100%)→无");
@@ -635,6 +826,8 @@ class TradeToolsTest {
     @Test
     void marketOpenPersistsPositionIdFromResponse() {
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(888L);
         resp.setPositionId(42L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
@@ -665,14 +858,16 @@ class TradeToolsTest {
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, entryContext, () -> true);
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(890L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         when(planMapper.selectOne(any())).thenReturn(null);
 
         JsonNode receipt = MAPPER.readTree(openOnce(withAtr));
 
-        assertThat(receipt.path("orderId").asLong()).isEqualTo(890L);
-        JsonNode facts = receipt.path("facts");
+        assertThat(receipt.path("entries").get(0).path("orderId").asLong()).isEqualTo(890L);
+        JsonNode facts = receipt.path("facts").path("batch");
         assertThat(facts.path("entryRef").asDecimal()).isEqualByComparingTo("100000");
         assertThat(facts.path("notional").asDecimal()).isEqualByComparingTo("1000");
         assertThat(facts.path("feeRoundTrip").asDecimal()).isEqualByComparingTo("0.8");
@@ -690,12 +885,13 @@ class TradeToolsTest {
     @Test
     void limitReceiptUsesLimitPriceAndMakerFee() {
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(891L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         when(planMapper.selectOne(any())).thenReturn(null);
 
-        JsonNode facts = MAPPER.readTree(tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.01, 10,
-                96000.0, 95000.0, oneRung("110000"), "PULLBACK", "回踩支撑", "1h收盘跌破95000")).path("facts");
+        JsonNode facts = MAPPER.readTree(tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), BigDecimal.valueOf(96000.0))), 10, 95000.0, oneRung("110000"), "PULLBACK", "回踩支撑", "1h收盘跌破95000")).path("facts").path("batch");
 
         assertThat(facts.path("entryRef").asDecimal()).isEqualByComparingTo("96000");
         assertThat(facts.path("feeRoundTrip").asDecimal()).isEqualByComparingTo("0.58");
@@ -708,13 +904,14 @@ class TradeToolsTest {
     @Test
     void openWithoutTakeProfit() {
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(892L);
         resp.setPositionId(42L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         when(planMapper.selectOne(any())).thenReturn(null);
 
-        JsonNode receipt = MAPPER.readTree(tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"));
+        JsonNode receipt = MAPPER.readTree(tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"));
 
         ArgumentCaptor<FuturesOpenRequest> req = ArgumentCaptor.forClass(FuturesOpenRequest.class);
         verify(simTradeClient).openPosition(eq(99L), req.capture());
@@ -723,22 +920,22 @@ class TradeToolsTest {
         ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).insert(plan.capture());
         assertThat(plan.getValue().getTakeProfitsJson()).isNull();
-        assertThat(receipt.path("facts").has("lossAtStop")).isTrue();
-        assertThat(receipt.path("facts").has("gainAtTargets")).isFalse();
-        assertThat(receipt.path("facts").has("rewardRiskAfterFees")).isFalse();
+        assertThat(receipt.path("facts").path("batch").has("lossAtStop")).isTrue();
+        assertThat(receipt.path("facts").path("batch").has("gainAtTargets")).isFalse();
+        assertThat(receipt.path("facts").path("batch").has("rewardRiskAfterFees")).isFalse();
     }
 
     /** 开仓带分档止盈：sim 收到的是每档的价位和折好的数量，计划里存的是价位和占比 */
     @Test
     void openWithTakeProfitLadder() {
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(893L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         when(planMapper.selectOne(any())).thenReturn(null);
 
-        tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, List.of(rung("105000", "50"), rung("110000", "30")),
-                "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+        tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0, List.of(rung("105000", "50"), rung("110000", "30")), "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
         ArgumentCaptor<FuturesOpenRequest> req = ArgumentCaptor.forClass(FuturesOpenRequest.class);
         verify(simTradeClient).openPosition(eq(99L), req.capture());
@@ -755,13 +952,11 @@ class TradeToolsTest {
     void addOnTakeProfitRungsCappedBySimLimit() {
         FuturesPositionDTO held = longPosition();
         held.setTakeProfits(List.of(
-                new FuturesTakeProfit("t1", new BigDecimal("105000"), new BigDecimal("0.005")),
-                new FuturesTakeProfit("t2", new BigDecimal("110000"), new BigDecimal("0.005"))));
+                new FuturesTakeProfit("t1", new BigDecimal("106000"), new BigDecimal("0.005")),
+                new FuturesTakeProfit("t2", new BigDecimal("107000"), new BigDecimal("0.005"))));
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(held));
 
-        String r = tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10, null, 95000.0,
-                List.of(rung("105000", "30"), rung("110000", "30"), rung("120000", "40")),
-                "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
+        String r = tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0, List.of(rung("105000", "30"), rung("110000", "30"), rung("120000", "40")), "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
 
         assertThat(r).startsWith("REJECTED").contains("已经挂着 2 档").contains("最多 4 档");
         verify(simTradeClient, never()).openPosition(anyLong(), any());
@@ -771,7 +966,7 @@ class TradeToolsTest {
     @Test
     void entryContextWrittenAsyncAfterPlanPersisted() {
         EntryContext entryContext = mock(EntryContext.class);
-        when(entryContext.capture(eq("BTCUSDT"), eq("MARKET"), eq(new BigDecimal("100000")),
+        when(entryContext.capture(eq("BTCUSDT"), eq("MARKET"), argThat(v -> v.compareTo(new BigDecimal("100000")) == 0),
                 eq(BigDecimal.valueOf(95000.0)), eq(10), anyLong()))
                 .thenReturn("{\"regime\":\"RANGE\"}");
         when(planMapper.insert(any(AiTraderPlan.class))).thenAnswer(inv -> {
@@ -785,31 +980,30 @@ class TradeToolsTest {
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, entryContext, () -> true);
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(889L);
         resp.setPositionId(43L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         when(planMapper.selectOne(any())).thenReturn(null);
+        when(planMapper.selectByIdForUpdate(43L)).thenAnswer(_ -> { AiTraderPlan p = existingPlan(); p.setId(43L); return p; });
 
         openOnce(withCtx);
 
         ArgumentCaptor<AiTraderPlan> inserted = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).insert(inserted.capture());
         assertThat(inserted.getValue().getEntryCtxJson()).isNull();
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        ArgumentCaptor<LambdaUpdateWrapper<AiTraderPlan>> up = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
-        verify(planMapper, timeout(2000)).update(isNull(), up.capture());
-        assertThat(up.getValue().getSqlSet()).contains("entry_ctx_json");
-        // 条件值要先拼一次 where 才落进参数表
-        assertThat(up.getValue().getSqlSegment()).contains("id = ");
-        assertThat(up.getValue().getParamNameValuePairs()).containsValue("{\"regime\":\"RANGE\"}").containsValue(43L);
+        ArgumentCaptor<AiTraderPlan> updated = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper, timeout(2000)).updateById(updated.capture());
+        assertThat(updated.getValue().getEntryCtxJson()).isEqualTo("{\"regime\":\"RANGE\"}");
+        assertThat(updated.getValue().getId()).isEqualTo(43L);
     }
 
     // ---------- 下单结果未知：幂等键 + 同键重发 ----------
 
     /** 常规开仓参数（护栏全过），下单链路的用例都用它 */
     private String openOnce(TradeTools t) {
-        return t.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, oneRung("110000"), "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+        return t.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0, oneRung("110000"), "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
     }
 
     /**
@@ -830,6 +1024,8 @@ class TradeToolsTest {
                         "请求处理中，请稍后用同一 clientRequestId 重试");
             }
             FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
             resp.setOrderId(888L);
             return resp;
         });
@@ -855,13 +1051,12 @@ class TradeToolsTest {
 
         String r = openOnce(tools);
 
-        assertThat(r).startsWith("UNKNOWN").contains("可能已经成交")
+        assertThat(r).startsWith("UNKNOWN: ").contains("可能已经成交")
                 .contains("get_account").contains("切勿直接重复下单");
         verify(simTradeClient, times(3)).openPosition(eq(99L), any());
         assertThat(tools.actions()).singleElement()
                 .satisfies(a -> assertThat(a.path("status").asString(null)).isEqualTo("unknown"));
-        // 结果未知就不落计划：没确认成交的仓位不该有事前承诺记录，模型要补走 write_plan
-        verify(planMapper, never()).insert(any(AiTraderPlan.class));
+        verify(planMapper).insert(any(AiTraderPlan.class));
     }
 
     /** 明确的业务失败（没成交）不重发，原样回给模型 */
@@ -872,7 +1067,9 @@ class TradeToolsTest {
 
         String r = openOnce(tools);
 
-        assertThat(r).startsWith("ERROR").contains("余额不足");
+        assertThat(r).startsWith("ERROR: ").contains("余额不足");
+        assertThat(tools.actions()).singleElement()
+                .satisfies(a -> assertThat(a.path("status").asString(null)).isEqualTo("error"));
         verify(simTradeClient, times(1)).openPosition(eq(99L), any());
     }
 
@@ -893,7 +1090,7 @@ class TradeToolsTest {
         assertThat(late.closePosition(5L, 0.01, "失效条件触发")).contains("本轮已超时");
         assertThat(late.setStopLoss(5L, 98000.0, "上移锁保本")).contains("本轮已超时");
         assertThat(late.setTakeProfit(5L, oneRung("120000"), "趋势加速")).contains("本轮已超时");
-        assertThat(late.cancelOrder(11L)).contains("本轮已超时");
+        assertThat(late.cancelOrder(11L, "计划失效")).contains("本轮已超时");
         // 连持仓查询都不该发出：超时后一次 sim 调用都不欠
         verifyNoInteractions(simTradeClient);
     }
@@ -912,8 +1109,7 @@ class TradeToolsTest {
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
 
-        String r = strict.openPosition(null, "SHORT", "MARKET", 0.64, 20,
-                null, 64980.0, oneRung("64640"), "BREAKOUT", "突破", "收回箱体");
+        String r = strict.openPosition(null, "SHORT", List.of(new EntryRung(BigDecimal.valueOf(0.64), null)), 20, 64980.0, oneRung("64640"), "BREAKOUT", "突破", "收回箱体");
 
         assertThat(r).startsWith("REJECTED").contains("白名单").contains("完整给出全部参数");
     }
@@ -925,8 +1121,7 @@ class TradeToolsTest {
      */
     @Test
     void missingStopLossRejectedInsteadOfOpeningNakedLong() {
-        String r = tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, null, oneRung("110000"), "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+        String r = tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, null, oneRung("110000"), "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
         assertThat(r).startsWith("REJECTED").contains("止损");
         verify(simTradeClient, never()).openPosition(anyLong(), any());
@@ -940,56 +1135,34 @@ class TradeToolsTest {
     void addOnFillsImmediately() {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(777L);
         resp.setPositionId(5L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
-        String r = tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, oneRung("110000"), "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
+        String r = tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0, oneRung("110000"), "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
 
         assertThat(r).doesNotStartWith("REJECTED").contains("777");
         assertThat(tools.actions().get(0).path("status").asString(null)).isEqualTo("ok");
         verify(simTradeClient).openPosition(eq(99L), any());
         // coversPlan 由同向持仓/开仓挂单推出：覆盖走 updateById，判成新立就会多插一行
-        verify(planMapper).updateById(any(AiTraderPlan.class));
+        verify(planMapper, org.mockito.Mockito.atLeastOnce()).updateById(any(AiTraderPlan.class));
         verify(planMapper, never()).insert(any(AiTraderPlan.class));
         // 现有保护单的数量没超过仓位，不重挂
         verify(simTradeClient, never()).setStopLoss(anyLong(), any());
         verify(simTradeClient, never()).setTakeProfit(anyLong(), any());
     }
 
-    /** 分批止盈走了一半（仓位剩 0.005，止损止盈单还挂着 0.01）再加仓：先按仓位现量把保护单重挂，再发加仓单 */
-    @Test
-    void addOnRefitsStaleProtectiveOrdersBeforeSending() {
-        FuturesPositionDTO held = longPosition();
-        held.setQuantity(new BigDecimal("0.005"));
-        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(held));
-        FuturesOrderResponse resp = new FuturesOrderResponse();
-        resp.setOrderId(778L);
-        resp.setPositionId(5L);
-        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
-        when(planMapper.selectOne(any())).thenReturn(existingPlan());
-
-        tools.openPosition("BTCUSDT", "LONG", "MARKET", 0.01, 10,
-                null, 95000.0, null, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
-
-        InOrder sent = inOrder(simTradeClient);
-        ArgumentCaptor<FuturesStopLossRequest> sl = ArgumentCaptor.forClass(FuturesStopLossRequest.class);
-        ArgumentCaptor<FuturesTakeProfitRequest> tp = ArgumentCaptor.forClass(FuturesTakeProfitRequest.class);
-        sent.verify(simTradeClient).setStopLoss(eq(99L), sl.capture());
-        sent.verify(simTradeClient).setTakeProfit(eq(99L), tp.capture());
-        sent.verify(simTradeClient).openPosition(eq(99L), any());
-        assertThat(sl.getValue().getStopLosses()).singleElement()
-                .satisfies(i -> assertThat(i.getQuantity()).isEqualByComparingTo("0.005"));
-        assertThat(tp.getValue().getTakeProfits()).singleElement()
-                .satisfies(i -> assertThat(i.getQuantity()).isEqualByComparingTo("0.005"));
-    }
-
     /** 同币同向还挂着限价单时再挂一张：计划走覆盖，不能把挂着那张的计划归档掉 */
     @Test
     void secondOrderWhileSameSidePendingCoversPlan() {
         FuturesOrderResponse pending = new FuturesOrderResponse();
+        pending.setStatus("PENDING");
+        pending.setQuantity(new BigDecimal("0.01"));
+        pending.setLimitPrice(new BigDecimal("98000"));
+        pending.setUpdatedAt(LocalDateTime.now());
         pending.setOrderId(600L);
         pending.setSymbol("BTCUSDT");
         pending.setOrderSide("OPEN_LONG");
@@ -997,12 +1170,13 @@ class TradeToolsTest {
         pending.setLeverage(10);
         when(simTradeClient.getPendingOrders(eq(99L), any())).thenReturn(List.of(pending));
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(601L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
 
-        String r = tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.02, 10,
-                97000.0, 95000.0, oneRung("110000"), "PULLBACK", "二次回踩", "1h收盘跌破96000");
+        String r = tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.02), BigDecimal.valueOf(97000.0))), 10, 95000.0, oneRung("110000"), "PULLBACK", "二次回踩", "1h收盘跌破96000");
 
         assertThat(r).doesNotStartWith("REJECTED").contains("601");
         ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
@@ -1017,6 +1191,8 @@ class TradeToolsTest {
     void closeFillsImmediately() {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(778L);
         when(simTradeClient.closePosition(eq(99L), any())).thenReturn(resp);
 
@@ -1047,6 +1223,8 @@ class TradeToolsTest {
         plan.setPositionId(42L);
         when(planMapper.selectOne(any())).thenReturn(plan);
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(779L);
         when(simTradeClient.closePosition(eq(99L), any())).thenReturn(resp);
 
@@ -1071,10 +1249,9 @@ class TradeToolsTest {
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
                 PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
 
-        String r = poorer.openPosition("BTCUSDT", "LONG", "MARKET", 0.4, 10,
-                null, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+        String r = poorer.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.4), null)), 10, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
-        assertThat(r).startsWith("REJECTED").contains("数量最多");
+        assertThat(r).startsWith("REJECTED").contains("本次各档合计数量最多");
         verify(simTradeClient, never()).openPosition(anyLong(), any());
     }
 
@@ -1083,6 +1260,8 @@ class TradeToolsTest {
     void reentryWithoutExposureOpensNewPlan() {
         when(planMapper.selectOne(any())).thenReturn(existingPlan());
         FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setStatus("FILLED");
+        resp.setUpdatedAt(LocalDateTime.now());
         resp.setOrderId(889L);
         resp.setPositionId(43L);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);

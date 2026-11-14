@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn, fmtDateTime, fmtNum } from '../../lib/utils';
 import type { AiTraderPlanView, PlanRevision } from '../../types';
-import { planTargets } from './traderTools';
+import { entryStatus, planEntries, planTargets } from './traderTools';
 
 /** 价位一格：标签 + 窄体大数，入场/原始止损并排 */
 function Px({ label, value }: { label: string; value: number }) {
@@ -12,7 +12,7 @@ function Px({ label, value }: { label: string; value: number }) {
 }
 
 /**
- * 交易计划块：币对/方向/立的时刻 → 论点 + 依据 → 失效条件 → 原始价位 → 修订史。退出纪律的公开凭证。
+ * 交易计划块：论点、入场安排、最近价格快照和修订史。
  * embedded=挂在已了结交易卡里，改用虚线接上去，不自带底线。
  */
 export function PlanBlock({ plan, embedded }: { plan: AiTraderPlanView; embedded?: boolean }) {
@@ -58,6 +58,7 @@ export function PlanBlock({ plan, embedded }: { plan: AiTraderPlanView; embedded
           </span>
         )}
       </div>
+      <PlanEntries json={plan.entriesJson} />
       {revisions.length > 0 && (
         <div className="text-[12.5px] mute mt-2 pt-2 border-t border-dashed border-border">
           {revisions.map((r, i) => (
@@ -71,6 +72,29 @@ export function PlanBlock({ plan, embedded }: { plan: AiTraderPlanView; embedded
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** 计划卡和持仓卡共用的逐档安排。 */
+export function PlanEntries({ json }: { json: string | null }) {
+  const { t } = useTranslation('ai');
+  const entries = useMemo(() => planEntries(json), [json]);
+  if (!entries.length) return null;
+  return (
+    <div className="mt-2 text-[12.5px]">
+      <span className="mute">{t('plan.entries')}</span>
+      <ul className="mt-1 space-y-1">
+        {entries.map((entry, index) => (
+          <li key={entry.orderId ?? index} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <b className="num font-semibold">{entry.limitPrice == null ? t('plan.marketEntry') : fmtNum(entry.limitPrice, 8)} × {fmtNum(entry.quantity, 8)}</b>
+            {entry.add && <span className="mute">{t('plan.addEntry')}</span>}
+            <span className={cn(entry.status === 'UNKNOWN' ? 'text-warning' : 'mute')}>{entryStatus(entry.status)}</span>
+            {entry.filledPrice != null && <span className="num mute">{t('plan.filledAt', { price: fmtNum(entry.filledPrice, 8) })}</span>}
+            {entry.reason && <span className="mute">{entry.reason}</span>}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

@@ -11,14 +11,22 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
+import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.ledger.LedgerCtx;
+import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+
+import static com.mawai.wiibcommon.enums.LedgerBizType.FUTURES_LIMIT_UNFREEZE;
 
 final class FuturesHelper {
 
@@ -59,6 +67,33 @@ final class FuturesHelper {
     static void cancelCloseOrders(Long positionId, FuturesOrderMapper orderMapper, CacheService cacheService) {
         for (FuturesOrder order : orderMapper.cancelPendingCloseOrders(positionId)) {
             removeFromLimitZSet(order, cacheService);
+        }
+    }
+
+    /**
+     * 仓位全平了：这个币这个方向带组标识、还没成交的开仓单一起撤掉，还挂着的和已触发在等锁的都算
+     * （等锁的那张拿到锁后抢状态失败，不会成交）。逐仓单退冻结；全仓单没冻结过钱。
+     * 限价索引等事务提交后再摘，回滚了单子还在索引里
+     */
+    static void cancelGroupedOpenOrders(FuturesPosition position, FuturesOrderMapper orderMapper,
+                                        UserMapper userMapper, CacheService cacheService) {
+        List<FuturesOrder> cancelled = orderMapper.cancelGroupedOpenOrders(
+                position.getUserId(), position.getSymbol(), "OPEN_" + position.getSide());
+        for (FuturesOrder order : cancelled) {
+            if (!FuturesPosition.CROSS.equals(order.getMarginMode())) {
+                LedgerCtx.mark(FUTURES_LIMIT_UNFREEZE, "FUTURES_ORDER", order.getId());
+                if (userMapper.atomicUnfreezeBalance(order.getUserId(), order.getFrozenAmount()) == null) {
+                    throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+                }
+            }
+        }
+        if (!cancelled.isEmpty()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cancelled.forEach(order -> removeFromLimitZSet(order, cacheService));
+                }
+            });
         }
     }
 
@@ -194,6 +229,11 @@ final class FuturesHelper {
         resp.setRealizedPnl(order.getRealizedPnl());
         resp.setStatus(order.getStatus());
         resp.setCreatedAt(order.getCreatedAt());
+        resp.setUpdatedAt(order.getUpdatedAt());
+        resp.setGroupId(order.getGroupId());
+        resp.setCancelReason(order.getCancelReason());
+        resp.setStopLosses(order.getStopLosses());
+        resp.setTakeProfits(order.getTakeProfits());
         return resp;
     }
 
@@ -274,25 +314,93 @@ final class FuturesHelper {
         return UUID.randomUUID().toString().substring(0, 8);
     }
 
-    /** 合并SL档位（开仓并入同向仓位用）：现有+新增，条数≤4、总量≤合并后持仓；新增为空返回null=不改库 */
-    static List<FuturesStopLoss> mergeSlList(List<FuturesStopLoss> existing, List<FuturesStopLoss> added, BigDecimal mergedQty) {
+    /**
+     * 合并SL档位（开仓并入同向仓位用）。新增为空返回 null＝不改库。
+     * 旧档先按触发先后（最紧的先）摊到加仓前的持仓量上，摊不到的去掉：部分平仓后 sim 不缩减保护单数量，
+     * 不先摊一遍，过期的数量会把新档的分配挤掉。再并入新档：同价的合进旧档（沿用旧档的 id 和生效时刻），不同价才追加。条数≤4
+     */
+    static List<FuturesStopLoss> mergeSlList(List<FuturesStopLoss> existing, List<FuturesStopLoss> added,
+                                             BigDecimal oldQty, String side) {
         if (added == null || added.isEmpty()) return null;
-        List<FuturesStopLoss> combined = new ArrayList<>(existing == null ? List.of() : existing);
-        combined.addAll(added);
+        List<FuturesStopLoss> combined = new ArrayList<>();
+        Comparator<FuturesStopLoss> byPrice = Comparator.comparing(FuturesStopLoss::getPrice);
+        BigDecimal left = oldQty;
+        List<FuturesStopLoss> tightestFirst = existing == null ? List.of()
+                : existing.stream().sorted("LONG".equals(side) ? byPrice.reversed() : byPrice).toList();
+        for (FuturesStopLoss old : tightestFirst) {
+            BigDecimal qty = old.getQuantity().min(left);
+            if (qty.signum() <= 0) continue;
+            FuturesStopLoss copy = new FuturesStopLoss(old.getId(), old.getPrice(), qty);
+            copy.setCreatedAt(old.getCreatedAt());
+            combined.add(copy);
+            left = left.subtract(qty);
+        }
+        for (FuturesStopLoss item : added) {
+            FuturesStopLoss same = combined.stream().filter(x -> x.getPrice().compareTo(item.getPrice()) == 0)
+                    .findFirst().orElse(null);
+            if (same == null) {
+                combined.add(item);
+            } else {
+                same.setQuantity(same.getQuantity().add(item.getQuantity()));
+            }
+        }
         if (combined.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
-        BigDecimal total = combined.stream().map(FuturesStopLoss::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (total.compareTo(mergedQty) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         return combined;
     }
 
-    /** 合并TP档位：规则同SL */
-    static List<FuturesTakeProfit> mergeTpList(List<FuturesTakeProfit> existing, List<FuturesTakeProfit> added, BigDecimal mergedQty) {
+    /** 合并TP档位：规则同SL，旧档从最近的一档摊起 */
+    static List<FuturesTakeProfit> mergeTpList(List<FuturesTakeProfit> existing, List<FuturesTakeProfit> added,
+                                               BigDecimal oldQty, String side) {
         if (added == null || added.isEmpty()) return null;
-        List<FuturesTakeProfit> combined = new ArrayList<>(existing == null ? List.of() : existing);
-        combined.addAll(added);
+        List<FuturesTakeProfit> combined = new ArrayList<>();
+        Comparator<FuturesTakeProfit> byPrice = Comparator.comparing(FuturesTakeProfit::getPrice);
+        BigDecimal left = oldQty;
+        List<FuturesTakeProfit> nearestFirst = existing == null ? List.of()
+                : existing.stream().sorted("LONG".equals(side) ? byPrice : byPrice.reversed()).toList();
+        for (FuturesTakeProfit old : nearestFirst) {
+            BigDecimal qty = old.getQuantity().min(left);
+            if (qty.signum() <= 0) continue;
+            FuturesTakeProfit copy = new FuturesTakeProfit(old.getId(), old.getPrice(), qty);
+            copy.setCreatedAt(old.getCreatedAt());
+            combined.add(copy);
+            left = left.subtract(qty);
+        }
+        for (FuturesTakeProfit item : added) {
+            FuturesTakeProfit same = combined.stream().filter(x -> x.getPrice().compareTo(item.getPrice()) == 0)
+                    .findFirst().orElse(null);
+            if (same == null) {
+                combined.add(item);
+            } else {
+                same.setQuantity(same.getQuantity().add(item.getQuantity()));
+            }
+        }
         if (combined.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
-        BigDecimal total = combined.stream().map(FuturesTakeProfit::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (total.compareTo(mergedQty) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         return combined;
+    }
+
+    /**
+     * 并单后同步触发索引：摊不到数量被去掉的旧档摘掉，新增价位的档注册；合进旧档的沿用旧 id，不用动。
+     * 哪一类的合并结果是 null（这次没带），那一类不动
+     */
+    static void syncProtectionIndex(FuturesPosition position, List<FuturesStopLoss> sls,
+                                    List<FuturesTakeProfit> tps, FuturesPositionIndexService index) {
+        if (sls != null) {
+            List<FuturesStopLoss> old = position.getStopLosses() == null ? List.of() : position.getStopLosses();
+            List<FuturesStopLoss> removed = old.stream()
+                    .filter(x -> sls.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
+            List<FuturesStopLoss> added = sls.stream()
+                    .filter(x -> old.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
+            if (!removed.isEmpty()) index.unregisterStopLosses(position.getId(), position.getSymbol(), position.getSide(), removed);
+            if (!added.isEmpty()) index.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), added);
+        }
+        if (tps != null) {
+            List<FuturesTakeProfit> old = position.getTakeProfits() == null ? List.of() : position.getTakeProfits();
+            List<FuturesTakeProfit> removed = old.stream()
+                    .filter(x -> tps.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
+            List<FuturesTakeProfit> added = tps.stream()
+                    .filter(x -> old.stream().noneMatch(y -> y.getId().equals(x.getId()))).toList();
+            if (!removed.isEmpty()) index.unregisterTakeProfits(position.getId(), position.getSymbol(), position.getSide(), removed);
+            if (!added.isEmpty()) index.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), added);
+        }
     }
 }

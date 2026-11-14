@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.dto.FuturesAdjustLeverageRequest;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
+import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
@@ -96,6 +97,18 @@ public class InternalFuturesTradeController {
     public Result<List<FuturesOrderResponse>> pendingOrders(@PathVariable Long userId,
                                                             @RequestParam(required = false) String symbol) {
         return Result.ok(tradingService.getPendingOrders(userId, symbol));
+    }
+
+    @PostMapping("/{userId}/order/{orderId}/protection")
+    public Result<Void> setOrderProtection(@PathVariable Long userId, @PathVariable Long orderId,
+                                           @RequestBody FuturesOrderProtectionRequest request) {
+        tradingService.setOrderProtection(userId, orderId, request);
+        return Result.ok();
+    }
+
+    @GetMapping("/{userId}/orders")
+    public Result<List<FuturesOrderResponse>> groupOrders(@PathVariable Long userId, @RequestParam String groupId) {
+        return Result.ok(tradingService.getGroupOrders(userId, groupId));
     }
 
     @GetMapping("/{userId}/positions")

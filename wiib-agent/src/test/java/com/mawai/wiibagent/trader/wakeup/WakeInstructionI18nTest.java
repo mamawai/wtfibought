@@ -99,7 +99,7 @@ class WakeInstructionI18nTest {
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             mock(CrossAssetToolkit.class),
             traderMapper, mock(AiTraderDecisionMapper.class),
-            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts), watchStore,
+            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new org.springframework.transaction.support.TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class))), watchStore,
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
@@ -116,6 +116,7 @@ class WakeInstructionI18nTest {
     @BeforeAll
     static void initTableInfoCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTrader.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), com.mawai.wiibcommon.entity.AiTraderDecision.class);
     }
 
     /** 带一条待读留言的开场白段：注入即消费，每次现造 trader */
@@ -229,6 +230,27 @@ class WakeInstructionI18nTest {
         assertThat(single.indexOf(calendar)).isLessThan(single.indexOf("本轮：看整盘"));
         assertThat(alert.indexOf(calendar)).isLessThan(alert.indexOf("注意：本次不是例行唤醒"));
         assertThat(second.indexOf(calendar)).isLessThan(second.indexOf("本段：看整盘"));
+    }
+
+    @Test
+    void entryEventsShowCountsAndCancellationReasonInBothLanguages() {
+        var plan = new com.mawai.wiibcommon.entity.AiTraderPlan(); plan.setSymbol("BTCUSDT"); plan.setSide("SHORT");
+        var filled = new com.mawai.wiibagent.trader.trade.PlanEntry();
+        filled.setLimitPrice(new BigDecimal("102")); filled.setQuantity(new BigDecimal("3")); filled.setFilledPrice(new BigDecimal("102.1"));
+        var cancelled = new com.mawai.wiibagent.trader.trade.PlanEntry();
+        cancelled.setLimitPrice(new BigDecimal("104")); cancelled.setQuantity(new BigDecimal("4"));
+        for (AgentLang lang : AgentLang.values()) {
+            cancelled.setReason(prompts.get(lang, "trader.cancelReason.groupClosed"));
+            var counts = new TraderPlanStore.EntryCounts(3, 1, 0);
+            var reconcile = new TraderPlanStore.Reconcile(List.of(), List.of(
+                    new TraderPlanStore.EntryFilled(plan, filled, counts),
+                    new TraderPlanStore.EntryCancelled(plan, cancelled, counts)));
+            String text = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+                    reconcile, List.of(), BOUNDARY, lang, List.of(), List.of(), List.of(), Map.of()).text();
+            assertThat(text).contains("102 × 3", "104 × 4", "102.1", cancelled.getReason());
+            assertThat(text).contains(lang == AgentLang.ZH ? "共 3 档，已成交 1 档，还挂 0 档" : "3 entries, 1 filled, 0 pending");
+            if (lang == AgentLang.EN) PromptI18nAssertions.assertNoCjk("entry events", text);
+        }
     }
 
     /** 观察包（账户/上一轮结论）的文案：英文侧零中文（含全角【】），中文侧段头齐全；没承诺、没事件就不算忙 */

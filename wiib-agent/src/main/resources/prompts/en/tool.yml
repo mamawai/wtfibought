@@ -300,44 +300,46 @@ tool:
     changes after your trades or fills that occurred while you were checking data.
 
   open_position: |-
-    Open a futures position on your sim account (cross margin). Hard rules (violations are rejected
-    with a reason you can fix, and the rejection tells you the exact allowed range): leverage must land
-    INSIDE the range your owner configured — it is a range, not a ceiling, so picking too low is
-    rejected too; when opening a NEW position the margin (=quantity*price/leverage) must not exceed
-    the configured percent-of-equity cap — there is no lower bound (adds are exempt); same-symbol
-    leverage must match any position or pending order already on that symbol;
-    LIMIT price within 5% of mark and resting on the far side of it (LONG below, SHORT above) — a LIMIT
-    that would fill at once is rejected, use MARKET for that; stopLossPrice is REQUIRED and on the correct side.
-    takeProfits is OPTIONAL: up to 3 rungs, each a price on the profit side of entry plus the percent of the
-    position it closes (percents sum to at most 100; whatever is left has no take-profit order). Omit it
-    and the position has no take-profit order at all.
-    playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
-    signalsUsed: one sentence citing the concrete data fields your thesis rests on.
-    invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
-    number); it becomes part of your position's plan.
-    Stop, take-profit rungs (= the plan's targets) and invalidation condition are all filed into the plan
-    and injected back into your next opening message. The receipt carries a facts block for this order:
-    the round-trip fee estimate, the stop distance in % and in ATR14 of your heartbeat interval, the loss
-    at the stop as a percentage of equity, and — only when take-profit rungs are set — the gain if every
-    rung fills and the reward-to-risk after fees (counting only the part the rungs cover).
+    Open a futures position on your sim account (cross margin) using entries: 1–5 rungs
+    {quantity, limitPrice}. Omit limitPrice for a market rung; at most one market rung per call.
+    Limits go first, market last. Limits must rest within 5% of mark (LONG below, SHORT above).
+    Each rung must meet quantity steps and minimum notional. Leverage must be inside your owner's
+    range and match existing positions/orders. Without a filled same-side position, this batch plus
+    same-side pending margin must fit the equity cap; filled adds are exempt. Leverage tiers are
+    prechecked on existing position + same-side pending + this batch's notional.
+    stopLossPrice is REQUIRED, beyond every entry. Optional takeProfits: up to 3 {price, percent}
+    rungs on the favorable side of every entry, percents sum to at most 100; quantities must meet
+    the step for each entry. Omit takeProfits to place no targets.
+    playType: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
+    signalsUsed cites concrete data; invalidationCondition is the market condition that disproves
+    the thesis, not a PnL number. Entries, stop, targets and thesis are recorded in one plan.
+    The receipt lists each rung. If only part of the batch went through, the reply starts with
+    PARTIAL: and the rungs that filled stay. If a rung's outcome is unknown it starts with UNKNOWN: —
+    reconcile with get_account before resubmitting. If the whole batch is refused, rungs already
+    resting are withdrawn and the reply is an ERROR with the reason. facts.batch estimates quantity, weighted
+    entry, notional, round-trip fees, stop distance (% and heartbeat ATR14), loss at stop and equity
+    risk; targets add estimated gain and reward/risk. facts.sameSide estimates the total loss at
+    current stops for this symbol and direction. These are scenarios, excluding exit slippage.
 
   reverse_position: |-
     Fully close positionId at MARKET, then open the opposite side of the same symbol at MARKET.
-    Symbol and side are inferred. quantity and leverage are for the NEW position; quantity need not
-    match the old position. stopLossPrice is REQUIRED for the new side. Optional takeProfits and
-    playType, signalsUsed, invalidationCondition have the same meaning as open_position; signalsUsed
-    also explains the current market evidence for reversing. Uses the same opening rules, cross
-    margin, plans and facts receipts. Existing opposite-side exposure is handled as an add.
-    Checks the new order before closing, then rechecks with the refreshed account and price.
-    These are two orders, not an atomic transaction. partial means execution was incomplete; inspect
-    both leg receipts. unknown means an order may have filled: reconcile with get_account before
-    placing another order. Other pending opening orders and watches are unchanged; manage them
-    with cancel_order / set_watch.
+    quantity and leverage describe the NEW position; quantity need not match the old position.
+    stopLossPrice is REQUIRED for the new side. Optional takeProfits and required playType, signalsUsed and
+    invalidationCondition have the same meaning as open_position; signalsUsed also explains why
+    you are reversing now. The symbol and opposite side are inferred from the current position.
+    The new order is checked against the same opening rules before closing, then checked again
+    using the refreshed account and mark price after closing. Existing same-side exposure is
+    handled like open_position (an add). This is two orders, not an atomic transaction:
+    partial means execution was incomplete; inspect both leg receipts. unknown means
+    an order may have filled, so reconcile with get_account before placing another order.
+    The receipt includes each leg and the new order's facts; opening files a plan.
+    A full close also cancels all unfilled grouped entry orders for the old symbol and direction. Watch conditions remain in place.
 
   close_position: |-
     Close (part of) an open position by positionId (from the [Account] block in your opening message, or get_account), at market price.
     quantity: coins to close; pass the full position quantity to close it entirely.
     reason: one sentence on why you are closing now.
+    A full close also cancels all unfilled grouped entry orders for this symbol and direction. Partial closes or partial targets leave them resting.
 
   set_stop_loss: |-
     Replace the stop-loss of an open position (positionId from the [Account] block in your opening message, or get_account). The new stop
@@ -345,6 +347,7 @@ tool:
     LONG stops may only move UP, SHORT stops only DOWN (relative to the current stop); it cannot
     sit on the far side of the current price (it would fire at once). To exit, use close_position.
     reason is REQUIRED and becomes part of the position's public plan revision history.
+    First update eligible PENDING entries in the same plan group, then the position. An entry keeps its own stop if the new stop is inside its entry price or is not tighter than its own stop; the receipt lists updated, retained and failed entries. With no filled position yet, cancel the entries with reasons and place them again.
 
   set_take_profit: |-
     Replace ALL take-profit orders of an open position (positionId from the [Account] block in your opening
@@ -354,6 +357,7 @@ tool:
     profit side of the current price (LONG above, SHORT below), otherwise it would fire at once — to leave
     now, use close_position.
     reason is REQUIRED (public plan revision history).
+    Update PENDING entries in the same plan group first, then reread the position size and replace its targets. Each entry uses its own quantity; any target below one quantity step rejects the request before changes. An empty array clears targets on both pending entries and the position. With no filled position yet, cancel the entries with reasons and place them again.
 
   write_plan: |-
     Backfill a trading plan for an open position that has NO plan record (positionId from the
@@ -362,7 +366,8 @@ tool:
     Rejected if the position already has a plan — plans are immutable; the only
     legal ways to change a thesis are adding to the position or closing and reopening.
 
-  cancel_order: Cancel a pending limit order by orderId (from the [Account] block's pendingOrders in your opening message, or get_account).
+  cancel_order: |-
+    Cancel a pending limit order by orderId (from the [Account] block's pendingOrders in your opening message, or get_account). reason is REQUIRED and records why this entry was cancelled in the plan and its revision history.
 
   set_watch: |-
     Replace ALL your watch conditions on one symbol. The symbol may be any coin the platform tracks, not

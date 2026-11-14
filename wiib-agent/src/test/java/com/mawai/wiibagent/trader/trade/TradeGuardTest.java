@@ -37,14 +37,12 @@ class TradeGuardTest {
 
     /** 基准单：0.1×100000/10 = 保证金1000 = 权益10%，落在 5~20% 区间内；带止损和一档 100% 的止盈 */
     private TradeGuard.OpenReq base() {
-        return new TradeGuard.OpenReq("BTCUSDT", "LONG", "MARKET", new BigDecimal("0.1"), 10,
-                null, new BigDecimal("95000"), List.of(rung("110000", "100")), "BREAKOUT", "突破前高", "1h收盘跌回98000下方");
+        return new TradeGuard.OpenReq("BTCUSDT", "LONG", List.of(new EntryRung(new BigDecimal("0.1"), null)), 10, new BigDecimal("95000"), List.of(rung("110000", "100")), "BREAKOUT", "突破前高", "1h收盘跌回98000下方");
     }
 
     /** 空单基准：止损在入场价上方、止盈在下方 */
     private TradeGuard.OpenReq baseShort() {
-        return new TradeGuard.OpenReq("BTCUSDT", "SHORT", "MARKET", new BigDecimal("0.1"), 10,
-                null, new BigDecimal("105000"), List.of(rung("90000", "100")), "BREAKOUT", "跌破前低", "1h收盘站回102000上方");
+        return new TradeGuard.OpenReq("BTCUSDT", "SHORT", List.of(new EntryRung(new BigDecimal("0.1"), null)), 10, new BigDecimal("105000"), List.of(rung("90000", "100")), "BREAKOUT", "跌破前低", "1h收盘站回102000上方");
     }
 
     private static TargetRung rung(String price, String percent) {
@@ -53,45 +51,95 @@ class TradeGuardTest {
 
     // ---------- 造数变体：生产 OpenReq 不带 wither（无生产调用），变体构造属于测试侧 ----------
 
-    private static TradeGuard.OpenReq withOrderType(TradeGuard.OpenReq r, String v) {
-        return new TradeGuard.OpenReq(r.symbol(), r.side(), v, r.quantity(), r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+    private static TradeGuard.OpenReq withEntries(TradeGuard.OpenReq r, EntryRung... entries) {
+        return new TradeGuard.OpenReq(r.symbol(), r.side(), List.of(entries), r.leverage(),
+                r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withQuantity(TradeGuard.OpenReq r, BigDecimal v) {
-        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), v, r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+        return withEntries(r, new EntryRung(v, r.entries().getFirst().limitPrice()));
     }
 
     private static TradeGuard.OpenReq withLeverage(TradeGuard.OpenReq r, Integer v) {
-        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), v,
-                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.entries(), v,
+                r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withLimitPrice(TradeGuard.OpenReq r, BigDecimal v) {
-        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                v, r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+        return withEntries(r, new EntryRung(r.quantity(), v));
     }
 
     private static TradeGuard.OpenReq withStopLossPrice(TradeGuard.OpenReq r, BigDecimal v) {
-        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                r.limitPrice(), v, r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
+        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.entries(), r.leverage(),
+                v, r.takeProfits(), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     private static TradeGuard.OpenReq withInvalidationCondition(TradeGuard.OpenReq r, String v) {
-        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), v);
+        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.entries(), r.leverage(),
+                r.stopLossPrice(), r.takeProfits(), r.playType(), r.signalsUsed(), v);
     }
 
     private static TradeGuard.OpenReq withTakeProfits(TradeGuard.OpenReq r, TargetRung... v) {
-        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.orderType(), r.quantity(), r.leverage(),
-                r.limitPrice(), r.stopLossPrice(), List.of(v), r.playType(), r.signalsUsed(), r.invalidationCondition());
+        return new TradeGuard.OpenReq(r.symbol(), r.side(), r.entries(), r.leverage(),
+                r.stopLossPrice(), List.of(v), r.playType(), r.signalsUsed(), r.invalidationCondition());
     }
 
     @Test
     void validOpenPasses() {
         assertThat(validateOpen(base(), EQUITY, MARK, WL, cfg(), List.of())).isNull();
         assertThat(validateOpen(baseShort(), EQUITY, MARK, WL, cfg(), List.of())).isNull();
+    }
+
+    @Test
+    void entryCountAndMarketCountAreCheckedAsOneBatch() {
+        assertThat(validateOpen(withEntries(base()), EQUITY, MARK, WL, cfg(), List.of())).contains("1到5");
+        var market = new EntryRung(new BigDecimal("0.01"), null);
+        assertThat(validateOpen(withEntries(base(), market, market), EQUITY, MARK, WL, cfg(), List.of())).contains("最多一档");
+        assertThat(validateOpen(withEntries(base(), java.util.Collections.nCopies(6,
+                new EntryRung(new BigDecimal("0.01"), new BigDecimal("99000"))).toArray(EntryRung[]::new)),
+                EQUITY, MARK, WL, cfg(), List.of())).contains("1到5");
+    }
+
+    @Test
+    void stopAndTargetMustWorkForEveryEntryAndEveryQuantity() {
+        var request = withEntries(base(), new EntryRung(new BigDecimal("0.01"), new BigDecimal("96000")),
+                new EntryRung(new BigDecimal("0.001"), null));
+        assertThat(validateOpen(withStopLossPrice(request, new BigDecimal("97000")), EQUITY, MARK, WL, cfg(), List.of())).contains("止损");
+        assertThat(validateOpen(withTakeProfits(request, rung("99000", "100")), EQUITY, MARK, WL, cfg(), List.of())).contains("止盈");
+        assertThat(validateOpen(withTakeProfits(request, rung("110000", "50")), EQUITY, MARK, WL, cfg(), List.of())).contains("步长");
+    }
+
+    @Test
+    void sameSidePendingSharesSlotButStillConsumesFirstEntryMargin() {
+        var pending = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, false, new BigDecimal("1500")));
+        String reject = validateOpen(base(), EQUITY, MARK, WL, cfg(false, false), pending);
+        assertThat(reject).contains("合计保证金");
+        assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.01")), EQUITY, MARK, WL, cfg(false, false), pending)).isNull();
+        // 拒因里的建议数量先扣掉了挂单已占的保证金，照抄能过
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
+        assertThat(m.find()).isTrue();
+        assertThat(validateOpen(withQuantity(base(), new BigDecimal(m.group(1))), EQUITY, MARK, WL, cfg(false, false), pending)).isNull();
+    }
+
+    @Test
+    void bracketCapIsExclusiveAndReportsAllowedNotional() {
+        var brackets = List.of(new com.mawai.wiibquant.external.sim.SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000"), 20, BigDecimal.ZERO, BigDecimal.ZERO),
+                new com.mawai.wiibquant.external.sim.SimTradeApi.Bracket(2, new BigDecimal("1000"), new BigDecimal("2000"), 10, BigDecimal.ZERO, BigDecimal.ZERO));
+        assertThat(TradeGuard.validateBracket(new BigDecimal("999"), 20, brackets, PROMPTS, AgentLang.ZH)).isNull();
+        assertThat(TradeGuard.validateBracket(new BigDecimal("1000"), 20, brackets, PROMPTS, AgentLang.ZH)).contains("1000");
+    }
+
+    @Test
+    void ladderFactsSumLegLossesAndFees() {
+        var request = new TradeGuard.OpenReq("BTCUSDT", "SHORT", List.of(
+                new EntryRung(new BigDecimal("3"), new BigDecimal("102")),
+                new EntryRung(new BigDecimal("4"), new BigDecimal("104")),
+                new EntryRung(new BigDecimal("3"), new BigDecimal("106"))), 10,
+                new BigDecimal("108"), List.of(), "RANGE", "反抽", "突破阻力");
+        var facts = OpenFacts.of(request, new BigDecimal("100"), EQUITY);
+        assertThat(facts.path("entryRef").asDecimal()).isEqualByComparingTo("104");
+        assertThat(facts.path("lossAtStop").asDecimal()).isEqualByComparingTo("40.62");
+        assertThat(facts.path("feeRoundTrip").asDecimal()).isEqualByComparingTo("0.62");
     }
 
     // ---------- 止盈：可以不设，设了最多 3 档 ----------
@@ -166,7 +214,7 @@ class TradeGuardTest {
         TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("15"), true, false);
         String reject = validateOpen(withQuantity(base(), new BigDecimal("0.3")),
                 EQUITY, MARK, WL, tight, List.of());
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("数量最多 (\\S+)").matcher(reject);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
         assertThat(m.find()).isTrue();
 
         assertThat(validateOpen(withQuantity(base(), new BigDecimal(m.group(1))),
@@ -220,7 +268,7 @@ class TradeGuardTest {
         TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("15"), true, false);
         BigDecimal equity = new BigDecimal("12345.67");
         String reject = validateOpen(withQuantity(base(), new BigDecimal("0.3")), equity, MARK, WL, tight, List.of());
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("数量最多 (\\S+)").matcher(reject);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("合计数量最多 (\\S+)").matcher(reject);
         assertThat(m.find()).isTrue();
 
         BigDecimal q = new BigDecimal(m.group(1));
@@ -238,7 +286,7 @@ class TradeGuardTest {
     /** 限价单按限价算保证金：0.205×96000/10=1968=19.68% 放行；同样数量按现价 100000 算是 20.5%，拒 */
     @Test
     void limitOrderMarginUsesLimitPrice() {
-        TradeGuard.OpenReq limit = withQuantity(withLimitPrice(withOrderType(base(), "LIMIT"), new BigDecimal("96000")),
+        TradeGuard.OpenReq limit = withQuantity(withLimitPrice(base(), new BigDecimal("96000")),
                 new BigDecimal("0.205"));
         assertThat(validateOpen(limit, EQUITY, MARK, WL, cfg(), List.of())).isNull();
         assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.205")), EQUITY, MARK, WL, cfg(), List.of()))
@@ -250,7 +298,7 @@ class TradeGuardTest {
     /** 做多限价等于现价＝挂出去当场成交：拒，并说清该用 MARKET 还是挂到现价另一侧 */
     @Test
     void marketableLongLimitRejected() {
-        TradeGuard.OpenReq atMark = withLimitPrice(withOrderType(base(), "LIMIT"), MARK);
+        TradeGuard.OpenReq atMark = withLimitPrice(base(), MARK);
         assertThat(validateOpen(atMark, EQUITY, MARK, WL, cfg(), List.of()))
                 .contains("当场按现价成交").contains("MARKET").contains("做多限价要低于现价");
     }
@@ -258,10 +306,10 @@ class TradeGuardTest {
     /** 做空限价：挂在现价下方拒，挂在上方放行 */
     @Test
     void shortLimitMustRestAboveMark() {
-        TradeGuard.OpenReq below = withLimitPrice(withOrderType(baseShort(), "LIMIT"), new BigDecimal("99000"));
+        TradeGuard.OpenReq below = withLimitPrice(baseShort(), new BigDecimal("99000"));
         assertThat(validateOpen(below, EQUITY, MARK, WL, cfg(), List.of()))
                 .contains("当场按现价成交").contains("做空限价要高于现价");
-        TradeGuard.OpenReq above = withLimitPrice(withOrderType(baseShort(), "LIMIT"), new BigDecimal("101000"));
+        TradeGuard.OpenReq above = withLimitPrice(baseShort(), new BigDecimal("101000"));
         assertThat(validateOpen(above, EQUITY, MARK, WL, cfg(), List.of())).isNull();
     }
 
@@ -270,7 +318,7 @@ class TradeGuardTest {
     /** 单仓模式下换标的：拒，并把占坑的仓位报给模型 */
     @Test
     void singlePositionModeRejectsAnotherSymbol() {
-        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("ETHUSDT", "LONG", 10, true));
+        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("ETHUSDT", "LONG", 10, true, BigDecimal.ZERO));
         assertThat(validateOpen(base(), EQUITY, MARK, WL, cfg(false, false), held))
                 .contains("一个仓位").contains("ETHUSDT LONG");
     }
@@ -278,27 +326,29 @@ class TradeGuardTest {
     /** 单仓模式下对同一仓加仓：sim 会并仓不占新坑，放行 */
     @Test
     void singlePositionModeAllowsAddOn() {
-        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, true));
+        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, true, BigDecimal.ZERO));
         assertThat(validateOpen(base(), EQUITY, MARK, WL, cfg(false, false), held)).isNull();
+        assertThat(validateOpen(base(), EQUITY, MARK, WL, cfg(false, false), List.of(held.getFirst(),
+                new TradeGuard.PosSnap("ETHUSDT", "LONG", 10, true, BigDecimal.ZERO)))).isNull();
     }
 
     /** 挂单一并计数：只看持仓的话，先挂几单就能绕过单仓限制 */
     @Test
     void pendingOrderCountsAsOccupied() {
-        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("ETHUSDT", "SHORT", 10, false));
+        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("ETHUSDT", "SHORT", 10, false, BigDecimal.ZERO));
         assertThat(validateOpen(base(), EQUITY, MARK, WL, cfg(false, false), held)).contains("一个仓位");
     }
 
     @Test
     void hedgeRejectedWhenDisabled() {
-        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "SHORT", 10, true));
+        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "SHORT", 10, true, BigDecimal.ZERO));
         assertThat(validateOpen(base(), EQUITY, MARK, WL, cfg(true, false), held))
                 .contains("反向仓位").contains("多空双开");
     }
 
     @Test
     void hedgeAllowedWhenEnabled() {
-        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "SHORT", 10, true));
+        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "SHORT", 10, true, BigDecimal.ZERO));
         assertThat(validateOpen(base(), EQUITY, MARK, WL, cfg(true, true), held)).isNull();
     }
 
@@ -307,7 +357,7 @@ class TradeGuardTest {
     /** 同币杠杆必须一致（sim 侧规则），护栏提前拦并说清该用几倍 */
     @Test
     void addOnMustMatchSymbolLeverage() {
-        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, true));
+        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, true, BigDecimal.ZERO));
         assertThat(validateOpen(withLeverage(base(), 15), EQUITY, MARK, WL, cfg(), held))
                 .contains("杠杆必须一致").contains("10倍");
     }
@@ -315,7 +365,7 @@ class TradeGuardTest {
     /** 加仓量由模型自己斟酌：0.5 → 保证金5000=50%，远超20%上限也放行 */
     @Test
     void addOnSkipsMarginCap() {
-        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, true));
+        List<TradeGuard.PosSnap> held = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, true, BigDecimal.ZERO));
         assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.5")), EQUITY, MARK, WL, cfg(), held))
                 .isNull();
     }
@@ -326,7 +376,7 @@ class TradeGuardTest {
      */
     @Test
     void sameSidePendingOrderIsNotAnAddOn() {
-        List<TradeGuard.PosSnap> pending = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, false));
+        List<TradeGuard.PosSnap> pending = List.of(new TradeGuard.PosSnap("BTCUSDT", "LONG", 10, false, BigDecimal.ZERO));
         assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.5")), EQUITY, MARK, WL, cfg(), pending))
                 .contains("占权益50%");
     }

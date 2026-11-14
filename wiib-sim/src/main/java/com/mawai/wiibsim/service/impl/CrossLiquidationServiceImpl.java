@@ -37,6 +37,7 @@ import java.util.stream.IntStream;
 
 import static com.mawai.wiibsim.service.impl.FuturesHelper.calculatePnl;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.cancelCloseOrders;
+import static com.mawai.wiibsim.service.impl.FuturesHelper.cancelGroupedOpenOrders;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.markPrice;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.removeFromLimitZSet;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.toEpochMs;
@@ -249,6 +250,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
             if (positionMapper.casClosePosition(pos.getId(), "LIQUIDATED", price, pnl) == 0) continue;
             positionIndexService.unregisterAll(pos); // 全仓无LIQ索引，清的是SL/TP残留
             cancelCloseOrders(pos.getId(), orderMapper, cacheService);
+            cancelGroupedOpenOrders(pos, orderMapper, userMapper, cacheService);
 
             FuturesOrder order = new FuturesOrder();
             order.setUserId(userId);

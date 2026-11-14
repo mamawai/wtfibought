@@ -150,6 +150,7 @@
     "long": "做多",
     "short": "做空",
     "qty": "{{n}}张",
+    "limit": "限价 {{p}}",
     "sl": "止损{{p}}",
     "tp": "止盈{{p}}",
     "tpNone": "撤掉止盈",
@@ -184,6 +185,18 @@
     "entry": "入场",
     "origSl": "原始止损",
     "target": "目标",
+    "entries": "入场各档",
+    "marketEntry": "市价",
+    "addEntry": "加仓",
+    "filledAt": "成交价 {{price}}",
+    "entryStatus": {
+      "pending": "待成交",
+      "filled": "已成交",
+      "cancelled": "已撤单",
+      "unknown": "结果未知",
+      "rejected": "被拒绝",
+      "not_attempted": "未下单"
+    },
     "setAt": "{{time}} 立",
     "revisions_other": "修订 {{count}} 次"
   },

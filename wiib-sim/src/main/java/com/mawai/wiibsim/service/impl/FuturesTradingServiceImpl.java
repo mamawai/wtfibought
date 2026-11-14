@@ -33,6 +33,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -167,7 +168,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
     /**
      * 当场成交的同向单并入现有仓位（Binance 语义：同向下单即合并，均价按数量加权），limitPrice 为空是市价单。
-     * 随单 SL/TP 以成交价为参照校验后追加到仓位现有档位（合计条数≤4、总量≤合并后持仓）。
+     * 随单 SL/TP 以成交价为参照、按本单数量校验后并入仓位现有档位（旧档先摊到加仓前的持仓量，同价合并，合计条数≤4）。
      */
     private FuturesOrderResponse mergeNow(Long userId, FuturesPosition position, FuturesOpenRequest request,
                                           BigDecimal price, BigDecimal limitPrice) {
@@ -180,10 +181,10 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         validateLeverageByBracket(position.getSymbol(), leverage, price.multiply(newQty));
 
         // 随单SL/TP先构建校验，不过关不动钱；null=本单未带，不改库
-        List<FuturesStopLoss> addSl = buildStopLosses(request.getStopLosses(), position.getSide(), price, newQty);
-        List<FuturesTakeProfit> addTp = buildTakeProfits(request.getTakeProfits(), position.getSide(), price, newQty);
-        List<FuturesStopLoss> mergedSl = mergeSlList(position.getStopLosses(), addSl, newQty);
-        List<FuturesTakeProfit> mergedTp = mergeTpList(position.getTakeProfits(), addTp, newQty);
+        List<FuturesStopLoss> addSl = buildStopLosses(request.getStopLosses(), position.getSide(), price, addQty);
+        List<FuturesTakeProfit> addTp = buildTakeProfits(request.getTakeProfits(), position.getSide(), price, addQty);
+        List<FuturesStopLoss> mergedSl = mergeSlList(position.getStopLosses(), addSl, oldQty, position.getSide());
+        List<FuturesTakeProfit> mergedTp = mergeTpList(position.getTakeProfits(), addTp, oldQty, position.getSide());
 
         BigDecimal addValue = price.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
@@ -213,9 +214,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (mergedSl != null) positionMapper.updateStopLosses(position.getId(), mergedSl);
         if (mergedTp != null) positionMapper.updateTakeProfits(position.getId(), mergedTp);
 
-        // 索引同步：新增SL/TP档位注册触发索引（存量档位已在册）；逐仓重算静态强平价
-        if (addSl != null) positionIndexService.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), addSl);
-        if (addTp != null) positionIndexService.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), addTp);
+        syncProtectionIndex(position, mergedSl, mergedTp, positionIndexService);
         if (!position.isCross()) {
             BigDecimal newMargin = position.getMargin().add(addMargin);
             BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(),
@@ -234,6 +233,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setOrderType(orderType(limitPrice));
         order.setMarginMode(position.getMarginMode());
         order.setQuantity(addQty);
+        order.setGroupId(request.getGroupId());
         order.setLeverage(leverage);
         order.setLimitPrice(limitPrice);
         order.setFilledPrice(price);
@@ -312,6 +312,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setPositionId(position.getId());
         order.setSymbol(request.getSymbol());
         order.setOrderSide("LONG".equals(request.getSide()) ? "OPEN_LONG" : "OPEN_SHORT");
+        order.setGroupId(request.getGroupId());
         order.setOrderType(orderType(limitPrice));
         order.setMarginMode(marginMode);
         order.setQuantity(quantity);
@@ -364,6 +365,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setOrderType("LIMIT");
         order.setMarginMode(marginMode);
         order.setQuantity(quantity);
+        order.setGroupId(request.getGroupId());
         order.setLeverage(leverage);
         order.setLimitPrice(limitPrice);
         order.setFrozenAmount(frozenAmount);
@@ -531,6 +533,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
             positionIndexService.unregisterAll(position);
             cancelCloseOrders(position.getId(), orderMapper, cacheService);
+            cancelGroupedOpenOrders(position, orderMapper, userMapper, cacheService);
         } else {
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
@@ -637,7 +640,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);
         }
 
-        int affected = orderMapper.casUpdateStatus(orderId, "PENDING", "CANCELLED");
+        int affected = orderMapper.casCancel(orderId, "PENDING", "USER");
         if (affected == 0) throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);
 
         // 逐仓开/加仓单解冻资金；全仓单没冻结过钱，状态一改挂单占用自动消失
@@ -646,8 +649,38 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
 
         order.setStatus("CANCELLED");
+        order.setCancelReason("USER");
+        order.setUpdatedAt(LocalDateTime.now());
         log.info("futures取消限价单 userId={} orderId={}", userId, orderId);
         return order;
+    }
+
+    /** 改一张还挂着的开仓限价单带的止损止盈：哪个列表不传就不动哪个，传空列表是清掉；单子已触发、成交或撤掉就拒 */
+    @Override
+    public void setOrderProtection(Long userId, Long orderId, FuturesOrderProtectionRequest request) {
+        FuturesOrder order = orderMapper.selectById(orderId);
+        if (order == null || !order.getUserId().equals(userId)) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
+        if (!"PENDING".equals(order.getStatus()) || !"LIMIT".equals(order.getOrderType())
+                || !List.of("OPEN_LONG", "OPEN_SHORT").contains(order.getOrderSide())) {
+            throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);
+        }
+        String side = order.getOrderSide().substring(5);
+        List<FuturesStopLoss> sls = request.getStopLosses() == null ? null : request.getStopLosses().isEmpty()
+                ? List.of() : buildStopLosses(request.getStopLosses(), side, order.getLimitPrice(), order.getQuantity());
+        List<FuturesTakeProfit> tps = request.getTakeProfits() == null ? null : request.getTakeProfits().isEmpty()
+                ? List.of() : buildTakeProfits(request.getTakeProfits(), side, order.getLimitPrice(), order.getQuantity());
+        if (orderMapper.updatePendingProtection(userId, orderId, sls, tps) == 0) {
+            throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);
+        }
+    }
+
+    /** 这个订单组的全部订单，什么状态都算 */
+    @Override
+    public List<FuturesOrderResponse> getGroupOrders(Long userId, String groupId) {
+        return orderMapper.selectList(new LambdaQueryWrapper<FuturesOrder>()
+                        .eq(FuturesOrder::getUserId, userId).eq(FuturesOrder::getGroupId, groupId)
+                        .orderByAsc(FuturesOrder::getId))
+                .stream().map(FuturesHelper::buildOrderResponse).toList();
     }
 
     // ==================== 追加保证金 ====================

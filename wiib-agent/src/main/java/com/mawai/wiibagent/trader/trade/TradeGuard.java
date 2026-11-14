@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.toolkit.BeijingTime;
+import com.mawai.wiibquant.external.sim.SimTradeApi;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -40,11 +41,14 @@ public final class TradeGuard {
      *               sim 只与已成交持仓并仓，把挂单也当成"已有同向仓"会让加仓判定为真、
      *               从而跳过保证金区间校验——先挂一个不会成交的限价单，之后开仓就不受约束了
      */
-    public record PosSnap(String symbol, String side, Integer leverage, boolean filled) {
+    public record PosSnap(String symbol, String side, Integer leverage, boolean filled, BigDecimal pendingMargin) {
     }
 
     /** 止盈最多分几档 */
     public static final int MAX_TARGET_RUNGS = 3;
+
+    /** 一次开仓最多分几档入场 */
+    public static final int MAX_ENTRY_RUNGS = 5;
 
     /** sim 一个仓位最多挂几档止盈（止损同）；加仓带的档位是追加上去的 */
     public static final int SIM_SPLIT_LIMIT = 4;
@@ -53,12 +57,53 @@ public final class TradeGuard {
      * 开仓请求（工具参数的结构化镜像）。takeProfits 是止盈分档，空表＝不设止盈。
      * 变体构造归测试侧（TradeGuardTest 的 with* 助手）。
      */
-    public record OpenReq(String symbol, String side, String orderType, BigDecimal quantity, Integer leverage,
-                          BigDecimal limitPrice, BigDecimal stopLossPrice, List<TargetRung> takeProfits,
+    public record OpenReq(String symbol, String side, List<EntryRung> entries, Integer leverage,
+                          BigDecimal stopLossPrice, List<TargetRung> takeProfits,
                           String playType, String signalsUsed, String invalidationCondition) {
+
+        /** 各档数量合计 */
+        public BigDecimal quantity() {
+            return entries.stream().map(EntryRung::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        /** 各档名义额合计：限价档按限价、市价档按现价 */
+        public BigDecimal notional(BigDecimal mark) {
+            return entries.stream().map(e -> e.quantity().multiply(e.price(mark))).reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        /** 各档按数量加权的入场参照价 */
+        public BigDecimal entryPrice(BigDecimal mark) {
+            return notional(mark).divide(quantity(), 8, RoundingMode.HALF_UP);
+        }
+
+        /** 入场方式：多于一档是 LADDER，单档是 MARKET / LIMIT */
+        public String orderType() {
+            return entries.size() > 1 ? "LADDER" : entries.getFirst().orderType();
+        }
     }
 
     private TradeGuard() {
+    }
+
+    /**
+     * 杠杆分档预检：合计名义额落在哪一档，杠杆就不能超过那一档的上限。通过返回 null。
+     * 只是下单前先拦一道，sim 成交时还会复检
+     */
+    public static String validateBracket(BigDecimal notional, int leverage, List<SimTradeApi.Bracket> brackets,
+                                         PromptCatalog prompts, AgentLang lang) {
+        if (brackets == null || brackets.isEmpty()) {
+            return prompts.get(lang, "trader.guard.bracketsUnavailable");
+        }
+        boolean allowed = brackets.stream().anyMatch(b -> notional.compareTo(b.notionalFloor()) >= 0
+                && notional.compareTo(b.notionalCap()) < 0 && leverage <= b.maxLeverage());
+        if (allowed) {
+            return null;
+        }
+        // 这个杠杆还用得了的最高一档的名义额上界
+        BigDecimal cap = brackets.stream().filter(b -> leverage <= b.maxLeverage())
+                .map(SimTradeApi.Bracket::notionalCap).max(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
+        return prompts.get(lang, "trader.guard.bracketExceeded",
+                Map.of("leverage", leverage, "notional", plain(notional), "cap", plain(cap)));
     }
 
     /**
@@ -88,11 +133,12 @@ public final class TradeGuard {
         if (!isLong && !"SHORT".equals(req.side())) {
             return prompts.get(lang, "trader.guard.sideInvalid");
         }
-        boolean isLimit = "LIMIT".equals(req.orderType());
-        if (!isLimit && !"MARKET".equals(req.orderType())) {
-            return prompts.get(lang, "trader.guard.orderTypeInvalid");
+        // 档数 1 到上限，不带限价的市价档最多一档
+        if (req.entries() == null || req.entries().isEmpty() || req.entries().size() > MAX_ENTRY_RUNGS
+                || req.entries().stream().filter(e -> e != null && e.limitPrice() == null).count() > 1) {
+            return prompts.get(lang, "trader.guard.entryRungsInvalid", Map.of("max", MAX_ENTRY_RUNGS));
         }
-        if (req.quantity() == null || req.quantity().signum() <= 0) {
+        if (req.entries().stream().anyMatch(e -> e == null || e.quantity() == null || e.quantity().signum() <= 0)) {
             return prompts.get(lang, "trader.guard.quantityPositive");
         }
         if (req.leverage() == null || req.leverage() < cfg.leverageMin() || req.leverage() > cfg.leverageMax()) {
@@ -105,25 +151,24 @@ public final class TradeGuard {
         if (req.invalidationCondition() == null || req.invalidationCondition().isBlank()) {
             return prompts.get(lang, "trader.guard.invalidationRequired");
         }
-        if (isLimit && req.limitPrice() == null) {
-            return prompts.get(lang, "trader.guard.limitPriceRequired");
-        }
-        if (isLimit) {
-            BigDecimal deviation = req.limitPrice().subtract(markPrice).abs()
-                    .divide(markPrice, 8, RoundingMode.HALF_UP);
-            if (deviation.compareTo(MAX_LIMIT_DEVIATION) > 0) {
-                return prompts.get(lang, "trader.guard.limitTooFar", Map.of(
-                        "pct", deviation.multiply(new BigDecimal("100")).setScale(1, RoundingMode.HALF_UP),
-                        "mark", markPrice.stripTrailingZeros().toPlainString()));
-            }
-            // 买入限价不低于现价、卖出限价不高于现价：挂出去当场按现价成交，不是挂单
-            boolean marketable = isLong ? req.limitPrice().compareTo(markPrice) >= 0
-                    : req.limitPrice().compareTo(markPrice) <= 0;
-            if (marketable) {
-                return prompts.get(lang, "trader.guard.limitMarketable", Map.of(
-                        "rule", prompts.get(lang, isLong ? "trader.guard.limitMarketableLong" : "trader.guard.limitMarketableShort"),
-                        "limit", req.limitPrice().stripTrailingZeros().toPlainString(),
-                        "mark", markPrice.stripTrailingZeros().toPlainString()));
+        for (EntryRung entry : req.entries()) {
+            if (entry.limitPrice() != null) {
+                BigDecimal deviation = entry.limitPrice().subtract(markPrice).abs()
+                        .divide(markPrice, 8, RoundingMode.HALF_UP);
+                if (deviation.compareTo(MAX_LIMIT_DEVIATION) > 0) {
+                    return prompts.get(lang, "trader.guard.limitTooFar", Map.of(
+                            "pct", deviation.multiply(new BigDecimal("100")).setScale(1, RoundingMode.HALF_UP),
+                            "mark", markPrice.stripTrailingZeros().toPlainString()));
+                }
+                // 买入限价不低于现价、卖出限价不高于现价：挂出去当场按现价成交，不是挂单
+                boolean marketable = isLong ? entry.limitPrice().compareTo(markPrice) >= 0
+                        : entry.limitPrice().compareTo(markPrice) <= 0;
+                if (marketable) {
+                    return prompts.get(lang, "trader.guard.limitMarketable", Map.of(
+                            "rule", prompts.get(lang, isLong ? "trader.guard.limitMarketableLong" : "trader.guard.limitMarketableShort"),
+                            "limit", entry.limitPrice().stripTrailingZeros().toPlainString(),
+                            "mark", markPrice.stripTrailingZeros().toPlainString()));
+                }
             }
         }
         List<PosSnap> snaps = existing == null ? List.of() : existing;
@@ -142,7 +187,8 @@ public final class TradeGuard {
                     Map.of("symbol", req.symbol(), "lev", symLev));
         }
         // 单仓模式：加仓不占新坑（sim 同向自动并仓），其余一律拒
-        if (!cfg.allowMultiPosition() && !isAddOn && !snaps.isEmpty()) {
+        if (!cfg.allowMultiPosition() && !isAddOn
+                && snaps.stream().anyMatch(p -> !p.symbol().equals(req.symbol()) || !p.side().equals(req.side()))) {
             return prompts.get(lang, "trader.guard.singlePositionOnly", Map.of("occupied", describe(snaps)));
         }
         // 双开：同币反向占的是另一个坑，只可能在多仓位模式下发生
@@ -152,73 +198,85 @@ public final class TradeGuard {
         }
 
         // 入场参考价：限价单按限价、市价单按现价
-        BigDecimal entryRef = isLimit ? req.limitPrice() : markPrice;
+        BigDecimal entryRef = req.entryPrice(markPrice);
         // 保证金占比只有上限，且只管开新仓：加仓多大由模型自己斟酌（主人的原话）
         if (!isAddOn) {
-            BigDecimal margin = req.quantity().multiply(entryRef)
-                    .divide(BigDecimal.valueOf(req.leverage()), 8, RoundingMode.HALF_UP);
+            // 还没成交的同币同向挂单和本次各档合起来算一个新仓
+            BigDecimal pendingMargin = snaps.stream()
+                    .filter(p -> !p.filled() && p.symbol().equals(req.symbol()) && p.side().equals(req.side()))
+                    .map(PosSnap::pendingMargin).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal margin = req.notional(markPrice)
+                    .divide(BigDecimal.valueOf(req.leverage()), 8, RoundingMode.HALF_UP).add(pendingMargin);
             BigDecimal pct = margin.multiply(new BigDecimal("100"))
                     .divide(equity, 4, RoundingMode.HALF_UP);
             if (pct.compareTo(cfg.marginPctMax()) > 0) {
+                // 上限扣掉挂单已占的，剩下的才是本次还能用的保证金
+                BigDecimal marginRoom = equity.multiply(cfg.marginPctMax()).divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP)
+                        .subtract(pendingMargin).max(BigDecimal.ZERO);
                 // 占比原样展示不四舍五入：20.005% 若显示成"20.00%超过上限20%"是自相矛盾，模型会懵
                 return prompts.get(lang, "trader.guard.marginOverMax", Map.of(
                         "margin", margin.setScale(0, RoundingMode.HALF_UP),
                         "pct", pct.stripTrailingZeros().toPlainString(),
                         "max", cfg.marginPctMax().stripTrailingZeros().toPlainString(),
                         "lev", req.leverage(),
-                        "qtyMax", qtyAtCap(cfg.marginPctMax(), equity, req.leverage(), entryRef, filter)));
+                        "qtyMax", qtyAtCap(marginRoom, req.leverage(), entryRef, filter)));
             }
         }
-        if (filter != null) {
-            if (req.quantity().compareTo(filter.minQty()) < 0
-                    || req.quantity().remainder(filter.stepSize()).signum() != 0) {
-                return prompts.get(lang, "trader.guard.qtyStep", Map.of(
-                        "symbol", req.symbol(),
-                        "step", plain(filter.stepSize()),
-                        "min", plain(filter.minQty()),
-                        "given", plain(req.quantity())));
+        for (EntryRung entry : req.entries()) {
+            entryRef = entry.price(markPrice);
+            if (filter != null) {
+                if (entry.quantity().compareTo(filter.minQty()) < 0
+                        || entry.quantity().remainder(filter.stepSize()).signum() != 0) {
+                    return prompts.get(lang, "trader.guard.qtyStep", Map.of(
+                            "symbol", req.symbol(),
+                            "step", plain(filter.stepSize()),
+                            "min", plain(filter.minQty()),
+                            "given", plain(entry.quantity())));
+                }
+                BigDecimal notional = entry.quantity().multiply(entryRef);
+                if (notional.compareTo(filter.minNotional()) < 0) {
+                    return prompts.get(lang, "trader.guard.minNotional", Map.of(
+                            "symbol", req.symbol(),
+                            "notional", plain(notional.setScale(2, RoundingMode.HALF_UP)),
+                            "min", plain(filter.minNotional())));
+                }
             }
-            BigDecimal notional = req.quantity().multiply(entryRef);
-            if (notional.compareTo(filter.minNotional()) < 0) {
-                return prompts.get(lang, "trader.guard.minNotional", Map.of(
-                        "symbol", req.symbol(),
-                        "notional", plain(notional.setScale(2, RoundingMode.HALF_UP)),
-                        "min", plain(filter.minNotional())));
+            if (req.stopLossPrice() == null) {
+                return prompts.get(lang, "trader.guard.stopLossRequired");
             }
-        }
-        if (req.stopLossPrice() == null) {
-            return prompts.get(lang, "trader.guard.stopLossRequired");
-        }
-        // 零/负必须挡在方向校验之前：LONG 的「0 >= 入场价」为假会直接放行，
-        // 开出止损价为0（永不触发）的裸单——真实成因多半是重试时漏传了这个参数
-        if (req.stopLossPrice().signum() <= 0) {
-            return prompts.get(lang, "trader.guard.stopLossPositive", Map.of(
-                    "given", req.stopLossPrice().stripTrailingZeros().toPlainString(),
-                    "entry", entryRef.stripTrailingZeros().toPlainString(),
-                    "hint", isLong
-                            ? prompts.get(lang, "trader.guard.stopLossHintLong",
-                                    Map.of("example", pctOf(entryRef, "0.98")))
-                            : prompts.get(lang, "trader.guard.stopLossHintShort",
-                                    Map.of("example", pctOf(entryRef, "1.02")))));
-        }
-        if (isLong ? req.stopLossPrice().compareTo(entryRef) >= 0
-                : req.stopLossPrice().compareTo(entryRef) <= 0) {
-            return prompts.get(lang, "trader.guard.stopLossDirection", Map.of(
-                    "rule", prompts.get(lang, isLong ? "trader.guard.stopLossRuleLong" : "trader.guard.stopLossRuleShort"),
-                    "entry", entryRef.stripTrailingZeros().toPlainString()));
-        }
-        // 止盈可以不设；设了的每档都要在入场价有利一侧
-        String targets = validateTargets(req.takeProfits(), prompts, lang);
-        if (targets != null) {
-            return targets;
-        }
-        for (TargetRung rung : req.takeProfits()) {
-            if (isLong ? rung.price().compareTo(entryRef) <= 0 : rung.price().compareTo(entryRef) >= 0) {
-                return prompts.get(lang, "trader.guard.takeProfitDirection", Map.of("rule",
-                        prompts.get(lang, isLong ? "trader.guard.takeProfitRuleLong" : "trader.guard.takeProfitRuleShort")));
+            // 零/负必须挡在方向校验之前：LONG 的「0 >= 入场价」为假会直接放行，
+            // 开出止损价为0（永不触发）的裸单——真实成因多半是重试时漏传了这个参数
+            if (req.stopLossPrice().signum() <= 0) {
+                return prompts.get(lang, "trader.guard.stopLossPositive", Map.of(
+                        "given", req.stopLossPrice().stripTrailingZeros().toPlainString(),
+                        "entry", entryRef.stripTrailingZeros().toPlainString(),
+                        "hint", isLong
+                                ? prompts.get(lang, "trader.guard.stopLossHintLong",
+                                        Map.of("example", pctOf(entryRef, "0.98")))
+                                : prompts.get(lang, "trader.guard.stopLossHintShort",
+                                        Map.of("example", pctOf(entryRef, "1.02")))));
             }
+            if (isLong ? req.stopLossPrice().compareTo(entryRef) >= 0
+                    : req.stopLossPrice().compareTo(entryRef) <= 0) {
+                return prompts.get(lang, "trader.guard.stopLossDirection", Map.of(
+                        "rule", prompts.get(lang, isLong ? "trader.guard.stopLossRuleLong" : "trader.guard.stopLossRuleShort"),
+                        "entry", entryRef.stripTrailingZeros().toPlainString()));
+            }
+            // 止盈可以不设；设了的每档都要在入场价有利一侧
+            String targets = validateTargets(req.takeProfits(), prompts, lang);
+            if (targets != null) {
+                return targets;
+            }
+            for (TargetRung rung : req.takeProfits()) {
+                if (isLong ? rung.price().compareTo(entryRef) <= 0 : rung.price().compareTo(entryRef) >= 0) {
+                    return prompts.get(lang, "trader.guard.takeProfitDirection", Map.of("rule",
+                            prompts.get(lang, isLong ? "trader.guard.takeProfitRuleLong" : "trader.guard.takeProfitRuleShort")));
+                }
+            }
+            String quantities = targetQuantities(req.takeProfits(), entry.quantity(), req.symbol(), prompts, lang);
+            if (quantities != null) return quantities;
         }
-        return targetQuantities(req.takeProfits(), req.quantity(), req.symbol(), prompts, lang);
+        return null;
     }
 
     /** 止盈分档的形状：最多 {@link #MAX_TARGET_RUNGS} 档，每档有正的价位和占比，占比合计不超过 100。通过返回 null */
@@ -349,14 +407,13 @@ public final class TradeGuard {
     }
 
     /**
-     * 拒因里把上限处的数量直接算给模型，省一轮试错。
+     * 拒因里把还能用的保证金折成数量直接算给模型，省一轮试错。
      * 向下取整：模型会照抄提示数字重试（一晚 8 次贴边拒绝的实测教训——HALF_UP 算出的数被模型截位后又越界，陷入拒绝循环）。
      * 再按交易所步长取整，照抄过去 sim 那关也能过。
      */
-    private static String qtyAtCap(BigDecimal marginPct, BigDecimal equity, int leverage,
+    private static String qtyAtCap(BigDecimal marginRoom, int leverage,
                                    BigDecimal entryRef, TradeFilterDefaults.Filter filter) {
-        BigDecimal qty = equity.multiply(marginPct).divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP)
-                .multiply(BigDecimal.valueOf(leverage))
+        BigDecimal qty = marginRoom.multiply(BigDecimal.valueOf(leverage))
                 .divide(entryRef, 6, RoundingMode.FLOOR);
         if (filter != null) {
             qty = qty.divide(filter.stepSize(), 0, RoundingMode.FLOOR).multiply(filter.stepSize());

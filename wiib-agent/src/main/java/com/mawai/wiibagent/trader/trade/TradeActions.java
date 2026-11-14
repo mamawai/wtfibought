@@ -16,8 +16,19 @@ public final class TradeActions {
         return List.of(action);
     }
 
+    /** 这个动作开没开成仓：整笔成了，或者分档里有哪一档成交了、挂上了 */
     public static boolean opened(JsonNode action) {
         return legs(action).stream().anyMatch(a -> "open_position".equals(a.path("tool").asString(null))
-                && "ok".equals(a.path("status").asString(null)));
+                && ("ok".equals(a.path("status").asString(null)) || anyEntryPlaced(a.path("result").path("entries"))));
+    }
+
+    private static boolean anyEntryPlaced(JsonNode entries) {
+        for (JsonNode e : entries) {
+            String status = e.path("status").asString(null);
+            if ("filled".equals(status) || "pending".equals(status)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

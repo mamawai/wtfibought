@@ -2,8 +2,10 @@ package com.mawai.wiibagent.learning;
 
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.trade.TargetRung;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.market.FuturesFeeRates;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import lombok.RequiredArgsConstructor;
@@ -82,21 +84,17 @@ public class CaseFileBuilder {
     public enum Outcome { TARGET, STOP, OPEN }
 
     /**
-     * 一档止损宽度的重放结局。r 按同样的风险金额折算、不计手续费：没到过止盈档就被止损 = −1；
-     * 到过止盈档的，各档按占比 × 目标距离 ÷ 这一档的止损距离，剩下的仓位后来被止损的按占比 × −1 一起算；未决为 null。
+     * 一档止损宽度的重放结局。r 按同样的风险金额折算，扣估算的交易手续费；未决为 null。
      */
     public record WidthOutcome(BigDecimal width, Outcome outcome, BigDecimal r) {
     }
 
     /**
-     * 开仓后不动的重放，单位 R = 入场价到原始止损的距离。从开仓那根之后的第一根 5m 逐根走，最远到开仓后 72 小时；
-     * 同一根里止损和止盈档都碰到按止损算。没设止盈的单子只会是止损或未决。
-     * actualR 是这笔的净盈亏 ÷（开仓总数量 × R），sim 没给开仓总数量或净盈亏时为 null；
-     * fav24R / adv24R 是开仓后 24 小时内的最大顺向与最大逆向；hold24R 是不设止损拿满 24 小时的收盘位置，
-     * K 线没覆盖到 24 小时为 null；widths 按 {@link #STOP_WIDTHS} 的顺序，止盈档不变、止损放到几倍 R 处。
+     * 首批计划不动的重放，R 是首批数量 × 加权入场到止损的距离；无首批档记录的沿用单档算法。
+     * fav24R / adv24R / hold24R 是以入场参照价计算的价格位置；withAdds 标记实际里有加仓。
      */
     public record Replay(BigDecimal actualR, BigDecimal fav24R, BigDecimal adv24R, BigDecimal hold24R,
-                         List<WidthOutcome> widths) {
+                         List<WidthOutcome> widths, boolean withAdds) {
         /** 止损原样那一档，就是开仓后什么都不动 */
         public WidthOutcome untouched() {
             return widths.getFirst();
@@ -112,11 +110,12 @@ public class CaseFileBuilder {
      * managed 是"实际"和"开仓后不动"两边都有数的笔数，actualR / untouchedR 只合计这几笔。
      */
     public record ReplaySummary(int trades, List<WidthTally> widths, int managed,
-                                BigDecimal actualR, BigDecimal untouchedR) {
+                                BigDecimal actualR, BigDecimal untouchedR, long withAdds) {
     }
 
     /** 没成交就撤掉的限价单：从最后一次见它还挂着的那轮起 24 小时内，价格到没到过限价位、到过计划里的几档止盈 */
-    public record CancelledLimit(AiTraderPlan plan, boolean touchedLimit, int reachedTargets) {
+    public record CancelledLimit(AiTraderPlan plan, PlanEntry entry, BigDecimal limit, BigDecimal stop,
+                                 List<TargetRung> targets, long cancelledAt, boolean touchedLimit, int reachedTargets) {
     }
 
     /** 同一类单子的一组，赢亏同台 */
@@ -142,9 +141,9 @@ public class CaseFileBuilder {
         long openBar = openMs - Math.floorMod(openMs, BAR_MS);
         long closeBar = closeMs - Math.floorMod(closeMs, BAR_MS);
         List<KlineBar> bars = historyStore.load(pos.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
-                openBar, Math.max(closeBar + AFTER_LONG_MS, openBar + REPLAY_MS));
+                replayStart(plan, openBar), Math.max(closeBar + AFTER_LONG_MS, openBar + REPLAY_MS));
         return new TradeCase(pos, plan, entryCtx(plan),
-                path(pos, plan, bars, openMs, openBar, closeBar), replay(pos, plan, bars, openBar));
+                path(pos, plan, bars.stream().filter(b -> b.openTime() >= openBar).toList(), openMs, openBar, closeBar), replay(pos, plan, bars, openBar));
     }
 
     /** 只要重放：论点战绩每轮都算，不取出场后那一段 */
@@ -152,7 +151,15 @@ public class CaseFileBuilder {
         long openMs = TradePairing.msOf(pos.getCreatedAt());
         long openBar = openMs - Math.floorMod(openMs, BAR_MS);
         return replay(pos, plan, historyStore.load(pos.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
-                openBar, openBar + REPLAY_MS), openBar);
+                replayStart(plan, openBar), openBar + REPLAY_MS), openBar);
+    }
+
+    private static long replayStart(AiTraderPlan plan, long openBar) {
+        return PlanEntry.read(plan).stream().filter(e -> !e.isAdd()).mapToLong(e -> LadderReplay.floorBar(e.getPlacedAt())).min().orElse(openBar);
+    }
+
+    public static boolean hasFilledAdds(AiTraderPlan plan) {
+        return PlanEntry.read(plan).stream().anyMatch(e -> e.isAdd() && "FILLED".equals(e.getStatus()));
     }
 
     /**
@@ -161,17 +168,29 @@ public class CaseFileBuilder {
      * @param fromMs 从哪一刻看起：最后一次见它还挂着的那轮。计划是下一轮对账时才归档的，从归档时刻看会漏掉撤单后的头一段
      */
     public CancelledLimit cancelledLimit(AiTraderPlan plan, long fromMs) {
+        return cancelledLimit(plan, null, fromMs, plan.getEntryPrice(), plan.getStopLossPrice(), TargetRung.of(plan));
+    }
+
+    public CancelledLimit cancelledLimit(AiTraderPlan plan, PlanEntry entry) {
+        PlanEntry initial = PlanEntry.read(plan).stream().filter(e -> !e.isAdd()).findFirst().orElse(null);
+        return cancelledLimit(plan, entry, entry.getClosedAt(), entry.getLimitPrice(),
+                initial == null ? plan.getStopLossPrice() : initial.getStop(),
+                initial == null ? TargetRung.of(plan) : initial.getTargets() == null ? List.of() : initial.getTargets());
+    }
+
+    private CancelledLimit cancelledLimit(AiTraderPlan plan, PlanEntry entry, long fromMs,
+                                           BigDecimal limit, BigDecimal stop, List<TargetRung> targets) {
         List<KlineBar> bars = historyStore.load(plan.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
                 fromMs, fromMs + AFTER_LONG_MS);
         if (bars.isEmpty()) {
             return null;
         }
         boolean isLong = "LONG".equals(plan.getSide());
-        BigDecimal limit = plan.getEntryPrice();
         boolean touched = bars.stream().anyMatch(b -> isLong ? b.low().compareTo(limit) <= 0 : b.high().compareTo(limit) >= 0);
         BigDecimal best = bars.stream().map(isLong ? KlineBar::high : KlineBar::low)
                 .reduce((a, b) -> better(a, b, isLong)).orElseThrow();
-        return new CancelledLimit(plan, touched, reached(TargetRung.of(plan), best, isLong));
+        return new CancelledLimit(plan, entry, limit, stop, targets,
+                entry == null ? plan.getClosedWakeTime() : entry.getClosedAt(), touched, reached(targets, best, isLong));
     }
 
     /** 最有利价到过几档止盈 */
@@ -205,7 +224,8 @@ public class CaseFileBuilder {
                 .filter(r -> r.actualR() != null && r.untouched().r() != null).toList();
         return new ReplaySummary(replays.size(), widths, managed.size(),
                 managed.stream().map(Replay::actualR).reduce(BigDecimal.ZERO, BigDecimal::add),
-                managed.stream().map(r -> r.untouched().r()).reduce(BigDecimal.ZERO, BigDecimal::add));
+                managed.stream().map(r -> r.untouched().r()).reduce(BigDecimal.ZERO, BigDecimal::add),
+                managed.stream().filter(Replay::withAdds).count());
     }
 
     /** 计划上的入场上下文 JSON 解析成树；没计划或没存给 null */
@@ -270,6 +290,8 @@ public class CaseFileBuilder {
     }
 
     private static Replay replay(FuturesPositionDTO pos, AiTraderPlan plan, List<KlineBar> bars, long openBar) {
+        List<PlanEntry> initial = PlanEntry.read(plan).stream().filter(e -> !e.isAdd()).toList();
+        if (!initial.isEmpty()) return LadderReplay.replay(pos, initial, bars, hasFilledAdds(plan));
         BigDecimal entry = pos.getEntryPrice();
         BigDecimal r = dist(entry, plan == null ? null : plan.getStopLossPrice());
         List<KlineBar> after = bars.stream()
@@ -293,11 +315,15 @@ public class CaseFileBuilder {
         // 止盈档由近到远排好，重放时一档一档碰
         List<TargetRung> rungs = TargetRung.of(plan).stream()
                 .sorted(Comparator.comparing(t -> t.price().subtract(entry).abs())).toList();
+        JsonNode ctx = entryCtx(plan);
+        BigDecimal openRate = ctx != null && "LIMIT".equals(ctx.path("orderType").asString(null))
+                ? FuturesFeeRates.MAKER : FuturesFeeRates.TAKER;
         List<WidthOutcome> widths = STOP_WIDTHS.stream()
-                .map(w -> walk(after, isLong, entry, r.multiply(w), rungs, w)).toList();
+                .map(w -> walk(after, isLong, entry, r.multiply(w), rungs, w, openRate)).toList();
         BigDecimal actualR = pos.getClosedPnl() == null || pos.getOpenedQuantity() == null ? null
-                : pos.getClosedPnl().divide(pos.getOpenedQuantity().multiply(r), 2, RoundingMode.HALF_UP);
-        return new Replay(actualR, frac(fav, r), frac(adv, r).negate(), covers24h ? frac(hold, r) : null, widths);
+                : pos.getClosedPnl().add(pos.getFundingFeeTotal() == null ? BigDecimal.ZERO : pos.getFundingFeeTotal())
+                .divide(pos.getOpenedQuantity().multiply(r), 2, RoundingMode.HALF_UP);
+        return new Replay(actualR, frac(fav, r), frac(adv, r).negate(), covers24h ? frac(hold, r) : null, widths, hasFilledAdds(plan));
     }
 
     /**
@@ -305,27 +331,31 @@ public class CaseFileBuilder {
      * 整个仓位了结才算已决。
      */
     private static WidthOutcome walk(List<KlineBar> bars, boolean isLong, BigDecimal entry,
-                                     BigDecimal stopDist, List<TargetRung> rungs, BigDecimal width) {
+                                     BigDecimal stopDist, List<TargetRung> rungs, BigDecimal width, BigDecimal openRate) {
         // left 是还没了结的仓位比例，gain 是已了结各档的占比 × 目标距离
         BigDecimal left = BigDecimal.ONE;
         BigDecimal gain = BigDecimal.ZERO;
+        BigDecimal fee = entry.multiply(openRate);
+        BigDecimal stopPrice = isLong ? entry.subtract(stopDist) : entry.add(stopDist);
         int next = 0;
         for (KlineBar b : bars) {
             BigDecimal advExc = isLong ? entry.subtract(b.low()) : b.high().subtract(entry);
             if (advExc.compareTo(stopDist) >= 0) {
-                return next == 0 ? new WidthOutcome(width, Outcome.STOP, BigDecimal.ONE.negate())
-                        : new WidthOutcome(width, Outcome.TARGET, gain.subtract(left.multiply(stopDist))
+                fee = fee.add(left.multiply(stopPrice).multiply(FuturesFeeRates.TAKER));
+                return new WidthOutcome(width, next == 0 ? Outcome.STOP : Outcome.TARGET,
+                        gain.subtract(left.multiply(stopDist)).subtract(fee)
                                 .divide(stopDist, 2, RoundingMode.HALF_UP));
             }
             BigDecimal favExc = isLong ? b.high().subtract(entry) : entry.subtract(b.low());
             while (next < rungs.size() && favExc.compareTo(rungs.get(next).price().subtract(entry).abs()) >= 0) {
                 BigDecimal share = rungs.get(next).percent().movePointLeft(2);
                 gain = gain.add(share.multiply(rungs.get(next).price().subtract(entry).abs()));
+                fee = fee.add(share.multiply(rungs.get(next).price()).multiply(FuturesFeeRates.TAKER));
                 left = left.subtract(share);
                 next++;
             }
             if (left.signum() <= 0) {
-                return new WidthOutcome(width, Outcome.TARGET, gain.divide(stopDist, 2, RoundingMode.HALF_UP));
+                return new WidthOutcome(width, Outcome.TARGET, gain.subtract(fee).divide(stopDist, 2, RoundingMode.HALF_UP));
             }
         }
         return new WidthOutcome(width, Outcome.OPEN, null);

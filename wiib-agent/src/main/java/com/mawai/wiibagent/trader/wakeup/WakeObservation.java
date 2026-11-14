@@ -15,6 +15,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
+import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibquant.market.service.CrossAssetService;
 import lombok.RequiredArgsConstructor;
@@ -290,11 +291,25 @@ public class WakeObservation {
                 case TraderPlanStore.Closed c -> closedEvent(p, c.position(), lang);
                 case TraderPlanStore.Filled f -> prompts.get(lang, "trader.wake.eventFilled",
                         Map.of("symbol", p.getSymbol(), "side", p.getSide()));
+                case TraderPlanStore.EntryFilled f -> entryEvent(p, f.entry(), f.counts(), true, lang);
+                case TraderPlanStore.EntryCancelled c -> entryEvent(p, c.entry(), c.counts(), false, lang);
                 case TraderPlanStore.Cancelled c -> prompts.get(lang, "trader.wake.eventCancelled",
                         Map.of("symbol", p.getSymbol(), "side", p.getSide()));
             }).append('\n');
         }
         return sb.toString();
+    }
+
+    /** 分档计划里一档成交或被撤的一句：哪一档、成交价或撤单原因，这份计划共几档、成交几档、还挂几档 */
+    private String entryEvent(AiTraderPlan plan, PlanEntry entry,
+                              TraderPlanStore.EntryCounts counts, boolean filled, AgentLang lang) {
+        BigDecimal price = entry.getLimitPrice() == null ? entry.getFilledPrice() : entry.getLimitPrice();
+        return prompts.get(lang, filled ? "trader.wake.eventEntryFilled" : "trader.wake.eventEntryCancelled",
+                Map.of("symbol", plan.getSymbol(), "side", plan.getSide(),
+                        "price", WatchText.num(price),
+                        "qty", WatchText.num(entry.getQuantity()),
+                        "detail", filled ? WatchText.num(entry.getFilledPrice()) : String.valueOf(entry.getReason()),
+                        "total", counts.total(), "filled", counts.filled(), "pending", counts.pending()));
     }
 
     /** 一条平仓事件：了结方式/成交价/盈亏 + 当时的论点与失效条件 */

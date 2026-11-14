@@ -4,7 +4,7 @@ import { useMarkPrices } from '../../hooks/useMarkPrices';
 import { formatCoinPrice, getCoin } from '../../lib/coinConfig';
 import { cn, fmtDateTime, fmtNum, fmtSignedPct, fmtTime } from '../../lib/utils';
 import type { AiTraderPlanView, FuturesOrder, FuturesPosition, PlanRevision, TraderWatch } from '../../types';
-import { planTargets } from './traderTools';
+import { PlanEntries } from './PlanBlock';
 
 /** 盯盘价离现价不到这么多（%）就标「快到了」 */
 const NEAR_PCT = 0.35;
@@ -61,6 +61,7 @@ function PlanLines({ plan }: { plan?: AiTraderPlanView }) {
     <div className="tr-pc-why">
       {why && <div><span>{t('wb.hold.why')}</span>{why}</div>}
       <div><span>{t('wb.hold.inval')}</span>{plan.invalidationCondition}</div>
+      <PlanEntries json={plan.entriesJson} />
       {revisions.length > 0 && (
         <div className="num">
           <span>{t('wb.hold.revised', { count: revisions.length })}</span>
@@ -127,7 +128,7 @@ function PositionCard({ p, plan, mark }: { p: FuturesPosition; plan?: AiTraderPl
   );
 }
 
-/** 一个没成交的挂单：挂在哪、离现价多远就成交、成交后的止损止盈（取自计划） */
+/** 挂单的价量、触价距离和随单保护。 */
 function OrderCard({ o, plan, mark }: { o: FuturesOrder; plan?: AiTraderPlanView; mark?: number }) {
   const { t } = useTranslation('ai');
   const moveText = useMoveText();
@@ -135,7 +136,8 @@ function OrderCard({ o, plan, mark }: { o: FuturesOrder; plan?: AiTraderPlanView
   const Icon = cfg.icon;
   const long = o.orderSide.includes('LONG');
   const px = (v: number) => formatCoinPrice(o.symbol, v);
-  const targets = planTargets(plan?.takeProfitsJson).map(r => px(r.price)).join(' / ');
+  const stops = (o.stopLosses ?? []).map(r => px(r.price)).join(' / ');
+  const targets = (o.takeProfits ?? []).map(r => px(r.price)).join(' / ');
   const sideKey = o.orderSide.startsWith('OPEN')
     ? (long ? 'wb.hold.limitLong' : 'wb.hold.limitShort')
     : (long ? 'wb.hold.limitCloseLong' : 'wb.hold.limitCloseShort');
@@ -153,8 +155,7 @@ function OrderCard({ o, plan, mark }: { o: FuturesOrder; plan?: AiTraderPlanView
       {o.limitPrice != null && mark != null && (
         <p className="tr-pc-ord num">
           {t('wb.hold.fillIn', { now: px(mark), move: moveText(o.limitPrice, mark) })}
-          {plan?.stopLossPrice != null
-            && ` ${targets ? t('wb.hold.afterFill', { sl: px(plan.stopLossPrice), tp: targets }) : t('wb.hold.afterFillSl', { sl: px(plan.stopLossPrice) })}`}
+          {stops && ` ${targets ? t('wb.hold.afterFill', { sl: stops, tp: targets }) : t('wb.hold.afterFillSl', { sl: stops })}`}
         </p>
       )}
       <PlanLines plan={plan} />
