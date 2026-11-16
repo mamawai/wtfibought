@@ -756,7 +756,7 @@ public class TradeTools {
             return fail("cancel_order", args, error);
         }
         record(action("cancel_order", args).put("status", PARTIAL).put("error", error).set("result", receipt));
-        return "PARTIAL: " + MAPPER.writeValueAsString(receipt);
+        return replyPrefix(PARTIAL) + MAPPER.writeValueAsString(receipt);
     }
 
     @Tool(name = "set_watch")
