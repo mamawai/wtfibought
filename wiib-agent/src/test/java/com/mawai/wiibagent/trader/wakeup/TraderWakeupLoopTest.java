@@ -91,6 +91,7 @@ import java.util.concurrent.TimeUnit;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -1627,6 +1628,41 @@ class TraderWakeupLoopTest {
         JsonNode action = MAPPER.readTree(dec.getValue().getActionsJson()).get(0);
         assertThat(action.path("tool").asString()).isEqualTo("close_position");
         assertThat(action.path("status").asString()).isEqualTo("unknown");
+    }
+
+    /** 会话线程卡在不理中断的调用里：最多再等 sessionStopWait 就收尾，唤醒不会一直挂着 */
+    @Test
+    void timeoutStopsWaitingForStuckSession() {
+        stubHealthyAccount();
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("2000", "0")));
+        CountDownLatch release = new CountDownLatch(1);
+        // sim 一直不回，打断了也不理，放行了才返回
+        when(simTradeClient.closePosition(eq(99L), any())).thenAnswer(inv -> {
+            while (release.getCount() > 0) {
+                try {
+                    release.await();
+                } catch (InterruptedException ignored) {
+                    // 不理中断
+                }
+            }
+            throw new IllegalStateException("released");
+        });
+        ChatModel model = modelCallingThenSummary("close_position",
+                "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}");
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTrader trader = trader();
+        runner.sessionStopWait = Duration.ofMillis(200);
+
+        try {
+            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> runner.doWake(trader, 1785171600000L, 2,
+                    TraderWakeupRunner.baseDecision(trader, 1785171600000L), List.of(), AgentLang.ZH));
+        } finally {
+            release.countDown();
+        }
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
     }
 
     /** 一调就报错的模型 */

@@ -55,6 +55,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -151,6 +152,9 @@ public class TraderWakeupRunner {
 
     /** 墙钟注入点：预算计算要可测（测试里把"现在"钉在边界附近） */
     LongSupplier nowMs = System::currentTimeMillis;
+
+    /** 超时打断会话后最多等它收尾多久，盖过 sim 一次下单连重试（最坏约 22 秒）；测试里调短 */
+    Duration sessionStopWait = Duration.ofSeconds(30);
 
     /** 唤醒预算(秒)：截止 = 下一边界前 5s——唤醒决不占用下一根K线；上限 900s。 */
     static long wakeBudgetSeconds(long boundary, long intervalMs, long now) {
@@ -441,8 +445,11 @@ public class TraderWakeupRunner {
         } finally {
             cancel.complete(null);
             task.cancel(true);
-            // 等会话线程停下来再收：超时那一刻正在跑的交易调用，这时才把自己的结果记完
-            sessionThread.join();
+            // 等会话线程停下来再收：超时那一刻正在跑的交易调用，这时才把自己的结果记完；最多等 sessionStopWait
+            if (!sessionThread.join(sessionStopWait)) {
+                log.warn("[Trader] 会话线程 {}s 内没停下，不再等，动作轨迹按已记下的收 traderId={}",
+                        sessionStopWait.toSeconds(), trader.getId());
+            }
             // 无论成败，动作轨迹都要留：超时/异常时已执行的开平仓是真实发生的
             List<ObjectNode> actions = mergeActions(trace.calls(), tradeTools.actions());
             decision.setActionsJson(MAPPER.writeValueAsString(actions));
