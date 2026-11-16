@@ -10,7 +10,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 工具调用全量轨迹：{@link ReactLoop} 每次模型给出 tool_call 时调 {@link #record}，模型每轮想调的工具
- * （含 klines/indicators 等数据工具——它们是无状态共享 bean，自己没有记录点）都记下 名字+参数。
+ * （含 klines/indicators 等数据工具——它们是无状态共享 bean，自己没有记录点）都记下 名字+参数，
+ * 连同 tool_call id（callId，和工具执行时的 {@link ReactLoop#TOOL_CALL_ID} 是同一个）。
  * 每次运行 new 一个。
  * 收集器活在调用方手里：超时 cancel 打断循环时，已发生的记录仍保得住。
  */
@@ -25,7 +26,7 @@ public class ToolCallTraceHook {
 
     public void record(AssistantMessage reply) {
         for (AssistantMessage.ToolCall tc : reply.getToolCalls()) {
-            ObjectNode row = MAPPER.createObjectNode().put("tool", tc.name());
+            ObjectNode row = MAPPER.createObjectNode().put("tool", tc.name()).put("callId", tc.id());
             try {
                 row.set("args", MAPPER.readValue(tc.arguments(), ObjectNode.class));
             } catch (Exception ignore) {

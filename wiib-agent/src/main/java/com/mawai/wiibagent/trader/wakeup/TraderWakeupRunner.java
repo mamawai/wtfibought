@@ -57,11 +57,10 @@ import tools.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Deque;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -551,23 +550,24 @@ public class TraderWakeupRunner {
 
     /**
      * 合并轨迹：顺序骨架来自轨迹收集器的全量记录（含数据工具）；交易工具用 TradeTools 的
-     * 富记录（结果/拒因）按序替换轻量占位，工具名对得上才换。
+     * 富记录（结果/拒因）替换轻量占位，两边按调用 id（callId）对。
      * 改账户的工具只要进了方法就会留富记录，没留的就是没执行（参数绑不上、被保险丝拦下），占位标成 not_attempted。
      * 极端中断时轨迹记录缺失，富记录兜底补尾。
      */
     static List<ObjectNode> mergeActions(List<ObjectNode> traced, List<ObjectNode> tradeActions) {
-        Deque<ObjectNode> rich = new ArrayDeque<>(tradeActions);
+        Map<String, ObjectNode> rich = new LinkedHashMap<>();
+        tradeActions.forEach(a -> rich.put(a.path("callId").asString(), a));
         List<ObjectNode> merged = new ArrayList<>();
         for (ObjectNode t : traced) {
-            String tool = t.path("tool").asString();
-            ObjectNode next = rich.peek();
-            if (next != null && next.path("tool").asString().equals(tool)) {
-                merged.add(rich.poll());
+            ObjectNode own = rich.remove(t.path("callId").asString());
+            if (own != null) {
+                merged.add(own);
             } else {
-                merged.add(TradeTools.SERIAL_TOOLS.contains(tool) ? t.put("status", TradeActions.NOT_ATTEMPTED) : t);
+                merged.add(TradeTools.SERIAL_TOOLS.contains(t.path("tool").asString())
+                        ? t.put("status", TradeActions.NOT_ATTEMPTED) : t);
             }
         }
-        merged.addAll(rich);
+        merged.addAll(rich.values());
         return merged;
     }
 

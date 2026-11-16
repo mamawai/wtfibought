@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
@@ -857,8 +858,14 @@ public class TradeTools {
         return a;
     }
 
-    /** 动作填完整了再入轨迹：同一批里两个 get_account 会并发到这儿（别的工具都在 SERIAL_TOOLS 里） */
+    /**
+     * 动作填完整了再入轨迹，经 ReactLoop 调进来的带上这次调用的 id（callId）：
+     * 同一批里两个 get_account 会并发到这儿（别的工具都在 SERIAL_TOOLS 里）
+     */
     private synchronized void record(ObjectNode action) {
+        if (ReactLoop.TOOL_CALL_ID.isBound()) {
+            action.put("callId", ReactLoop.TOOL_CALL_ID.get());
+        }
         actions.add(action);
     }
 

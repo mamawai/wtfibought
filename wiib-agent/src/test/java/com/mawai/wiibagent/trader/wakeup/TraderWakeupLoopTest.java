@@ -1582,22 +1582,48 @@ class TraderWakeupLoopTest {
         return hit;
     }
 
-    /** 合并轨迹按工具名对：没留下富记录的那次交易调用标成未执行，后面的富记录不前移；数据工具的占位不带状态 */
+    /** 合并轨迹按调用 id 对：没留下富记录的那次交易调用标成未执行，紧跟着同名重试的那次拿回自己的富记录；数据工具的占位不带状态 */
     @Test
-    void mergeActionsMarksTradeCallWithoutRichRecordNotAttempted() {
-        ObjectNode klines = MAPPER.createObjectNode().put("tool", "klines");
-        ObjectNode closeUnrecorded = MAPPER.createObjectNode().put("tool", "close_position");
-        ObjectNode stopTraced = MAPPER.createObjectNode().put("tool", "set_stop_loss");
-        ObjectNode stopRich = MAPPER.createObjectNode().put("tool", "set_stop_loss").put("status", "ok");
+    void mergeActionsPairsRichRecordByCallId() {
+        ObjectNode klines = MAPPER.createObjectNode().put("tool", "klines").put("callId", "c1");
+        ObjectNode closeUnrecorded = MAPPER.createObjectNode().put("tool", "close_position").put("callId", "c2");
+        ObjectNode closeRetried = MAPPER.createObjectNode().put("tool", "close_position").put("callId", "c3");
+        ObjectNode closeRich = MAPPER.createObjectNode().put("tool", "close_position").put("callId", "c3").put("status", "ok");
 
         List<ObjectNode> merged = TraderWakeupRunner.mergeActions(
-                List.of(klines, closeUnrecorded, stopTraced), List.of(stopRich));
+                List.of(klines, closeUnrecorded, closeRetried), List.of(closeRich));
 
-        assertThat(merged).extracting(a -> a.path("tool").asString())
-                .containsExactly("klines", "close_position", "set_stop_loss");
+        assertThat(merged).extracting(a -> a.path("callId").asString()).containsExactly("c1", "c2", "c3");
         assertThat(merged.get(0).has("status")).isFalse();
         assertThat(merged.get(1).path("status").asString()).isEqualTo("not_attempted");
-        assertThat(merged.get(2)).isSameAs(stopRich);
+        assertThat(merged.get(2)).isSameAs(closeRich);
+    }
+
+    /** 参数绑不上的平仓没进方法，模型改好参数重试同一个工具：调用 id 从 ReactLoop 一路带到两边，记录各归各的那次 */
+    @Test
+    void retryAfterUnboundArgsKeepsEachCallsOwnRecord() {
+        stubHealthyAccount();
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("2000", "0")));
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(filledReceipt());
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        when(model.stream(any(Prompt.class))).thenReturn(
+                frameOf(AssistantMessage.builder().content("").toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function",
+                        "close_position", "{\"positionId\":\"abc\",\"quantity\":0.1,\"reason\":\"到目标位\"}"))).build()),
+                frameOf(AssistantMessage.builder().content("").toolCalls(List.of(new AssistantMessage.ToolCall("c2", "function",
+                        "close_position", "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}"))).build()),
+                frameOf(new AssistantMessage("平掉一部分，本轮结束。")));
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.wake(trader(), 1785171600000L);
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        JsonNode actions = MAPPER.readTree(dec.getValue().getActionsJson());
+        assertThat(actions.get(0).path("callId").asString()).isEqualTo("c1");
+        assertThat(actions.get(0).path("status").asString()).isEqualTo("not_attempted");
+        assertThat(actions.get(1).path("callId").asString()).isEqualTo("c2");
+        assertThat(actions.get(1).path("status").asString()).isEqualTo("ok");
     }
 
     /** 超时那一刻平仓还在等 sim：等会话线程停了再收动作轨迹，工具自己记的"结果未知"收得进来 */

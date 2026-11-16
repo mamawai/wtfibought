@@ -70,6 +70,9 @@ public final class ReactLoop {
     /** ToolContext 里的会话号键，工具方法体用它读当前会话（见 {@code ToolRunContext}） */
     public static final String SESSION_KEY = "session_id";
 
+    /** 正在执行的这次工具调用的 tool_call id：工具自己记的动作带上它，事后按它和轨迹对上 */
+    public static final ScopedValue<String> TOOL_CALL_ID = ScopedValue.newInstance();
+
     /**
      * 工具执行前的闸门：返回非空就用它顶掉这批工具的真实执行（如审批卡先占位）。
      * 返回的回执要覆盖 reply 里的每一个 tool_call，少一个就是孤儿。
@@ -308,13 +311,13 @@ public final class ReactLoop {
         return ToolResponseMessage.builder().responses(responses).build();
     }
 
-    /** 单个工具调用；工具名对不上就回执报错并列出可用工具 */
+    /** 单个工具调用，执行期间 {@link #TOOL_CALL_ID} 是这次调用的 id；工具名对不上就回执报错并列出可用工具 */
     private String callTool(AssistantMessage.ToolCall toolCall, ToolContext context) {
         ToolCallback callback = toolsByName.get(toolCall.name());
         return callback == null
                 ? "ERROR: unknown tool \"" + toolCall.name() + "\", available tools: "
                         + String.join(", ", toolsByName.keySet())
-                : callback.call(toolCall.arguments(), context);
+                : ScopedValue.where(TOOL_CALL_ID, toolCall.id()).call(() -> callback.call(toolCall.arguments(), context));
     }
 
     /**
