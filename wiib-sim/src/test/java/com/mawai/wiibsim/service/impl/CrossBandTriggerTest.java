@@ -13,10 +13,14 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.CrossMarginService.CrossAccount;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -83,12 +87,15 @@ class CrossBandTriggerTest {
         when(lockRegistry.tryLockAsSystem("futures:pos:1")).thenReturn(posLock);
         when(crossMargin.usersOnSymbol(SYM)).thenReturn(Set.of("7"));
 
+        UserMapper userMapper = mock(UserMapper.class);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
         service = new CrossLiquidationServiceImpl(crossMargin, positionMapper, orderMapper,
-                new TradingConfig(), cacheService, mock(FuturesPositionIndexService.class),
+                new TradingConfig(), new FuturesPrices(cacheService),
                 lockRegistry, mock(TradeNotificationService.class), registry,
                 mock(FuturesRiskService.class), new TransactionTemplate(mock(PlatformTransactionManager.class)),
-                new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(UserMapper.class),
-                mock(BankruptcyService.class), NoBookFillPricer.create());
+                new TradeFilterRegistry(mock(BinanceRestClient.class)), userMapper,
+                mock(BankruptcyService.class), NoBookFillPricer.create(), limitIndex,
+                new ClosedPositionCleanup(mock(FuturesPositionIndexService.class), orderMapper, userMapper, limitIndex));
     }
 
     /** LONG 20@100、20x、占用100 */

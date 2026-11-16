@@ -5,28 +5,18 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
-import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
-import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
-import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
-import com.mawai.wiibsim.service.FuturesRiskService;
-import com.mawai.wiibsim.service.UserService;
-import com.mawai.wiibsim.util.FairLockRegistry;
+import com.mawai.wiibsim.service.FuturesPrices;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -44,7 +34,7 @@ class FuturesClosedPositionsTest {
 
     private FuturesPositionMapper positionMapper;
     private FuturesOrderMapper orderMapper;
-    private FuturesTradingServiceImpl service;
+    private FuturesQueryServiceImpl service;
 
     @BeforeAll
     static void initTableInfoCache() {
@@ -56,13 +46,9 @@ class FuturesClosedPositionsTest {
     void setUp() {
         positionMapper = mock(FuturesPositionMapper.class);
         orderMapper = mock(FuturesOrderMapper.class);
-        service = new FuturesTradingServiceImpl(
-                mock(UserService.class), mock(UserMapper.class), positionMapper, orderMapper,
-                new TradingConfig(), mock(FairLockRegistry.class), mock(CacheService.class),
+        service = new FuturesQueryServiceImpl(positionMapper, orderMapper, new TradingConfig(),
                 mock(FuturesPositionIndexService.class), mock(FuturesLeverageBracketRegistry.class),
-                mock(CrossMarginService.class), new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), NoBookFillPricer.create());
+                mock(CrossMarginService.class), new FuturesPrices(mock(CacheService.class)));
     }
 
     private static FuturesPosition closed(long id, String lastClosePnl, String funding) {

@@ -10,7 +10,6 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.dto.ProfilePositionDTO;
 import com.mawai.wiibsim.dto.UserProfileDTO;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.service.impl.AssetValuationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

@@ -42,7 +42,7 @@ public class UserDTO {
     /** 破产次数 */
     private Integer bankruptCount;
 
-    /** 破产恢复日期（交易日09:00恢复） */
+    /** 破产恢复日期（当天09:00恢复） */
     private java.time.LocalDate bankruptResetDate;
 
     /** 总资产 */

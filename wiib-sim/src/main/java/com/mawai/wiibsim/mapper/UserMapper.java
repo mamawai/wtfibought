@@ -96,7 +96,8 @@ public interface UserMapper extends BaseMapper<User> {
     int updateMutedUntil(@Param("userId") long userId, @Param("mutedUntil") LocalDateTime mutedUntil);
 
     /**
-     * 原子更新可用余额，返回变动后余额；null=余额不足没改成。
+     * 原子更新可用余额，返回变动后余额。入账不看余额（全仓结算可能已经把余额扣成负数，该进的钱照进）；
+     * 扣款余额不够就不改，返回 null。
      * RETURNING 是同条语句的返回子句，不是二次查询——写的仍是 balance = balance + delta
      * 相对更新、条件仍由 DB 判定，并发语义与改造前完全一致。账本靠这个返回值拿 balance_after。
      * <p>
@@ -109,7 +110,7 @@ public interface UserMapper extends BaseMapper<User> {
      */
     @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
     @Select("UPDATE \"user\" SET balance = balance + #{amount}, updated_at = NOW() " +
-            "WHERE id = #{userId} AND balance + #{amount} >= 0 " +
+            "WHERE id = #{userId} AND (#{amount} >= 0 OR balance + #{amount} >= 0) " +
             "RETURNING balance")
     BigDecimal atomicUpdateBalance(@Param("userId") Long userId, @Param("amount") BigDecimal amount);
 
@@ -263,7 +264,7 @@ public interface UserMapper extends BaseMapper<User> {
     int markBankrupt(@Param("userId") Long userId,
                      @Param("resetDate") LocalDate resetDate);
 
-    /** 破产恢复（交易日09:00） */
+    /** 破产恢复（每天09:00） */
     @Update("UPDATE \"user\" SET " +
             "is_bankrupt = FALSE, " +
             "balance = #{initialBalance}, " +

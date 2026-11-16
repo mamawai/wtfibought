@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TraderSymbolService;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +50,7 @@ class FuturesLiquidationRecoverGapTest {
     private final FuturesPositionMapper positionMapper = mock(FuturesPositionMapper.class);
     private final FuturesLiquidationServiceImpl service = new FuturesLiquidationServiceImpl(riskService, cacheService,
             mock(TraderSymbolService.class), positionMapper, mock(FuturesPositionIndexService.class),
-            mock(CrossLiquidationService.class));
+            mock(CrossLiquidationService.class), new FuturesPrices(cacheService));
 
     private static KlineBar bar(long openTime, long closeTime, String high, String low) {
         return new KlineBar(openTime, closeTime, new BigDecimal(low), new BigDecimal(high),

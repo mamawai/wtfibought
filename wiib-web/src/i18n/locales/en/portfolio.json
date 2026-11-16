@@ -2,7 +2,7 @@
   "bankrupt": {
     "title": "Liquidated — trading disabled",
     "detail": "Bankruptcies: {{times}} · Starting capital restored {{date}} 09:00",
-    "nextTradingDay": "the next trading day"
+    "nextDay": "the next day"
   },
   "page": {
     "title": "Portfolio",

@@ -17,9 +17,13 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -90,15 +94,18 @@ class TradeNotificationAnchorTest {
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         TradeFilterRegistry filterRegistry = new TradeFilterRegistry(mock(BinanceRestClient.class));
         BankruptcyService bankruptcy = mock(BankruptcyService.class);
+        FuturesPrices prices = new FuturesPrices(cacheService);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
+        ClosedPositionCleanup cleanup = new ClosedPositionCleanup(indexService, orderMapper, userMapper, limitIndex);
         riskService = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper, tradingConfig,
-                mock(FairLockRegistry.class), cacheService, indexService,
+                mock(FairLockRegistry.class), prices, indexService,
                 bracketRegistry, crossMarginService, tradeNotification, tx, new LedgerTx(tx), filterRegistry,
-                bankruptcy, NoBookFillPricer.create());
+                bankruptcy, NoBookFillPricer.create(), cleanup);
 
         crossLiquidation = new CrossLiquidationServiceImpl(crossMarginService, positionMapper, orderMapper,
-                tradingConfig, cacheService, indexService, mock(FairLockRegistry.class),
+                tradingConfig, prices, mock(FairLockRegistry.class),
                 tradeNotification, new CrossBandRegistry(), riskService, tx, filterRegistry, userMapper, bankruptcy,
-                NoBookFillPricer.create());
+                NoBookFillPricer.create(), limitIndex, cleanup);
     }
 
     private static FuturesPosition isolatedLong() {

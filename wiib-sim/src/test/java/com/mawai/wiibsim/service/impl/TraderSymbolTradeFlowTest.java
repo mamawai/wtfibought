@@ -17,10 +17,13 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.Test;
@@ -71,13 +74,16 @@ class TraderSymbolTradeFlowTest {
         user.setId(UID);
         user.setIsBankrupt(false);
         when(userService.getById(UID)).thenReturn(user);
+        UserMapper userMapper = mock(UserMapper.class);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cache);
         return new FuturesTradingServiceImpl(
-                userService, mock(UserMapper.class), positionMapper, orderMapper,
+                userService, userMapper, positionMapper, orderMapper,
                 new TradingConfig(), mock(FairLockRegistry.class), cache,
                 mock(FuturesPositionIndexService.class), new FuturesLeverageBracketRegistry(), crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), NoBookFillPricer.create());
+                mock(FuturesRiskService.class), NoBookFillPricer.create(), new FuturesPrices(cache), limitIndex,
+                new ClosedPositionCleanup(mock(FuturesPositionIndexService.class), orderMapper, userMapper, limitIndex));
     }
 
     @Test

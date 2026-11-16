@@ -1,4 +1,4 @@
-package com.mawai.wiibsim.service.impl;
+package com.mawai.wiibsim.service;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronization;

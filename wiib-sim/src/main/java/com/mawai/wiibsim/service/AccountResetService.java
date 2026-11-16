@@ -30,8 +30,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AccountResetService {
 
-    private static final String LIMIT_BUY_PREFIX = "crypto:limit:buy:";
-    private static final String LIMIT_SELL_PREFIX = "crypto:limit:sell:";
     private static final String RANKING_KEY = "ranking:top";
 
     private final FuturesPositionMapper futuresPositionMapper;
@@ -43,6 +41,7 @@ public class AccountResetService {
     private final UserMapper userMapper;
     /** 管理页的拦阻提示也跟界面语言 */
     private final MessageCatalog messages;
+    private final LimitOrderIndex limitIndex;
 
     /** 策略账户（quant-FIBO 这类）是 user 表里的真实行，永不可重置；用户名须逐字匹配，防误点 */
     public static void assertResettable(String actualUsername, String confirmUsername) {
@@ -84,7 +83,7 @@ public class AccountResetService {
 
     /**
      * 量化子账户销户（内部 API，AI Trader 过期轮次清理用）：清索引→清表→删 user 行。
-     * 双重护栏：用户名须 ai_trader_ 开头且 user 行是量化建号（linuxDoId internal: 前缀）——
+     * 只删 AI Trader 的子账户（{@link UserService#isTraderSubAccount}）——
      * quant-FIBO 策略常驻账户和真人用户都拒；账户不存在视为已删（幂等，quant 重试无害）。
      */
     public void deleteQuantAccount(String username) {
@@ -93,8 +92,7 @@ public class AccountResetService {
         if (user == null) {
             return;
         }
-        if (!username.startsWith("ai_trader_")
-                || user.getLinuxDoId() == null || !user.getLinuxDoId().startsWith("internal:")) {
+        if (!UserService.isTraderSubAccount(user)) {
             throw new BizException(messages.get("sim.reset.onlyQuantSubAccount", Map.of("name", username)));
         }
         wipe(user.getId(), () -> purgeTx.deleteAccount(user.getId()));
@@ -137,8 +135,7 @@ public class AccountResetService {
                         .eq(CryptoOrder::getUserId, userId)
                         .eq(CryptoOrder::getStatus, "PENDING"));
         for (CryptoOrder o : pending) {
-            String prefix = "BUY".equals(o.getOrderSide()) ? LIMIT_BUY_PREFIX : LIMIT_SELL_PREFIX;
-            redis.opsForZSet().remove(prefix + o.getSymbol(), String.valueOf(o.getId()));
+            limitIndex.remove(o);
         }
     }
 }

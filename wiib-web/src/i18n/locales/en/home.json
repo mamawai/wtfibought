@@ -171,7 +171,7 @@
     },
     "bankrupt": {
       "q": "What happens if I go bankrupt?",
-      "a": "When your trading net worth (cash + position value − borrowed principal and interest) falls below zero, you are marked bankrupt: all wallets and positions are cleared and your starting capital is restored the next trading day. An automatic recovery still counts against your weekly resets."
+      "a": "When your trading net worth (cash + position value − borrowed principal and interest) falls below zero, you are marked bankrupt: all wallets and positions are cleared and your starting capital is restored at 09:00 the next day. An automatic recovery still counts against your weekly resets."
     },
     "prediction": {
       "q": "How does the prediction market work?",

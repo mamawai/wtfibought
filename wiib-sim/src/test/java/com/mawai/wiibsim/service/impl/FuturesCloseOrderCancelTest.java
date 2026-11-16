@@ -14,8 +14,11 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -50,12 +53,15 @@ class FuturesCloseOrderCancelTest {
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
         when(positionMapper.atomicPartialClose(anyLong(), any(), any())).thenReturn(1);
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
-        risk = new FuturesRiskServiceImpl(positionMapper, orderMapper, mock(UserMapper.class),
-                new TradingConfig(), lockRegistry, cacheService, mock(FuturesPositionIndexService.class),
+        UserMapper userMapper = mock(UserMapper.class);
+        FuturesPositionIndexService indexService = mock(FuturesPositionIndexService.class);
+        risk = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper,
+                new TradingConfig(), lockRegistry, new FuturesPrices(cacheService), indexService,
                 mock(FuturesLeverageBracketRegistry.class), mock(CrossMarginService.class),
                 mock(TradeNotificationService.class), tx, new LedgerTx(tx),
                 new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(BankruptcyService.class),
-                NoBookFillPricer.create());
+                NoBookFillPricer.create(),
+                new ClosedPositionCleanup(indexService, orderMapper, userMapper, new LimitOrderIndex(cacheService)));
     }
 
     /** 逐仓多 1 张 @100，止损 95 平 slQty */

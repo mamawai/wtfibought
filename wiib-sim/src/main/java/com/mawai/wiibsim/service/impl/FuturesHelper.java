@@ -6,41 +6,22 @@ import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibsim.config.TradingConfig;
-import com.mawai.wiibsim.mapper.FuturesOrderMapper;
-import com.mawai.wiibsim.mapper.UserMapper;
-import com.mawai.wiibsim.ledger.LedgerCtx;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
-import static com.mawai.wiibcommon.enums.LedgerBizType.FUTURES_LIMIT_UNFREEZE;
-
+/** 合约的计算、校验和 DTO 组装，全是静态方法。查价见 FuturesPrices，限价索引见 LimitOrderIndex，仓位全平的收尾见 ClosedPositionCleanup */
 final class FuturesHelper {
 
     private FuturesHelper() {}
-
-    /** 实体 createdAt 换毫秒（MetaObjectHandler 用 LocalDateTime.now() 填的，按本机时区还原） */
-    static long toEpochMs(LocalDateTime t) {
-        return t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-    }
-
-    static final String LIMIT_OPEN_LONG_PREFIX = "futures:limit:open_long:";
-    static final String LIMIT_OPEN_SHORT_PREFIX = "futures:limit:open_short:";
-    static final String LIMIT_CLOSE_LONG_PREFIX = "futures:limit:close_long:";
-    static final String LIMIT_CLOSE_SHORT_PREFIX = "futures:limit:close_short:";
 
     // 强平/止损/止盈触发索引前缀：写入侧(PositionIndex)与消费侧(Liquidation)共用，改一处即全局生效
     static final String LIQ_LONG_PREFIX = "futures:liq:long:";
@@ -49,60 +30,6 @@ final class FuturesHelper {
     static final String SL_SHORT_PREFIX = "futures:sl:short:";
     static final String TP_LONG_PREFIX = "futures:tp:long:";
     static final String TP_SHORT_PREFIX = "futures:tp:short:";
-
-    static void addToLimitZSet(FuturesOrder order, CacheService cacheService) {
-        String key = getLimitZSetKey(order.getOrderSide(), order.getSymbol());
-        cacheService.zAdd(key, order.getId().toString(), order.getLimitPrice().doubleValue());
-    }
-
-    static void removeFromLimitZSet(FuturesOrder order, CacheService cacheService) {
-        String key = getLimitZSetKey(order.getOrderSide(), order.getSymbol());
-        cacheService.zRemove(key, order.getId().toString());
-    }
-
-    /**
-     * 仓位全平了：它名下还挂着的平仓限价单撤掉、摘索引（平仓单不冻结钱，不用退）。
-     * 摘索引在事务提交之前，事务回滚了单子退回 PENDING 而索引已经没了，由每小时的 reconcileLimitOrderIndex 补回来
-     */
-    static void cancelCloseOrders(Long positionId, FuturesOrderMapper orderMapper, CacheService cacheService) {
-        for (FuturesOrder order : orderMapper.cancelPendingCloseOrders(positionId)) {
-            removeFromLimitZSet(order, cacheService);
-        }
-    }
-
-    /**
-     * 仓位全平了：这个币这个方向带组标识、还没成交的开仓单（挂着的和已触发的）一起撤掉。逐仓单退冻结，全仓单只改状态。限价索引在事务提交后摘
-     */
-    static void cancelGroupedOpenOrders(FuturesPosition position, FuturesOrderMapper orderMapper,
-                                        UserMapper userMapper, CacheService cacheService) {
-        List<FuturesOrder> cancelled = orderMapper.cancelGroupedOpenOrders(
-                position.getUserId(), position.getSymbol(), "OPEN_" + position.getSide());
-        for (FuturesOrder order : cancelled) {
-            if (!FuturesPosition.CROSS.equals(order.getMarginMode())) {
-                LedgerCtx.mark(FUTURES_LIMIT_UNFREEZE, "FUTURES_ORDER", order.getId());
-                userMapper.atomicUnfreezeBalance(order.getUserId(), order.getFrozenAmount());
-            }
-        }
-        if (!cancelled.isEmpty()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    cancelled.forEach(order -> removeFromLimitZSet(order, cacheService));
-                }
-            });
-        }
-    }
-
-    static String getLimitZSetKey(String orderSide, String symbol) {
-        return switch (orderSide) {
-            // INCREASE_* 仅存量历史挂单路由（重建/过期/撤单），触发即自清撤单，不再产生新单
-            case "OPEN_LONG", "INCREASE_LONG" -> LIMIT_OPEN_LONG_PREFIX + symbol;
-            case "OPEN_SHORT", "INCREASE_SHORT" -> LIMIT_OPEN_SHORT_PREFIX + symbol;
-            case "CLOSE_LONG" -> LIMIT_CLOSE_LONG_PREFIX + symbol;
-            case "CLOSE_SHORT" -> LIMIT_CLOSE_SHORT_PREFIX + symbol;
-            default -> throw new IllegalArgumentException("Invalid orderSide: " + orderSide);
-        };
-    }
 
     /**
      * 资金费转移额（对齐真实机制：费率>0 多头付、空头收；费率<0 反向）。
@@ -189,6 +116,25 @@ final class FuturesHelper {
         }
     }
 
+    /** position 是按 id 刚查出来的那行（可能是 null）：得是这个用户的、还开着，否则抛对应的错 */
+    static FuturesPosition requireOpen(FuturesPosition position, Long userId) {
+        if (position == null || !position.getUserId().equals(userId)) {
+            throw new BizException(ErrorCode.FUTURES_POSITION_NOT_FOUND);
+        }
+        if (!"OPEN".equals(position.getStatus())) {
+            throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
+        }
+        return position;
+    }
+
+    /** 杠杆不能超过这笔名义额所在档位的上限 maxAllowed */
+    static void validateLeverage(String symbol, int leverage, int maxAllowed) {
+        if (leverage > maxAllowed) {
+            throw new BizException(ErrorCode.FUTURES_INVALID_LEVERAGE.getCode(),
+                    symbol + " 当前仓位档位最大支持 " + maxAllowed + "x，请求 " + leverage + "x 超限");
+        }
+    }
+
     static int normalizeLeverage(Integer leverage, int maxLeverage) {
         if (leverage == null || leverage < 1) return 1;
         if (leverage > maxLeverage) throw new BizException(ErrorCode.FUTURES_INVALID_LEVERAGE);
@@ -231,41 +177,6 @@ final class FuturesHelper {
         resp.setStopLosses(order.getStopLosses());
         resp.setTakeProfits(order.getTakeProfits());
         return resp;
-    }
-
-    /** 最新合约价：futures 实时价优先，mark 价兜底；都缺抛价不可用。 */
-    static BigDecimal latestFuturesPrice(CacheService cacheService, String symbol) {
-        BigDecimal price = cacheService.getFuturesPrice(symbol);
-        if (price != null) return price;
-        price = cacheService.getMarkPrice(symbol);
-        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
-        return price;
-    }
-
-    /** 市价开仓、限价单只认 feed 这么久内写过标记价的币 */
-    static final long OPEN_PRICE_MAX_AGE_MS = 30_000L;
-
-    /**
-     * 市价开仓、限价单判能不能当场成交用的价：同 latestFuturesPrice，但 feed 超过 30 秒没写过这个币的标记价就当没有价，
-     * 拒单（断线时价格停住，不按停住的价成交，也判断不了限价单能不能当场成交）。
-     * 心跳看标记价不看最新价：markPrice@1s 每秒必推，miniTicker 没成交就不推，成交稀的币会几十秒没帧。
-     * 市价平仓不走这里：下架的币要能按最后价平掉。
-     */
-    static BigDecimal freshFuturesPrice(CacheService cacheService, String symbol) {
-        Long at = cacheService.getMarkPriceAt(symbol);
-        if (at == null || System.currentTimeMillis() - at > OPEN_PRICE_MAX_AGE_MS) {
-            throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
-        }
-        return latestFuturesPrice(cacheService, symbol);
-    }
-
-    /** mark 价：mark 优先，合约最新价兜底（三处调用方曾各写一份，其中一份还把兜底写成了现货价）。 */
-    static BigDecimal markPrice(CacheService cacheService, String symbol) {
-        BigDecimal mp = cacheService.getMarkPrice(symbol);
-        if (mp != null) return mp;
-        BigDecimal price = cacheService.getFuturesPrice(symbol);
-        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
-        return price;
     }
 
     /** 开仓单随单止损列表构建+校验；空返回 null（市价参照当前价、限价参照挂单价）。 */

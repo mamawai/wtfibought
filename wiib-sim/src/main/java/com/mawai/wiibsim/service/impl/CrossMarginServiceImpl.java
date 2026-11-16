@@ -1,7 +1,6 @@
 package com.mawai.wiibsim.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -12,8 +11,10 @@ import com.mawai.wiibsim.ledger.Ledger;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,7 +43,7 @@ public class CrossMarginServiceImpl implements CrossMarginService {
 
     private final UserMapper userMapper;
     private final FuturesPositionMapper positionMapper;
-    private final CacheService cacheService;
+    private final FuturesPrices prices;
     private final FuturesLeverageBracketRegistry bracketRegistry;
     private final FuturesPositionIndexService positionIndexService;
     private final BankruptcyService bankruptcyService;
@@ -122,7 +123,7 @@ public class CrossMarginServiceImpl implements CrossMarginService {
     /** mark价优先、合约价兜底；都缺退回开仓价（浮盈亏按0算，别让快照因行情缺失炸掉） */
     private BigDecimal resolvePrice(FuturesPosition pos) {
         try {
-            return FuturesHelper.markPrice(cacheService, pos.getSymbol());
+            return prices.mark(pos.getSymbol());
         } catch (BizException e) {
             return pos.getEntryPrice();
         }

@@ -26,6 +26,7 @@ import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.BStockService;
 import com.mawai.wiibsim.service.BookFillPricer;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.PriceTick;
 import com.mawai.wiibsim.service.TradeHit;
@@ -34,7 +35,6 @@ import com.mawai.wiibsim.util.RedisLockUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -47,7 +47,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.*;
-import static com.mawai.wiibsim.service.impl.FuturesHelper.toEpochMs;
 
 @Slf4j
 @Service
@@ -60,7 +59,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final RedisLockUtil redisLockUtil;
     private final MarginAccountService marginAccountService;
     private final CrossMarginService crossMarginService;
-    private final StringRedisTemplate stringRedisTemplate;
+    private final LimitOrderIndex limitIndex;
     private final CacheService cacheService;
     private final BStockService bStockService;
     private final TradeFilterRegistry tradeFilterRegistry;
@@ -69,8 +68,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final BookFillPricer fillPricer;
 
     private static final int TRIGGERED_ORDER_BATCH_SIZE = 200;
-    private static final String LIMIT_BUY_ZSET_PREFIX = "crypto:limit:buy:";
-    private static final String LIMIT_SELL_ZSET_PREFIX = "crypto:limit:sell:";
+    /** 订单列表单页封顶 */
+    private static final int ORDER_PAGE_MAX = 100;
 
     @PostConstruct
     void initLimitOrderZSets() {
@@ -179,7 +178,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         try {
             CryptoOrder order = ledgerTx.call(SPOT_LIMIT_UNFREEZE, () -> doCancelOrder(userId, orderId));
             // 索引跟着DB走：事务提交后才摘索引。搁事务里解冻一失败回滚，单子退回PENDING而索引已没了=悬空
-            removeFromLimitZSet(order);
+            limitIndex.remove(order);
             return buildResponse(order);
         } finally {
             redisLockUtil.unlock(lockKey, lockValue);
@@ -209,7 +208,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
 
     @Override
     public IPage<CryptoOrderResponse> getUserOrders(Long userId, String status, int pageNum, int pageSize, String symbol) {
-        Page<CryptoOrder> page = new Page<>(pageNum, pageSize);
+        Page<CryptoOrder> page = new Page<>(Math.max(pageNum, 1), Math.clamp(pageSize, 1, ORDER_PAGE_MAX));
         LambdaQueryWrapper<CryptoOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(CryptoOrder::getUserId, userId);
         if (status != null && !status.isEmpty()) wrapper.eq(CryptoOrder::getStatus, status);
@@ -318,7 +317,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         CryptoOrder order = buildOrder(userId, request.getSymbol(), OrderSide.BUY.getCode(), OrderType.LIMIT.getCode(),
                 request.getQuantity(), 1, request.getLimitPrice(), null, null, null, freezeAmount, OrderStatus.PENDING.getCode());
         baseMapper.insert(order);
-        addToLimitZSet(order);
+        limitIndex.add(order);
         log.info("crypto限价买单 userId={} {} qty={} limit={} frozen={}", userId, request.getSymbol(), request.getQuantity(), request.getLimitPrice(), freezeAmount);
         return buildResponse(order);
     }
@@ -329,7 +328,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         CryptoOrder order = buildOrder(userId, request.getSymbol(), OrderSide.SELL.getCode(), OrderType.LIMIT.getCode(),
                 request.getQuantity(), 1, request.getLimitPrice(), null, null, null, null, OrderStatus.PENDING.getCode());
         baseMapper.insert(order);
-        addToLimitZSet(order);
+        limitIndex.add(order);
         log.info("crypto限价卖单 userId={} {} qty={} limit={}", userId, request.getSymbol(), request.getQuantity(), request.getLimitPrice());
         return buildResponse(order);
     }
@@ -413,44 +412,25 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
 
     @Override
     public List<TradeHit> limitHits(String symbol, List<PriceTick> ticks) {
-        BigDecimal[] range = PriceTick.lowHigh(ticks);
         List<TradeHit> hits = new ArrayList<>();
-        // 要严格穿过：买单只看挂单价高于最低价的，卖单只看低于最高价的
-        collectLimitHits(LIMIT_BUY_ZSET_PREFIX + symbol, Math.nextUp(range[0].doubleValue()), Double.MAX_VALUE,
-                ticks, true, hits);
-        collectLimitHits(LIMIT_SELL_ZSET_PREFIX + symbol, 0, Math.nextDown(range[1].doubleValue()),
-                ticks, false, hits);
+        for (var crossed : limitIndex.crossedSpot(symbol, ticks, baseMapper::selectById)) {
+            CryptoOrder order = crossed.order();
+            hits.add(new TradeHit(crossed.tick(), false, order.getUserId(),
+                    () -> triggerAndExecuteOrder(order, crossed.price())));
+        }
         return hits;
     }
 
-    /** 只查不预删：DB是事实、索引跟着事实走。抢不到锁或CAS抛错时索引原地留着，下一笔穿过照样捞得到 */
-    private void collectLimitHits(String key, double min, double max, List<PriceTick> ticks, boolean buy,
-                                  List<TradeHit> hits) {
-        Set<String> candidates = stringRedisTemplate.opsForZSet().rangeByScore(key, min, max);
-        if (candidates == null) return;
-        for (String id : candidates) {
-            Long orderId = Long.parseLong(id);
-            CryptoOrder order = baseMapper.selectById(orderId);
-            if (order == null) {
-                // DB 里没这单了，索引是过期项，摘掉
-                stringRedisTemplate.opsForZSet().remove(key, id);
-                continue;
-            }
-            int i = PriceTick.firstTouch(ticks, toEpochMs(order.getCreatedAt()), order.getLimitPrice(), buy, true);
-            if (i < 0) continue;
-            BigDecimal triggerPrice = ticks.get(i).touchPrice(order.getLimitPrice(), buy);
-            hits.add(new TradeHit(i, false, order.getUserId(), () -> triggerAndExecuteOrder(key, orderId, triggerPrice)));
-        }
-    }
-
-    private void triggerAndExecuteOrder(String zsetKey, Long orderId, BigDecimal triggerPrice) {
+    /** pending 是捞索引时读到的那张挂单，这里只用它的 id 和它在索引里的位置。抢不到锁或CAS抛错时索引原地留着，下一笔穿过照样捞得到 */
+    private void triggerAndExecuteOrder(CryptoOrder pending, BigDecimal triggerPrice) {
+        Long orderId = pending.getId();
         String lockKey = "crypto:order:execute:" + orderId;
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
         if (lockValue == null) return;   // 有人正在处理这单，索引不动，下一笔穿过再来
         try {
             markOrderTriggered(orderId, triggerPrice);
             // CAS正常返回才摘索引：没改到说明这单早不是PENDING，索引是过期项，一样该清
-            stringRedisTemplate.opsForZSet().remove(zsetKey, orderId.toString());
+            limitIndex.remove(pending);
             CryptoOrder order = baseMapper.selectById(orderId);
             if (order != null && OrderStatus.TRIGGERED.getCode().equals(order.getStatus())) {
                 transactionTemplate.executeWithoutResult(_ -> processTriggeredOrder(order));
@@ -462,21 +442,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         }
     }
 
-    // ==================== ZSet索引管理 ====================
-
-    private void addToLimitZSet(CryptoOrder order) {
-        String key = OrderSide.BUY.getCode().equals(order.getOrderSide())
-                ? LIMIT_BUY_ZSET_PREFIX + order.getSymbol()
-                : LIMIT_SELL_ZSET_PREFIX + order.getSymbol();
-        stringRedisTemplate.opsForZSet().add(key, order.getId().toString(), order.getLimitPrice().doubleValue());
-    }
-
-    private void removeFromLimitZSet(CryptoOrder order) {
-        String key = OrderSide.BUY.getCode().equals(order.getOrderSide())
-                ? LIMIT_BUY_ZSET_PREFIX + order.getSymbol()
-                : LIMIT_SELL_ZSET_PREFIX + order.getSymbol();
-        stringRedisTemplate.opsForZSet().remove(key, order.getId().toString());
-    }
+    // ==================== 限价索引重建/对账 ====================
 
     /**
      * 周期对账：把DB里所有PENDING挂单补回索引。纯追加不删——ZADD同member只覆盖score，
@@ -487,7 +453,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         List<CryptoOrder> pendingOrders = pendingLimitOrders();
         if (pendingOrders.isEmpty()) return;
         for (CryptoOrder order : pendingOrders) {
-            addToLimitZSet(order);
+            limitIndex.add(order);
         }
         log.info("crypto限价单索引对账 挂单{}个", pendingOrders.size());
     }
@@ -504,11 +470,10 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
 
         Set<String> symbols = pendingOrders.stream().map(CryptoOrder::getSymbol).collect(Collectors.toSet());
         for (String symbol : symbols) {
-            stringRedisTemplate.delete(LIMIT_BUY_ZSET_PREFIX + symbol);
-            stringRedisTemplate.delete(LIMIT_SELL_ZSET_PREFIX + symbol);
+            limitIndex.clearSpot(symbol);
         }
         for (CryptoOrder order : pendingOrders) {
-            addToLimitZSet(order);
+            limitIndex.add(order);
         }
         log.info("重建crypto限价单ZSet索引 共{}个订单", pendingOrders.size());
     }

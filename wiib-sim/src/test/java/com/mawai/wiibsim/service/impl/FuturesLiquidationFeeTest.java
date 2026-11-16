@@ -21,9 +21,13 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.BookFillPricer;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesTradingService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -110,15 +114,19 @@ class FuturesLiquidationFeeTest {
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         LedgerTx ledgerTx = new LedgerTx(tx);
         TradeFilterRegistry filterRegistry = new TradeFilterRegistry(mock(BinanceRestClient.class));
+        FuturesPrices prices = new FuturesPrices(cacheService);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
+        ClosedPositionCleanup cleanup = new ClosedPositionCleanup(indexService, orderMapper, userMapper, limitIndex);
         riskService = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper, tradingConfig,
-                lockRegistry, cacheService, indexService, brackets, crossMarginService,
-                notification, tx, ledgerTx, filterRegistry, bankruptcy, pricer);
+                lockRegistry, prices, indexService, brackets, crossMarginService,
+                notification, tx, ledgerTx, filterRegistry, bankruptcy, pricer, cleanup);
         crossLiquidation = new CrossLiquidationServiceImpl(crossMarginService, positionMapper, orderMapper,
-                tradingConfig, cacheService, indexService, lockRegistry, notification,
-                new CrossBandRegistry(), riskService, tx, filterRegistry, userMapper, bankruptcy, pricer);
+                tradingConfig, prices, lockRegistry, notification,
+                new CrossBandRegistry(), riskService, tx, filterRegistry, userMapper, bankruptcy, pricer,
+                limitIndex, cleanup);
         trading = new FuturesTradingServiceImpl(mock(UserService.class), userMapper, positionMapper, orderMapper,
                 tradingConfig, lockRegistry, cacheService, indexService, brackets, crossMarginService,
-                filterRegistry, new MessageCatalog(), ledgerTx, riskService, pricer);
+                filterRegistry, new MessageCatalog(), ledgerTx, riskService, pricer, prices, limitIndex, cleanup);
     }
 
     private static FuturesPosition position(long id, String symbol, String mode, String margin) {

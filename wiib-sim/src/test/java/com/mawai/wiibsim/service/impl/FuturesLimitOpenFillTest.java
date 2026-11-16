@@ -12,10 +12,13 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibcommon.market.TradeEvent;
@@ -89,12 +92,14 @@ class FuturesLimitOpenFillTest {
 
         crossMarginService = mock(CrossMarginService.class);
         eventPublisher = mock(TradeEventPublisher.class);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
         service = new FuturesSettlementServiceImpl(
                 userService, userMapper, positionMapper, orderMapper,
-                new TradingConfig(), bracketRegistry, cacheService, positionIndexService,
+                new TradingConfig(), bracketRegistry, new FuturesPrices(cacheService), positionIndexService,
                 mock(FuturesRiskService.class), crossMarginService,
                 mock(CrossLiquidationService.class), mock(FairLockRegistry.class),
-                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))), eventPublisher);
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))), eventPublisher,
+                limitIndex, new ClosedPositionCleanup(positionIndexService, orderMapper, userMapper, limitIndex));
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,

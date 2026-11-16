@@ -6,7 +6,9 @@ import com.mawai.wiibsim.dto.CrossSnapshotRow;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -52,7 +54,7 @@ class CrossSnapshotPinTest {
         when(cacheService.getMarkPrice(SYM)).thenReturn(new BigDecimal("100"));
         when(bracketRegistry.calcMaintenanceMargin(eq(SYM), any())).thenReturn(new BigDecimal("10"));
 
-        crossMargin = new CrossMarginServiceImpl(mock(UserMapper.class), positionMapper, cacheService,
+        crossMargin = new CrossMarginServiceImpl(mock(UserMapper.class), positionMapper, new FuturesPrices(cacheService),
                 bracketRegistry, mock(FuturesPositionIndexService.class), mock(BankruptcyService.class),
                 mock(StringRedisTemplate.class), new CrossBandRegistry());
     }

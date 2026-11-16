@@ -15,6 +15,8 @@ import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibsim.dto.PositionHistoryDTO;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FundingRateService;
+import com.mawai.wiibsim.service.FuturesMarginService;
+import com.mawai.wiibsim.service.FuturesQueryService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.KlineCacheService;
@@ -32,6 +34,8 @@ import java.util.Map;
 public class FuturesController {
 
     private final FuturesTradingService futuresTradingService;
+    private final FuturesMarginService futuresMarginService;
+    private final FuturesQueryService futuresQueryService;
     private final FuturesRiskService futuresRiskService;
     private final ForceOrderService forceOrderService;
     private final KlineCacheService klineCacheService;
@@ -78,21 +82,21 @@ public class FuturesController {
     /** 追加保证金 */
     @PostMapping("/margin")
     public Result<Void> addMargin(@CurrentUserId Long userId, @RequestBody FuturesAddMarginRequest request) {
-        futuresTradingService.addMargin(userId, request);
+        futuresMarginService.addMargin(userId, request);
         return Result.ok();
     }
 
     /** 减少逐仓保证金 */
     @PostMapping("/margin/reduce")
     public Result<Void> reduceMargin(@CurrentUserId Long userId, @RequestBody FuturesReduceMarginRequest request) {
-        futuresTradingService.reduceMargin(userId, request);
+        futuresMarginService.reduceMargin(userId, request);
         return Result.ok();
     }
 
     /** 持仓调杠杆：全仓双向可调，逐仓只能调高 */
     @PostMapping("/leverage")
     public Result<Void> adjustLeverage(@CurrentUserId Long userId, @RequestBody FuturesAdjustLeverageRequest request) {
-        futuresTradingService.adjustLeverage(userId, request);
+        futuresMarginService.adjustLeverage(userId, request);
         return Result.ok();
     }
 
@@ -128,7 +132,7 @@ public class FuturesController {
     /** 查询仓位列表 */
     @GetMapping("/positions")
     public Result<List<FuturesPositionDTO>> positions(@CurrentUserId Long userId, @RequestParam(required = false) String symbol) {
-        return Result.ok(futuresTradingService.getUserPositions(userId, symbol));
+        return Result.ok(futuresQueryService.getUserPositions(userId, symbol));
     }
 
     /**
@@ -152,13 +156,13 @@ public class FuturesController {
                                                        @RequestParam(defaultValue = "1") int pageNum,
                                                        @RequestParam(defaultValue = "10") int pageSize,
                                                        @RequestParam(required = false) String symbol) {
-        return Result.ok(futuresTradingService.getUserOrders(userId, status, pageNum, pageSize, symbol));
+        return Result.ok(futuresQueryService.getUserOrders(userId, status, pageNum, pageSize, symbol));
     }
 
     /** 最新成交-匿名 */
     @GetMapping("/live")
     public Result<List<FuturesOrderResponse>> live() {
-        return Result.ok(futuresTradingService.getLatestOrders());
+        return Result.ok(futuresQueryService.getLatestOrders());
     }
 
     /** Binance爆仓记录-匿名 */

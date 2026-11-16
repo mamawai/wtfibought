@@ -1,10 +1,13 @@
 package com.mawai.wiibsim.service;
 
-import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.mawai.wiibcommon.dto.*;
+import com.mawai.wiibcommon.dto.FuturesCloseRequest;
+import com.mawai.wiibcommon.dto.FuturesOpenRequest;
+import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
+import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 
 import java.util.List;
 
+/** 合约开仓、平仓、撤单。改保证金和杠杆见 FuturesMarginService，查询见 FuturesQueryService */
 public interface FuturesTradingService {
 
     FuturesOrderResponse openPosition(Long userId, FuturesOpenRequest request);
@@ -30,28 +33,4 @@ public interface FuturesTradingService {
     FuturesOrderResponse cancelOrder(Long userId, Long orderId);
 
     void setOrderProtection(Long userId, Long orderId, FuturesOrderProtectionRequest request);
-
-    List<FuturesOrderResponse> getGroupOrders(Long userId, String groupId);
-
-    void addMargin(Long userId, FuturesAddMarginRequest request);
-
-    void reduceMargin(Long userId, FuturesReduceMarginRequest request);
-
-    /** 币种级调杠杆（多空共用，一次调整该币全部仓位）：全仓双向可调（改占用额度），逐仓只能调高（释放多余保证金回钱包） */
-    void adjustLeverage(Long userId, FuturesAdjustLeverageRequest request);
-
-    List<FuturesPositionDTO> getUserPositions(Long userId, String symbol);
-
-    /** 已平/强平仓位历史（internal：AI Trader 战绩与策略账户监控用）：静态字段快照，不算实时浮盈；closedPnl 是订单流水聚合出的净盈亏。 */
-    List<FuturesPositionDTO> getClosedPositions(Long userId, String symbol, int limit);
-
-    /** 单笔订单查询（internal 执行轮询用）；订单不存在或不属于该用户抛 ORDER_NOT_FOUND。 */
-    FuturesOrderResponse getOrder(Long userId, Long orderId);
-
-    /** 该用户 PENDING 挂单列表（internal 重启对账用）；symbol 为空查全部。 */
-    List<FuturesOrderResponse> getPendingOrders(Long userId, String symbol);
-
-    IPage<FuturesOrderResponse> getUserOrders(Long userId, String status, int pageNum, int pageSize, String symbol);
-
-    List<FuturesOrderResponse> getLatestOrders();
 }

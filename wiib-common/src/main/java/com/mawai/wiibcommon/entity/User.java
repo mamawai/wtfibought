@@ -71,7 +71,7 @@ public class User {
     /** 爆仓时间 */
     private LocalDateTime bankruptAt;
 
-    /** 恢复日期（交易日09:00恢复） */
+    /** 恢复日期（当天09:00恢复） */
     private LocalDate bankruptResetDate;
 
     /** 禁言到期时间，NULL 或已过期=未禁言。到期自动解禁；重置账户刻意不清它 */

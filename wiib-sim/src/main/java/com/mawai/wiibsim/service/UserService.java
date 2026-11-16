@@ -12,6 +12,15 @@ import java.math.BigDecimal;
  */
 public interface UserService extends IService<User> {
 
+    /** AI Trader 每局 sim 子账户的用户名前缀（wiib-agent TraderService 建号），真人不给 */
+    String TRADER_ACCOUNT_PREFIX = "ai_trader_";
+
+    /** 是不是 AI Trader 的子账户：用户名带这个前缀，且是量化建的号（linuxDoId 带 internal: 前缀） */
+    static boolean isTraderSubAccount(User user) {
+        return user.getUsername().startsWith(TRADER_ACCOUNT_PREFIX)
+                && user.getLinuxDoId() != null && user.getLinuxDoId().startsWith("internal:");
+    }
+
     /**
      * 根据LinuxDo ID查找用户
      */

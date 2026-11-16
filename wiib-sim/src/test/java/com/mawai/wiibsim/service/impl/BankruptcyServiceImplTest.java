@@ -11,8 +11,10 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.ResetQuotaService;
 import com.mawai.wiibsim.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +25,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -58,7 +61,7 @@ class BankruptcyServiceImplTest {
                 userService, userMapper, cryptoPositionService, new TradingConfig(),
                 mock(CryptoOrderMapper.class), mock(CryptoPositionMapper.class),
                 mock(FuturesOrderMapper.class), futuresPositionMapper,
-                mock(CacheService.class), mock(FuturesPositionIndexService.class),
+                new LimitOrderIndex(mock(CacheService.class)), mock(FuturesPositionIndexService.class),
                 mock(PredictionBetMapper.class), assetValuationService,
                 mock(UserLedgerMapper.class), mock(ResetQuotaService.class),
                 new TransactionTemplate(mock(PlatformTransactionManager.class)));
@@ -71,6 +74,23 @@ class BankruptcyServiceImplTest {
         u.setBalance(new BigDecimal(balance));
         u.setMarginLoanPrincipal(new BigDecimal(principal));
         return u;
+    }
+
+    /** AI Trader 的子账户破产就是出局，恢复任务只恢复别的用户 */
+    @Test
+    void 破产恢复跳过trader子账户() {
+        User human = user("0", "0");
+        human.setUsername("alice");
+        User robot = user("0", "0");
+        robot.setId(8L);
+        robot.setUsername("ai_trader_7_r1");
+        robot.setLinuxDoId("internal:ai_trader_7_r1");
+        when(userService.list(ArgumentMatchers.<Wrapper<User>>any())).thenReturn(List.of(human, robot));
+
+        service.resetBankruptUsers(LocalDate.now());
+
+        verify(userMapper).resetAfterBankruptcy(eq(UID), any(), any());
+        verify(userMapper, never()).resetAfterBankruptcy(eq(8L), any(), any());
     }
 
     /** 批量检查扫出来的用户，锁外粗筛读到的也是这一份 */

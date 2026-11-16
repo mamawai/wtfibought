@@ -14,6 +14,7 @@ import com.mawai.wiibsim.service.BStockService;
 import com.mawai.wiibsim.service.BookFillPricer;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.CryptoPositionService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.RedisLockUtil;
@@ -22,7 +23,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -48,7 +48,7 @@ class CryptoLimitFillTest {
     private UserService userService;
     private CryptoPositionService positionService;
     private CryptoOrderMapper mapper;
-    private ZSetOperations<String, String> zset;
+    private CacheService cache;
     private DepthStreamCache depth;
     private CryptoOrderServiceImpl service;
 
@@ -58,9 +58,8 @@ class CryptoLimitFillTest {
         userService = mock(UserService.class);
         positionService = mock(CryptoPositionService.class);
         mapper = mock(CryptoOrderMapper.class);
-        zset = mock(ZSetOperations.class);
         depth = mock(DepthStreamCache.class);
-        CacheService cache = mock(CacheService.class);
+        cache = mock(CacheService.class);
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
 
         User user = new User();
@@ -71,7 +70,6 @@ class CryptoLimitFillTest {
         when(cache.getCryptoPrice(SYM)).thenReturn(new BigDecimal("100"));
         when(depth.spotSnapshot(SYM)).thenReturn(new DepthStreamCache.Snapshot(System.currentTimeMillis(), BOOK));
         when(redis.opsForStream()).thenReturn(mock(StreamOperations.class));
-        when(redis.opsForZSet()).thenReturn(zset);
         doAnswer(inv -> {
             inv.<CryptoOrder>getArgument(0).setId(1L);
             return 1;
@@ -83,7 +81,7 @@ class CryptoLimitFillTest {
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         service = new CryptoOrderServiceImpl(userService, positionService, new TradingConfig(),
                 mock(RedisLockUtil.class), mock(MarginAccountService.class), mock(CrossMarginService.class),
-                redis, cache, mock(BStockService.class), mock(TradeFilterRegistry.class), tx, new LedgerTx(tx),
+                new LimitOrderIndex(cache), cache, mock(BStockService.class), mock(TradeFilterRegistry.class), tx, new LedgerTx(tx),
                 new BookFillPricer(depth, redis));
         // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
@@ -115,7 +113,7 @@ class CryptoLimitFillTest {
         assertThat(order.getFilledPrice()).isEqualByComparingTo("100.75");
         verify(userService).updateBalance(eq(UID), argThat(d -> d.compareTo(new BigDecimal("-100.85")) == 0));
         verify(userService, never()).freezeBalance(anyLong(), any());
-        verify(zset, never()).add(anyString(), anyString(), anyDouble());
+        verify(cache, never()).zAdd(anyString(), anyString(), anyDouble());
     }
 
     @Test
@@ -124,7 +122,7 @@ class CryptoLimitFillTest {
         service.buy(UID, limit("100.6"));
 
         assertThat(inserted().getStatus()).isEqualTo("PENDING");
-        verify(zset).add("crypto:limit:buy:" + SYM, "1", 100.6);
+        verify(cache).zAdd("crypto:limit:buy:" + SYM, "1", 100.6);
     }
 
     @Test
@@ -134,7 +132,7 @@ class CryptoLimitFillTest {
 
         assertThat(inserted().getStatus()).isEqualTo("PENDING");
         verify(userService).freezeBalance(eq(UID), argThat(f -> f.compareTo(new BigDecimal("100.30")) == 0));
-        verify(zset).add("crypto:limit:buy:" + SYM, "1", 100.2);
+        verify(cache).zAdd("crypto:limit:buy:" + SYM, "1", 100.2);
     }
 
     @Test

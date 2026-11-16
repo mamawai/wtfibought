@@ -24,10 +24,13 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -37,6 +40,7 @@ import org.junit.jupiter.api.function.Executable;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -49,6 +53,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -71,7 +76,9 @@ class FuturesLockEntryTest {
     private CacheService cacheService;
     private FairLockRegistry lockRegistry;
     private Lock posLock;
+    private FuturesPositionIndexService indexService;
     private FuturesTradingServiceImpl trading;
+    private FuturesMarginServiceImpl margin;
     private FuturesRiskServiceImpl risk;
 
     @BeforeEach
@@ -82,23 +89,28 @@ class FuturesLockEntryTest {
         cacheService = mock(CacheService.class);
         lockRegistry = mock(FairLockRegistry.class);
         posLock = mock(Lock.class);
-        FuturesPositionIndexService indexService = mock(FuturesPositionIndexService.class);
+        indexService = mock(FuturesPositionIndexService.class);
         CrossMarginService crossMargin = mock(CrossMarginService.class);
         FuturesLeverageBracketRegistry brackets = mock(FuturesLeverageBracketRegistry.class);
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         LedgerTx ledgerTx = new LedgerTx(tx);
 
+        FuturesPrices prices = new FuturesPrices(cacheService);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
+        ClosedPositionCleanup cleanup = new ClosedPositionCleanup(indexService, orderMapper, userMapper, limitIndex);
         trading = new FuturesTradingServiceImpl(
                 mock(UserService.class), userMapper, positionMapper, orderMapper,
                 new TradingConfig(), lockRegistry, cacheService,
                 indexService, brackets, crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)), new MessageCatalog(), ledgerTx,
-                mock(FuturesRiskService.class), NoBookFillPricer.create());
+                mock(FuturesRiskService.class), NoBookFillPricer.create(), prices, limitIndex, cleanup);
+        margin = new FuturesMarginServiceImpl(userMapper, positionMapper, new TradingConfig(), lockRegistry,
+                indexService, brackets, crossMargin, ledgerTx, prices);
         risk = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper,
-                new TradingConfig(), lockRegistry, cacheService, indexService, brackets,
+                new TradingConfig(), lockRegistry, prices, indexService, brackets,
                 crossMargin, mock(TradeNotificationService.class), tx, ledgerTx,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(BankruptcyService.class),
-                NoBookFillPricer.create());
+                NoBookFillPricer.create(), cleanup);
     }
 
     /** 逐仓多 1 张 @100，保证金 10 */
@@ -169,8 +181,8 @@ class FuturesLockEntryTest {
         reduce.setAmount(BigDecimal.ONE);
 
         assertProcessing(() -> trading.closePosition(UID, close));
-        assertProcessing(() -> trading.addMargin(UID, add));
-        assertProcessing(() -> trading.reduceMargin(UID, reduce));
+        assertProcessing(() -> margin.addMargin(UID, add));
+        assertProcessing(() -> margin.reduceMargin(UID, reduce));
 
         verify(lockRegistry, times(3)).tryLockAsUser(POS_KEY);
         verify(lockRegistry, never()).tryLockAsSystem(anyString());
@@ -190,7 +202,7 @@ class FuturesLockEntryTest {
         req.setSymbol(SYM);
         req.setLeverage(20);
 
-        assertProcessing(() -> trading.adjustLeverage(UID, req));
+        assertProcessing(() -> margin.adjustLeverage(UID, req));
 
         verify(lockRegistry).tryLockAsUser("futures:pos:2");
         InOrder inOrder = inOrder(posLock, symLock);
@@ -241,6 +253,31 @@ class FuturesLockEntryTest {
         FuturesPosition p = position();
         p.setStopLosses(new ArrayList<>(List.of(new FuturesStopLoss(slId, new BigDecimal("95"), new BigDecimal(slQty)))));
         return p;
+    }
+
+    /** 改止损：库先改，索引等事务提交后才摘旧档、挂新档 */
+    @Test
+    void 改止损_索引等提交后才动() {
+        FuturesPosition p = withStopLoss("sl1", "1");
+        when(positionMapper.selectById(1L)).thenReturn(p);
+        when(cacheService.getFuturesPrice(SYM)).thenReturn(new BigDecimal("100"));
+        FuturesStopLossRequest.StopLossItem item = new FuturesStopLossRequest.StopLossItem();
+        item.setPrice(new BigDecimal("97"));
+        FuturesStopLossRequest request = new FuturesStopLossRequest();
+        request.setPositionId(1L);
+        request.setStopLosses(List.of(item));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            risk.doSetStopLoss(UID, request);
+            verify(positionMapper).updateStopLosses(eq(1L), any());
+            verifyNoInteractions(indexService);
+            TransactionSynchronizationManager.getSynchronizations().forEach(s -> s.afterCommit());
+            verify(indexService).unregisterStopLosses(1L, SYM, "LONG", p.getStopLosses());
+            verify(indexService).registerStopLosses(eq(1L), eq(SYM), eq("LONG"), argThat(list -> list.size() == 1));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test

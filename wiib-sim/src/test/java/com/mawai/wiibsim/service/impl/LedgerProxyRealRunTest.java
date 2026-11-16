@@ -76,7 +76,7 @@ class LedgerProxyRealRunTest {
     private FuturesPositionMapper positionMapper;
 
     @Autowired
-    private FuturesTradingServiceImpl futuresTradingServiceImpl;
+    private FuturesMarginServiceImpl futuresMarginServiceImpl;
 
     @Autowired
     private FuturesSettlementServiceImpl futuresSettlementServiceImpl;
@@ -218,7 +218,7 @@ class LedgerProxyRealRunTest {
     /**
      * 真跑一遍看"钱到底回不回滚"——失败注入。
      * <p>
-     * 打 {@code FuturesTradingServiceImpl.addMargin}，它经 LedgerTx 进的 doAddMargin 执行顺序天然适合注入：
+     * 打 {@code FuturesMarginServiceImpl.addMargin}，它经 LedgerTx 进的 doAddMargin 执行顺序天然适合注入：
      * <pre>
      * atomicUpdateBalance(-amount)   ← 钱动了，切面同时插了账本行
      * atomicAddMargin(+amount)       ← 仓位 margin 也动了
@@ -241,7 +241,7 @@ class LedgerProxyRealRunTest {
 
         // 必须钉住是哪个异常：FUTURES_SYMBOL_NOT_CONFIGURED 只可能来自 calcStaticLiqPrice（两次动钱之后），
         // 只断言"抛了"的话前置校验抛出也假绿
-        assertThatThrownBy(() -> futuresTradingServiceImpl.addMargin(uid, req))
+        assertThatThrownBy(() -> futuresMarginServiceImpl.addMargin(uid, req))
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).getCode())
                 .as("失败注入必须落在 calcStaticLiqPrice（动钱之后），否则本用例什么都没验到")

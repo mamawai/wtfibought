@@ -11,7 +11,10 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.FuturesPrices;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -62,11 +65,14 @@ class FuturesForceCloseRecheckTest {
         FuturesLeverageBracketRegistry brackets = new FuturesLeverageBracketRegistry();
         indexService = new FuturesPositionIndexServiceImpl(positionMapper, cacheService, brackets);
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
-        riskService = new FuturesRiskServiceImpl(positionMapper, mock(FuturesOrderMapper.class), mock(UserMapper.class),
-                new TradingConfig(), lockRegistry, cacheService, indexService, brackets,
+        FuturesOrderMapper orderMapper = mock(FuturesOrderMapper.class);
+        UserMapper userMapper = mock(UserMapper.class);
+        riskService = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper,
+                new TradingConfig(), lockRegistry, new FuturesPrices(cacheService), indexService, brackets,
                 mock(CrossMarginService.class), mock(TradeNotificationService.class), tx, new LedgerTx(tx),
                 new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(BankruptcyService.class),
-                NoBookFillPricer.create());
+                NoBookFillPricer.create(),
+                new ClosedPositionCleanup(indexService, orderMapper, userMapper, new LimitOrderIndex(cacheService)));
     }
 
     private static FuturesPosition isolatedLong(String margin) {

@@ -14,11 +14,14 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BStockService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.PriceTick;
@@ -28,7 +31,6 @@ import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -80,10 +82,11 @@ class LimitOrderHitsTest {
     private final CacheService cacheService = mock(CacheService.class);
     private final FuturesSettlementServiceImpl futures = new FuturesSettlementServiceImpl(mock(UserService.class),
             mock(UserMapper.class), mock(FuturesPositionMapper.class), orderMapper, mock(TradingConfig.class),
-            mock(FuturesLeverageBracketRegistry.class), cacheService, mock(FuturesPositionIndexService.class),
+            mock(FuturesLeverageBracketRegistry.class), new FuturesPrices(cacheService),
+            mock(FuturesPositionIndexService.class),
             mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
             mock(FairLockRegistry.class), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-            mock(TradeEventPublisher.class));
+            mock(TradeEventPublisher.class), new LimitOrderIndex(cacheService), mock(ClosedPositionCleanup.class));
 
     /** 开多挂单 50，挂在 createdAt */
     private FuturesOrder openLong(long createdAt) {
@@ -141,12 +144,10 @@ class LimitOrderHitsTest {
     private static final String SELL_KEY = "crypto:limit:sell:" + SYM;
 
     @Test
-    @SuppressWarnings("unchecked")
     void 现货卖单要有价高于挂单价_挂单之前的不算() {
-        StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
-        when(redis.opsForZSet()).thenReturn(zset);
-        when(zset.rangeByScore(eq(SELL_KEY), anyDouble(), anyDouble())).thenReturn(Set.of("1"));
+        CacheService spotCache = mock(CacheService.class);
+        when(spotCache.zRangeByScoreWithScores(eq(SELL_KEY), anyDouble(), anyDouble()))
+                .thenReturn(Set.of(ZSetOperations.TypedTuple.of("1", 50d)));
         RedisLockUtil lockUtil = mock(RedisLockUtil.class);
         when(lockUtil.tryLock(anyString(), anyLong())).thenReturn("v");
         CryptoOrderMapper mapper = mock(CryptoOrderMapper.class);
@@ -164,7 +165,7 @@ class LimitOrderHitsTest {
         CryptoOrderServiceImpl spot = new CryptoOrderServiceImpl(mock(UserService.class),
                 mock(CryptoPositionService.class), mock(TradingConfig.class), lockUtil,
                 mock(MarginAccountService.class), mock(CrossMarginService.class),
-                redis, mock(CacheService.class), mock(BStockService.class), mock(TradeFilterRegistry.class),
+                new LimitOrderIndex(spotCache), spotCache, mock(BStockService.class), mock(TradeFilterRegistry.class),
                 tx, new LedgerTx(tx), NoBookFillPricer.create());
         // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
         ReflectionTestUtils.setField(spot, "baseMapper", mapper);

@@ -1,7 +1,6 @@
 package com.mawai.wiibsim.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -14,10 +13,13 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.BookFillPricer;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
-import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.AfterCommit;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -35,12 +37,9 @@ import java.util.List;
 import java.util.concurrent.locks.Lock;
 import java.util.stream.IntStream;
 
+import static com.mawai.wiibsim.service.PriceTick.toEpochMs;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.calculatePnl;
-import static com.mawai.wiibsim.service.impl.FuturesHelper.cancelCloseOrders;
-import static com.mawai.wiibsim.service.impl.FuturesHelper.cancelGroupedOpenOrders;
-import static com.mawai.wiibsim.service.impl.FuturesHelper.markPrice;
-import static com.mawai.wiibsim.service.impl.FuturesHelper.removeFromLimitZSet;
-import static com.mawai.wiibsim.service.impl.FuturesHelper.toEpochMs;
+import static com.mawai.wiibsim.util.FairLockRegistry.held;
 
 @Slf4j
 @Service
@@ -54,8 +53,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     private final FuturesPositionMapper positionMapper;
     private final FuturesOrderMapper orderMapper;
     private final TradingConfig tradingConfig;
-    private final CacheService cacheService;
-    private final FuturesPositionIndexService positionIndexService;
+    private final FuturesPrices prices;
     private final FairLockRegistry lockRegistry;
     private final TradeNotificationService tradeNotificationService;
     private final CrossBandRegistry bandRegistry;
@@ -65,6 +63,8 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     private final UserMapper userMapper;
     private final BankruptcyService bankruptcyService;
     private final BookFillPricer fillPricer;
+    private final LimitOrderIndex limitIndex;
+    private final ClosedPositionCleanup closedPositionCleanup;
 
     @Override
     public void onPriceTick(String symbol, BigDecimal markPrice) {
@@ -150,16 +150,12 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     @Override
     public void triggerStopLoss(FuturesPosition position, Collection<String> slIds, BigDecimal price, long priceAt) {
         Long userId = position.getUserId();
-        Lock lock = lockRegistry.tryLockAsSystem(LIQ_LOCK_PREFIX + userId);
-        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
-        try {
+        try (var _ = held(lockRegistry.tryLockAsSystem(LIQ_LOCK_PREFIX + userId))) {
             // 止损看成交价、爆仓看标记价：按现在的标记价已经够爆，就是爆仓先到，爆了止损作废
             var account = crossMarginService.snapshot(userId);
             if (account.liquidatable() && liquidateWithPositionLocks(userId, null, null,
                     System.currentTimeMillis(), account.positions())) return;
             futuresRiskService.batchTriggerStopLoss(position.getId(), slIds, price, priceAt);
-        } finally {
-            lock.unlock();
         }
     }
 
@@ -239,7 +235,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
             FuturesPosition pos = positionMapper.selectById(id);
             if (pos == null || !"OPEN".equals(pos.getStatus())) continue;
             boolean pinned = pos.getSymbol().equals(pinSymbol);
-            BigDecimal judgePrice = pinned ? pinPrice : markPrice(cacheService, pos.getSymbol());
+            BigDecimal judgePrice = pinned ? pinPrice : prices.mark(pos.getSymbol());
             BigDecimal price = fillPricer.futures(pos.getSymbol(), "SHORT".equals(pos.getSide()), pos.getQuantity(),
                     judgePrice, pinned ? pinAt : now);
             BigDecimal pnl = calculatePnl(pos.getSide(), pos.getEntryPrice(), price, pos.getQuantity());
@@ -248,9 +244,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
 
             // CAS兜底：不拿仓位锁的路径（破产清算）先关了就跳过本仓，不重复结算
             if (positionMapper.casClosePosition(pos.getId(), "LIQUIDATED", price, pnl) == 0) continue;
-            positionIndexService.unregisterAll(pos); // 全仓无LIQ索引，清的是SL/TP残留
-            cancelCloseOrders(pos.getId(), orderMapper, cacheService);
-            cancelGroupedOpenOrders(pos, orderMapper, userMapper, cacheService);
+            closedPositionCleanup.run(pos); // 全仓无LIQ索引，摘的触发索引是SL/TP残留
 
             FuturesOrder order = new FuturesOrder();
             order.setUserId(userId);
@@ -334,7 +328,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
             // TRIGGERED单的索引在触发时(CAS落定后)已摘掉，这里ZREM返0无害；PENDING单靠这句摘干净。
             // 注意这句跑在 liquidateAll 的事务里，摘在提交之前：后面 settle 抛了就回滚，
             // 单退回PENDING而索引已经没了，这段悬空由每小时的 reconcileLimitOrderIndex 补回来
-            removeFromLimitZSet(order, cacheService);
+            limitIndex.remove(order);
             cancelled++;
         }
         return cancelled;

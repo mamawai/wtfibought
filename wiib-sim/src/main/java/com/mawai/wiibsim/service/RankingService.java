@@ -10,7 +10,6 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.PublicTradeMapper;
-import com.mawai.wiibsim.service.impl.AssetValuationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.time.Duration;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -53,6 +54,9 @@ public class RankingService {
     /** 单页封顶，同 force-orders / 全站成交那条口径 */
     private static final int MAX_PAGE_SIZE = 100;
 
+    /** AI Trader 子账户的用户名：ai_trader_{主人}_r{局号}（wiib-agent TraderService 建号） */
+    private static final Pattern TRADER_ACCOUNT = Pattern.compile(UserService.TRADER_ACCOUNT_PREFIX + "(\\d+)_r(\\d+)");
+
     @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
 
@@ -71,6 +75,27 @@ public class RankingService {
         return refreshRanking();
     }
 
+    /** AI Trader 每局一个子账户，同一个 trader 只留局号最大的那个；别的用户原样 */
+    static List<User> currentRoundOnly(List<User> users) {
+        Map<String, Integer> latestRound = new HashMap<>();
+        for (User u : users) {
+            Matcher m = traderAccount(u);
+            if (m != null) {
+                latestRound.merge(m.group(1), Integer.parseInt(m.group(2)), Math::max);
+            }
+        }
+        return users.stream().filter(u -> {
+            Matcher m = traderAccount(u);
+            return m == null || latestRound.get(m.group(1)) == Integer.parseInt(m.group(2));
+        }).toList();
+    }
+
+    /** 是 AI Trader 的子账户就给出用户名的匹配结果（1=主人，2=局号），不是给 null */
+    private static Matcher traderAccount(User user) {
+        Matcher m = TRADER_ACCOUNT.matcher(user.getUsername());
+        return m.matches() && UserService.isTraderSubAccount(user) ? m : null;
+    }
+
     public List<RankingDTO> refreshRanking() {
         log.info("开始刷新排行榜");
         long start = System.currentTimeMillis();
@@ -79,7 +104,7 @@ public class RankingService {
         // 只算交易过的人（有过 FILLED 现货或合约单）。没交易过的挂着初始资金进榜，
         // 排出来是一串一模一样的 10000，把真在交易的人挤到后面去
         Set<Long> tradedUserIds = new HashSet<>(publicTradeMapper.selectTradedUserIds());
-        List<User> users = userService.list().stream()
+        List<User> users = currentRoundOnly(userService.list()).stream()
                 .filter(u -> tradedUserIds.contains(u.getId()))
                 .toList();
         Map<Long, List<CryptoPosition>> cryptoPositionMap = cryptoPositionService.list().stream()

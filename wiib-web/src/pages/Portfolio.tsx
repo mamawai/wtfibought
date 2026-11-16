@@ -286,7 +286,7 @@ export function Portfolio() {
           <div className="mute">
             {t('bankrupt.detail', {
               times: user.bankruptCount,
-              date: user.bankruptResetDate ?? t('bankrupt.nextTradingDay'),
+              date: user.bankruptResetDate ?? t('bankrupt.nextDay'),
             })}
           </div>
         </div>

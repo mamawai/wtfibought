@@ -17,6 +17,7 @@ import com.mawai.wiibsim.mapper.PredictionRoundMapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.market.PolymarketPriceClient;
 import com.mawai.wiibcommon.market.PredictionFee;
+import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.PredictionService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.RedisLockUtil;
@@ -59,7 +60,7 @@ public class PredictionServiceImpl implements PredictionService {
     // ==================== 窗口时间 ====================
 
     /** 当前 5 分钟窗口起点(秒)；只有这个窗口的注单卖得掉、按盘口估值 */
-    static long currentWindowStart() {
+    public static long currentWindowStart() {
         long now = Instant.now().getEpochSecond();
         return now - (now % WINDOW_SECONDS);
     }

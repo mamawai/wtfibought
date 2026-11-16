@@ -9,7 +9,9 @@ import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -66,7 +68,7 @@ class CrossUserIndexTest {
         when(redis.opsForSet()).thenReturn(setOps);
         when(positionMapper.selectList(any())).thenReturn(List.of(crossPos()));
 
-        crossMargin = new CrossMarginServiceImpl(userMapper, positionMapper, mock(CacheService.class),
+        crossMargin = new CrossMarginServiceImpl(userMapper, positionMapper, new FuturesPrices(mock(CacheService.class)),
                 mock(FuturesLeverageBracketRegistry.class), mock(FuturesPositionIndexService.class),
                 bankruptcyService, redis, new CrossBandRegistry());
     }

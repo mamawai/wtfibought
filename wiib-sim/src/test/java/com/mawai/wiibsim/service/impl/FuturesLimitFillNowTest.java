@@ -19,9 +19,12 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BookFillPricer;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -101,7 +104,9 @@ class FuturesLimitFillNowTest {
                 mock(FuturesPositionIndexService.class), bracketRegistry, mock(CrossMarginService.class),
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), new BookFillPricer(depth, redis));
+                mock(FuturesRiskService.class), new BookFillPricer(depth, redis), new FuturesPrices(cacheService),
+                new LimitOrderIndex(cacheService), new ClosedPositionCleanup(mock(FuturesPositionIndexService.class),
+                        orderMapper, userMapper, new LimitOrderIndex(cacheService)));
     }
 
     private static FuturesOpenRequest limitLong(String qty, String limitPrice) {

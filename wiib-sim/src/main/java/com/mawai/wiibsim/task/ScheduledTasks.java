@@ -98,8 +98,8 @@ public class ScheduledTasks {
         });
     }
 
-    /** 交易日09:00恢复破产用户（幂等） */
-    @Scheduled(cron = "0 0 9 * * MON-FRI")
+    /** 每天09:00恢复破产用户（幂等） */
+    @Scheduled(cron = "0 0 9 * * *")
     public void resetBankruptUsers() {
         Thread.startVirtualThread(() -> {
             try {
@@ -110,12 +110,12 @@ public class ScheduledTasks {
         });
     }
 
-    /** 交易日17:00计息并执行爆仓检查 */
-    @Scheduled(cron = "0 0 17 * * MON-FRI")
+    /** 每天17:00计息并执行爆仓检查 */
+    @Scheduled(cron = "0 0 17 * * *")
     public void accrueInterestAndCheckBankruptcy() {
         Thread.startVirtualThread(() -> {
             try {
-                log.info("交易日17:00计息并执行爆仓检查");
+                log.info("每天17:00计息并执行爆仓检查");
                 LocalDate today = LocalDate.now();
                 marginAccountService.accrueDailyInterest(today);
                 bankruptcyService.checkAndLiquidateAll();

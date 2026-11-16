@@ -3,20 +3,14 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.FuturesAdjustLeverageRequest;
 import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
-import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.LedgerTx;
-import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
-import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
-import com.mawai.wiibsim.service.FuturesRiskService;
-import com.mawai.wiibsim.service.UserService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -44,7 +38,6 @@ class CrossLeverageBandInvalidateTest {
     void 全仓调杠杆改占用_必须刷新用户索引作废安全带() {
         var userMapper = mock(UserMapper.class);
         var positionMapper = mock(FuturesPositionMapper.class);
-        var orderMapper = mock(FuturesOrderMapper.class);
         var cacheService = mock(CacheService.class);
         var bracketRegistry = mock(FuturesLeverageBracketRegistry.class);
         var crossMargin = mock(CrossMarginService.class);
@@ -68,19 +61,16 @@ class CrossLeverageBandInvalidateTest {
         when(positionMapper.updateLeverageAndMargin(eq(1L), eq(50), any())).thenReturn(1);
         when(lockRegistry.tryLockAsUser(anyString())).thenReturn(mock(Lock.class));
 
-        FuturesTradingServiceImpl trading = new FuturesTradingServiceImpl(
-                mock(UserService.class), userMapper, positionMapper, orderMapper,
-                new TradingConfig(), lockRegistry, cacheService,
-                mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
-                new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), NoBookFillPricer.create());
+        FuturesMarginServiceImpl margin = new FuturesMarginServiceImpl(userMapper, positionMapper,
+                new TradingConfig(), lockRegistry, mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                new FuturesPrices(cacheService));
 
         FuturesAdjustLeverageRequest req = new FuturesAdjustLeverageRequest();
         req.setSymbol("BTCUSDT");
         req.setLeverage(50);
 
-        trading.adjustLeverage(UID, req);
+        margin.adjustLeverage(UID, req);
 
         verify(crossMargin).refreshUserIndex(UID);
     }

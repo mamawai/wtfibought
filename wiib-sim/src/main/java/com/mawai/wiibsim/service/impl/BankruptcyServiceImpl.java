@@ -17,10 +17,11 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.BankruptcyService;
-import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.ResetQuotaService;
 import com.mawai.wiibsim.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -48,7 +49,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final CryptoPositionMapper cryptoPositionMapper;
     private final FuturesOrderMapper futuresOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
-    private final CacheService cacheService;
+    private final LimitOrderIndex limitIndex;
     private final FuturesPositionIndexService futuresPositionIndexService;
     private final PredictionBetMapper predictionBetMapper;
     private final AssetValuationService assetValuationService;
@@ -103,6 +104,10 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         }
 
         for (User user : users) {
+            // AI Trader 的子账户破产就是出局，不恢复
+            if (UserService.isTraderSubAccount(user)) {
+                continue;
+            }
             try {
                 transactionTemplate.executeWithoutResult(_ -> resetUser(user.getId(), today));
             } catch (Exception e) {
@@ -117,7 +122,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     }
 
     /**
-     * 强平提交后顺手判一下；判不了只记日志，不能让已经提交的强平报错，工作日 17 点的破产检查还会再判。
+     * 强平提交后顺手判一下；判不了只记日志，不能让已经提交的强平报错，每天 17 点的破产检查还会再判。
      * 调用方在提交之后的回调里调，线程上还挂着刚提交完的那个事务：另开一个新事务，不然写的东西不归任何事务管
      */
     @Override
@@ -271,7 +276,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
                 .eq(FuturesOrder::getStatus, "PENDING")
                 .eq(FuturesOrder::getOrderType, "LIMIT"));
         for (FuturesOrder order : pendingOrders) {
-            FuturesHelper.removeFromLimitZSet(order, cacheService);
+            limitIndex.remove(order);
         }
 
         List<FuturesPosition> openPositions = futuresPositionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()

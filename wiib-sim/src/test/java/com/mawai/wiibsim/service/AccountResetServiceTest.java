@@ -1,5 +1,6 @@
 package com.mawai.wiibsim.service;
 
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.CryptoOrder;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.FuturesPosition;
@@ -12,7 +13,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ZSetOperations;
 
 import java.util.List;
 
@@ -35,12 +35,11 @@ class AccountResetServiceTest {
     private FuturesPositionIndexService indexService;
     private AccountPurgeTx purgeTx;
     private StringRedisTemplate redis;
-    private ZSetOperations<String, String> zSetOps;
+    private CacheService cacheService;
     private ResetQuotaService resetQuota;
     private UserMapper userMapper;
     private AccountResetService service;
 
-    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
         positionMapper = mock(FuturesPositionMapper.class);
@@ -51,14 +50,13 @@ class AccountResetServiceTest {
         userMapper = mock(UserMapper.class);
 
         redis = mock(StringRedisTemplate.class);
-        zSetOps = mock(ZSetOperations.class);
-        when(redis.opsForZSet()).thenReturn(zSetOps);
+        cacheService = mock(CacheService.class);
 
         when(positionMapper.selectList(any())).thenReturn(List.of());
         when(cryptoOrderMapper.selectList(any())).thenReturn(List.of());
 
         service = new AccountResetService(positionMapper, cryptoOrderMapper, indexService,
-                purgeTx, redis, resetQuota, userMapper, new MessageCatalog());
+                purgeTx, redis, resetQuota, userMapper, new MessageCatalog(), new LimitOrderIndex(cacheService));
     }
 
     private static FuturesPosition openPosition() {
@@ -128,7 +126,7 @@ class AccountResetServiceTest {
 
         service.reset(7L);
 
-        verify(zSetOps).remove("crypto:limit:buy:BTCUSDT", "500");
+        verify(cacheService).zRemove("crypto:limit:buy:BTCUSDT", "500");
     }
 
     // ==================== 量化子账户销户（AI Trader 过期轮次清理） ====================

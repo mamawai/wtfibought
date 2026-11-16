@@ -10,6 +10,7 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FuturesLiquidationService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.PriceTick;
 import com.mawai.wiibsim.service.TradeHit;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static com.mawai.wiibsim.service.PriceTick.toEpochMs;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.*;
 
 /**
@@ -43,6 +45,7 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
     private final FuturesPositionMapper positionMapper;
     private final FuturesPositionIndexService positionIndexService;
     private final CrossLiquidationService crossLiquidationService;
+    private final FuturesPrices prices;
 
     /** 从止损/止盈索引摘出来的一档，放回用 key/member/score */
     private record Claim(String key, String member, double score, boolean stopLoss) {
@@ -240,7 +243,7 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
         for (String symbol : traderSymbolService.allFuturesSymbols()) {
             try {
                 // 标记价，缺了用合约最新价
-                checkOnPriceUpdate(symbol, markPrice(cacheService, symbol));
+                checkOnPriceUpdate(symbol, prices.mark(symbol));
             } catch (BizException e) {
                 // 价格缓存还没热（刚启动 / 该标的行情未到），等下一轮即可，不是故障
                 log.debug("[FuturesLiq] 兜底巡检跳过 symbol={} 价格不可用", symbol);

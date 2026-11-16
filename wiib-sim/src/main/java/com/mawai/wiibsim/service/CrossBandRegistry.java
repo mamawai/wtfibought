@@ -1,4 +1,4 @@
-package com.mawai.wiibsim.service.impl;
+package com.mawai.wiibsim.service;
 
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 全仓安全带注册表：tick 巡检的"免检证"。
  *
- * <p>每次精查（{@link CrossLiquidationServiceImpl#checkUser}）末尾按账户快照算出一条带：
+ * <p>每次精查（{@link CrossLiquidationService#checkUser}）末尾按账户快照算出一条带：
  * <b>只要所有持仓 symbol 的价格不出各自区间，数学上保证账户爆不了</b>——于是带内 tick 直接跳过，
  * 不再打 DB。危险度编码在带宽里：高杠杆/深回撤账户带极窄（几乎每 tick 精查），健康账户带宽（长期免检）。</p>
  *

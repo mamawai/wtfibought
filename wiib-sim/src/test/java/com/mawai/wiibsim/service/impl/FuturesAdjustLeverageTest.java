@@ -5,20 +5,14 @@ import com.mawai.wiibcommon.dto.FuturesAdjustLeverageRequest;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
-import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.LedgerTx;
-import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
-import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
-import com.mawai.wiibsim.service.FuturesRiskService;
-import com.mawai.wiibsim.service.UserService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,7 +51,7 @@ class FuturesAdjustLeverageTest {
     private FuturesLeverageBracketRegistry bracketRegistry;
     private CrossMarginService crossMarginService;
     private FuturesPositionIndexService positionIndexService;
-    private FuturesTradingServiceImpl service;
+    private FuturesMarginServiceImpl service;
 
     @BeforeEach
     void setUp() {
@@ -76,13 +70,10 @@ class FuturesAdjustLeverageTest {
         // 别看它与场景余额不符就去"修"：记账切面只织在真 Spring 代理上，裸 mock 单测里压根不参与
         when(userMapper.atomicUpdateBalance(anyLong(), any())).thenReturn(new BigDecimal("10000"));
 
-        service = new FuturesTradingServiceImpl(
-                mock(UserService.class), userMapper, positionMapper, mock(FuturesOrderMapper.class),
-                new TradingConfig(), mock(FairLockRegistry.class), cacheService,
-                positionIndexService, bracketRegistry, crossMarginService,
-                new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), NoBookFillPricer.create());
+        service = new FuturesMarginServiceImpl(userMapper, positionMapper,
+                new TradingConfig(), mock(FairLockRegistry.class), positionIndexService, bracketRegistry,
+                crossMarginService, new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                new FuturesPrices(cacheService));
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,

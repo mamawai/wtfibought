@@ -16,11 +16,12 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
-import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.BookFillPricer;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.AfterCommit;
@@ -38,6 +39,7 @@ import java.util.concurrent.locks.Lock;
 import static com.mawai.wiibcommon.enums.LedgerBizType.FUTURES_CLOSE_SETTLE;
 import static com.mawai.wiibcommon.enums.LedgerBizType.FUTURES_LIQUIDATION_RETURN;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.*;
+import static com.mawai.wiibsim.util.FairLockRegistry.held;
 
 @Slf4j
 @Service
@@ -49,7 +51,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private final UserMapper userMapper;
     private final TradingConfig tradingConfig;
     private final FairLockRegistry lockRegistry;
-    private final CacheService cacheService;
+    private final FuturesPrices prices;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
     private final CrossMarginService crossMarginService;
@@ -59,34 +61,29 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private final TradeFilterRegistry filterRegistry;
     private final BankruptcyService bankruptcyService;
     private final BookFillPricer fillPricer;
+    private final ClosedPositionCleanup closedPositionCleanup;
 
     // ==================== 设置止损 ====================
 
     @Override
     public void setStopLoss(Long userId, FuturesStopLossRequest request) {
-        Lock lock = lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId());
-        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
-        try {
+        try (var _ = held(lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId()))) {
             transactionTemplate.executeWithoutResult(_ -> doSetStopLoss(userId, request));
-        } finally {
-            lock.unlock();
         }
     }
 
     void doSetStopLoss(Long userId, FuturesStopLossRequest request) {
-        FuturesPosition position = getUserPosition(userId, request.getPositionId());
+        FuturesPosition position = requireOpen(positionMapper.selectById(request.getPositionId()), userId);
 
         List<FuturesStopLossRequest.StopLossItem> items = request.getStopLosses();
         if (items != null && items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
 
-        // 先完成全部校验再动 Redis 索引：校验抛异常时 DB 回滚而 Redis 删除不会回滚，
-        // 顺序反了会留下"DB 有旧止损但索引已删、永不触发"的不一致
-        List<FuturesStopLoss> newList = null;
+        // 新的一组止损；不传或传空就是清掉
+        List<FuturesStopLoss> newList = new ArrayList<>();
         if (items != null && !items.isEmpty()) {
             // 止损看成交价触发，按最新成交价校验方向
-            BigDecimal lastPrice = latestFuturesPrice(cacheService, position.getSymbol());
+            BigDecimal lastPrice = prices.latest(position.getSymbol());
             BigDecimal totalQty = BigDecimal.ZERO;
-            newList = new ArrayList<>();
             for (FuturesStopLossRequest.StopLossItem item : items) {
                 validateSlPrice(item.getPrice(), position.getSide(), lastPrice);
                 BigDecimal quantity = item.getQuantity() == null ? position.getQuantity() : item.getQuantity();
@@ -99,18 +96,12 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         }
 
-        List<FuturesStopLoss> oldSls = position.getStopLosses();
-        if (oldSls != null && !oldSls.isEmpty()) {
-            positionIndexService.unregisterStopLosses(position.getId(), position.getSymbol(), position.getSide(), oldSls);
-        }
-
-        if (newList == null) {
-            positionMapper.updateStopLosses(position.getId(), null);
-            return;
-        }
-
-        positionMapper.updateStopLosses(position.getId(), newList);
-        positionIndexService.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), newList);
+        positionMapper.updateStopLosses(position.getId(), newList.isEmpty() ? null : newList);
+        // 索引跟着库走：提交后才摘旧档、挂新档
+        AfterCommit.run(() -> {
+            positionIndexService.unregisterStopLosses(position.getId(), position.getSymbol(), position.getSide(), position.getStopLosses());
+            positionIndexService.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), newList);
+        });
 
         log.info("futures设置止损 userId={} posId={} count={}", userId, request.getPositionId(), newList.size());
     }
@@ -119,27 +110,22 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void setTakeProfit(Long userId, FuturesTakeProfitRequest request) {
-        Lock lock = lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId());
-        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
-        try {
+        try (var _ = held(lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId()))) {
             transactionTemplate.executeWithoutResult(_ -> doSetTakeProfit(userId, request));
-        } finally {
-            lock.unlock();
         }
     }
 
     void doSetTakeProfit(Long userId, FuturesTakeProfitRequest request) {
-        FuturesPosition position = getUserPosition(userId, request.getPositionId());
+        FuturesPosition position = requireOpen(positionMapper.selectById(request.getPositionId()), userId);
 
         List<FuturesTakeProfitRequest.TakeProfitItem> items = request.getTakeProfits();
         if (items != null && items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
 
-        // 同 doSetStopLoss：先校验后动 Redis 索引，防止 DB 回滚后索引已删的不一致
-        List<FuturesTakeProfit> newList = null;
+        // 新的一组止盈；不传或传空就是清掉
+        List<FuturesTakeProfit> newList = new ArrayList<>();
         if (items != null && !items.isEmpty()) {
-            BigDecimal lastPrice = latestFuturesPrice(cacheService, position.getSymbol());
+            BigDecimal lastPrice = prices.latest(position.getSymbol());
             BigDecimal totalQty = BigDecimal.ZERO;
-            newList = new ArrayList<>();
             for (FuturesTakeProfitRequest.TakeProfitItem item : items) {
                 validateTpPrice(item.getPrice(), position.getSide(), lastPrice);
                 validateQty(item.getQuantity());
@@ -151,19 +137,12 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         }
 
-        List<FuturesTakeProfit> oldTps = position.getTakeProfits();
-        if (oldTps != null && !oldTps.isEmpty()) {
-            positionIndexService.unregisterTakeProfits(position.getId(), position.getSymbol(), position.getSide(), oldTps);
-        }
-
-        if (newList == null) {
-            positionMapper.updateTakeProfits(position.getId(), null);
-            log.info("futures清空止盈 userId={} posId={}", userId, request.getPositionId());
-            return;
-        }
-
-        positionMapper.updateTakeProfits(position.getId(), newList);
-        positionIndexService.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), newList);
+        positionMapper.updateTakeProfits(position.getId(), newList.isEmpty() ? null : newList);
+        // 索引跟着库走：提交后才摘旧档、挂新档
+        AfterCommit.run(() -> {
+            positionIndexService.unregisterTakeProfits(position.getId(), position.getSymbol(), position.getSide(), position.getTakeProfits());
+            positionIndexService.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), newList);
+        });
 
         log.info("futures设置止盈 userId={} posId={} count={}", userId, request.getPositionId(), newList.size());
     }
@@ -172,12 +151,8 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void forceClose(Long positionId, BigDecimal price, long priceAt) {
-        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + positionId);
-        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
-        try {
+        try (var _ = held(lockRegistry.tryLockAsSystem("futures:pos:" + positionId))) {
             ledgerTx.run(FUTURES_LIQUIDATION_RETURN, () -> doForceClose(positionId, price, priceAt));
-        } finally {
-            lock.unlock();
         }
     }
 
@@ -222,9 +197,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         int affected = positionMapper.casClosePosition(position.getId(), "LIQUIDATED", fill.price(), fill.pnl());
         if (affected == 0) return null;
 
-        positionIndexService.unregisterAll(position);
-        cancelCloseOrders(position.getId(), orderMapper, cacheService);
-        cancelGroupedOpenOrders(position, orderMapper, userMapper, cacheService);
+        closedPositionCleanup.run(position);
 
         if (returnAmount.signum() > 0) {
             // 这笔是强平返还（手动平仓转成强平时外层是平仓结算的类型）
@@ -314,23 +287,15 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void batchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price, long priceAt) {
-        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + positionId);
-        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
-        try {
+        try (var _ = held(lockRegistry.tryLockAsSystem("futures:pos:" + positionId))) {
             ledgerTx.run(FUTURES_CLOSE_SETTLE, () -> doBatchTrigger(positionId, slIds, price, priceAt, true));
-        } finally {
-            lock.unlock();
         }
     }
 
     @Override
     public void batchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price, long priceAt) {
-        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + positionId);
-        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
-        try {
+        try (var _ = held(lockRegistry.tryLockAsSystem("futures:pos:" + positionId))) {
             ledgerTx.run(FUTURES_CLOSE_SETTLE, () -> doBatchTrigger(positionId, tpIds, price, priceAt, false));
-        } finally {
-            lock.unlock();
         }
     }
 
@@ -379,9 +344,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         if (isFullClose) {
             int affected = positionMapper.casClosePosition(positionId, "CLOSED", fill.price(), fill.pnl());
             if (affected == 0) return;
-            positionIndexService.unregisterAll(position);
-            cancelCloseOrders(positionId, orderMapper, cacheService);
-            cancelGroupedOpenOrders(position, orderMapper, userMapper, cacheService);
+            closedPositionCleanup.run(position);
         } else {
             int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginPart);
             if (affected == 0) return;
@@ -436,18 +399,5 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         // 盈亏扣掉手续费，跟强平、全仓爆仓的通知一个口径
         tradeNotificationService.protectiveClose(position, totalCloseQty, fill.price(),
                 fill.pnl().subtract(fill.commission()), isStopLoss);
-    }
-
-    // ==================== 内部工具 ====================
-
-    private FuturesPosition getUserPosition(Long userId, Long positionId) {
-        FuturesPosition position = positionMapper.selectById(positionId);
-        if (position == null || !position.getUserId().equals(userId)) {
-            throw new BizException(ErrorCode.FUTURES_POSITION_NOT_FOUND);
-        }
-        if (!"OPEN".equals(position.getStatus())) {
-            throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
-        }
-        return position;
     }
 }

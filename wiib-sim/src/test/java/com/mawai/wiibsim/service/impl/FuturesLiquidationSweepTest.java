@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TraderSymbolService;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class FuturesLiquidationSweepTest {
     private FuturesLiquidationServiceImpl service() {
         return new FuturesLiquidationServiceImpl(mock(FuturesRiskService.class), cacheService, traderSymbols,
                 mock(FuturesPositionMapper.class), mock(FuturesPositionIndexService.class),
-                mock(CrossLiquidationService.class));
+                mock(CrossLiquidationService.class), new FuturesPrices(cacheService));
     }
 
     private void symbols(String... symbols) {

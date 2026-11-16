@@ -57,8 +57,6 @@ public class AuthServiceImpl implements AuthService {
     /** 用户名允许的字符（正则字符集）和最长字数：注册校验、Google 名字生成共用 */
     private static final String USERNAME_CHARS = "A-Za-z0-9_\\u4e00-\\u9fa5";
     private static final int USERNAME_MAX = 20;
-    /** AI Trader 每局 sim 子账户的用户名前缀（wiib-agent TraderService 建号），真人不给 */
-    private static final String TRADER_ACCOUNT_PREFIX = "ai_trader_";
 
     private final UserService userService;
     private final LinuxDoConfig linuxDoConfig;
@@ -145,7 +143,7 @@ public class AuthServiceImpl implements AuthService {
                 // 首次登录，创建用户并赠送初始资金
                 user = new User();
                 user.setLinuxDoId(linuxDoId);
-                user.setUsername(username);
+                user.setUsername(linuxDoUsername(username, null));
                 user.setAvatar(avatar);
                 user.setBalance(initialBalance);
                 // agent 语言初值取建号那一刻的界面语言，之后只在配置页改
@@ -166,7 +164,7 @@ public class AuthServiceImpl implements AuthService {
                 log.info("新用户注册: {} LinuxDoId={}", username, linuxDoId);
             } else {
                 // 更新用户信息
-                user.setUsername(username);
+                user.setUsername(linuxDoUsername(username, user));
                 user.setAvatar(avatar);
                 try {
                     userService.updateById(user);
@@ -213,7 +211,7 @@ public class AuthServiceImpl implements AuthService {
                 // 首次登录，创建用户并赠送初始资金
                 user = new User();
                 user.setGoogleId(googleId);
-                user.setUsername(googleUsername(userInfo.getName()));
+                user.setUsername(freshUsername(userInfo.getName()));
                 user.setAvatar(picture);
                 user.setBalance(initialBalance);
                 // 同 LinuxDo 首登：agent 语言初值取界面语言
@@ -243,9 +241,21 @@ public class AuthServiceImpl implements AuthService {
     }
 
     /**
-     * Google 名字转站内用户名：撞名或不到 2 个字，就截短后补 _4位随机数（补完不超上限）
+     * LinuxDo 登录后站内叫什么：一般跟 LinuxDo 的名字走；
+     * 撞上 AI Trader 子账户前缀的不跟——新号另起一个，老号（existing）留着原来的
      */
-    String googleUsername(String name) {
+    String linuxDoUsername(String linuxDoName, User existing) {
+        if (!linuxDoName.startsWith(UserService.TRADER_ACCOUNT_PREFIX)) {
+            return linuxDoName;
+        }
+        return existing == null ? freshUsername(linuxDoName) : existing.getUsername();
+    }
+
+    /**
+     * 外面的名字（Google 的名字、不能照搬的 LinuxDo 名字）转站内用户名：
+     * 撞名或不到 2 个字，就截短后补 _4位随机数（补完不超上限）
+     */
+    String freshUsername(String name) {
         String base = sanitizeUsername(name);
         String username = base;
         while (username.length() < 2 || userService.findByUsername(username) != null) {
@@ -264,7 +274,7 @@ public class AuthServiceImpl implements AuthService {
                 .trim()
                 .replaceAll("\\s+", "_");
         s = StrUtil.sub(s, 0, USERNAME_MAX);
-        return s.isEmpty() || s.startsWith(TRADER_ACCOUNT_PREFIX) ? "user" : s;
+        return s.isEmpty() || s.startsWith(UserService.TRADER_ACCOUNT_PREFIX) ? "user" : s;
     }
 
     /**
@@ -317,6 +327,10 @@ public class AuthServiceImpl implements AuthService {
         String name = username == null ? "" : username.trim();
         if (!name.matches("[" + USERNAME_CHARS + "]{2," + USERNAME_MAX + "}")) {
             throw new BizException(messages.get("auth.usernameFormat"));
+        }
+        // AI Trader 子账户的名字段，真人不给
+        if (name.startsWith(UserService.TRADER_ACCOUNT_PREFIX)) {
+            throw new BizException(messages.get("auth.usernameTaken"));
         }
         if (password == null || password.length() < 6 || password.length() > 64) {
             throw new BizException(messages.get("auth.passwordLength"));

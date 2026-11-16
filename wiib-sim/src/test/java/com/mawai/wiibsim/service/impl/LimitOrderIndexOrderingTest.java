@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.CryptoOrder;
+import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.market.TradeRecord;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
@@ -12,12 +13,15 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BStockService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.PriceTick;
 import com.mawai.wiibsim.service.TradeEventPublisher;
@@ -26,10 +30,11 @@ import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -45,6 +50,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -75,23 +81,27 @@ class LimitOrderIndexOrderingTest {
         return order;
     }
 
+    /** 索引里躺着 1 号买单 */
+    private static CacheService cacheWithBuyOrder() {
+        CacheService cache = mock(CacheService.class);
+        when(cache.zRangeByScoreWithScores(eq(BUY_KEY), anyDouble(), anyDouble()))
+                .thenReturn(Set.of(ZSetOperations.TypedTuple.of("1", 50000d)));
+        return cache;
+    }
+
     /** 现货：抢不到执行锁就直接放手，命中的那条索引必须原地不动，下一笔还能捞到 */
     @Test
-    @SuppressWarnings("unchecked")
     void 现货抢不到锁时不许摘索引() {
-        StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
-        when(redis.opsForZSet()).thenReturn(zset);
-        when(zset.rangeByScore(eq(BUY_KEY), anyDouble(), anyDouble())).thenReturn(Set.of("1"));
+        CacheService cache = cacheWithBuyOrder();
         // tryLock 不打桩=返回 null，即"这单有人在处理"
         RedisLockUtil lockUtil = mock(RedisLockUtil.class);
         CryptoOrderMapper mapper = mock(CryptoOrderMapper.class);
         when(mapper.selectById(1L)).thenReturn(pendingBuy());
 
-        TradeHit.runByUser(cryptoService(redis, lockUtil, mapper).limitHits("BTCUSDT", tradeThrough()));
+        TradeHit.runByUser(cryptoService(cache, lockUtil, mapper).limitHits("BTCUSDT", tradeThrough()));
 
         verify(lockUtil).tryLock("crypto:order:execute:1", 30);
-        verify(zset, never()).remove(anyString(), any());
+        verify(cache, never()).zRemove(anyString(), any());
     }
 
     /**
@@ -99,22 +109,18 @@ class LimitOrderIndexOrderingTest {
      * 摘早了这单在库里还是 PENDING、却没人盯价，只能等每小时对账捞回来。
      */
     @Test
-    @SuppressWarnings("unchecked")
     void 现货CAS抛异常时不许摘索引() {
-        StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
-        when(redis.opsForZSet()).thenReturn(zset);
-        when(zset.rangeByScore(eq(BUY_KEY), anyDouble(), anyDouble())).thenReturn(Set.of("1"));
+        CacheService cache = cacheWithBuyOrder();
         RedisLockUtil lockUtil = mock(RedisLockUtil.class);
         when(lockUtil.tryLock("crypto:order:execute:1", 30)).thenReturn("lock-val");
         CryptoOrderMapper mapper = mock(CryptoOrderMapper.class);
         when(mapper.selectById(1L)).thenReturn(pendingBuy());
         when(mapper.casUpdateToTriggered(anyLong(), any())).thenThrow(new RuntimeException("CAS 炸了"));
 
-        TradeHit.runByUser(cryptoService(redis, lockUtil, mapper).limitHits("BTCUSDT", tradeThrough()));
+        TradeHit.runByUser(cryptoService(cache, lockUtil, mapper).limitHits("BTCUSDT", tradeThrough()));
 
         verify(mapper).casUpdateToTriggered(anyLong(), any());
-        verify(zset, never()).remove(anyString(), any());
+        verify(cache, never()).zRemove(anyString(), any());
     }
 
     /** 合约：扫描只查不摘，摘索引归触发方在CAS落定之后做 */
@@ -129,11 +135,11 @@ class LimitOrderIndexOrderingTest {
         verify(cacheService, never()).zRangeByScoreAndRemove(anyString(), anyDouble(), anyDouble());
     }
 
-    private CryptoOrderServiceImpl cryptoService(StringRedisTemplate redis, RedisLockUtil lockUtil, CryptoOrderMapper mapper) {
+    private CryptoOrderServiceImpl cryptoService(CacheService cache, RedisLockUtil lockUtil, CryptoOrderMapper mapper) {
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         CryptoOrderServiceImpl service = new CryptoOrderServiceImpl(mock(UserService.class),
                 mock(CryptoPositionService.class), mock(TradingConfig.class), lockUtil, mock(MarginAccountService.class),
-                mock(CrossMarginService.class), redis, mock(CacheService.class), mock(BStockService.class),
+                mock(CrossMarginService.class), new LimitOrderIndex(cache), cache, mock(BStockService.class),
                 mock(TradeFilterRegistry.class), tx, new LedgerTx(tx), NoBookFillPricer.create());
         // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
@@ -143,10 +149,31 @@ class LimitOrderIndexOrderingTest {
     private FuturesSettlementServiceImpl futuresService(CacheService cacheService) {
         return new FuturesSettlementServiceImpl(mock(UserService.class), mock(UserMapper.class),
                 mock(FuturesPositionMapper.class), mock(FuturesOrderMapper.class), mock(TradingConfig.class),
-                mock(FuturesLeverageBracketRegistry.class), cacheService, mock(FuturesPositionIndexService.class),
+                mock(FuturesLeverageBracketRegistry.class), new FuturesPrices(cacheService),
+                mock(FuturesPositionIndexService.class),
                 mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
                 mock(FairLockRegistry.class),
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(TradeEventPublisher.class));
+                mock(TradeEventPublisher.class), new LimitOrderIndex(cacheService), mock(ClosedPositionCleanup.class));
+    }
+
+    /** 事务里挂限价索引：提交之后才真的挂上 */
+    @Test
+    void 事务里挂索引要等提交之后() {
+        CacheService cache = mock(CacheService.class);
+        FuturesOrder order = new FuturesOrder();
+        order.setId(11L);
+        order.setSymbol("BTCUSDT");
+        order.setOrderSide("OPEN_LONG");
+        order.setLimitPrice(new BigDecimal("99000"));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            new LimitOrderIndex(cache).add(order);
+            verifyNoInteractions(cache);
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+            verify(cache).zAdd("futures:limit:open_long:BTCUSDT", "11", 99000.0);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 }

@@ -21,7 +21,7 @@ import java.util.List;
  *
  * <p>爆仓 = 全组爆：equity ≤ Σ维持保证金时，该用户所有全仓仓位一次性强平，
  * 盈亏净额减清算费直接结算进余额钱包（可为负）；结算后余额 &lt; 0 即穿仓 → 立即破产
- * （清空两个钱包，次一交易日重置初始资金）。</p>
+ * （清空两个钱包，次日重置初始资金）。</p>
  */
 public interface CrossLiquidationService {
 

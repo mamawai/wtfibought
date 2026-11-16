@@ -1,10 +1,13 @@
-package com.mawai.wiibsim.service.impl;
+package com.mawai.wiibsim.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.PredictionBet;
+import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
+import com.mawai.wiibsim.service.impl.PredictionServiceImpl;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +25,23 @@ public class AssetValuationService {
 
     private final CacheService cacheService;
     private final PredictionBetMapper predictionBetMapper;
+    private final FuturesPositionMapper futuresPositionMapper;
+
+    /**
+     * 合约账户权益：余额 + 冻结 + 各持仓估值（{@link #futuresPositionValue}）。
+     * AI Trader 的出局判定、时间线上的权益和下单护栏都用这个数，agent 那边不再自己算。
+     */
+    public BigDecimal futuresEquity(User user) {
+        BigDecimal equity = user.getBalance()
+                .add(user.getFrozenBalance() == null ? BigDecimal.ZERO : user.getFrozenBalance());
+        List<FuturesPosition> open = futuresPositionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
+                .eq(FuturesPosition::getUserId, user.getId())
+                .eq(FuturesPosition::getStatus, "OPEN"));
+        for (FuturesPosition fp : open) {
+            equity = equity.add(futuresPositionValue(fp, resolveFuturesPrice(fp.getSymbol())));
+        }
+        return equity;
+    }
 
     /** mark 价优先，现货价兜底；都缺返回 null，由估值函数按"保留保证金跳过浮盈亏"处理。 */
     public BigDecimal resolveFuturesPrice(String symbol) {

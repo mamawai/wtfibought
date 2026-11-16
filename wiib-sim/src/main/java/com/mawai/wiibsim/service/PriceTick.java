@@ -4,6 +4,8 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.TradeRecord;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -24,6 +26,11 @@ public record PriceTick(BigDecimal open, BigDecimal low, BigDecimal high, long a
     /** 兜底巡检：缓存里的最新价当作这一刻的一笔成交 */
     public static PriceTick of(BigDecimal price, long nowMs) {
         return new PriceTick(price, price, price, nowMs);
+    }
+
+    /** 实体 createdAt 换成和 at 可比的毫秒（MetaObjectHandler 用 LocalDateTime.now() 填的，按本机时区还原） */
+    public static long toEpochMs(LocalDateTime t) {
+        return t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
     }
 
     /** 这些格子里的最低价、最高价 */

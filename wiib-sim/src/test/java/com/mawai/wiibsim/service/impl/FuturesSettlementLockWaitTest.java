@@ -10,10 +10,13 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -88,13 +91,15 @@ class FuturesSettlementLockWaitTest {
         when(userMapper.atomicUpdateBalance(anyLong(), any())).thenReturn(new BigDecimal("10000"));
         when(cacheService.getMarkPrice(SYMBOL)).thenReturn(new BigDecimal("100"));
 
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
         service = new FuturesSettlementServiceImpl(
                 userService, userMapper, positionMapper, orderMapper,
-                new TradingConfig(), bracketRegistry, cacheService, positionIndexService,
+                new TradingConfig(), bracketRegistry, new FuturesPrices(cacheService), positionIndexService,
                 riskService, crossMarginService,
                 crossLiquidationService, lockRegistry,
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(TradeEventPublisher.class));
+                mock(TradeEventPublisher.class), limitIndex,
+                new ClosedPositionCleanup(positionIndexService, orderMapper, userMapper, limitIndex));
     }
 
     private static FuturesPosition isolatedLong(long id) {

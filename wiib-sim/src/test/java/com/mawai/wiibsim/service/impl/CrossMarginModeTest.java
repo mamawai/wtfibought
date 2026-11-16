@@ -3,6 +3,7 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.CrossMarginService.CrossAccount;
 import org.junit.jupiter.api.Test;
 

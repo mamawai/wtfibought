@@ -12,7 +12,7 @@ import com.mawai.wiibsim.mapper.ReturningRecordProbeMapper;
 import com.mawai.wiibsim.mapper.LedgerProbeMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
-import com.mawai.wiibsim.service.FuturesTradingService;
+import com.mawai.wiibsim.service.FuturesMarginService;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.UserService;
 import org.junit.jupiter.api.AfterEach;
@@ -76,7 +76,7 @@ class UserLedgerRealRunTest {
     private MarginAccountService marginAccountService;
 
     @Autowired
-    private FuturesTradingService futuresTradingService;
+    private FuturesMarginService futuresMarginService;
 
     @Autowired
     private FuturesPositionMapper positionMapper;
@@ -164,6 +164,17 @@ class UserLedgerRealRunTest {
 
         assertThat(after).isNull();
         assertThat(userMapper.selectById(uid).getBalance()).isEqualByComparingTo("100.00");
+    }
+
+    /** 余额已经被全仓结算扣成负数：入账照进，扣款照拦 */
+    @Test
+    void 余额为负时入账照进扣款照拦() {
+        Long uid = newUser("100.00");
+        userMapper.atomicSettleBalance(uid, new BigDecimal("-600.00"));
+
+        assertThat(userMapper.atomicUpdateBalance(uid, new BigDecimal("350.00"))).isEqualByComparingTo("-150.00");
+        assertThat(userMapper.atomicUpdateBalance(uid, new BigDecimal("-1.00"))).isNull();
+        assertThat(userMapper.selectById(uid).getBalance()).isEqualByComparingTo("-150.00");
     }
 
     /**
@@ -494,7 +505,7 @@ class UserLedgerRealRunTest {
         FuturesAddMarginRequest req = new FuturesAddMarginRequest();
         req.setPositionId(posId);
         req.setAmount(new BigDecimal("100.00"));
-        futuresTradingService.addMargin(uid, req);
+        futuresMarginService.addMargin(uid, req);
         assertInvariant(uid, "合约组");
 
         // ===== 收尾：五列绝对值逐个钉死 =====

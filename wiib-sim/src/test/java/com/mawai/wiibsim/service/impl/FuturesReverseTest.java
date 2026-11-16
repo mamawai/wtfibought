@@ -18,10 +18,13 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -59,13 +62,15 @@ class FuturesReverseTest {
     @BeforeEach
     void setUp() {
         positionMapper = mock(FuturesPositionMapper.class);
+        CacheService cacheService = mock(CacheService.class);
         service = spy(new FuturesTradingServiceImpl(
                 mock(UserService.class), mock(UserMapper.class), positionMapper, mock(FuturesOrderMapper.class),
-                new TradingConfig(), mock(FairLockRegistry.class), mock(CacheService.class),
+                new TradingConfig(), mock(FairLockRegistry.class), cacheService,
                 mock(FuturesPositionIndexService.class), mock(FuturesLeverageBracketRegistry.class),
                 mock(CrossMarginService.class), new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 MESSAGES, new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), NoBookFillPricer.create()));
+                mock(FuturesRiskService.class), NoBookFillPricer.create(), new FuturesPrices(cacheService),
+                new LimitOrderIndex(cacheService), mock(ClosedPositionCleanup.class)));
     }
 
     /** 平仓回执＝反向开仓的唯一参数来源（doClosePosition 在仓位锁内读的那份快照） */

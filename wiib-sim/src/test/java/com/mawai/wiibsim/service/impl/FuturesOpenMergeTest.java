@@ -18,10 +18,13 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,7 +100,9 @@ class FuturesOpenMergeTest {
                 positionIndexService, bracketRegistry, crossMarginService,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), NoBookFillPricer.create());
+                mock(FuturesRiskService.class), NoBookFillPricer.create(), new FuturesPrices(cacheService),
+                new LimitOrderIndex(cacheService), new ClosedPositionCleanup(positionIndexService,
+                        orderMapper, userMapper, new LimitOrderIndex(cacheService)));
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,

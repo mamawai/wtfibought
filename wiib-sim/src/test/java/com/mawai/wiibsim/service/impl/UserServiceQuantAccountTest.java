@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

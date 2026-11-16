@@ -5,21 +5,16 @@ import com.mawai.wiibcommon.dto.FuturesAddMarginRequest;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
-import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.dto.CrossSnapshotRow;
 import com.mawai.wiibsim.ledger.LedgerTx;
-import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
-import com.mawai.wiibsim.service.FuturesRiskService;
-import com.mawai.wiibsim.service.NoBookFillPricer;
-import com.mawai.wiibsim.service.UserService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,7 +51,6 @@ class CrossOccupancyGuardTest {
 
     private UserMapper userMapper;
     private FuturesPositionMapper positionMapper;
-    private FuturesOrderMapper orderMapper;
     private CacheService cacheService;
     private FuturesLeverageBracketRegistry bracketRegistry;
     private CrossMarginServiceImpl crossMargin;
@@ -65,7 +59,6 @@ class CrossOccupancyGuardTest {
     void setUp() {
         userMapper = mock(UserMapper.class);
         positionMapper = mock(FuturesPositionMapper.class);
-        orderMapper = mock(FuturesOrderMapper.class);
         cacheService = mock(CacheService.class);
         bracketRegistry = mock(FuturesLeverageBracketRegistry.class);
 
@@ -75,7 +68,7 @@ class CrossOccupancyGuardTest {
         when(cacheService.getMarkPrice(CROSS_SYMBOL)).thenReturn(new BigDecimal("100"));
         when(bracketRegistry.calcMaintenanceMargin(eq(CROSS_SYMBOL), any())).thenReturn(new BigDecimal("10"));
 
-        crossMargin = new CrossMarginServiceImpl(userMapper, positionMapper, cacheService,
+        crossMargin = new CrossMarginServiceImpl(userMapper, positionMapper, new FuturesPrices(cacheService),
                 bracketRegistry, mock(FuturesPositionIndexService.class), mock(BankruptcyService.class),
                 mock(StringRedisTemplate.class), new CrossBandRegistry());
     }
@@ -178,19 +171,17 @@ class CrossOccupancyGuardTest {
         isolated.setStatus("OPEN");
         when(positionMapper.selectById(2L)).thenReturn(isolated);
 
-        FuturesTradingServiceImpl trading = new FuturesTradingServiceImpl(
-                mock(UserService.class), userMapper, positionMapper, orderMapper,
-                new TradingConfig(), mock(FairLockRegistry.class), cacheService,
-                mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
-                new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(FuturesRiskService.class), NoBookFillPricer.create());
+        FuturesMarginServiceImpl margin = new FuturesMarginServiceImpl(userMapper, positionMapper,
+                new TradingConfig(), mock(FairLockRegistry.class), mock(FuturesPositionIndexService.class),
+                bracketRegistry, crossMargin,
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
+                new FuturesPrices(cacheService));
 
         FuturesAddMarginRequest req = new FuturesAddMarginRequest();
         req.setPositionId(2L);
         req.setAmount(new BigDecimal("950"));
 
-        assertThatThrownBy(() -> trading.doAddMargin(UID, req))
+        assertThatThrownBy(() -> margin.doAddMargin(UID, req))
                 .isInstanceOf(BizException.class)
                 .extracting("code").isEqualTo(ErrorCode.FUTURES_CROSS_AVAILABLE_NOT_ENOUGH.getCode());
 

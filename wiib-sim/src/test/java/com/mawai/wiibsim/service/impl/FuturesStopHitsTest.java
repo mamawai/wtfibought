@@ -11,6 +11,7 @@ import com.mawai.wiibcommon.market.TradeRecord;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.PriceTick;
 import com.mawai.wiibsim.service.TradeHit;
@@ -46,7 +47,8 @@ class FuturesStopHitsTest {
     private final FuturesPositionMapper positionMapper = mock(FuturesPositionMapper.class);
     private final CrossLiquidationService crossLiquidation = mock(CrossLiquidationService.class);
     private final FuturesLiquidationServiceImpl service = new FuturesLiquidationServiceImpl(riskService, cacheService,
-            mock(TraderSymbolService.class), positionMapper, mock(FuturesPositionIndexService.class), crossLiquidation);
+            mock(TraderSymbolService.class), positionMapper, mock(FuturesPositionIndexService.class), crossLiquidation,
+            new FuturesPrices(cacheService));
 
     @BeforeEach
     void setUp() {

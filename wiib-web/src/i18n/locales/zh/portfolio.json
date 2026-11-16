@@ -2,7 +2,7 @@
   "bankrupt": {
     "title": "已爆仓，交易已禁用",
     "detail": "破产次数 {{times}} · 将在 {{date}} 09:00 恢复初始资金",
-    "nextTradingDay": "下个交易日"
+    "nextDay": "次日"
   },
   "page": {
     "title": "持仓",

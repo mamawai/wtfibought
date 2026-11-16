@@ -1,16 +1,9 @@
 package com.mawai.wiibsim.service.impl;
 
 import org.junit.jupiter.api.Test;
-import org.apache.ibatis.annotations.Select;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
-import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.entity.FuturesOrder;
-import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibsim.mapper.FuturesOrderMapper;
-import com.mawai.wiibsim.mapper.UserMapper;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -18,8 +11,6 @@ import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.*;
-import static org.mockito.ArgumentMatchers.*;
 
 class FuturesHelperTest {
 
@@ -74,36 +65,6 @@ class FuturesHelperTest {
         assertThatThrownBy(() -> FuturesHelper.mergeTpList(targets,
                 List.of(new FuturesTakeProfit("fifth", new BigDecimal("90"), BigDecimal.ONE)), new BigDecimal("4"), "SHORT"))
                 .isInstanceOf(BizException.class);
-    }
-
-    @Test
-    void groupedCancellationRefundsIsolatedOrdersAndDropsIndexesAfterCommit() throws Exception {
-        var mapper = mock(FuturesOrderMapper.class);
-        var users = mock(UserMapper.class);
-        var cache = mock(CacheService.class);
-        FuturesPosition pos = new FuturesPosition();
-        pos.setUserId(7L); pos.setSymbol("BTCUSDT"); pos.setSide("SHORT");
-        FuturesOrder isolated = new FuturesOrder();
-        isolated.setId(1L); isolated.setUserId(7L); isolated.setSymbol("BTCUSDT");
-        isolated.setOrderSide("OPEN_SHORT"); isolated.setMarginMode("ISOLATED");
-        isolated.setFrozenAmount(new BigDecimal("12"));
-        FuturesOrder cross = new FuturesOrder();
-        cross.setId(2L); cross.setSymbol("BTCUSDT"); cross.setOrderSide("OPEN_SHORT"); cross.setMarginMode("CROSS");
-        when(mapper.cancelGroupedOpenOrders(7L, "BTCUSDT", "OPEN_SHORT")).thenReturn(List.of(isolated, cross));
-        TransactionSynchronizationManager.initSynchronization();
-        try {
-            FuturesHelper.cancelGroupedOpenOrders(pos, mapper, users, cache);
-            verify(users).atomicUnfreezeBalance(7L, new BigDecimal("12"));
-            verifyNoInteractions(cache);
-            TransactionSynchronizationManager.getSynchronizations().forEach(s -> s.afterCommit());
-            verify(cache).zRemove("futures:limit:open_short:BTCUSDT", "1");
-            verify(cache).zRemove("futures:limit:open_short:BTCUSDT", "2");
-        } finally {
-            TransactionSynchronizationManager.clearSynchronization();
-        }
-        String sql = String.join(" ", FuturesOrderMapper.class.getMethod("cancelGroupedOpenOrders", Long.class, String.class, String.class)
-                .getAnnotation(Select.class).value());
-        assertThat(sql).contains("group_id IS NOT NULL", "status IN ('PENDING', 'TRIGGERED')", "GROUP_CLOSED");
     }
 
     @Test

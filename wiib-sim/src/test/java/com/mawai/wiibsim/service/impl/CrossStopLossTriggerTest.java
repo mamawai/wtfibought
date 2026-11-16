@@ -14,9 +14,13 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
+import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.CrossMarginService.CrossAccount;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.NoBookFillPricer;
 import com.mawai.wiibsim.service.TradeNotificationService;
@@ -80,12 +84,16 @@ class CrossStopLossTriggerTest {
         when(positionMapper.selectById(1L)).thenReturn(btcLong());
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
 
-        service = new CrossLiquidationServiceImpl(crossMargin, positionMapper, mock(FuturesOrderMapper.class),
-                new TradingConfig(), cacheService, mock(FuturesPositionIndexService.class),
+        FuturesOrderMapper orderMapper = mock(FuturesOrderMapper.class);
+        UserMapper userMapper = mock(UserMapper.class);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
+        service = new CrossLiquidationServiceImpl(crossMargin, positionMapper, orderMapper,
+                new TradingConfig(), new FuturesPrices(cacheService),
                 lockRegistry, mock(TradeNotificationService.class), new CrossBandRegistry(),
                 riskService, new TransactionTemplate(mock(PlatformTransactionManager.class)),
-                new TradeFilterRegistry(mock(BinanceRestClient.class)), mock(UserMapper.class),
-                mock(BankruptcyService.class), NoBookFillPricer.create());
+                new TradeFilterRegistry(mock(BinanceRestClient.class)), userMapper,
+                mock(BankruptcyService.class), NoBookFillPricer.create(), limitIndex,
+                new ClosedPositionCleanup(mock(FuturesPositionIndexService.class), orderMapper, userMapper, limitIndex));
     }
 
     private static FuturesPosition btcLong() {

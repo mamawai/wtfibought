@@ -10,10 +10,13 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
@@ -56,13 +59,17 @@ class FuturesLimitCloseFillTest {
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
         when(userMapper.atomicUpdateBalance(anyLong(), any())).thenReturn(new BigDecimal("10000"));
 
+        CacheService cacheService = mock(CacheService.class);
+        FuturesPositionIndexService indexService = mock(FuturesPositionIndexService.class);
+        LimitOrderIndex limitIndex = new LimitOrderIndex(cacheService);
         service = new FuturesSettlementServiceImpl(
                 userService, userMapper, positionMapper, orderMapper,
-                new TradingConfig(), mock(FuturesLeverageBracketRegistry.class), mock(CacheService.class),
-                mock(FuturesPositionIndexService.class), mock(FuturesRiskService.class), mock(CrossMarginService.class),
+                new TradingConfig(), mock(FuturesLeverageBracketRegistry.class), new FuturesPrices(cacheService),
+                indexService, mock(FuturesRiskService.class), mock(CrossMarginService.class),
                 mock(CrossLiquidationService.class), mock(FairLockRegistry.class),
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(TradeEventPublisher.class));
+                mock(TradeEventPublisher.class), limitIndex,
+                new ClosedPositionCleanup(indexService, orderMapper, userMapper, limitIndex));
     }
 
     /** 逐仓多原来 1 个，被止损平掉 0.5，剩 0.5 @100、保证金 5；挂着的平仓单 110 平 1 个 */

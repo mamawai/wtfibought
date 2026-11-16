@@ -14,7 +14,10 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.service.AccountResetService;
+import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.CrossMarginService;
+import com.mawai.wiibsim.service.FuturesMarginService;
+import com.mawai.wiibsim.service.FuturesQueryService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.InternalOrderIdempotency;
@@ -55,6 +58,9 @@ public class InternalFuturesTradeController {
     private final CrossMarginService crossMarginService;
     private final TraderSymbolService traderSymbolService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
+    private final AssetValuationService assetValuationService;
+    private final FuturesMarginService marginService;
+    private final FuturesQueryService queryService;
 
     /** 带 clientRequestId 就走幂等（调用方超时重发不会双仓），不带＝原样直发 */
     @PostMapping("/{userId}/open")
@@ -90,13 +96,13 @@ public class InternalFuturesTradeController {
 
     @GetMapping("/{userId}/order/{orderId}")
     public Result<FuturesOrderResponse> getOrder(@PathVariable Long userId, @PathVariable Long orderId) {
-        return Result.ok(tradingService.getOrder(userId, orderId));
+        return Result.ok(queryService.getOrder(userId, orderId));
     }
 
     @GetMapping("/{userId}/pending-orders")
     public Result<List<FuturesOrderResponse>> pendingOrders(@PathVariable Long userId,
                                                             @RequestParam(required = false) String symbol) {
-        return Result.ok(tradingService.getPendingOrders(userId, symbol));
+        return Result.ok(queryService.getPendingOrders(userId, symbol));
     }
 
     @PostMapping("/{userId}/order/{orderId}/protection")
@@ -108,30 +114,32 @@ public class InternalFuturesTradeController {
 
     @GetMapping("/{userId}/orders")
     public Result<List<FuturesOrderResponse>> groupOrders(@PathVariable Long userId, @RequestParam String groupId) {
-        return Result.ok(tradingService.getGroupOrders(userId, groupId));
+        return Result.ok(queryService.getGroupOrders(userId, groupId));
     }
 
     @GetMapping("/{userId}/positions")
     public Result<List<FuturesPositionDTO>> positions(@PathVariable Long userId,
                                                       @RequestParam(required = false) String symbol) {
-        return Result.ok(tradingService.getUserPositions(userId, symbol));
+        return Result.ok(queryService.getUserPositions(userId, symbol));
     }
 
     @GetMapping("/{userId}/closed-positions")
     public Result<List<FuturesPositionDTO>> closedPositions(@PathVariable Long userId,
                                                             @RequestParam(required = false) String symbol,
                                                             @RequestParam(defaultValue = "100") int limit) {
-        return Result.ok(tradingService.getClosedPositions(userId, symbol, limit));
+        return Result.ok(queryService.getClosedPositions(userId, symbol, limit));
     }
 
     @GetMapping("/{userId}/balance")
     public Result<Map<String, Object>> balance(@PathVariable Long userId) {
         User user = userService.getById(userId);
         if (user == null) throw new BizException(ErrorCode.USER_NOT_FOUND);
-        // available 是全仓账本的下单额度口径（净值 − 占用保证金 − 挂单占用），和开仓校验用的同一个数
+        // available 是全仓账本的下单额度口径（净值 − 占用保证金 − 挂单占用），和开仓校验用的同一个数；
+        // equity 是合约账户权益，AI Trader 直接用它
         return Result.ok(Map.of("userId", user.getId(), "balance", user.getBalance(),
                 "frozenBalance", user.getFrozenBalance() == null ? BigDecimal.ZERO : user.getFrozenBalance(),
-                "available", crossMarginService.snapshot(userId).available()));
+                "available", crossMarginService.snapshot(userId).available(),
+                "equity", assetValuationService.futuresEquity(user)));
     }
 
     /** 交易员登记今天要下单的币：feed 按交易员集合订行情，登记 2 小时后过期 */
@@ -144,7 +152,7 @@ public class InternalFuturesTradeController {
     /** 调杠杆：币种级，作用于这个币的全部仓位，全仓双向可调 */
     @PostMapping("/{userId}/leverage")
     public Result<Void> adjustLeverage(@PathVariable Long userId, @RequestBody FuturesAdjustLeverageRequest request) {
-        tradingService.adjustLeverage(userId, request);
+        marginService.adjustLeverage(userId, request);
         return Result.ok();
     }
 

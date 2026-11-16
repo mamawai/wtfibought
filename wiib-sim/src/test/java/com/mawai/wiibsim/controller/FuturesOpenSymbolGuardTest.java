@@ -9,6 +9,8 @@ import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FundingRateService;
+import com.mawai.wiibsim.service.FuturesMarginService;
+import com.mawai.wiibsim.service.FuturesQueryService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.KlineCacheService;
@@ -38,7 +40,8 @@ class FuturesOpenSymbolGuardTest {
         BinanceProperties props = new BinanceProperties();
         props.setSymbols(List.of("BTCUSDT"));
         props.setCryptoFuturesSymbols(List.of("HYPEUSDT"));
-        return new FuturesController(trading, mock(FuturesRiskService.class), mock(ForceOrderService.class),
+        return new FuturesController(trading, mock(FuturesMarginService.class), mock(FuturesQueryService.class),
+                mock(FuturesRiskService.class), mock(ForceOrderService.class),
                 mock(KlineCacheService.class), mock(FuturesLeverageBracketRegistry.class),
                 mock(CrossMarginService.class), mock(TradeFilterRegistry.class),
                 mock(PositionHistoryService.class), mock(FundingRateService.class), props);

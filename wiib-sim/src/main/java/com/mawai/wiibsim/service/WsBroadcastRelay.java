@@ -1,4 +1,4 @@
-package com.mawai.wiibsim.service.impl;
+package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import lombok.RequiredArgsConstructor;

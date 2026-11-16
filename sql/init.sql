@@ -51,7 +51,7 @@ COMMENT ON COLUMN "user".margin_interest_last_date IS '杠杆计息上次日期�
 COMMENT ON COLUMN "user".is_bankrupt IS '是否破产（爆仓后禁用交易）';
 COMMENT ON COLUMN "user".bankrupt_count IS '破产次数';
 COMMENT ON COLUMN "user".bankrupt_at IS '爆仓时间';
-COMMENT ON COLUMN "user".bankrupt_reset_date IS '恢复日期（交易日09:00恢复）';
+COMMENT ON COLUMN "user".bankrupt_reset_date IS '恢复日期（当天09:00恢复）';
 COMMENT ON COLUMN "user".lang IS 'agent提示词语言 zh/en（AgentLang.code），NULL=跟随中文。建号时取当时的界面语言，之后只在配置页改；界面语言在前端localStorage(wiib-lang)，两边互不影响';
 COMMENT ON COLUMN "user".muted_until IS '禁言到期时间，NULL或已过期=未禁言；永久禁言存2099年。到期自动解禁，无需定时任务。重置账户不清此列，否则被禁言者可靠重置逃避处罚';
 COMMENT ON COLUMN "user".profile_public IS '是否允许别人查看自己的持仓与交易历史。关掉只挡详情页，仍照常上排行榜（榜上只有总资产/收益率）';

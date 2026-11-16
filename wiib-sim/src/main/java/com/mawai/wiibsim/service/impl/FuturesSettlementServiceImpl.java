@@ -16,12 +16,14 @@ import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
-import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.ClosedPositionCleanup;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesSettlementService;
+import com.mawai.wiibsim.service.LimitOrderIndex;
 import com.mawai.wiibsim.service.PriceTick;
 import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.TradeHit;
@@ -30,7 +32,6 @@ import com.mawai.wiibsim.util.FairLockRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -54,7 +55,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final FuturesOrderMapper orderMapper;
     private final TradingConfig tradingConfig;
     private final FuturesLeverageBracketRegistry bracketRegistry;
-    private final CacheService cacheService;
+    private final FuturesPrices prices;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesRiskService riskService;
     private final CrossMarginService crossMarginService;
@@ -63,6 +64,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final LedgerTx ledgerTx;
     /** 限价开仓成交告诉 agent：trader 的单子成交了，当场叫醒它 */
     private final TradeEventPublisher eventPublisher;
+    private final LimitOrderIndex limitIndex;
+    private final ClosedPositionCleanup closedPositionCleanup;
 
     record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
@@ -76,45 +79,24 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
     @Override
     public List<TradeHit> limitHits(String symbol, List<PriceTick> ticks) {
-        BigDecimal[] range = PriceTick.lowHigh(ticks);
-        double low = Math.nextUp(range[0].doubleValue());
-        double high = Math.nextDown(range[1].doubleValue());
-        // 要严格穿过：买单只看挂单价高于最低价的，卖单只看低于最高价的
         List<TradeHit> hits = new ArrayList<>();
-        collectLimitHits(LIMIT_OPEN_LONG_PREFIX + symbol, low, Double.MAX_VALUE, ticks, true, hits);
-        collectLimitHits(LIMIT_CLOSE_SHORT_PREFIX + symbol, low, Double.MAX_VALUE, ticks, true, hits);
-        collectLimitHits(LIMIT_OPEN_SHORT_PREFIX + symbol, 0, high, ticks, false, hits);
-        collectLimitHits(LIMIT_CLOSE_LONG_PREFIX + symbol, 0, high, ticks, false, hits);
+        for (var crossed : limitIndex.crossedFutures(symbol, ticks, orderMapper::selectById)) {
+            FuturesOrder order = crossed.order();
+            hits.add(new TradeHit(crossed.tick(), false, order.getUserId(),
+                    () -> triggerLimitOrder(order, crossed.price())));
+        }
         return hits;
     }
 
-    /** 只查不摘：DB是事实、索引跟着事实走，CAS落定后由triggerLimitOrder摘自己那条 */
-    private void collectLimitHits(String key, double min, double max, List<PriceTick> ticks, boolean buy,
-                                  List<TradeHit> hits) {
-        Set<ZSetOperations.TypedTuple<String>> candidates = cacheService.zRangeByScoreWithScores(key, min, max);
-        if (candidates == null) return;
-        for (var tuple : candidates) {
-            Long orderId = Long.parseLong(Objects.requireNonNull(tuple.getValue()));
-            FuturesOrder order = orderMapper.selectById(orderId);
-            if (order == null) {
-                // DB 里没这单了，索引是过期项，摘掉
-                cacheService.zRemove(key, orderId.toString());
-                continue;
-            }
-            int i = PriceTick.firstTouch(ticks, toEpochMs(order.getCreatedAt()), order.getLimitPrice(), buy, true);
-            if (i < 0) continue;
-            BigDecimal triggerPrice = ticks.get(i).touchPrice(order.getLimitPrice(), buy);
-            hits.add(new TradeHit(i, false, order.getUserId(), () -> triggerLimitOrder(key, orderId, triggerPrice)));
-        }
-    }
-
-    private void triggerLimitOrder(String zsetKey, Long orderId, BigDecimal triggerPrice) {
+    /** pending 是捞索引时读到的那张挂单，这里只用它的 id 和它在索引里的位置 */
+    private void triggerLimitOrder(FuturesOrder pending, BigDecimal triggerPrice) {
+        Long orderId = pending.getId();
         try {
             // 同一单被几条路径（成交 Stream、补漏、巡检）并发打进来也只有一个CAS成功，其余affected=0，无害
             boolean triggered = markOrderTriggered(orderId, triggerPrice);
             // CAS正常返回才摘索引：没改到说明这单早不是PENDING，索引是过期项，一样该清；
             // 抛异常不摘，单子还是PENDING、索引还在，下一笔穿过再来
-            cacheService.zRemove(zsetKey, orderId.toString());
+            limitIndex.remove(pending);
             if (!triggered) return;
             FuturesOrder order = orderMapper.selectById(orderId);
             if (order != null) {
@@ -422,9 +404,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 return;
             }
 
-            positionIndexService.unregisterAll(position);
-            cancelCloseOrders(position.getId(), orderMapper, cacheService);
-            cancelGroupedOpenOrders(position, orderMapper, userMapper, cacheService);
+            closedPositionCleanup.run(position);
         } else {
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) {
@@ -653,7 +633,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         List<FuturesOrder> pendingOrders = pendingLimitOrders();
         if (pendingOrders.isEmpty()) return;
         for (FuturesOrder order : pendingOrders) {
-            addToLimitZSet(order, cacheService);
+            limitIndex.add(order);
         }
         log.info("futures限价单索引对账 挂单{}个", pendingOrders.size());
     }
@@ -666,13 +646,9 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
     // ==================== 内部工具 ====================
 
-    private BigDecimal getMarkPrice(String symbol) {
-        return FuturesHelper.markPrice(cacheService, symbol);
-    }
-
     private BigDecimal markPriceOrNull(String symbol) {
         try {
-            return getMarkPrice(symbol);
+            return prices.mark(symbol);
         } catch (Exception e) {
             return null;
         }
