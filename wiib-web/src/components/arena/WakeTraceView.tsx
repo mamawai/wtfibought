@@ -40,7 +40,9 @@ function CallTools({ call, running }: { call: WakeCall; running: boolean }) {
           const args = typeof tc.args === 'string' ? tc.args
             : TRADE_TOOL_SET.has(tc.name) ? tradeArgsSummary({ tool: tc.name, args: tc.args })
             : dataArgsSummary(tc.name, tc.args) ?? kvArgs(tc.args);
-          const failed = result != null && result.status !== 'ok';
+          // not_attempted：调用次数用完被拦下，没执行，不算出错
+          const skipped = result?.status === 'not_attempted';
+          const failed = result != null && result.status !== 'ok' && !skipped;
           return (
             <button key={tc.id} type="button"
                     onClick={() => result?.preview && setLevel(m => ({ ...m, [tc.id]: ((m[tc.id] ?? 0) + 1) % 3 }))}
@@ -51,6 +53,8 @@ function CallTools({ call, running }: { call: WakeCall; running: boolean }) {
                 : result?.status === 'error' ? t('trade.errored')
                 : result?.status === 'unknown' ? t('trade.unknown')
                 : result?.status === 'partial' ? t('trade.partial')
+                : result?.status === 'unavailable' ? t('trade.unavailable')
+                : skipped ? t('trade.notAttempted')
                 : !result && running ? ` · ${t('live.processing')}` : ''}
             </button>
           );

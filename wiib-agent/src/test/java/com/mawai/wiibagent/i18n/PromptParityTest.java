@@ -2,9 +2,13 @@ package com.mawai.wiibagent.i18n;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.core.type.MethodMetadata;
+import org.springframework.core.type.classreading.MetadataReaderFactory;
+import org.springframework.core.type.classreading.SimpleMetadataReaderFactory;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -24,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>
  * 与 {@code PromptI18nTest} 分工：那边按手工名单钉语义（约束句不丢、英文非回落）——名单天然有盲区，
  * 新增 key 忘了登记就没人管；这边按 key 集合全量钉存在性——en 缺一条 key 不会报错，
- * 只会让英文用户的那条提示词静默回落中文（工具描述则回落注解英文），这里让它变成红。
+ * 只会让英文用户的那条提示词静默回落中文，这里让它变成红。
  * <p>
  * 直接扫 yml 文件（父目录名=语言码，层级压成点分 key），与 messages/ 的 ParityTest 同款做法。
  */
@@ -75,6 +79,33 @@ class PromptParityTest {
                 assertThat(placeholders(en.getOrDefault(k, "")))
                         .as("%s 的占位符两门语言对不上", k)
                         .isEqualTo(placeholders(zhText)));
+    }
+
+    /**
+     * 工具描述只有词表这一份：主代码里每个 @Tool 都得有 tool.<工具名>，缺了那只工具一建就抛。
+     * 直接扫编译出来的主代码，不另抄工具清单。
+     */
+    @Test
+    void 代码里的每个工具在词表里都有描述() throws IOException {
+        String mainClasses = PromptCatalog.class.getProtectionDomain().getCodeSource().getLocation().toString();
+        MetadataReaderFactory readers = new SimpleMetadataReaderFactory();
+        Set<String> tools = new TreeSet<>();
+        for (Resource file : new PathMatchingResourcePatternResolver().getResources(mainClasses + "**/*.class")) {
+            for (MethodMetadata method : readers.getMetadataReader(file).getAnnotationMetadata()
+                    .getAnnotatedMethods(Tool.class.getName())) {
+                tools.add((String) Objects.requireNonNull(
+                        method.getAnnotationAttributes(Tool.class.getName())).get("name"));
+            }
+        }
+        // 探测端点用的空工具，不走词表
+        tools.remove("noop");
+        assertThat(tools).as("一个工具都没扫到").isNotEmpty();
+
+        for (AgentLang lang : AgentLang.values()) {
+            Set<String> missing = new TreeSet<>(tools);
+            missing.removeIf(name -> PROMPTS.get(lang).containsKey("tool." + name));
+            assertThat(missing).as("%s 词表缺这些工具的描述", lang.code()).isEmpty();
+        }
     }
 
     private static Set<String> placeholders(String text) {

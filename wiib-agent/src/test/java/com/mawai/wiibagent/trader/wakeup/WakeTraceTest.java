@@ -106,8 +106,10 @@ class WakeTraceTest {
         WakeTrace.Frame ok = t.toolResult("c1", "klines", receipt("x".repeat(WakeTrace.PREVIEW_CHARS + 500)));
         WakeTrace.Frame error = t.toolResult("c2", "a", receipt("ERROR: 上游超时"));
         WakeTrace.Frame rejected = t.toolResult("c3", "b", receipt("REJECTED: 杠杆越界\n上限 \"20\" 倍"));
-        // 返回 JSON 的工具，回执就是那段 JSON
+        // 返回 JSON 的工具，回执就是那段 JSON；available=false 是这次没取到数据
         WakeTrace.Frame json = t.toolResult("c4", "c", receipt("{\"available\":false}"));
+        // 被保险丝拦下的调用，回的是占位
+        WakeTrace.Frame skipped = t.toolSkipped("c7", "f", "未执行：本轮模型调用已达上限，工具被跳过。");
         // 工具名对不上的回执是循环自己写的，不过转换器
         WakeTrace.Frame unknownTool = t.toolResult("c5", "d", "ERROR: unknown tool \"d\"");
         // 预算用尽那一批的最后一条，回执后面贴着预算提示
@@ -122,8 +124,9 @@ class WakeTraceTest {
         assertThat(error.data().path("status").asString(null)).isEqualTo("error");
         assertThat(rejected.data().path("status").asString(null)).isEqualTo("rejected");
         assertThat(rejected.data().path("preview").asString(null)).isEqualTo("REJECTED: 杠杆越界\n上限 \"20\" 倍");
-        assertThat(json.data().path("status").asString(null)).isEqualTo("ok");
+        assertThat(json.data().path("status").asString(null)).isEqualTo("unavailable");
         assertThat(json.data().path("preview").asString(null)).isEqualTo("{\"available\":false}");
+        assertThat(skipped.data().path("status").asString(null)).isEqualTo("not_attempted");
         assertThat(unknownTool.data().path("status").asString(null)).isEqualTo("error");
         assertThat(lastCall.data().path("status").asString(null)).isEqualTo("rejected");
         assertThat(lastCall.data().path("preview").asString(null)).isEqualTo("REJECTED: 不行\n\n（预算已用完）");
@@ -153,7 +156,7 @@ class WakeTraceTest {
         WakeTrace t = trace();
         t.callStart();
         t.callEnd("", List.of(call("c1", "get_account", "{}")));
-        t.toolResult("c1", "get_account", "未执行");
+        t.toolSkipped("c1", "get_account", "未执行");
         t.callStart();
 
         WakeTrace.Frame end = t.end("OK", "上限", new BigDecimal("9990"), 1000, 12, null);
@@ -240,7 +243,7 @@ class WakeTraceTest {
         WakeTrace t = trace();
         t.callStart();
         t.callEnd("", List.of(call("c1", "get_account", "{}")));
-        t.toolResult("c1", "get_account", "未执行");
+        t.toolSkipped("c1", "get_account", "未执行");
         t.callStart();
         WakeTrace.Frame stage = t.stage("第二段：不查了，写结论");
         WakeTrace.Frame start = t.callStart();

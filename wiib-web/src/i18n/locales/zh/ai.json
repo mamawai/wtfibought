@@ -205,6 +205,8 @@
     "errored": "·出错",
     "unknown": "·结果未知",
     "partial": "·未完整执行",
+    "notAttempted": "·未执行",
+    "unavailable": "·没取到",
     "openedAt": "{{time}} 开",
     "closedAt": "{{time}} 平",
     "held": "持有 {{d}}",

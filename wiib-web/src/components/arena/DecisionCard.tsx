@@ -110,11 +110,13 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
             // unknown：成交结果未确认；partial：反手未完整执行。
             const unknown = a.status === 'unknown';
             const partial = a.status === 'partial';
+            // not_attempted：模型要调但没执行（调用次数用完，或参数没对上）
+            const skipped = a.status === 'not_attempted';
             return (
               <div key={i} className="flex gap-2.5 items-baseline py-0.5 text-[13.5px] border-t border-dashed border-border first:border-t-0">
-                <b className={cn('font-extrabold whitespace-nowrap', failed ? 'text-loss' : (unknown || partial) && 'text-warning')}>
+                <b className={cn('font-extrabold whitespace-nowrap', failed ? 'text-loss' : (unknown || partial) ? 'text-warning' : skipped && 'mute')}>
                   {toolName(a.tool)}
-                  {a.rejected ? t('trade.rejected') : a.status === 'error' ? t('trade.errored') : unknown ? t('trade.unknown') : partial ? t('trade.partial') : ''}
+                  {a.rejected ? t('trade.rejected') : a.status === 'error' ? t('trade.errored') : unknown ? t('trade.unknown') : partial ? t('trade.partial') : skipped ? t('trade.notAttempted') : ''}
                 </b>
                 <span className="mute">
                   {tradeArgsSummary(a)}

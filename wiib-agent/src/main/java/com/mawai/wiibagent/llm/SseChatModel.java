@@ -207,14 +207,12 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
      * ② 与 stream() 共用 streamOnce 一条协议解析路，各类渠道的事件怪癖只在子类 toFrames 一处处理。
      */
     private ChatResponse doCall(Prompt prompt) {
-        List<ChatResponse> frames;
-        try {
-            frames = streamOnce(prompt).collectList().block(callTimeout);
-        } catch (IllegalStateException e) {
-            // block 到点＝上游挂死的最终判据：keepalive 心跳会骗过字节级超时，只有这道闸拦得住。
-            // 判瞬时进重试——实测掐线换连接后 3s 内即成功
-            throw new TransientAiException(tag + " 调用 " + callTimeout.toSeconds() + "s 未完成，判定上游挂死", e);
-        }
+        // 到点没完＝上游挂死的最终判据：keepalive 心跳会骗过字节级超时，只有这道闸拦得住。
+        // 判瞬时进重试——实测掐线换连接后 3s 内即成功
+        List<ChatResponse> frames = streamOnce(prompt).collectList()
+                .timeout(callTimeout, Mono.error(() -> new TransientAiException(
+                        tag + " 调用 " + callTimeout.toSeconds() + "s 未完成，判定上游挂死")))
+                .block();
         return mergeFrames(frames);
     }
 
@@ -399,6 +397,21 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
         if (status == 429 || status >= 500) {
             return new TransientAiException(message);
         }
-        return new NonTransientAiException(message);
+        return new UpstreamRejected(status, message);
+    }
+
+    /** 上游回的 4xx（429 除外），带着状态码 */
+    public static final class UpstreamRejected extends NonTransientAiException {
+
+        private final int status;
+
+        public UpstreamRejected(int status, String message) {
+            super(message);
+            this.status = status;
+        }
+
+        public int status() {
+            return status;
+        }
     }
 }

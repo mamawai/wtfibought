@@ -211,6 +211,8 @@
     "errored": "· errored",
     "unknown": "· outcome unknown",
     "partial": "· incomplete",
+    "notAttempted": "· not executed",
+    "unavailable": "· no data",
     "openedAt": "opened {{time}}",
     "closedAt": "closed {{time}}",
     "held": "held {{d}}",

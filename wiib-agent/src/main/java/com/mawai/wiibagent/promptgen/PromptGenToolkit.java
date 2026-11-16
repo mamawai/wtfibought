@@ -54,11 +54,9 @@ public class PromptGenToolkit {
         this.prompts = prompts;
     }
 
-    // description 只是编译期兜底：真正发给模型的那份按语言取自词表 tool.<工具名>
+    // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
 
-    @Tool(name = "trader_play_stats", description = """
-            Get the owner's trader closed-trade record in the current round grouped by thesis tag (playType):
-            trade count, wins/losses and PnL per tag, paired and computed by code.""")
+    @Tool(name = "trader_play_stats")
     public String traderPlayStats() {
         if (run.trader() == null) {
             return MAPPER.writeValueAsString(MAPPER.createObjectNode().put("hasTrader", false));
@@ -67,10 +65,7 @@ public class PromptGenToolkit {
         return block == null ? prompts.get(run.lang(), "promptgen.noPlayStats") : block;
     }
 
-    @Tool(name = ASK_USER, description = """
-            Show the user one question card and end this turn; their answer arrives as the next message.
-            A card has the question, your recommended option with the reason, and 2-4 other options;
-            the user can always type their own answer instead.""")
+    @Tool(name = ASK_USER)
     public String askUser(
             @ToolParam(description = "Short English slug for what this question settles; required items must use their fixed keys")
             String key,
@@ -98,9 +93,7 @@ public class PromptGenToolkit {
                 .put("message", prompts.get(run.lang(), "promptgen.askShown")));
     }
 
-    @Tool(name = WRITE_DRAFT, description = """
-            Have the writer produce the next version of the instruction from the Q&A so far. The body is streamed
-            to the user; when done you get the body and notes back.""")
+    @Tool(name = WRITE_DRAFT)
     public String writeDraft(
             @ToolParam(description = "What the writer needs beyond the Q&A log (attached automatically): data findings with numbers, how you read the answers, and for a revision exactly what to change")
             String brief,

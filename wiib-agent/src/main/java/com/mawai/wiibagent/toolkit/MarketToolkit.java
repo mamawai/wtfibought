@@ -30,32 +30,8 @@ public class MarketToolkit {
 
     private final MarketDataService dataService;
 
-    @Tool(name = "market_snapshot", description = """
-            Get a real-time cross-section of a crypto perpetual symbol: the latest raw reading from each data
-            source, with no scoring. A section that is absent means that source was not available this time.
-            Times are UTC+8.
-            - asOf: when this snapshot was collected (it is cached for up to a minute)
-            - lastPrice; atr is the 5m atr14 — for stop distances use the atr14 of your own timeframe from `indicators`
-            - price_change: {5m,15m,30m,1h,4h,24h} percent change per window
-            - accountLongShort: Binance long/short account ratio, latest 5m point: ratio, longAccount and shortAccount
-              (shares of accounts), plus low24h / high24h = the lowest and highest ratio over the last 24h
-            - openInterest: latest 5m point in coins and usd, the same one hour earlier (coins1hAgo / usd1hAgo) and
-              at the earliest point fetched, about 4h back (coinsEarliest / usdEarliest, earliestTime)
-            - topTraderPositionLongShort: top traders' position long/short ratio, latest 5m point, and the earliest
-              point fetched, about 2h back (ratioEarliest, earliestTime)
-            - takerVolume5m: taker buy and sell volume (in coins) and their ratio over the latest 5m
-            - funding: current rate as a raw decimal per settlement (0.0001 = 0.01%), nextFundingTime, markPrice, indexPrice
-            - liquidations: last5m and last30m, each with longUsd (longs liquidated), shortUsd (shorts liquidated) and
-              count. Binance only; its liquidation stream is sampled, not complete, so the amounts are a lower
-              bound and fall further short the faster the market moves; only for coins the platform collects liquidations for
-            - futuresBookTop5 / spotBookTop5: total bid quantity and ask quantity (coins) over the top 5 levels
-            - trades3m: taker buy and taker sell notional (USDT) over the last 3 minutes, how much of each came from
-              single trades above largeThresholdUsd (the same threshold for every coin), and the trade count;
-              only for coins the platform streams trades for
-            - spotPerpBasisBps: perp premium over spot in basis points; positive = perp trading rich
-            - fearGreed: "value(label)", 0 = extreme fear, 100 = extreme greed
-            - qualityFlags: each NO_* names an input that is missing
-            To see how open interest and the ratios moved over time, use derivatives_history.""")
+    // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
+    @Tool(name = "market_snapshot")
     public String marketSnapshot(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         MarketAssembly a = dataService.assemble(symbol);
         if (!a.available()) {
@@ -78,17 +54,7 @@ public class MarketToolkit {
         return MAPPER.writeValueAsString(out);
     }
 
-    @Tool(name = "option_iv", description = """
-            Get option implied-volatility context for a crypto symbol from Deribit.
-            Coverage: BTC/ETH have the DVOL index plus ATM IV; SOL/XRP have ATM IV only
-            (USDC-settled options, no DVOL); other symbols have no option data.
-            - dvolIndex: Deribit's 30-day implied volatility index (annualized %), present only for BTC/ETH
-            - ivSummary: ATM_IV = mark IV of the call nearest the money in the nearest expiry
-              more than a day away, annualized %;
-              25d_skew = avg IV of calls 5-8% OTM minus avg IV of puts 5-8% OTM
-              (positive = calls richer; 0 = not enough strikes to compute);
-              term_slope = ATM IV of the next expiry minus the nearest (positive = further expiry priced higher)
-            Useful for judging whether the options market is pricing in larger moves than realized volatility suggests.""")
+    @Tool(name = "option_iv")
     public String optionIv(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         MarketAssembly a = dataService.assemble(symbol);
         if (!a.available()) {
@@ -105,11 +71,7 @@ public class MarketToolkit {
         return MAPPER.writeValueAsString(out);
     }
 
-    @Tool(name = "funding_history", description = """
-            Get recent funding rate history (last 30 settlements; the interval is per contract, 8h for
-            most, 4h or 1h for some) plus the next funding time and current mark price for a crypto
-            perpetual symbol. Rates are raw decimals per settlement: 0.0001 = 0.01%. Useful for carry judgment:
-            persistently positive funding = longs paying shorts (crowded long), negative = the opposite.""")
+    @Tool(name = "funding_history")
     public String fundingHistory(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         String raw = dataService.fundingHistory(symbol);
         if (raw == null) {
@@ -142,10 +104,7 @@ public class MarketToolkit {
         }
     }
 
-    @Tool(name = "orderbook_depth", description = """
-            Get the top 10 bid/ask levels (price, quantity) of the futures orderbook for a crypto
-            perpetual symbol. Useful for seeing where large resting orders (walls) sit relative to
-            current price when choosing limit order placement or judging near support/resistance.""")
+    @Tool(name = "orderbook_depth")
     public String orderbookDepth(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         String raw = dataService.orderbook(symbol);
         if (raw == null) {

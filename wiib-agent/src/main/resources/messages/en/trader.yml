@@ -17,6 +17,12 @@ trader:
     nameMismatch: The name does not match - type this trader's name exactly
     busy: It is waking up right now - delete once this round finishes
 
+  # Resetting into a new round: refused mid-wake or mid-review, and when the old account cannot be closed out
+  reset:
+    busy: It is waking up or being reviewed right now - reset once that finishes
+    # {{reason}} is the refusal from sim
+    closeOutFailed: "The old account's positions and orders could not be cleared, so nothing was reset - try again shortly: {{reason}}"
+
   # Ignore mark (stale) on settled trades: curates the AI's own material, public record untouched
   plan:
     notFound: Trade plan not found

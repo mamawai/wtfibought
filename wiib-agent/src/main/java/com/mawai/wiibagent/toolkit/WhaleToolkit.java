@@ -32,26 +32,8 @@ public class WhaleToolkit {
 
     private final WhaleQueryService whales;
 
-    // 描述按语言取自词表 tool.whale_positions，注解这份只当词表缺失时的兜底
-    @Tool(name = "whale_positions", description = """
-            Hyperliquid whale positions for a crypto symbol (BTC / ETH / SOL / XRP / DOGE only): the large
-            leveraged perp positions of a daily-qualified address pool (accounts worth >= $1M or holding a
-            >= $1M position; poolSize = addresses in the pool), snapshotted every 10 minutes (observedAt, UTC+8).
-            Only positions >= $100k count. On-chain Hyperliquid data, not Binance.
-            - price: Hyperliquid mark price at the snapshot
-            - long / short: count = addresses on that side; notional = total position value USD; wavgEntry =
-              size-weighted average entry; medianEntry = median entry across addresses; top1Share = the largest
-              address's share of that side's notional; upnl = total unrealized PnL USD. count=0 = nobody on that
-              side, and the other fields are then absent
-            - liqAbove / liqBelow: short (above price) / long (below price) liquidation notional within 5% of
-              price, and the bucket price where it peaks; absent = nothing within 5%
-            - hlOpenInterest: Hyperliquid whole-market open interest of the coin, USD; coverage = pool notional
-              divided by it, per side
-            - entryClusters / liqClusters: per side, the 5 price buckets holding the most notional by entry
-              price / by liquidation price (bucketWidth = 0.25% / 0.5% of price, price = bucket lower bound);
-              an average hides a two-peaked cost base, the clusters show it
-            The sample is small and whale-dominated (read count, top1Share, coverage) and off-platform hedges
-            are invisible.""")
+    // 描述在词表 tool.whale_positions（见 LocalizedToolCallbacks）
+    @Tool(name = "whale_positions")
     public String whalePositions(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         String coin = symbol.strip().toUpperCase(Locale.ROOT).replaceFirst("USDT$", "");
         CoinDetail d = whales.coin(coin);

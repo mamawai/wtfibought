@@ -29,6 +29,7 @@ import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
+import com.mawai.wiibagent.trader.wakeup.WakeIntervals;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -142,7 +143,7 @@ public class TraderController {
     @PostMapping("/prompt-template")
     @Operation(summary = "平台系统提示词预览（与唤醒组装同一份文本）")
     public Result<String> promptTemplate(@CurrentUserId long userId, @RequestBody PromptPreviewRequest req) {
-        String interval = req.intervalCode() == null || req.intervalCode().isBlank() ? TraderScheduler.DEFAULT_INTERVAL : req.intervalCode();
+        String interval = req.intervalCode() == null || req.intervalCode().isBlank() ? WakeIntervals.DEFAULT : req.intervalCode();
         String symbols = req.symbols() == null || req.symbols().isBlank() ? "BTCUSDT" : req.symbols();
         TraderRiskConfig cfg = req.spec() == null
                 ? TraderRiskConfig.of(new AiTrader()) : req.spec().toConfig();
@@ -217,7 +218,7 @@ public class TraderController {
     }
 
     @PostMapping("/reset")
-    @Operation(summary = "重置开新局（round+1，新子账户注资10000，历史留档；carryNotes=false不带入经验账本）")
+    @Operation(summary = "重置开新局（旧账户挂单全撤、仓位全平，round+1，新子账户注资10000，历史留档；唤醒或复盘中拒；carryNotes=false不带入经验账本）")
     public Result<Void> reset(@CurrentUserId long userId, @RequestBody(required = false) ResetRequest req) {
         boolean carry = req == null || req.carryNotes() == null || req.carryNotes();
         String err = traderService.reset(userId, carry);

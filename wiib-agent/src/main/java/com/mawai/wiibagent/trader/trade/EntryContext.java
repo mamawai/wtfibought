@@ -2,7 +2,7 @@ package com.mawai.wiibagent.trader.trade;
 
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
@@ -50,7 +50,7 @@ public class EntryContext {
         out.put("orderType", orderType);
         out.put("leverage", leverage);
         out.put("placedAt", nowMs);
-        out.put("hourBj", Instant.ofEpochMilli(nowMs).atZone(WakeWindow.ZONE).getHour());
+        out.put("hourBj", Instant.ofEpochMilli(nowMs).atZone(BeijingTime.ZONE).getHour());
         BigDecimal stopDist = entryRef.subtract(stopPrice).abs();
         out.put("stopPct", stopDist.multiply(BigDecimal.valueOf(100)).divide(entryRef, 3, RoundingMode.HALF_UP));
         Map<String, Object> hourly = indicators(sym, "1h", nowMs);

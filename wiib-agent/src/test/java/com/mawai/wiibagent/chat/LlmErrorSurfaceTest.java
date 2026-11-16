@@ -5,6 +5,7 @@ import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.llm.SseChannel;
+import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ChatModel;
@@ -41,7 +42,7 @@ class LlmErrorSurfaceTest {
             }
         };
         ChatTurnRunner turnRunner = mock(ChatTurnRunner.class);
-        doThrow(new RuntimeException(RAW)).when(turnRunner)
+        doThrow(new SseChatModel.UpstreamRejected(401, RAW)).when(turnRunner)
                 .run(any(), anyLong(), any(), any(), any(), any(), any(), any());
         ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, mock(ChatHistoryService.class),
                 mock(WorkbenchRunRegistry.class), new ApprovalRegistry(), ChatTestEndpoints.PROMPTS);

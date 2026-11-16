@@ -9,6 +9,7 @@ import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.SseChannel;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,9 +19,6 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,10 +48,6 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 @Component
 @RequiredArgsConstructor
 public class ChatTurnStreamer {
-
-    /** 注入用户消息的当前时间。带年份不随仓里 MM-dd 惯例：模型没有时钟，年份是它最容易错的一位 */
-    private static final DateTimeFormatter TIME_FMT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     /** 模型思考期间 SSE 通道可能静默较久，nginx 默认 proxy_read_timeout 60s 会掐断——20s 一帧留 3 倍余量 */
     private static final long HEARTBEAT_SECONDS = 20;
@@ -160,9 +154,9 @@ public class ChatTurnStreamer {
                     enriched = prompts.get(leaves.lang(), "chat.wake.instruction");
                     prefix = prompts.get(leaves.lang(), "chat.wake.header") + "\n\n";
                 } else {
-                    // 补充时间信息。轮起始标记按语言取自词表（chat.turn.*），认的一侧在 turnLang
+                    // 补充时间信息（带年份：模型没有时钟，年份是它最容易错的一位）。轮起始标记按语言取自词表（chat.turn.*），认的一侧在 turnLang
                     enriched = prompts.get(leaves.lang(), "chat.turn.timeMark",
-                            Map.of("time", TIME_FMT.format(Instant.now()))) + "\n"
+                            Map.of("time", BeijingTime.format(System.currentTimeMillis()))) + "\n"
                             + prompts.get(leaves.lang(), "chat.turn.questionPrefix") + message;
                 }
 

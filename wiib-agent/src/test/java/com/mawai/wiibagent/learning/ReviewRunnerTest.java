@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -202,8 +203,9 @@ class ReviewRunnerTest {
         assertThat(all.stripTrailing()).endsWith("输出语言：中文。");
     }
 
+    /** 一行更新都解析不出：记成 ERROR（素材窗口不往前推），正文照存 */
     @Test
-    void noParsableOpsKeepsReviewRowButLeavesLedgerAlone() {
+    void noParsableOpsWritesErrorRowWithBodyAndLeavesLedgerAlone() {
         stubMaterial();
         ChatModel model = modelReturning("【本期复盘】\n战绩：……\n【经验更新】\n写了一段散文，没有一行是表里的");
         when(modelFactory.modelFor(any())).thenReturn(model);
@@ -212,7 +214,7 @@ class ReviewRunnerTest {
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
-        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
         assertThat(dec.getValue().getReasoning()).contains("散文");
         assertThat(dec.getValue().getError()).contains("账本未更新");
         assertThat(dec.getValue().getMemoryAfter()).isNull();
@@ -234,7 +236,7 @@ class ReviewRunnerTest {
     @Test
     void failureWritesErrorRowWithoutMemoryOrFailureCount() {
         stubMaterial();
-        when(modelFactory.modelFor(any())).thenThrow(new IllegalStateException("上游401"));
+        when(modelFactory.modelFor(any())).thenThrow(new SseChatModel.UpstreamRejected(401, "上游401"));
 
         runner.review(trader(), BOUNDARY);
 

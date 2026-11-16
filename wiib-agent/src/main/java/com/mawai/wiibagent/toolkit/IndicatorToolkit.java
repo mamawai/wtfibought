@@ -68,24 +68,8 @@ public class IndicatorToolkit {
     /** 墙钟注入点：末根走没走完要测得了 */
     LongSupplier nowMs = System::currentTimeMillis;
 
-    @Tool(name = "klines", description = """
-            Get raw OHLCV candlesticks for a crypto perpetual symbol from Binance futures.
-            Returns a fixed 192 rows [openTime(ms), open, high, low, close, volume], oldest first;
-            the last row is the current still-forming candle (its close is the live price,
-            its volume is only partial) and the bar that just closed is the row before it. Tell
-            whether the last row is still forming by its openTime: openTime plus one interval later
-            than now means it is still running. This is the only tool that includes that forming row;
-            `indicators` and `kline_structure` work on closed bars only.
-            interval: 5m/15m/1h/4h/1d — 192 bars span 16h / 2d / 8d / 32d / 192d respectively.
-            endTime (optional) ends the window at a past moment instead of now; the three tools called
-            with the same endTime still read one shared window.
-            Call it when your method requires reading the candles bar by bar: verifying candle
-            patterns, applying your own swing or structure definition, or inspecting a stretch
-            that `kline_structure` pointed you at. This is the only tool that gives you every
-            bar — `kline_structure` carries raw candles too, but only the recent ones and those
-            around each key point.
-            If you also call `kline_structure` on the same symbol+interval, pass
-            includeBars=false there so its focus_bars don't repeat these rows.""")
+    // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
+    @Tool(name = "klines")
     public String klines(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                          @ToolParam(description = "Interval: 5m/15m/1h/4h/1d") String interval,
                          @ToolParam(required = false, description = END_TIME_DESC) String endTime) {
@@ -98,26 +82,7 @@ public class IndicatorToolkit {
         return bars.isEmpty() ? error("kline data unavailable") : toCompactRows(bars);
     }
 
-    @Tool(name = "indicators", description = """
-            Get the full classic technical indicator set for a crypto perpetual symbol, computed
-            on the requested interval (5m/15m/1h/4h/1d) over the closed candles of the same 192-bar
-            window `klines` returns. The still-forming candle is left out, so "last bar" below always
-            means the bar that just closed. With endTime the window ends at that past moment instead
-            (the same window `klines` gives for the same endTime). Fields:
-            ma7/ma25/ma99 + ema12/ema20/ema26 (moving averages); ma_alignment: 1 = MA7>MA25>MA99 bullish
-            stacking, -1 = bearish stacking, 0 = tangled;
-            rsi14 + rsi14_trend (>70 overbought, <30 oversold);
-            macd_dif/dea/hist + macd_hist_trend (momentum); macd_cross appears only when a golden/death
-            cross happened on the last bar, otherwise the field is absent;
-            boll_upper/mid/lower + boll_pb (%B on a 0-100 scale: >100 closed above the upper band, <0 below
-            the lower band, 50 at the middle) + boll_bandwidth ((upper-lower)/mid*100; shrinking = squeeze,
-            expanding = trending);
-            atr14 (Wilder RMA volatility; common stop-distance unit);
-            kdj_k/d/j; adx + plus_di/minus_di (adx>25 trending, <15 ranging; direction = which DI is larger);
-            obv/obv_ma20/obv_trend + volume_ma20/volume_ratio (volume confirmation; volume_ratio = last bar
-            volume / 20-bar average);
-            close_trend. Every *_trend field is one of rising_5 (5 consecutive rises), falling_5, mostly_up,
-            mostly_down, sideways.""")
+    @Tool(name = "indicators")
     public String indicators(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                              @ToolParam(description = "Interval: 5m/15m/1h/4h/1d") String interval,
                              @ToolParam(required = false, description = END_TIME_DESC) String endTime) {
@@ -133,26 +98,7 @@ public class IndicatorToolkit {
         return MAPPER.writeValueAsString(CryptoIndicatorCalculator.calcAll(toCalcRows(bars)));
     }
 
-    @Tool(name = "kline_structure", description = """
-            Structural summary of the closed candles in the same 192-bar window that `klines`
-            returns — path, segments, volume-by-price and key levels, computed for you. The
-            still-forming last row of `klines` is left out. Neutral facts only: no trend or
-            reversal calls, that judgement is yours. With endTime the window ends at that past
-            moment instead (the same window `klines` gives for the same endTime).
-            Read these before using the numbers:
-            - atr14 is Wilder RMA — the exact same value the `indicators` tool reports. avg_tr_* is a
-              plain arithmetic mean of True Range: shorter memory, tracks current volatility, and is
-              NOT ATR. Never mix the two.
-            - swings are local extremes over ±swingWindow bars. The last swingWindow bars can never
-              qualify (their right side isn't confirmed yet), so a turn that just happened is missing.
-            - segments_swing (price and volume leg by leg between swing points) is returned only with
-              includeSwingSegments=true. It cuts at swing points and adjacent segments SHARE their
-              boundary bar, so their volumes add up to more than volume.total. Do not sum them.
-            - every idx refers to the same row order as `klines` on this symbol+interval; the forming
-              row is simply absent here. If a bar closed between the two calls the window has slid by
-              one row — match rows by time_ms / openTime then, not by idx.
-            What you get is the computed path plus focus_bars — the last N candles and the ones
-            around each key point; `klines` is the tool that hands you every raw bar instead.""")
+    @Tool(name = "kline_structure")
     public String klineStructure(
             @ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
             @ToolParam(description = "Interval: 5m/15m/1h/4h/1d") String interval,

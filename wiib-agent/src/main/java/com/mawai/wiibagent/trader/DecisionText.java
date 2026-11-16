@@ -13,6 +13,7 @@ import tools.jackson.databind.node.ArrayNode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -221,8 +222,17 @@ public class DecisionText {
         return false;
     }
 
-    /** chat 决策行的工具名列表（stale 治理后）：被忽略交易的动作名剔除，数据工具与其余动作照常 */
+    /** 决策行的工具名列表（stale 治理后）：被忽略交易的动作名剔除，数据工具与其余动作照常 */
     public List<String> staleFilteredToolNames(AiTraderDecision d, List<AiTraderPlan> plans) {
+        return staleFiltered(d, plans, a -> a.path("tool").asString(null));
+    }
+
+    /** 同上，给对话看的：没做成的动作名后面带状态（见 {@link TradeActions#label}） */
+    public List<String> staleFilteredToolLabels(AiTraderDecision d, List<AiTraderPlan> plans) {
+        return staleFiltered(d, plans, TradeActions::label);
+    }
+
+    private List<String> staleFiltered(AiTraderDecision d, List<AiTraderPlan> plans, Function<JsonNode, String> name) {
         if (d.getActionsJson() == null || d.getActionsJson().isBlank()) {
             return List.of();
         }
@@ -230,11 +240,10 @@ public class DecisionText {
             ArrayNode arr = MAPPER.readValue(d.getActionsJson(), ArrayNode.class);
             List<String> out = new ArrayList<>(arr.size());
             for (JsonNode a : arr) {
-                String tool = a.path("tool").asString(null);
-                if (tool == null || staleAction(a, d.getWakeTime(), plans)) {
+                if (!a.hasNonNull("tool") || staleAction(a, d.getWakeTime(), plans)) {
                     continue;
                 }
-                out.add(tool);
+                out.add(name.apply(a));
             }
             return out;
         } catch (Exception e) {

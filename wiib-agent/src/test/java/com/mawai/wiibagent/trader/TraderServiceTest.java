@@ -5,6 +5,9 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.dto.FuturesCloseRequest;
+import com.mawai.wiibcommon.dto.FuturesOrderResponse;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
@@ -35,8 +38,11 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -71,6 +77,11 @@ class TraderServiceTest {
             traderMapper, decisionMapper, modelFactory, endpointService,
             simTradeClient, binanceProperties, planStore, watchStore, scheduler, hub,
             new PromptCatalog(), langResolver, new MessageCatalog(), ledger);
+
+    {
+        // 重置要占 trader 的位子，默认占得到
+        when(scheduler.tryOccupy(anyLong())).thenReturn(true);
+    }
 
     /** 端点库里的一条 */
     private static UserLlmEndpoint endpoint(long id, String model) {
@@ -291,6 +302,74 @@ class TraderServiceTest {
         verify(planStore, never()).purgeRounds(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyInt());
         verify(simTradeClient, never()).deleteAccount(any());
+    }
+
+    /** 有唤醒或复盘在跑：不重置，什么都不动 */
+    @Test
+    void resetRefusedWhileBusy() {
+        AiTrader t = new AiTrader();
+        t.setId(7L);
+        t.setUserId(1L);
+        t.setRoundNo(3);
+        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(scheduler.tryOccupy(7L)).thenReturn(false);
+
+        assertThat(service.reset(1L, true)).contains("等这一轮跑完再重置");
+
+        verify(simTradeClient, never()).ensureAccount(any(), any());
+        verify(planStore, never()).archiveRound(anyLong(), anyInt(), anyLong());
+        verify(scheduler, never()).release(anyLong());
+    }
+
+    /** 重置先给旧账户收尾：挂单全撤、仓位市价全平，然后才开新账户；位子用完放掉 */
+    @Test
+    void resetClosesOutOldAccountBeforeOpeningNewRound() {
+        AiTrader t = new AiTrader();
+        t.setId(7L);
+        t.setUserId(1L);
+        t.setRoundNo(3);
+        t.setSimUserId(88L);
+        when(traderMapper.selectOne(any())).thenReturn(t);
+        FuturesOrderResponse pending = new FuturesOrderResponse();
+        pending.setOrderId(600L);
+        when(simTradeClient.getPendingOrders(88L, null)).thenReturn(List.of(pending));
+        FuturesPositionDTO position = new FuturesPositionDTO();
+        position.setId(5L);
+        when(simTradeClient.getAllPositions(88L)).thenReturn(List.of(position));
+        when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
+
+        assertThat(service.reset(1L, true)).isNull();
+
+        var calls = inOrder(simTradeClient, scheduler);
+        calls.verify(simTradeClient).cancelOrder(88L, 600L);
+        ArgumentCaptor<FuturesCloseRequest> close = ArgumentCaptor.forClass(FuturesCloseRequest.class);
+        calls.verify(simTradeClient).closePosition(eq(88L), close.capture());
+        calls.verify(simTradeClient).ensureAccount("ai_trader_1_r4", TraderService.INITIAL_BALANCE);
+        calls.verify(scheduler).release(7L);
+        assertThat(close.getValue().getPositionId()).isEqualTo(5L);
+        assertThat(close.getValue().getOrderType()).isEqualTo("MARKET");
+        assertThat(close.getValue().getQuantity()).isNull();
+    }
+
+    /** 旧账户清不干净：不重置，局号和账户都不动，位子照样放掉 */
+    @Test
+    void resetAbortsWhenOldAccountCannotBeClosedOut() {
+        AiTrader t = new AiTrader();
+        t.setId(7L);
+        t.setUserId(1L);
+        t.setRoundNo(3);
+        t.setSimUserId(88L);
+        when(traderMapper.selectOne(any())).thenReturn(t);
+        FuturesPositionDTO position = new FuturesPositionDTO();
+        position.setId(5L);
+        when(simTradeClient.getAllPositions(88L)).thenReturn(List.of(position));
+        when(simTradeClient.closePosition(eq(88L), any())).thenThrow(new IllegalStateException("仓位在强平中"));
+
+        assertThat(service.reset(1L, true)).contains("这次没有重置").contains("仓位在强平中");
+
+        verify(simTradeClient, never()).ensureAccount(any(), any());
+        verify(traderMapper, never()).update(any(), any());
+        verify(scheduler).release(7L);
     }
 
     /** 保留窗口 10 局：开 R11 时 R1 整局清除——两表 roundNo≤1 删 + sim 子账户 ai_trader_1_r1 销户 */

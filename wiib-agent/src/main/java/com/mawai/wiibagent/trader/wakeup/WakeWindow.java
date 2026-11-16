@@ -1,24 +1,21 @@
 package com.mawai.wiibagent.trader.wakeup;
 
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.entity.AiTrader;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * 唤醒时段（北京时间，5 分钟粒度，两端闭区间，可跨午夜）："21:00-08:30"；null=全天。
  * 只管交易类唤醒（例行/警报）；日线交接的复盘不看它——夜里交易了就该复盘夜里的交易。
- * ZONE 写死 Asia/Shanghai 而不是 systemDefault：UI 上标的是"北京时间"，承诺不该随部署环境 TZ 漂移
- * （容器 TZ=Asia/Singapore 同为 +8、无夏令时）。
  */
 @Slf4j
 public record WakeWindow(int fromMin, int toMin) {
 
-    public static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
     private static final Pattern FORMAT = Pattern.compile("^(\\d{2}):(\\d{2})-(\\d{2}):(\\d{2})$");
     private static final long DAY_MS = 86_400_000L;
 
@@ -68,7 +65,7 @@ public record WakeWindow(int fromMin, int toMin) {
 
     /** 该时刻是否在时段内：换成北京时间的"当日第几分钟"再比；跨午夜时段是"两头"的并集 */
     public boolean contains(long epochMs) {
-        LocalTime t = Instant.ofEpochMilli(epochMs).atZone(ZONE).toLocalTime();
+        LocalTime t = Instant.ofEpochMilli(epochMs).atZone(BeijingTime.ZONE).toLocalTime();
         int m = t.getHour() * 60 + t.getMinute();
         return fromMin <= toMin
                 ? m >= fromMin && m <= toMin

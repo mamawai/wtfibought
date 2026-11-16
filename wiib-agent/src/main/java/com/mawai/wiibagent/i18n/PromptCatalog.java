@@ -37,11 +37,7 @@ public class PromptCatalog {
         return bundle.get(lang, key, vars);
     }
 
-    /**
-     * 取不到返回 null，不抛。只给「缺了有正当回落」的调用方用——目前只有
-     * {@link LocalizedToolCallbacks}：还没搬进 yml 的工具要保留注解里的原描述照常工作。
-     * 提示词正文一律走 {@link #get}。
-     */
+    /** 取原文，不填占位符；取不到返回 null，不抛。提示词正文一律走 {@link #get} */
     public String find(AgentLang lang, String key) {
         return bundle.find(lang, key);
     }

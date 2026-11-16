@@ -8,6 +8,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -20,8 +21,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价单开出新仓），
- * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就把它叫醒；不是 trader 的用户直接忽略。
- * 准入（冷静期 / 互斥 / 时段 / 交接）全在调度器，这里只认人。
+ * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就广播一条 {@link TriggerFired}；不是 trader 的用户直接忽略。
+ * 准入（互斥 / 时段 / 交接）全在调度器，这里只认人。
  */
 @Slf4j
 @Component
@@ -30,7 +31,7 @@ public class TradeEventListener implements MessageListener {
 
     private final RedisMessageListenerContainer listenerContainer;
     private final AiTraderMapper traderMapper;
-    private final TraderScheduler scheduler;
+    private final ApplicationEventPublisher events;
 
     @PostConstruct
     public void init() {
@@ -47,7 +48,7 @@ public class TradeEventListener implements MessageListener {
             log.warn("[TradeEvent] 解析失败: {}", e.toString());
             return;
         }
-        // 查库和唤醒都不占 redis-sub 线程；异步之后没人接得住，不打日志就彻底无声
+        // 查库不占 redis-sub 线程；异步之后没人接得住，不打日志就彻底无声
         Thread.startVirtualThread(() -> {
             try {
                 onEvent(event);
@@ -62,7 +63,7 @@ public class TradeEventListener implements MessageListener {
                 .eq(AiTrader::getSimUserId, event.userId())
                 .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING));
         for (AiTrader t : traders) {
-            scheduler.tryTriggerWake(t.getId(), new EventTrigger(event));
+            events.publishEvent(new TriggerFired(t.getId(), new EventTrigger(event)));
         }
     }
 }

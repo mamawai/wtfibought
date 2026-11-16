@@ -9,12 +9,12 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -22,17 +22,15 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-
-import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
+import java.util.concurrent.Executor;
 
 /**
  * 波动哨兵（探测层）：feed markPrice tick（~1s）→ 每币 5 分钟滚动窗口振幅，超过
  * "币基准阈值 × trader 灵敏度系数"且该 trader（1h/4h 档）持有该币仓位/挂单时，
- * 经 {@link TraderScheduler#tryTriggerWake}（在跑则排队，结束后合成一轮）触发一次警报唤醒。
+ * 广播一条 {@link TriggerFired}，调度器接住后触发一次警报唤醒（在跑则排队，结束后合成一轮）。
  * 例行 K 线唤醒的补充而非替代——只认"世界变了"级别的波动，空仓者不惊动。
  * <p>
  * 边沿触发：振幅从基准线下穿上去算一段行情开始，回落到基准线的八成以下算结束（{@link #REARM_RATIO}，
@@ -77,7 +75,10 @@ public class VolatilitySentinel implements MessageListener {
     private final RedisMessageListenerContainer listenerContainer;
     private final AiTraderMapper traderMapper;
     private final SimTradeClient simTradeClient;
-    private final TraderScheduler scheduler;
+    private final ApplicationEventPublisher events;
+
+    /** 过线之后的重活在哪跑：缺省起虚拟线程，不占 Redis 订阅线程；测试里换成就地跑 */
+    Executor offload = Thread::startVirtualThread;
 
     /**
      * 全都要并发安全：Redis 容器是线程池分发（见 RedisMessageConfig，4~16 线程）、所有币又共用
@@ -99,22 +100,17 @@ public class VolatilitySentinel implements MessageListener {
     @Override
     public void onMessage(@NonNull Message message, byte[] pattern) {
         try {
-            JsonNode obj = MAPPER.readTree(message.getBody());
-            if (!"markprice".equals(obj.path("type").asString(null))) {
-                return;
+            MarkPriceTick tick = MarkPriceTick.parse(message);
+            if (tick != null) {
+                onPriceTick(tick.symbol(), tick.price(), System.currentTimeMillis());
             }
-            String symbol = obj.path("symbol").asString(null);
-            String price = obj.path("price").asString(null);
-            if (symbol == null || price == null) {
-                return;
-            }
-            onPriceTick(symbol.trim().toUpperCase(Locale.ROOT), new BigDecimal(price), System.currentTimeMillis());
         } catch (Exception e) {
             // 单条解析失败只丢本 tick，下一 tick 补上
             log.debug("[Sentinel] tick解析失败: {}", e.toString());
         }
     }
 
+    /** 在订阅线程上只做采样和算振幅（纯内存）；过线之后的查库、调 sim 交给 {@link #offload} */
     void onPriceTick(String symbol, BigDecimal price, long now) {
         BigDecimal base = BASE_THRESHOLD_PCT.get(symbol);
         if (base == null) {
@@ -136,7 +132,20 @@ public class VolatilitySentinel implements MessageListener {
         if (amp.compareTo(base) < 0) {
             return;
         }
-        // 穿越的那一刻查一次库定下名单，之后振幅碰到谁的阈值就报谁。查库放在 map 外面做，不占着 CHM 的桶锁
+        String direction = window.direction();
+        offload.execute(() -> {
+            try {
+                alert(symbol, amp, price, direction, now);
+            } catch (Exception e) {
+                // 换了线程之后没人接得住，不打日志就彻底无声
+                log.warn("[Sentinel] 警报处理失败 symbol={} msg={}", symbol, e.toString());
+            }
+        });
+    }
+
+    /** 振幅过了基准线：穿越的那一刻查一次库定下名单，之后振幅碰到谁的阈值、谁又持有这个币，就报谁 */
+    private void alert(String symbol, BigDecimal amp, BigDecimal price, String direction, long now) {
+        // 查库放在 map 外面做，不占着 CHM 的桶锁
         Incident incident = incidents.get(symbol);
         if (incident == null) {
             Incident fresh = candidates(symbol);
@@ -147,7 +156,7 @@ public class VolatilitySentinel implements MessageListener {
         }
         for (AiTrader t : incident.due(amp)) {
             if (engaged(t, symbol)) {
-                scheduler.tryTriggerWake(t.getId(), new AlertTrigger(symbol, amp, price, window.direction(), now));
+                events.publishEvent(new TriggerFired(t.getId(), new AlertTrigger(symbol, amp, price, direction, now)));
             }
         }
     }

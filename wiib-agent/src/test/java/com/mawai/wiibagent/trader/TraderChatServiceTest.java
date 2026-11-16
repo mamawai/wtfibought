@@ -211,6 +211,24 @@ class TraderChatServiceTest {
         assertThat(out.get(0).get("tools")).extracting(JsonNode::asString).containsExactly("klines");
     }
 
+    /** 没做成的交易动作，工具名后面带状态：不带的话被拒的、没执行的看起来和做成的一样 */
+    @Test
+    void 没做成的动作工具名带状态() {
+        when(traderService.mine(ME)).thenReturn(running());
+        when(planStore.listAll(7L, 1)).thenReturn(List.of());
+        AiTraderDecision d = decision(2000L, "[本轮结论]\n动作：HOLD",
+                "[{\"tool\":\"klines\"},"
+                        + "{\"tool\":\"close_position\",\"args\":{\"positionId\":1},\"status\":\"ok\"},"
+                        + "{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\"},\"rejected\":\"杠杆越界\"},"
+                        + "{\"tool\":\"set_stop_loss\",\"args\":{\"positionId\":1},\"status\":\"not_attempted\"}]");
+        when(traderService.decisions(eq(7L), anyInt(), any(), any(), any(), any(), any())).thenReturn(List.of(d));
+
+        JsonNode out = parse(service.decisions(ME, null, null, AgentLang.ZH)).get("decisions");
+
+        assertThat(out.get(0).get("tools")).extracting(JsonNode::asString).containsExactly(
+                "klines", "close_position", "open_position(rejected)", "set_stop_loss(not_attempted)");
+    }
+
     @Test
     void 反手旧仓被忽略仍保留新仓动作() {
         AiTraderPlan old = new AiTraderPlan();

@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
-import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -13,6 +10,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.annotation.Tool;
 
 import java.util.ArrayDeque;
@@ -357,7 +355,7 @@ class ReactLoopTest {
         return LlmClient.builder()
                 .model(model)
                 .systemPrompt("测试")
-                .tools(new LocalizedToolCallbacks(new PromptCatalog()).of(AgentLang.ZH, toolkit))
+                .tools(List.of(ToolCallbacks.from(toolkit)))
                 .build();
     }
 

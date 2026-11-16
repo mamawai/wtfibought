@@ -23,17 +23,8 @@ public class CrossAssetToolkit {
 
     private final CrossAssetService crossAssets;
 
-    // 描述按语言取自词表 tool.cross_asset_snapshot，注解这份只当词表缺失时的兜底
-    @Tool(name = "cross_asset_snapshot", description = """
-            Macro cross-asset snapshot (Yahoo Finance): S&P 500 and Nasdaq Composite (cash indices, move
-            only in US hours), S&P 500 and Nasdaq 100 futures (trade nearly 24h), US Dollar Index, US
-            10-year Treasury yield (in %), VIX, gold futures (USD/oz) and WTI crude futures (USD/bbl).
-            Per instrument: price, changePct1d = change vs the previous close in %, changePct5d = change vs
-            the close 5 sessions ago in %, time = quote time (UTC+8). For the 10Y yield the changes are %
-            moves of the yield level itself, not basis points. Compare time with now: outside US hours a
-            cash index is just the last close. Unofficial source; quotes may lag by up to 15 minutes.
-            Gold and oil also trade as platform contracts (XAUUSDT / CLUSDT); that is the platform contract
-            price, looked up with market_snapshot.""")
+    // 描述在词表 tool.cross_asset_snapshot（见 LocalizedToolCallbacks）
+    @Tool(name = "cross_asset_snapshot")
     public String crossAssetSnapshot() {
         List<Quote> quotes = crossAssets.snapshot();
         log.info("[CrossAssetTool] cross_asset_snapshot {} 个品种", quotes.size());

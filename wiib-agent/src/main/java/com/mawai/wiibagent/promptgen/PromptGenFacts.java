@@ -5,8 +5,8 @@ import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TradeGuard;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
-import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import com.mawai.wiibagent.trader.wakeup.TraderWakeupRunner;
+import com.mawai.wiibagent.trader.wakeup.WakeIntervals;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -90,7 +90,7 @@ public class PromptGenFacts {
     private String facts(AiTrader trader, AgentLang lang) {
         // 没建 trader 时的默认值与 /prompt-template 预览接口同一套
         String symbols = trader == null ? "BTCUSDT" : trader.getSymbols();
-        String interval = trader == null ? TraderScheduler.DEFAULT_INTERVAL : trader.getIntervalCode();
+        String interval = trader == null ? WakeIntervals.DEFAULT : trader.getIntervalCode();
         WakeWindow window = trader == null ? null : WakeWindow.of(trader);
         TraderRiskConfig risk = TraderRiskConfig.of(trader == null ? new AiTrader() : trader);
         String existing = trader == null ? null : trader.getCustomPrompt();

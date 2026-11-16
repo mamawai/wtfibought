@@ -12,7 +12,7 @@ import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.trade.TradeActions;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.wakeup.WatchText;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -34,7 +34,6 @@ import tools.jackson.databind.node.ArrayNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,10 +70,8 @@ public class ReviewMaterialAssembler {
     /** 行情块最多回看多久（本局首篇复盘 fromMs=0） */
     static final long MARKET_LOOKBACK_MS = 48 * 3_600_000L;
     /** 时刻按北京时间写，与行情块头、入场上下文的 hourBj 同一时区 */
-    private static final DateTimeFormatter TIME_FMT =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(WakeWindow.ZONE);
     private static final DateTimeFormatter HM_FMT =
-            DateTimeFormatter.ofPattern("HH:mm").withZone(WakeWindow.ZONE);
+            DateTimeFormatter.ofPattern("HH:mm").withZone(BeijingTime.ZONE);
     /** 盯盘命中那轮的该币结论段最多带多少字 */
     static final int MAX_SECTION = 240;
 
@@ -277,7 +274,7 @@ public class ReviewMaterialAssembler {
                         "limit", plain(c.limit()),
                         "stop", plain(c.stop()),
                         "target", targets(c.targets(), lang),
-                        "closed", TIME_FMT.format(Instant.ofEpochMilli(c.cancelledAt())),
+                        "closed", BeijingTime.shortFormat(c.cancelledAt()),
                         "reason", c.entry() == null ? prompts.get(lang, "trader.cancelReason.unknown") : nullSafe(c.entry().getReason()),
                         "touched", prompts.get(lang, c.touchedLimit() ? "reviewer.label.reached" : "reviewer.label.notReached"),
                         "targetsAfter", targetsAfter(c.targets(), c.reachedTargets(), lang)))).append('\n');
@@ -384,10 +381,10 @@ public class ReviewMaterialAssembler {
                 case "FILLED" -> {
                     filled = filled.add(entry.getQuantity());
                     yield prompts.get(lang, "reviewer.label.entryFilled", Map.of("price", plain(entry.getFilledPrice()),
-                            "time", TIME_FMT.format(Instant.ofEpochMilli(entry.getClosedAt()))));
+                            "time", BeijingTime.shortFormat(entry.getClosedAt())));
                 }
                 case "CANCELLED" -> prompts.get(lang, "reviewer.label.entryCancelled",
-                        Map.of("time", TIME_FMT.format(Instant.ofEpochMilli(entry.getClosedAt())), "reason",
+                        Map.of("time", BeijingTime.shortFormat(entry.getClosedAt()), "reason",
                                 entry.getReason() == null ? prompts.get(lang, "trader.cancelReason.unknown") : entry.getReason()));
                 case "UNKNOWN" -> prompts.get(lang, "reviewer.label.entryUnknown");
                 default -> prompts.get(lang, "reviewer.label.entryPending");
@@ -431,8 +428,8 @@ public class ReviewMaterialAssembler {
         return prompts.get(lang, "reviewer.label.caseTrade", Map.ofEntries(
                 Map.entry("symbol", pos.getSymbol()),
                 Map.entry("side", pos.getSide()),
-                Map.entry("opened", TIME_FMT.format(Instant.ofEpochMilli(TradePairing.msOf(pos.getCreatedAt())))),
-                Map.entry("closed", TIME_FMT.format(Instant.ofEpochMilli(TradePairing.msOf(pos.getUpdatedAt())))),
+                Map.entry("opened", BeijingTime.shortFormat(TradePairing.msOf(pos.getCreatedAt()))),
+                Map.entry("closed", BeijingTime.shortFormat(TradePairing.msOf(pos.getUpdatedAt()))),
                 Map.entry("held", humanize(prompts, TradePairing.msOf(pos.getUpdatedAt()) - TradePairing.msOf(pos.getCreatedAt()), lang)),
                 Map.entry("entry", plain(pos.getEntryPrice())),
                 Map.entry("stop", plan == null ? none : plain(plan.getStopLossPrice())),
@@ -503,8 +500,8 @@ public class ReviewMaterialAssembler {
             sb.append(prompts.get(lang, "reviewer.label.marketRow", Map.of(
                     "symbol", symbol,
                     "open", plain(w.open()), "close", plain(w.close()),
-                    "low", plain(w.low()), "lowAt", TIME_FMT.format(Instant.ofEpochMilli(w.lowAt())),
-                    "high", plain(w.high()), "highAt", TIME_FMT.format(Instant.ofEpochMilli(w.highAt())),
+                    "low", plain(w.low()), "lowAt", BeijingTime.shortFormat(w.lowAt()),
+                    "high", plain(w.high()), "highAt", BeijingTime.shortFormat(w.highAt()),
                     "range", w.lowToHighPct()))).append('\n');
         }
         return sb.toString();
@@ -538,7 +535,7 @@ public class ReviewMaterialAssembler {
                         : prompts.get(lang, "reviewer.label.watchIdle", Map.of("symbols", String.join(", ", idle)))))).append('\n');
         for (AiTraderWatch w : fired) {
             sb.append(prompts.get(lang, "reviewer.label.watchHit", Map.of(
-                    "firedAt", TIME_FMT.format(Instant.ofEpochMilli(w.getFiredAt())),
+                    "firedAt", BeijingTime.shortFormat(w.getFiredAt()),
                     "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
                     "note", WatchText.note(w, prompts, lang),
                     "followUp", followUp(t, w, lang)))).append('\n');
@@ -560,7 +557,7 @@ public class ReviewMaterialAssembler {
                 .last("LIMIT 1"));
         String none = prompts.get(lang, "reviewer.label.none");
         return prompts.get(lang, "reviewer.label.watchFollowUp", Map.of(
-                "wokeAt", TIME_FMT.format(Instant.ofEpochMilli(w.getWokeAt())),
+                "wokeAt", BeijingTime.shortFormat(w.getWokeAt()),
                 "kind", d == null ? none : d.getKind(),
                 "actions", d == null ? none : tradeActions(d.getActionsJson(), lang),
                 "section", d == null ? none : symbolSection(d.getReasoning(), w.getSymbol(), none)));
@@ -578,10 +575,10 @@ public class ReviewMaterialAssembler {
                 }
                 String status = a.path("status").asString("");
                 String key = a.has("rejected") ? "watchRejected"
-                        : "error".equals(status) ? "watchFailed"
-                        : "not_attempted".equals(status) ? "watchNotAttempted"
-                        : "liquidated".equals(status) ? "watchLiquidated"
-                        : "unknown".equals(status) ? "watchUnknown" : null;
+                        : TradeActions.ERROR.equals(status) ? "watchFailed"
+                        : TradeActions.NOT_ATTEMPTED.equals(status) ? "watchNotAttempted"
+                        : TradeActions.LIQUIDATED.equals(status) ? "watchLiquidated"
+                        : TradeActions.UNKNOWN.equals(status) ? "watchUnknown" : null;
                 out.add(key == null ? tool : prompts.get(lang, "reviewer.label." + key, Map.of("tool", tool)));
             }
         }

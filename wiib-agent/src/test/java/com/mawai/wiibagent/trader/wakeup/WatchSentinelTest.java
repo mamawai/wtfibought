@@ -69,7 +69,8 @@ class WatchSentinelTest {
         verify(events, never()).publishEvent(any(Object.class));
 
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("63000"), 1_786_200_001_000L);
-        verify(events).publishEvent(argThat((Object o) -> o instanceof WatchTrigger w
+        verify(events).publishEvent(argThat((Object o) -> o instanceof TriggerFired f && f.traderId() == 7L
+                && f.trigger() instanceof WatchTrigger w
                 && w.watch().getId() == 1L && w.price().compareTo(new BigDecimal("63000")) == 0
                 && w.triggeredAt() == 1_786_200_001_000L));
 
@@ -120,7 +121,8 @@ class WatchSentinelTest {
         verify(events, never()).publishEvent(any(Object.class));
 
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("63000"), 1_786_200_000_000L);
-        verify(events).publishEvent(argThat((Object o) -> o instanceof WatchTrigger w
+        verify(events).publishEvent(argThat((Object o) -> o instanceof TriggerFired f
+                && f.trigger() instanceof WatchTrigger w
                 && w.watch().getId() == 3L && w.price().compareTo(new BigDecimal("63000")) == 0));
     }
 
@@ -138,7 +140,8 @@ class WatchSentinelTest {
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("63010"), 1_786_200_000_000L);
         sentinel.onPriceTick("BTCUSDT", new BigDecimal("60990"), 1_786_200_001_000L);
 
-        verify(events).publishEvent(argThat((Object o) -> o instanceof WatchTrigger w && w.watch().getId() == 6L));
+        verify(events).publishEvent(argThat((Object o) -> o instanceof TriggerFired f
+                && f.trigger() instanceof WatchTrigger w && w.watch().getId() == 6L));
         verify(events, times(1)).publishEvent(any(Object.class));
     }
 

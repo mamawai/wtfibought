@@ -25,7 +25,6 @@ import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.context.ApplicationEventPublisher;
 import java.util.Arrays;
@@ -99,7 +98,7 @@ class TradeToolsTest {
     private final TraderPlanStore planStore = new TraderPlanStore(planMapper, PROMPTS, new TransactionTemplate(mock(PlatformTransactionManager.class)));
     private final AtomicBoolean openingAllowed = new AtomicBoolean(true);
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
-            positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
+            sym -> new BigDecimal("100000"),
             planStore, watchStore,
             new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                     new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
@@ -107,6 +106,7 @@ class TradeToolsTest {
 
     @BeforeEach
     void ladderFixtures() {
+        when(simTradeClient.getEquity(99L)).thenReturn(new BigDecimal("10000"));
         when(simTradeClient.getBrackets(any())).thenReturn(Map.of("BTCUSDT", List.of(
                 new SimTradeApi.Bracket(1, BigDecimal.ZERO, new BigDecimal("1000000000"), 150, BigDecimal.ZERO, BigDecimal.ZERO))));
         when(planMapper.selectByIdForUpdate(anyLong())).thenAnswer(_ -> planMapper.selectOne(null));
@@ -193,6 +193,17 @@ class TradeToolsTest {
         when(simTradeClient.cancelOrder(anyLong(), anyLong())).thenThrow(new IllegalStateException("已成交"));
         assertThat(tools.cancelOrder(List.of(11L, 12L), "计划失效")).isEqualTo("ERROR: #11 已成交 / #12 已成交");
         assertThat(tools.actions().get(0).path("status").asString()).isEqualTo("error");
+    }
+
+    /** 开仓前查账户失败：按失败回，轨迹里留一条 */
+    @Test
+    void openFailureBeforeOrderingIsRecorded() {
+        when(simTradeClient.getAllPositions(99L)).thenThrow(new IllegalStateException("sim 连不上"));
+
+        assertThat(tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0,
+                null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000")).isEqualTo("ERROR: sim 连不上");
+        assertThat(tools.actions()).singleElement()
+                .satisfies(a -> assertThat(a.path("status").asString()).isEqualTo("error"));
     }
 
     @Test
@@ -497,7 +508,7 @@ class TradeToolsTest {
         when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("FILLED"));
         when(simTradeClient.openPosition(eq(99L), any())).thenAnswer(call -> entryReceipt(9, "FILLED", call.getArgument(1)));
         TradeTools single = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT"),
-                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"), planStore, watchStore,
+                sym -> new BigDecimal("100000"), planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), false, false), AgentLang.ZH),
                 PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
@@ -523,7 +534,7 @@ class TradeToolsTest {
         when(simTradeClient.getPendingOrders(99L, null)).thenReturn(List.of(first, second), List.of());
         when(simTradeClient.openPosition(eq(99L), any())).thenAnswer(call -> entryReceipt(9, "FILLED", call.getArgument(1)));
         TradeTools noHedge = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT"),
-                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"), planStore, watchStore,
+                sym -> new BigDecimal("100000"), planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, false), AgentLang.ZH),
                 PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
@@ -896,13 +907,14 @@ class TradeToolsTest {
      * 模型要么白烧保险丝预算复查账户，要么开始整体折价工具描述的权威性。
      */
     @Test
-    void getAccountDescriptionDoesNotContradictSystemPrompt() throws Exception {
-        String desc = TradeTools.class.getMethod("getAccount")
-                .getAnnotation(Tool.class).description();
+    void getAccountDescriptionDoesNotContradictSystemPrompt() {
+        String en = PROMPTS.get(AgentLang.EN, "tool.get_account");
+        String zh = PROMPTS.get(AgentLang.ZH, "tool.get_account");
 
-        assertThat(desc).doesNotContain("ALWAYS");
+        assertThat(en).doesNotContain("ALWAYS");
         // 只客观描述返回什么 + 点明账户状态每轮已注入，通常不必再调
-        assertThat(desc).contains("already");
+        assertThat(en).contains("equity").contains("available").contains("wallet balance").contains("already");
+        assertThat(zh).contains("权益").contains("available").contains("钱包余额").contains("每轮已注入");
     }
 
     /** 已有计划的仓不许 write_plan——否则它就是改论点的后门 */
@@ -973,7 +985,7 @@ class TradeToolsTest {
         EntryContext entryContext = mock(EntryContext.class);
         when(entryContext.atr14(eq("BTCUSDT"), eq("1h"), anyLong())).thenReturn(new BigDecimal("2000"));
         TradeTools withAtr = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
-                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
+                sym -> new BigDecimal("100000"),
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
@@ -1119,7 +1131,7 @@ class TradeToolsTest {
             return 1;
         });
         TradeTools withCtx = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
-                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
+                sym -> new BigDecimal("100000"),
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
@@ -1225,7 +1237,7 @@ class TradeToolsTest {
     @Test
     void expiredRoundRejectsAllWriteTools() {
         TradeTools late = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
-                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
+                sym -> new BigDecimal("100000"),
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, System.currentTimeMillis() - 1,
                         new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
@@ -1247,7 +1259,6 @@ class TradeToolsTest {
     @Test
     void blankSymbolRejectedBeforeMarketFetch() {
         TradeTools strict = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
-                positions -> new BigDecimal("10000"),
                 sym -> { throw new IllegalStateException("不该发起行情查询"); },
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
@@ -1389,14 +1400,9 @@ class TradeToolsTest {
      */
     @Test
     void marginCapUsesEquityAtOpenTime() {
-        TradeTools poorer = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
-                positions -> new BigDecimal("5000"), sym -> new BigDecimal("100000"),
-                planStore, watchStore,
-                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
+        when(simTradeClient.getEquity(99L)).thenReturn(new BigDecimal("5000"));
 
-        String r = poorer.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.4), null)), 10, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
+        String r = tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.4), null)), 10, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");
 
         assertThat(r).startsWith("REJECTED").contains("本次各档合计数量最多");
         verify(simTradeClient, never()).openPosition(anyLong(), any());

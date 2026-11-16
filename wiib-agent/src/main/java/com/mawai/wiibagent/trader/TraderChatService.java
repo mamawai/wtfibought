@@ -8,7 +8,9 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.trade.TargetRung;
+import com.mawai.wiibagent.trader.trade.TradeActions;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import lombok.RequiredArgsConstructor;
@@ -17,9 +19,6 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,9 +39,6 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 @Service
 @RequiredArgsConstructor
 public class TraderChatService {
-
-    private static final DateTimeFormatter TIME_FMT =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     /** 决策一次最多给几条：reasoning 是全文，给多了挤掉问题本身 */
     static final int MAX_DECISIONS = 20;
@@ -190,7 +186,7 @@ public class TraderChatService {
                     .put("toolCalls", d.getToolCalls())
                     .put("error", d.getError())
                     // 交易行的工具名同样过 stale：被忽略交易的 open/close 动作名不出现
-                    .set("tools", MAPPER.valueToTree(tradeRow ? decisionText.staleFilteredToolNames(d, allPlans)
+                    .set("tools", MAPPER.valueToTree(tradeRow ? decisionText.staleFilteredToolLabels(d, allPlans)
                             : toolNames(d.getActionsJson())))
                     .put("reasoning", reasoning));
         }
@@ -287,7 +283,7 @@ public class TraderChatService {
     // ===== 内部 =====
 
     private static String time(Long epochMs) {
-        return epochMs == null ? null : TIME_FMT.format(Instant.ofEpochMilli(epochMs));
+        return epochMs == null ? null : BeijingTime.shortFormat(epochMs);
     }
 
     private static ObjectNode planJson(AiTraderPlan p) {
@@ -311,15 +307,15 @@ public class TraderChatService {
         return row;
     }
 
-    /** 动作轨迹只取工具名：全文可能上万字符，而这里要的只是"那一轮它动手没有"。 */
+    /** 动作轨迹只取工具名（没做成的带状态）：全文可能上万字符，而这里要的只是"那一轮它动手没有"。 */
     private static List<String> toolNames(String actionsJson) {
         if (actionsJson == null || actionsJson.isBlank()) {
             return List.of();
         }
         try {
             return MAPPER.readValue(actionsJson, ArrayNode.class).valueStream()
-                    .map(o -> o.isObject() ? o.path("tool").asString(null) : null)
-                    .filter(java.util.Objects::nonNull)
+                    .filter(o -> o.hasNonNull("tool"))
+                    .map(TradeActions::label)
                     .toList();
         } catch (Exception e) {
             return List.of();

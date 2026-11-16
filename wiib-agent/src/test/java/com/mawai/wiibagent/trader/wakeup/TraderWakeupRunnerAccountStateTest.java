@@ -32,7 +32,7 @@ class TraderWakeupRunnerAccountStateTest {
 
     private static final long BOUNDARY = 1_787_000_400_000L;
     private static final DateTimeFormatter FMT =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
+            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(BeijingTime.ZONE);
 
     private final PromptCatalog prompts = new PromptCatalog();
 

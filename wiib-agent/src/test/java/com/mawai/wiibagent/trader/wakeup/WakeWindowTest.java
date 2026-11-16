@@ -3,6 +3,7 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import org.junit.jupiter.api.Test;
 
 import java.time.ZonedDateTime;
@@ -17,9 +18,9 @@ class WakeWindowTest {
     private static final long H1 = 3_600_000L;
     private static final long H4 = 14_400_000L;
 
-    /** 北京时间 2026-07-27 hh:mm 的 epoch ms（时区跟 WakeWindow.ZONE 走，测试与机器 TZ 无关） */
+    /** 北京时间 2026-07-27 hh:mm 的 epoch ms（时区跟 BeijingTime.ZONE 走，测试与机器 TZ 无关） */
     private static long bj(int h, int m) {
-        return ZonedDateTime.of(2026, 7, 27, h, m, 0, 0, WakeWindow.ZONE).toInstant().toEpochMilli();
+        return ZonedDateTime.of(2026, 7, 27, h, m, 0, 0, BeijingTime.ZONE).toInstant().toEpochMilli();
     }
 
     @Test

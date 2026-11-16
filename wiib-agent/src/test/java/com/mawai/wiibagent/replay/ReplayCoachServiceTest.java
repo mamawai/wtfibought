@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.ChatModelFactory;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
+import com.mawai.wiibagent.llm.SseChatModel;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -72,7 +73,8 @@ class ReplayCoachServiceTest {
     @Test
     void 模型抛错时发error一帧且文案不含原始异常() {
         ChatModel model = mock(ChatModel.class);
-        when(model.stream(any(Prompt.class))).thenReturn(Flux.error(new RuntimeException("401 Unauthorized sk-secret")));
+        when(model.stream(any(Prompt.class))).thenReturn(
+                Flux.error(new SseChatModel.UpstreamRejected(401, "401 Unauthorized sk-secret")));
         RecordingEmitter emitter = new RecordingEmitter();
 
         service().run(new SseChannel(emitter), model, hintReq(), AgentLang.ZH);

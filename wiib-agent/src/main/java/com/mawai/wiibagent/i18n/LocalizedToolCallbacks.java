@@ -28,12 +28,11 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 按语言出工具描述：{@code @Tool(description=...)} 是编译期常量换不掉，所以自己拼 ToolCallback——
  * 名字与 inputSchema 照旧由注解自动推导（{@link ToolDefinitions#from}，schema 零手写），
- * 只把 description 换成 {@code tool.<工具名>} 那条。
+ * description 取词表 {@code tool.<工具名>} 那条。
  * <p>
  * 建叶子时 {@code LlmClient.builder().tools(localized.of(lang, x))} 挂上去。
  * <p>
- * <b>唯一允许静默回落的地方</b>：catalog 里没有 {@code tool.<工具名>} 就原样保留注解里的描述——
- * 让还没搬进 yml 的工具照常工作，后续批次逐个搬。
+ * <b>描述只有词表这一份</b>：{@code @Tool} 上只写名字。词表里没有 {@code tool.<工具名>} 就在建工具时抛出，不兜底。
  * <p>
  * <b>@ToolParam 的参数描述不跟语言走</b>：它嵌在自动推导的 inputSchema 里，换语言要在 schema 层
  * 逐字段改写，复杂度不值。参数描述是字段级技术说明，全仓统一写英文。
@@ -72,13 +71,11 @@ public class LocalizedToolCallbacks {
 
     private ToolCallback build(AgentLang lang, Object toolObject, Method method) {
         ToolDefinition annotated = ToolDefinitions.from(method);
-        String localized = catalog.find(lang, "tool." + annotated.name());
-        ToolDefinition definition = localized == null ? annotated
-                : DefaultToolDefinition.builder()
-                        .name(annotated.name())
-                        .description(localized)
-                        .inputSchema(annotated.inputSchema())
-                        .build();
+        ToolDefinition definition = DefaultToolDefinition.builder()
+                .name(annotated.name())
+                .description(catalog.get(lang, "tool." + annotated.name()))
+                .inputSchema(annotated.inputSchema())
+                .build();
         // 除 definition 外逐项照抄框架的装配，否则 returnDirect、结果转换器这些注解属性会悄悄失效
         return new FailureAsResult(MethodToolCallback.builder()
                 .toolDefinition(definition)

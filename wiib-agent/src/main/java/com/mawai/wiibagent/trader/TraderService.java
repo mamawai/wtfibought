@@ -4,16 +4,21 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.dto.FuturesCloseRequest;
+import com.mawai.wiibcommon.dto.FuturesOrderResponse;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.llm.LlmEndpointService;
+import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -22,6 +27,7 @@ import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
+import com.mawai.wiibagent.trader.wakeup.WakeIntervals;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -242,7 +249,8 @@ public class TraderService {
     }
 
     /**
-     * 重置开新局：round+1、新 sim 子账户注资、PAUSED 待手动启动；旧账户与决策历史留档。
+     * 重置开新局：旧账户挂单全撤、仓位全平，round+1、新 sim 子账户注资、PAUSED 待手动启动；旧账户与决策历史留档。
+     * 有唤醒或复盘在跑时拒；旧账户清不干净也不重置。
      * carryNotes=false 时 memory 生效版本一并清空——历届存档在 REVIEW 行 memory_after 里，
      * 永远查得到，清的只是"下局还注不注入"。
      */
@@ -250,6 +258,25 @@ public class TraderService {
         AiTrader t = mine(userId);
         if (t == null) {
             return messages.get("trader.notCreated");
+        }
+        // 占住这个 trader 的位子：有唤醒或复盘在跑就拒，重置期间新的也进不来
+        if (!scheduler.tryOccupy(t.getId())) {
+            return messages.get("trader.reset.busy");
+        }
+        try {
+            return openNewRound(t, userId, carryNotes);
+        } finally {
+            scheduler.release(t.getId());
+        }
+    }
+
+    private String openNewRound(AiTrader t, long userId, boolean carryNotes) {
+        try {
+            closeOut(t.getSimUserId());
+        } catch (Exception e) {
+            log.warn("[Trader] 重置前旧账户收尾失败 traderId={} round={}", t.getId(), t.getRoundNo(), e);
+            return messages.get("trader.reset.closeOutFailed",
+                    Map.of("reason", SimTradeClient.describe(e, messages, RequestLang.current())));
         }
         int newRound = t.getRoundNo() + 1;
         Long simUserId = simTradeClient.ensureAccount(accountName(userId, newRound), INITIAL_BALANCE);
@@ -265,6 +292,7 @@ public class TraderService {
                 .set(AiTrader::getConsecutiveFailures, 0)
                 .set(AiTrader::getOwnerNote, null)
                 .set(AiTrader::getOwnerNoteRounds, 0)
+                .set(AiTrader::getUnreportedEvents, null)
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now());
         if (!carryNotes) {
             upd.set(AiTrader::getMemory, null);
@@ -276,6 +304,21 @@ public class TraderService {
         purgeExpiredRounds(t.getId(), userId, newRound);
         log.info("[Trader] 重置开新局 traderId={} round={}", t.getId(), newRound);
         return null;
+    }
+
+    /** 旧局收尾：挂单全撤，仓位市价全平 */
+    private void closeOut(Long simUserId) {
+        for (FuturesOrderResponse order : simTradeClient.getPendingOrders(simUserId, null)) {
+            simTradeClient.cancelOrder(simUserId, order.getOrderId());
+        }
+        for (FuturesPositionDTO position : simTradeClient.getAllPositions(simUserId)) {
+            FuturesCloseRequest close = new FuturesCloseRequest();
+            close.setPositionId(position.getId());
+            // 数量留空：sim 在仓位锁内按实际数量全平
+            close.setOrderType("MARKET");
+            close.setClientRequestId(UUID.randomUUID().toString());
+            SimOrderRetry.send(() -> simTradeClient.closePosition(simUserId, close));
+        }
     }
 
     /**
@@ -435,7 +478,7 @@ public class TraderService {
 
     /**
      * 最近一条写了 memory 的 REVIEW 行的 wakeTime，没有=null。
-     * 以 memoryAfter 非空为准（经验更新解析不出的复盘 OK 行照存但 memory 没动）。
+     * 以 memoryAfter 非空为准（复盘行落了、后面写记忆那步没成的，memory 没动）。
      * 不按局过滤：memory 能带入新局，"最近一次复盘"也就跨局看。
      */
     public Long latestReviewTime(long traderId) {
@@ -469,7 +512,7 @@ public class TraderService {
         if (req.name() == null || req.name().isBlank() || req.name().length() > 32) {
             return messages.get("trader.config.nameRequired");
         }
-        if (req.intervalCode() == null || !TraderScheduler.WAKE_INTERVALS.contains(req.intervalCode())) {
+        if (req.intervalCode() == null || !WakeIntervals.CODES.contains(req.intervalCode())) {
             return messages.get("trader.config.badInterval");
         }
         WakeWindow window;
@@ -481,9 +524,8 @@ public class TraderService {
         }
         // 4h 档选 21:00-23:00 这种时段里一根本档K线都不收盘 = 永远不醒，拦在入口
         if (window != null) {
-            long intervalMs = TraderScheduler.INTERVAL_MS.get(req.intervalCode());
-            long now = System.currentTimeMillis();
-            if (window.nextBoundaryFrom(now - Math.floorMod(now, intervalMs), intervalMs) < 0) {
+            long intervalMs = WakeIntervals.MS.get(req.intervalCode());
+            if (window.nextBoundaryFrom(WakeIntervals.align(System.currentTimeMillis(), intervalMs), intervalMs) < 0) {
                 return messages.get("trader.config.windowNeverWakes", Map.of("interval", req.intervalCode()));
             }
         }

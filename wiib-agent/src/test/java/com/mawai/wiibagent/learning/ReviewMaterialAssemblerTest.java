@@ -10,7 +10,7 @@ import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
@@ -60,8 +60,8 @@ class ReviewMaterialAssemblerTest {
     private static final long TO = FROM + 86_400_000L;
     private static final long H = 3600_000L;
     private static final long M5 = 300_000L;
-    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(WakeWindow.ZONE);
-    private static final DateTimeFormatter HM = DateTimeFormatter.ofPattern("HH:mm").withZone(WakeWindow.ZONE);
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(BeijingTime.ZONE);
+    private static final DateTimeFormatter HM = DateTimeFormatter.ofPattern("HH:mm").withZone(BeijingTime.ZONE);
 
     @BeforeAll
     static void initTableInfoCache() {

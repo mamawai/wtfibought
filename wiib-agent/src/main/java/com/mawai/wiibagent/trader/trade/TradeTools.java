@@ -9,27 +9,20 @@ import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
-import com.mawai.wiibquant.external.sim.SimTradeApi;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
-import java.util.Locale;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
@@ -40,6 +33,14 @@ import java.util.function.Function;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static com.mawai.wiibagent.trader.trade.StopOrders.pctOfEquity;
+import static com.mawai.wiibagent.trader.trade.TradeActions.ERROR;
+import static com.mawai.wiibagent.trader.trade.TradeActions.LIQUIDATED;
+import static com.mawai.wiibagent.trader.trade.TradeActions.NOT_ATTEMPTED;
+import static com.mawai.wiibagent.trader.trade.TradeActions.OK;
+import static com.mawai.wiibagent.trader.trade.TradeActions.PARTIAL;
+import static com.mawai.wiibagent.trader.trade.TradeActions.REJECTED;
+import static com.mawai.wiibagent.trader.trade.TradeActions.UNKNOWN;
+import static com.mawai.wiibagent.trader.trade.TradeActions.replyPrefix;
 
 /**
  * 交易工具（非 Spring bean）：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与白名单。
@@ -51,17 +52,13 @@ public class TradeTools {
 
     /**
      * 唤醒上下文：计划落库与风险护栏所需的 trader 侧信息；interval＝心跳周期，开仓回执里的 ATR 按它算；
+     * wakeTime＝这一轮的唤醒时刻（例行轮是 K 线边界，手动和非例行轮是醒来那一刻），和决策行的 wake_time 是同一个值；
      * deadlineMs＝本轮预算耗尽的墙钟时刻。
      * lang＝这只 trader 主人的语言：拒因既回给模型也公开在竞技场时间线上，两处都得跟它走。
      */
-    public record WakeCtx(long traderId, int roundNo, String interval, long boundaryTime, long deadlineMs,
+    public record WakeCtx(long traderId, int roundNo, String interval, long wakeTime, long deadlineMs,
                           TraderRiskConfig risk, AgentLang lang) {
     }
-
-    /** 本类自带富记录（结果/拒因）的工具名——轨迹合并时用富记录替换轨迹收集器的轻量占位 */
-    public static final Set<String> RECORDED_TOOLS = Set.of(
-            "get_account", "open_position", "close_position", "reverse_position", "set_stop_loss",
-            "set_take_profit", "cancel_order", "write_plan", "set_watch");
 
     /** 改账户状态的工具名：同一批 tool_call 里有它们就整批串行，不和别的调用交错（ReactLoop.serialTools） */
     public static final Set<String> SERIAL_TOOLS = Set.of(
@@ -72,8 +69,6 @@ public class TradeTools {
     private final Set<String> symbolWhitelist;
     /** 能布盯盘条件的币：平台在采的全部币，不限可交易的那几个 */
     private final Set<String> watchSymbols;
-    /** 按现查持仓算权益：同一轮先平后开，护栏要按平完之后的权益算占比 */
-    private final Function<List<FuturesPositionDTO>, BigDecimal> equityOf;
     /** 现价查询（symbol → mark price）；由唤醒回路注入，取 Binance 实时标记价 */
     private final Function<String, BigDecimal> markPrice;
     private final TraderPlanStore planStore;
@@ -84,15 +79,15 @@ public class TradeTools {
     private final PromptCatalog prompts;
     /** sim 那侧的拒因按错误码在这儿成文（余额不足/止损价非法等），同样跟 {@code ctx.lang()} */
     private final MessageCatalog messages;
-    /** 开仓那一刻的上下文快照，随计划落库 */
-    private final EntryContext entryContext;
+    /** 开仓那一套：护栏、逐档下单、立计划；普通开仓和反手的新仓共用 */
+    private final PositionOpener opener;
     /** 本轮是否已进入可以开仓的阶段 */
     private final BooleanSupplier openingAllowed;
     /** 本次唤醒的动作轨迹，唤醒回路收走序列化进 ai_trader_decision.actions_json */
     private final List<ObjectNode> actions = new ArrayList<>();
 
     public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist, Set<String> watchSymbols,
-                      Function<List<FuturesPositionDTO>, BigDecimal> equityOf, Function<String, BigDecimal> markPrice,
+                      Function<String, BigDecimal> markPrice,
                       TraderPlanStore planStore, TraderWatchStore watchStore, WakeCtx ctx,
                       PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext,
                       BooleanSupplier openingAllowed) {
@@ -100,31 +95,24 @@ public class TradeTools {
         this.simUserId = simUserId;
         this.symbolWhitelist = symbolWhitelist;
         this.watchSymbols = watchSymbols;
-        this.equityOf = equityOf;
         this.markPrice = markPrice;
         this.planStore = planStore;
         this.watchStore = watchStore;
         this.ctx = ctx;
         this.prompts = prompts;
         this.messages = messages;
-        this.entryContext = entryContext;
+        this.opener = new PositionOpener(simTradeClient, simUserId, symbolWhitelist, planStore, ctx, prompts,
+                messages, entryContext);
         this.openingAllowed = openingAllowed;
     }
 
-    /** 唤醒回路收轨迹：超时那条路上被中断的工具可能还在往里记，拷一份出去 */
+    /** 唤醒回路收轨迹：被打断的那批并发 get_account 可能还在往里记，拷一份出去 */
     public synchronized List<ObjectNode> actions() {
         return List.copyOf(actions);
     }
 
-    // 描述只客观说"返回什么"，不下行为指令：系统提示词明说账户状态每轮已注入、
-    // 让把调用预算花在行情求证上，这里再写 ALWAYS check 就是两条强指令打架
-    @Tool(name = "get_account", description = """
-            Get your full account state: equity, available (what is still free for new orders after
-            position margin and pending-order reservations), wallet balance, open positions (with id,
-            side, quantity, entry price, leverage, unrealized PnL, liquidation price, current
-            stop-loss/take-profit) and pending limit orders. This same state is already injected into
-            your opening message every round (the [Account] block), so you normally do not need to call
-            this; use it to confirm changes after your trades or fills that occurred while you were checking data.""")
+    // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
+    @Tool(name = "get_account")
     public String getAccount() {
         try {
             return ok("get_account", null, accountSnapshot());
@@ -138,8 +126,8 @@ public class TradeTools {
         ObjectNode out = MAPPER.createObjectNode();
         Map<String, Object> balance = simTradeClient.getBalanceDetail(simUserId);
         List<FuturesPositionDTO> positions = simTradeClient.getAllPositions(simUserId);
-        // 权益与开场白同一口径；available 是 sim 全仓账本的下单额度，钱包余额里还躺着已占用的保证金，不能当可用
-        BigDecimal equity = equityOf.apply(positions);
+        // 权益是 sim 算好的，和开场白同一个数；available 是 sim 全仓账本的下单额度，钱包余额里还躺着已占用的保证金，不能当可用
+        BigDecimal equity = SimTradeClient.equityOf(balance);
         out.put("equity", equity);
         out.put("lossAtAllStopsPctOfEquity", pctOfEquity(positions.stream().map(StopOrders::lossAtStops)
                 .reduce(BigDecimal.ZERO, BigDecimal::add), equity));
@@ -180,27 +168,7 @@ public class TradeTools {
         return v == null ? null : new BigDecimal(String.valueOf(v));
     }
 
-    @Tool(name = "open_position", description = """
-            Open a futures position on your sim account (cross margin) using entries: 1–5 rungs
-            {quantity, limitPrice}. Omit limitPrice for a market rung; at most one market rung per call.
-            Limits go first, market last. Limits must rest within 5% of mark (LONG below, SHORT above).
-            Each rung must meet quantity steps and minimum notional. Leverage must be inside your owner's
-            range and match existing positions/orders. Without a filled same-side position, this batch plus
-            same-side pending margin must fit the equity cap; filled adds are exempt. Leverage tiers are
-            prechecked on existing position + same-side pending + this batch's notional.
-            stopLossPrice is REQUIRED, beyond every entry. Optional takeProfits: up to 3 {price, percent}
-            rungs on the favorable side of every entry, percents sum to at most 100; quantities must meet
-            the step for each entry. Omit takeProfits to place no targets.
-            playType: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
-            signalsUsed cites concrete data; invalidationCondition is the market condition that disproves
-            the thesis, not a PnL number. Entries, stop, targets and thesis are recorded in one plan.
-            The receipt lists each rung. If only part of the batch went through, the reply starts with
-            PARTIAL: and the rungs that filled stay. If a rung's outcome is unknown it starts with UNKNOWN: —
-            reconcile with get_account before resubmitting. If the whole batch is refused, rungs already
-            resting are withdrawn and the reply is an ERROR with the reason. facts.batch estimates quantity, weighted
-            entry, notional, round-trip fees, stop distance (% and heartbeat ATR14), loss at stop and equity
-            risk; targets add estimated gain and reward/risk. facts.sameSide estimates the total loss at
-            current stops for this symbol and direction. These are scenarios, excluding exit slippage.""")
+    @Tool(name = "open_position")
     public String openPosition(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                                @ToolParam(description = "LONG or SHORT") String side,
                                @ToolParam(description = "1–5 entry rungs {quantity, limitPrice}; omit limitPrice for market, at most one market rung") List<EntryRung> entries,
@@ -229,21 +197,16 @@ public class TradeTools {
             return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.symbolNotWhitelisted",
                     Map.of("whitelist", symbolWhitelist, "given", String.valueOf(symbol))));
         }
-        BigDecimal mark;
         try {
-            mark = markPrice.apply(symbol);
-        } catch (Exception e) {
-            return fail("open_position", argSummary, e);
-        }
-        Account acct = account();
-        BigDecimal equity = equityOf.apply(acct.positions());
-        try {
-            String reject = validateOpen(req, acct, equity, mark);
+            BigDecimal mark = markPrice.apply(symbol);
+            Account acct = account();
+            BigDecimal equity = simTradeClient.getEquity(simUserId);
+            String reject = opener.validate(req, acct, equity, mark);
             if (reject != null) {
                 // rejected() 自己入轨迹，不许再包一层 record——否则拒绝动作双计
                 return rejected("open_position", argSummary, reject);
             }
-            return openResult(argSummary, executeOpen(req, acct, equity, mark));
+            return openResult(argSummary, opener.execute(req, acct, equity, mark));
         } catch (Exception e) {
             return fail("open_position", argSummary, e);
         }
@@ -254,298 +217,21 @@ public class TradeTools {
      */
     private String openResult(ObjectNode args, ObjectNode receipt) {
         String status = receipt.path("status").asString();
-        if ("ok".equals(status)) {
+        if (OK.equals(status)) {
             return ok("open_position", args, receipt);
         }
         String reason = receipt.path("reason").asString();
-        if ("rejected".equals(status)) {
-            record(action("open_position", args).put("status", "error").put("error", reason));
-            return "ERROR: " + reason;
+        if (REJECTED.equals(status)) {
+            record(action("open_position", args).put("status", ERROR).put("error", reason));
+            return replyPrefix(ERROR) + reason;
         }
         ObjectNode a = action("open_position", args).put("status", status).put("error", reason);
         a.set("result", receipt);
         record(a);
-        return status.toUpperCase(Locale.ROOT) + ": " + MAPPER.writeValueAsString(receipt);
+        return replyPrefix(status) + MAPPER.writeValueAsString(receipt);
     }
 
-    /** 普通开仓和反手新仓走同一套护栏。 */
-    private String validateOpen(TradeGuard.OpenReq req, Account acct, BigDecimal equity, BigDecimal mark) {
-        String reject = TradeGuard.validateOpen(req, equity, mark, symbolWhitelist, ctx.risk(), acct.snaps(),
-                prompts, ctx.lang());
-        if (reject != null) {
-            return reject;
-        }
-        FuturesPositionDTO sameSide = acct.sameSide(req.symbol(), req.side());
-        // 止盈价位数按 sim 并单后的算：仓位上还摊得到数量的旧价位、同方向挂单带的价位，加本次的新价位，同价算一档
-        Set<BigDecimal> prices = new TreeSet<>();
-        if (sameSide != null && sameSide.getTakeProfits() != null) {
-            Comparator<FuturesTakeProfit> byPrice = Comparator.comparing(FuturesTakeProfit::getPrice);
-            BigDecimal left = sameSide.getQuantity();
-            for (FuturesTakeProfit tp : sameSide.getTakeProfits().stream()
-                    .sorted("LONG".equals(req.side()) ? byPrice : byPrice.reversed()).toList()) {
-                if (left.signum() <= 0) {
-                    break;
-                }
-                prices.add(tp.getPrice());
-                left = left.subtract(tp.getQuantity());
-            }
-        }
-        for (FuturesOrderResponse order : acct.pending()) {
-            if (req.symbol().equals(order.getSymbol()) && ("OPEN_" + req.side()).equals(order.getOrderSide())
-                    && order.getTakeProfits() != null) {
-                order.getTakeProfits().forEach(tp -> prices.add(tp.getPrice()));
-            }
-        }
-        int hanging = prices.size();
-        req.takeProfits().forEach(tp -> prices.add(tp.price()));
-        if (prices.size() > TradeGuard.SIM_SPLIT_LIMIT) {
-            return prompts.get(ctx.lang(), "trader.reject.targetRungsOnAdd",
-                    Map.of("hanging", hanging, "limit", TradeGuard.SIM_SPLIT_LIMIT));
-        }
-        // 杠杆分档预检的合计名义额：同向持仓按标记价，同向挂单按限价，本次各档按入场参照价
-        BigDecimal total = req.notional(mark);
-        if (sameSide != null) {
-            total = total.add(sameSide.getQuantity().multiply(mark));
-        }
-        for (FuturesOrderResponse o : acct.pending()) {
-            if (req.symbol().equals(o.getSymbol()) && ("OPEN_" + req.side()).equals(o.getOrderSide())) {
-                total = total.add(o.getQuantity().multiply(o.getLimitPrice()));
-            }
-        }
-        List<SimTradeApi.Bracket> brackets = simTradeClient.getBrackets(List.of(req.symbol())).get(req.symbol());
-        return TradeGuard.validateBracket(total, req.leverage(), brackets, prompts, ctx.lang());
-    }
-
-    /**
-     * 普通开仓与反手共用：逐档下单、立计划、出回执。先挂限价档，最后下市价档。
-     * 回执的 status：ok 每档都成了；partial 有档被拒、已成交的留着；unknown 有档结果未知；rejected 被拒且什么都没留下。
-     */
-    private ObjectNode executeOpen(TradeGuard.OpenReq req, Account acct, BigDecimal equity, BigDecimal mark) {
-        FuturesPositionDTO sameSide = acct.sameSide(req.symbol(), req.side());
-        boolean coversPlan = sameSide != null || acct.pendingOpen(req.symbol(), req.side());
-        BigDecimal entryRef = req.entryPrice(mark);
-        AiTraderPlan live = coversPlan ? planStore.liveFor(ctx.traderId(), ctx.roundNo(), req.symbol(), req.side()) : null;
-        // 加仓沿用这份计划的订单组，首开新起一组
-        String groupId = live != null && live.getOrderGroup() != null ? live.getOrderGroup() : UUID.randomUUID().toString();
-        // 下单前的费用与风险估算。
-        ObjectNode batch = OpenFacts.of(req, mark, equity);
-        batch.set("entries", MAPPER.valueToTree(req.entries()));
-        ArrayNode results = MAPPER.createArrayNode();
-        List<PlanEntry> planned = new ArrayList<>();
-        String status = "ok";
-        String error = null;
-        // 市价档响应带仓位 id；限价加仓先认它将并入的那个仓；限价首开为 null，成交后才有
-        Long positionId = sameSide == null ? null : sameSide.getId();
-        List<EntryRung> limitsFirst = req.entries().stream()
-                .sorted(Comparator.comparing(e -> e.limitPrice() == null)).toList();
-        for (EntryRung entry : limitsFirst) {
-            ObjectNode result = MAPPER.createObjectNode()
-                    .put("quantity", entry.quantity())
-                    .put("limitPrice", entry.limitPrice());
-            results.add(result);
-            if (!"ok".equals(status)) {
-                result.put("status", "not_attempted");
-                continue;
-            }
-            PlanEntry saved = new PlanEntry();
-            saved.setLimitPrice(entry.limitPrice());
-            saved.setQuantity(entry.quantity());
-            saved.setStop(req.stopLossPrice());
-            saved.setTargets(req.takeProfits());
-            saved.setPlacedAt(System.currentTimeMillis());
-            saved.setAdd(coversPlan);
-            FuturesOpenRequest openReq = entryRequest(req, entry, groupId);
-            FuturesOrderResponse resp;
-            try {
-                resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
-            } catch (SimOrderRetry.UnknownOutcome e) {
-                // 结果未知：不撤别的档，记成未知留给对账认领
-                status = "unknown";
-                error = prompts.get(ctx.lang(), "trader.reject.orderUnknown");
-                saved.setStatus("UNKNOWN");
-                planned.add(saved);
-                result.put("status", "unknown");
-                continue;
-            } catch (Exception e) {
-                String reason = simReason(e);
-                result.put("status", "rejected").put("reason", reason);
-                int withdrawn = withdraw(planned, results, reason);
-                if (planned.stream().anyMatch(p -> !"CANCELLED".equals(p.getStatus()))) {
-                    status = "partial";
-                    error = reason;
-                } else {
-                    status = "rejected";
-                    error = withdrawn == 0 ? reason : prompts.get(ctx.lang(), "trader.reject.entriesWithdrawn",
-                            Map.of("reason", reason, "n", withdrawn));
-                }
-                continue;
-            }
-            result.setAll((ObjectNode) MAPPER.valueToTree(resp));
-            result.put("status", resp.getStatus().toLowerCase(Locale.ROOT));
-            saved.setOrderId(resp.getOrderId());
-            saved.setStatus(resp.getStatus());
-            if ("FILLED".equals(resp.getStatus())) {
-                saved.setFilledPrice(resp.getFilledPrice());
-                saved.setFee(resp.getCommission());
-                saved.setClosedAt(TradePairing.msOf(resp.getUpdatedAt()));
-            }
-            if (resp.getPositionId() != null) {
-                positionId = resp.getPositionId();
-            }
-            planned.add(saved);
-        }
-        if (!"rejected".equals(status)) {
-            persistPlan(req, entryRef, coversPlan, positionId, groupId, planned);
-        }
-        OpenFacts.addAtr(batch, req, entryRef, ctx.interval(),
-                entryContext.atr14(req.symbol(), ctx.interval(), System.currentTimeMillis()));
-        ObjectNode facts = MAPPER.createObjectNode();
-        facts.set("batch", batch);
-        facts.set("sameSide", sameSideFacts(req, acct, planned, equity, mark));
-        ObjectNode receipt = MAPPER.createObjectNode().put("status", status);
-        receipt.set("entries", results);
-        receipt.set("facts", facts);
-        if (error != null) {
-            receipt.put("reason", error);
-        }
-        return receipt;
-    }
-
-    /** 有档被拒：把本次已挂上的档撤回来，撤不掉的（已经成交）留着。返回撤掉了几档 */
-    private int withdraw(List<PlanEntry> planned, ArrayNode results, String reason) {
-        int withdrawn = 0;
-        for (PlanEntry entry : planned) {
-            if (!"PENDING".equals(entry.getStatus())) {
-                continue;
-            }
-            try {
-                FuturesOrderResponse cancelled = simTradeClient.cancelOrder(simUserId, entry.getOrderId());
-                entry.setStatus("CANCELLED");
-                entry.setReason(reason);
-                entry.setClosedAt(TradePairing.msOf(cancelled.getUpdatedAt()));
-                for (JsonNode row : results) {
-                    if (row.path("orderId").asLong(-1) == entry.getOrderId()) {
-                        ((ObjectNode) row).put("status", "cancelled");
-                    }
-                }
-                withdrawn++;
-            } catch (Exception e) {
-                log.info("[TradeTools] 分档撤回未成功 orderId={} msg={}", entry.getOrderId(), e.getMessage());
-            }
-        }
-        return withdrawn;
-    }
-
-    /** 这个币这个方向合计：下单前已有的仓位和挂单按现挂止损，加上本次留下的各档，全部被打掉的价差亏损 */
-    private ObjectNode sameSideFacts(TradeGuard.OpenReq req, Account acct, List<PlanEntry> planned,
-                                     BigDecimal equity, BigDecimal mark) {
-        BigDecimal loss = BigDecimal.ZERO;
-        for (FuturesPositionDTO p : acct.positions()) {
-            if (req.symbol().equals(p.getSymbol()) && req.side().equals(p.getSide())) {
-                loss = loss.add(StopOrders.lossAtStops(p));
-            }
-        }
-        for (FuturesOrderResponse o : acct.pending()) {
-            if (req.symbol().equals(o.getSymbol()) && ("OPEN_" + req.side()).equals(o.getOrderSide())) {
-                loss = loss.add(StopOrders.lossAtStops(o));
-            }
-        }
-        boolean isLong = "LONG".equals(req.side());
-        for (PlanEntry entry : planned) {
-            if ("CANCELLED".equals(entry.getStatus())) {
-                continue;
-            }
-            BigDecimal price = entry.getFilledPrice() != null ? entry.getFilledPrice()
-                    : entry.getLimitPrice() == null ? mark : entry.getLimitPrice();
-            BigDecimal perUnit = isLong ? price.subtract(entry.getStop()) : entry.getStop().subtract(price);
-            loss = loss.add(perUnit.multiply(entry.getQuantity()));
-        }
-        return MAPPER.createObjectNode()
-                .put("lossAtStops", loss)
-                .put("riskPctOfEquity", pctOfEquity(loss, equity));
-    }
-
-    private FuturesOpenRequest entryRequest(TradeGuard.OpenReq req, EntryRung entry, String groupId) {
-        FuturesOpenRequest openReq = new FuturesOpenRequest();
-        openReq.setSymbol(req.symbol());
-        openReq.setSide(req.side());
-        // trader 使用全仓模式。
-        openReq.setMarginMode(FuturesPosition.CROSS);
-        openReq.setOrderType(entry.orderType());
-        openReq.setQuantity(entry.quantity());
-        openReq.setLeverage(req.leverage());
-        openReq.setLimitPrice(entry.limitPrice());
-        openReq.setGroupId(groupId);
-        openReq.setMemo("ai_trader:" + req.playType());
-        // 本次订单的幂等键。
-        openReq.setClientRequestId(UUID.randomUUID().toString());
-        FuturesOpenRequest.StopLoss sl = new FuturesOpenRequest.StopLoss();
-        sl.setPrice(req.stopLossPrice());
-        sl.setQuantity(entry.quantity());
-        openReq.setStopLosses(List.of(sl));
-        List<BigDecimal> rungQty = TargetRung.quantities(req.takeProfits(), entry.quantity(), req.symbol());
-        List<FuturesOpenRequest.TakeProfit> tps = new ArrayList<>();
-        for (int i = 0; i < rungQty.size(); i++) {
-            FuturesOpenRequest.TakeProfit tp = new FuturesOpenRequest.TakeProfit();
-            tp.setPrice(req.takeProfits().get(i).price());
-            tp.setQuantity(rungQty.get(i));
-            tps.add(tp);
-        }
-        openReq.setTakeProfits(tps);
-        return openReq;
-    }
-
-    /**
-     * 成交/挂单即落计划（下轮唤醒回注）：同键已有持仓或挂单走覆盖，否则新立。
-     * 写失败只记日志不回错——交易已真实发生，回错误会诱导模型重复开仓。
-     */
-    private void persistPlan(TradeGuard.OpenReq req, BigDecimal entryRef, boolean coversPlan, Long positionId,
-                              String groupId, List<PlanEntry> entries) {
-        try {
-            AiTraderPlan plan = new AiTraderPlan();
-            plan.setTraderId(ctx.traderId());
-            plan.setRoundNo(ctx.roundNo());
-            plan.setSymbol(req.symbol());
-            plan.setSide(req.side());
-            plan.setPlayType(req.playType());
-            plan.setSignalsUsed(req.signalsUsed());
-            plan.setInvalidationCondition(req.invalidationCondition());
-            plan.setEntryPrice(entryRef);
-            plan.setStopLossPrice(req.stopLossPrice());
-            plan.setTakeProfitsJson(TargetRung.toJson(req.takeProfits()));
-            plan.setOpenedWakeTime(ctx.boundaryTime());
-            // 限价加仓先绑到它将并入的那个仓（不然下轮对账见键上有仓就把还挂着的单当成交了），首开留空等成交后对账补上
-            plan.setPositionId(positionId);
-            plan.setOrderGroup(groupId);
-            PlanEntry.save(plan, entries);
-            if (coversPlan) {
-                planStore.cover(plan, ctx.lang());
-            } else {
-                planStore.open(plan, group -> simTradeClient.getGroupOrders(simUserId, group), ctx.lang());
-            }
-            // 入场上下文要出网取，异步抓完按列补写到这条计划（覆盖时 id 是旧条目的）
-            long nowMs = System.currentTimeMillis();
-            Thread.startVirtualThread(() -> captureEntryContext(plan.getId(), req, entryRef, nowMs));
-        } catch (Exception e) {
-            log.warn("[TradeTools] 计划落库失败 traderId={} {} msg={}", ctx.traderId(), req.symbol(), e.getMessage());
-        }
-    }
-
-    /** 抓开仓那一刻的上下文写进计划的 entry_ctx_json；抓不到只记 warn */
-    void captureEntryContext(Long planId, TradeGuard.OpenReq req, BigDecimal entryRef, long nowMs) {
-        try {
-            planStore.setEntryContext(planId, entryContext.capture(req.symbol(), req.orderType(), entryRef,
-                    req.stopLossPrice(), req.leverage(), nowMs));
-        } catch (Exception e) {
-            log.warn("[TradeTools] 入场上下文抓取失败 traderId={} {} msg={}", ctx.traderId(), req.symbol(), e.getMessage());
-        }
-    }
-
-    @Tool(name = "close_position", description = """
-            Close (part of) an open position by positionId (from the [Account] block in your opening message, or get_account), at market price.
-            quantity: coins to close; pass the full position quantity to close it entirely.
-            reason: one sentence on why you are closing now.
-            A full close also cancels all unfilled grouped entry orders for this symbol and direction. Partial closes or partial targets leave them resting.""")
+    @Tool(name = "close_position")
     public String closePosition(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                                 @ToolParam(description = "Quantity in coins to close") double quantity,
                                 @ToolParam(description = "One sentence: why close now") String reason) {
@@ -579,19 +265,7 @@ public class TradeTools {
         }
     }
 
-    @Tool(name = "reverse_position", description = """
-            Fully close positionId at MARKET, then open the opposite side of the same symbol at MARKET.
-            quantity and leverage describe the NEW position; quantity need not match the old position.
-            stopLossPrice is REQUIRED for the new side. Optional takeProfits and required playType, signalsUsed and
-            invalidationCondition have the same meaning as open_position; signalsUsed also explains why
-            you are reversing now. The symbol and opposite side are inferred from the current position.
-            The new order is checked against the same opening rules before closing, then checked again
-            using the refreshed account and mark price after closing. Existing same-side exposure is
-            handled like open_position (an add). This is two orders, not an atomic transaction:
-            partial means execution was incomplete; inspect both leg receipts. unknown means
-            an order may have filled, so reconcile with get_account before placing another order.
-            The receipt includes each leg and the new order's facts; opening files a plan.
-            A full close also cancels all unfilled grouped entry orders for the old symbol and direction. Watch conditions remain in place.""")
+    @Tool(name = "reverse_position")
     public String reversePosition(
             @ToolParam(description = "Existing position id to close entirely") long positionId,
             @ToolParam(description = "NEW opposite position size in coins") double quantity,
@@ -632,7 +306,7 @@ public class TradeTools {
                     .filter(p -> !Long.valueOf(positionId).equals(p.getId())).toList(), before.pending().stream()
                     .filter(o -> !(pos.getSymbol().equals(o.getSymbol())
                             && ("OPEN_" + pos.getSide()).equals(o.getOrderSide()) && o.getGroupId() != null)).toList());
-            String reject = validateOpen(req, afterClose, equityOf.apply(before.positions()), markPrice.apply(req.symbol()));
+            String reject = opener.validate(req, afterClose, simTradeClient.getEquity(simUserId), markPrice.apply(req.symbol()));
             if (reject != null) {
                 return rejected("reverse_position", args, reject);
             }
@@ -641,7 +315,7 @@ public class TradeTools {
             }
             ObjectNode close = action("close_position", MAPPER.createObjectNode().put("positionId", positionId)
                     .put("quantity", pos.getQuantity()).put("reason", signalsUsed));
-            ObjectNode open = action("open_position", openArgs(req)).put("status", "not_attempted");
+            ObjectNode open = action("open_position", openArgs(req)).put("status", NOT_ATTEMPTED);
             legs.set("close", close);
             legs.set("open", open);
             activeLeg = close;
@@ -653,45 +327,46 @@ public class TradeTools {
             FuturesOrderResponse receipt = SimOrderRetry.send(() -> simTradeClient.closePosition(simUserId, closeReq));
             close.set("result", MAPPER.valueToTree(receipt));
             if ("LIQUIDATED".equals(receipt.getStatus())) {
-                close.put("status", "liquidated");
-                return reverseResult(args, legs, "partial", prompts.get(ctx.lang(), "trader.reject.reverseLiquidated"));
+                close.put("status", LIQUIDATED);
+                return reverseResult(args, legs, PARTIAL,prompts.get(ctx.lang(), "trader.reject.reverseLiquidated"));
             }
-            close.put("status", "ok");
+            close.put("status", OK);
             closed = true;
             revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.close"),
                     receipt.getQuantity().stripTrailingZeros().toPlainString(), signalsUsed);
             activeLeg = open;
             Account after = account();
             BigDecimal mark = markPrice.apply(req.symbol());
-            BigDecimal equity = equityOf.apply(after.positions());
-            reject = validateOpen(req, after, equity, mark);
+            // 平完再查一次：护栏按平完之后的权益算占比
+            BigDecimal equity = simTradeClient.getEquity(simUserId);
+            reject = opener.validate(req, after, equity, mark);
             if (reject == null && roundExpired()) {
                 reject = prompts.get(ctx.lang(), "trader.reject.expired");
             }
             if (reject != null) {
-                open.put("status", "rejected").put("rejected", reject);
-                return reverseResult(args, legs, "partial", reject);
+                open.put("status", REJECTED).put("rejected", reject);
+                return reverseResult(args, legs, PARTIAL,reject);
             }
-            ObjectNode opened = executeOpen(req, after, equity, mark);
+            ObjectNode opened = opener.execute(req, after, equity, mark);
             open.set("result", opened);
             String openStatus = opened.path("status").asString();
             open.put("status", openStatus);
-            return reverseResult(args, legs, "ok".equals(openStatus) ? "ok" : "unknown".equals(openStatus) ? "unknown" : "partial",
+            return reverseResult(args, legs, OK.equals(openStatus) ? OK : UNKNOWN.equals(openStatus) ? UNKNOWN : PARTIAL,
                     opened.path("reason").asString(null));
         } catch (SimOrderRetry.UnknownOutcome e) {
             String cause = SimTradeClient.describe(e, messages, ctx.lang());
             String msg = prompts.get(ctx.lang(), "trader.reject.unknown",
                     Map.of("cause", cause.substring(0, Math.min(cause.length(), 200))));
-            activeLeg.put("status", "unknown").put("error", msg);
-            return reverseResult(args, legs, "unknown", msg);
+            activeLeg.put("status", UNKNOWN).put("error", msg);
+            return reverseResult(args, legs, UNKNOWN, msg);
         } catch (Exception e) {
             if (activeLeg == null) {
                 return fail("reverse_position", args, e);
             }
             String msg = SimTradeClient.describe(e, messages, ctx.lang());
             msg = msg.substring(0, Math.min(msg.length(), 300));
-            activeLeg.put("status", "error").put("error", msg);
-            return reverseResult(args, legs, closed ? "partial" : "error", msg);
+            activeLeg.put("status", ERROR).put("error", msg);
+            return reverseResult(args, legs, closed ? PARTIAL : ERROR, msg);
         }
     }
 
@@ -703,17 +378,11 @@ public class TradeTools {
             a.put("error", error);
         }
         record(a);
-        String prefix = "ok".equals(status) ? "" : status.toUpperCase(java.util.Locale.ROOT) + ": ";
+        String prefix = OK.equals(status) ? "" : replyPrefix(status);
         return prefix + MAPPER.writeValueAsString(a);
     }
 
-    @Tool(name = "set_stop_loss", description = """
-            Replace the stop-loss of an open position (positionId from the [Account] block in your opening message, or get_account). The new stop
-            always covers the WHOLE position — you do not pass a quantity. Guard: tighten only —
-            LONG stops may only move UP, SHORT stops only DOWN (relative to the current stop); it cannot
-            sit on the far side of the current price (it would fire at once). To exit, use close_position.
-            reason is REQUIRED and becomes part of the position's public plan revision history.
-            First update eligible PENDING entries in the same plan group, then the position. An entry keeps its own stop if the new stop is inside its entry price or is not tighter than its own stop; the receipt lists updated, retained and failed entries. With no filled position yet, cancel the entries with reasons and place them again.""")
+    @Tool(name = "set_stop_loss")
     public String setStopLoss(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                               @ToolParam(description = "New stop-loss price") double stopLossPrice,
                               @ToolParam(description = "Why you move the stop now, e.g. 'price +2R, lock breakeven'") String reason) {
@@ -767,15 +436,7 @@ public class TradeTools {
         }
     }
 
-    @Tool(name = "set_take_profit", description = """
-            Replace ALL take-profit orders of an open position (positionId from the [Account] block in your opening
-            message, or get_account) with a new set of rungs: up to 3, each a price plus the percent of the current
-            position it closes (percents sum to at most 100; whatever is left has no take-profit order). An empty
-            array removes every take-profit order. Rungs may move nearer or farther; each must still be on the
-            profit side of the current price (LONG above, SHORT below), otherwise it would fire at once — to leave
-            now, use close_position.
-            reason is REQUIRED (public plan revision history).
-            Update PENDING entries in the same plan group first, then reread the position size and replace its targets. Each entry uses its own quantity; any target below one quantity step rejects the request before changes. An empty array clears targets on both pending entries and the position. With no filled position yet, cancel the entries with reasons and place them again.""")
+    @Tool(name = "set_take_profit")
     public String setTakeProfit(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                                 @ToolParam(description = "The whole new set of take-profit rungs, each {price, percent}; an empty array removes them all") List<TargetRung> takeProfits,
                                 @ToolParam(description = "Why you change the targets now, e.g. 'trend accelerating, extend to next resistance'") String reason) {
@@ -902,12 +563,7 @@ public class TradeTools {
         return rungs.isEmpty() ? prompts.get(ctx.lang(), "trader.revise.none") : TargetRung.text(rungs);
     }
 
-    @Tool(name = "write_plan", description = """
-            Backfill a trading plan for an open position that has NO plan record (positionId from the
-            [Account] block in your opening message, or get_account). The stop and the take-profit rungs are
-            copied from the position's current orders.
-            Rejected if the position already has a plan — plans are immutable; the only
-            legal ways to change a thesis are adding to the position or closing and reopening.""")
+    @Tool(name = "write_plan")
     public String writePlan(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                             @ToolParam(description = "Thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER") String playType,
                             @ToolParam(description = "One sentence citing concrete data behind holding this position") String signalsUsed,
@@ -951,8 +607,8 @@ public class TradeTools {
             // 持有时长按仓位真实开仓时间算，不是补立时刻——补立不能"清零仓龄"
             plan.setOpenedWakeTime(pos.getCreatedAt() != null
                     ? pos.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    : ctx.boundaryTime());
-            TraderPlanStore.appendRevision(plan, ctx.boundaryTime(), prompts.get(ctx.lang(), "trader.revise.fileNew"),
+                    : ctx.wakeTime());
+            TraderPlanStore.appendRevision(plan, ctx.wakeTime(), prompts.get(ctx.lang(), "trader.revise.fileNew"),
                     prompts.get(ctx.lang(), "trader.revise.fileNewNote"), signalsUsed);
             // 前置校验已确认无计划，补立就是新立
             planStore.open(plan, group -> simTradeClient.getGroupOrders(simUserId, group), ctx.lang());
@@ -967,7 +623,7 @@ public class TradeTools {
      * 每次开仓都现查——一轮里模型可能连开几笔，用唤醒开头的快照会算漏。
      * 挂单必须计入：只数持仓的话，先挂三个不同币的限价单就绕过了单仓限制。
      */
-    private record Account(List<FuturesPositionDTO> positions, List<FuturesOrderResponse> pending) {
+    record Account(List<FuturesPositionDTO> positions, List<FuturesOrderResponse> pending) {
         List<TradeGuard.PosSnap> snaps() {
             List<TradeGuard.PosSnap> out = new ArrayList<>();
             positions.forEach(p ->
@@ -991,10 +647,10 @@ public class TradeTools {
                     .findFirst().orElse(null);
         }
 
-        /** 同币同向还挂着开仓单 */
-        boolean pendingOpen(String symbol, String side) {
+        /** 同币同向还挂着的开仓单 */
+        List<FuturesOrderResponse> pendingOpens(String symbol, String side) {
             return pending.stream()
-                    .anyMatch(o -> symbol.equals(o.getSymbol()) && ("OPEN_" + side).equals(o.getOrderSide()));
+                    .filter(o -> symbol.equals(o.getSymbol()) && ("OPEN_" + side).equals(o.getOrderSide())).toList();
         }
     }
 
@@ -1019,7 +675,7 @@ public class TradeTools {
         try {
             AiTraderPlan plan = planStore.liveFor(ctx.traderId(), ctx.roundNo(), symbol, side);
             if (plan != null) {
-                planStore.revise(plan, ctx.boundaryTime(), type, change, reason);
+                planStore.revise(plan, ctx.wakeTime(), type, change, reason);
             }
         } catch (Exception e) {
             log.warn("[TradeTools] 修订落库失败 traderId={} {} msg={}", ctx.traderId(), symbol, e.getMessage());
@@ -1041,7 +697,7 @@ public class TradeTools {
         if (cause.length() > 200) {
             cause = cause.substring(0, 200) + "…";
         }
-        record(action(tool, args).put("status", "unknown").put("error", cause));
+        record(action(tool, args).put("status", UNKNOWN).put("error", cause));
         log.warn("[TradeTools] {} 结果未知 simUserId={} msg={}", tool, simUserId, cause);
         return prompts.get(ctx.lang(), "trader.reject.unknown", Map.of("cause", String.valueOf(cause)));
     }
@@ -1049,10 +705,10 @@ public class TradeTools {
     /** 护栏拒绝：与 open_position 的 REJECTED 同一语义，进动作轨迹，模型可修正重试。 */
     private String rejected(String tool, ObjectNode args, String reason) {
         record(action(tool, args).put("rejected", reason));
-        return "REJECTED: " + reason;
+        return replyPrefix(REJECTED) + reason;
     }
 
-    @Tool(name = "cancel_order", description = "Cancel one or more pending limit orders by orderIds (from the [Account] block's pendingOrders in your opening message, or get_account). reason is REQUIRED and records why these entries were cancelled in the plan and its revision history. Partial success starts with PARTIAL:.")
+    @Tool(name = "cancel_order")
     public String cancelOrder(@ToolParam(description = "One or more order ids from the [Account] block's pendingOrders in your opening message (or get_account)") List<Long> orderIds,
                               @ToolParam(description = "Why these pending orders should be cancelled") String reason) {
         ObjectNode args = MAPPER.createObjectNode().put("reason", reason);
@@ -1086,7 +742,7 @@ public class TradeTools {
         }
         if (!cancelled.isEmpty()) {
             try {
-                planStore.cancelEntries(ctx.traderId(), ctx.roundNo(), cancelled, reason, ctx.boundaryTime(), ctx.lang());
+                planStore.cancelEntries(ctx.traderId(), ctx.roundNo(), cancelled, reason, ctx.wakeTime(), ctx.lang());
             } catch (Exception e) {
                 log.warn("[TradeTools] 撤单标档失败 traderId={}", ctx.traderId(), e);
             }
@@ -1098,33 +754,11 @@ public class TradeTools {
         if (cancelled.isEmpty()) {
             return fail("cancel_order", args, error);
         }
-        record(action("cancel_order", args).put("status", "partial").put("error", error).set("result", receipt));
+        record(action("cancel_order", args).put("status", PARTIAL).put("error", error).set("result", receipt));
         return "PARTIAL: " + MAPPER.writeValueAsString(receipt);
     }
 
-    @Tool(name = "set_watch", description = """
-            Replace ALL your watch conditions on one symbol. The symbol may be any coin the platform tracks, not
-            only your tradable ones (e.g. BTCUSDT as the market benchmark). The platform watches them between
-            wake-ups and wakes you the moment one is met: a non-routine wake-up whose opening names the condition
-            and your note.
-            kind: TOUCH_ABOVE / TOUCH_BELOW (mark price touches level), CLOSE_ABOVE / CLOSE_BELOW (a candle of
-            period 5m/15m/1h/4h/1d closes above / below level; a close of your heartbeat period or longer lands on the
-            routine wake-up at that moment and is read out there, not as a separate wake-up), AT_TIME (at `at`,
-            Beijing time yyyy-MM-dd HH:mm).
-            The current Beijing time is nowBeijing in the [Account] block. note: one sentence to your next self about
-            what it means when this fires. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward
-            (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm
-            then. The previous set on the symbol is replaced in full, an empty array clears it. A condition fires
-            once and is removed.
-            A condition may carry an action — a standing order the platform carries out by itself the moment the
-            condition fires, on any of your positions or pending orders (not necessarily on this symbol):
-            MOVE_STOP (positionId, stopLossPrice: tighten that position's stop to this price), CLOSE (positionId,
-            closePercent: close that percent of the position at market, 100 = all), CANCEL_ORDER (orderId: cancel
-            that pending order). There is no action that opens a position. After MOVE_STOP or CANCEL_ORDER you are
-            NOT woken: the next opening message reports what was done, and until then that direction on this
-            symbol has no condition armed. After CLOSE you are woken. If the action cannot be carried out (the
-            position or order is gone, the stop would loosen or sit on the wrong side of the price) you are woken
-            with the reason.""")
+    @Tool(name = "set_watch")
     public String setWatch(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                            @ToolParam(description = "The whole new list for this symbol (at most one upward, one downward, one AT_TIME); an empty array clears it") List<WatchSpec> watches) {
         ObjectNode args = MAPPER.createObjectNode().put("symbol", symbol);
@@ -1162,7 +796,7 @@ public class TradeTools {
                 }
                 presets.add(MAPPER.writeValueAsString(action));
             }
-            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, presets, ctx.boundaryTime());
+            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, presets, ctx.wakeTime());
             return ok("set_watch", args, "{\"ok\":true,\"armed\":" + watches.size() + "}");
         } catch (Exception e) {
             return fail("set_watch", args, e);
@@ -1231,7 +865,7 @@ public class TradeTools {
     /** 成功：结果同时写进动作轨迹（摘要）与工具返回值（全文）。 */
     private String ok(String tool, ObjectNode args, Object payload) {
         String s = payload instanceof String str ? str : MAPPER.writeValueAsString(payload);
-        ObjectNode action = action(tool, args).put("status", "ok");
+        ObjectNode action = action(tool, args).put("status", OK);
         // 轨迹里只存摘要，防止 get_account 大 JSON 把决策行撑爆；开仓回执整条存
         if (s.length() > 1000 && !"open_position".equals(tool)) {
             action.put("result", s.substring(0, 1000) + "…");
@@ -1251,16 +885,20 @@ public class TradeTools {
     }
 
     private String fail(String tool, ObjectNode args, String msg) {
-        record(action(tool, args).put("status", "error").put("error", msg));
+        record(action(tool, args).put("status", ERROR).put("error", msg));
         log.warn("[TradeTools] {} 失败 simUserId={} msg={}", tool, simUserId, msg);
-        return "ERROR: " + msg;
+        return replyPrefix(ERROR) + msg;
+    }
+
+    private String simReason(Exception e) {
+        return simReason(e, messages, ctx.lang());
     }
 
     /** sim 那侧的拒因成文 */
-    private String simReason(Exception e) {
-        // sim 拒因按码查词表跟 ctx.lang()：这句既进模型上下文又进公开时间线，
+    static String simReason(Exception e, MessageCatalog messages, AgentLang lang) {
+        // sim 拒因按码查词表跟 trader 主人的语言：这句既进模型上下文又进公开时间线，
         // 跟不上语言的话英文 trader 会读到一句中文（模型立刻跟着混）
-        String msg = SimTradeClient.describe(e, messages, ctx.lang());
+        String msg = SimTradeClient.describe(e, messages, lang);
         // 上游异常可能拖着整段响应体（曾见全市场premiumIndex数组进拒因），截断防烧token防撑爆轨迹
         return msg.length() > 300 ? msg.substring(0, 300) + "…" : msg;
     }

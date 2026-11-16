@@ -11,8 +11,8 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -249,7 +249,7 @@ public class TraderActionService {
 
     /** 今天（北京时间零点起）本局醒了几次，按叫醒原因分，多的在前；复盘不算醒来，跳过的不算 */
     private Map<String, Long> todayWakes(AiTrader t) {
-        long dayStart = LocalDate.now(WakeWindow.ZONE).atStartOfDay(WakeWindow.ZONE).toInstant().toEpochMilli();
+        long dayStart = LocalDate.now(BeijingTime.ZONE).atStartOfDay(BeijingTime.ZONE).toInstant().toEpochMilli();
         List<Map<String, Object>> rows = decisionMapper.selectMaps(new QueryWrapper<AiTraderDecision>()
                 .select("kind", "COUNT(*) AS n")
                 .eq("trader_id", t.getId())

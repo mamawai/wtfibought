@@ -95,10 +95,11 @@ public class ByokModelBuilder {
                 false, false, model, CALL_TIMEOUT, 3, null, null,
                 observationRegistry, null, REJECT_CROSS_HOST_REDIRECT);
         // async 也必须显式给：builder 见 openAiClientAsync 为空就拿 options 自建，而 options 里没 key，
-        // SDK 当场抛 "At least one credential source must be specified"（哪怕根本不走流式）
+        // SDK 当场抛 "At least one credential source must be specified"（哪怕根本不走流式）。
+        // 流式只走它，重试在 LlmClient 那一层，SDK 自带的关掉（maxRetries=0）
         OpenAIClientAsync clientAsync = OpenAiSetup.setupAsyncClient(
                 OpenAiBaseUrl.forSdk(baseUrl), apiKey, null, null, null, null,
-                false, false, model, CALL_TIMEOUT, 3, null, null,
+                false, false, model, CALL_TIMEOUT, 0, null, null,
                 observationRegistry, null, REJECT_CROSS_HOST_REDIRECT);
         // 不设 temperature：走各模型默认值，思考模型（多数拒收或忽略温度）也安全。
         // 不设 timeout：留空就用上面 client 的 10 分钟

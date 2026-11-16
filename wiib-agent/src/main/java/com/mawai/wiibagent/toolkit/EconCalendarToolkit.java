@@ -31,20 +31,8 @@ public class EconCalendarToolkit {
 
     private final EconCalendarMapper mapper;
 
-    // 描述按语言取自词表 tool.econ_calendar，注解这份只当词表缺失时的兜底
-    @Tool(name = "econ_calendar", description = """
-            US macro economic calendar: TradingView high-impact US events only (no other countries).
-            Without indicator: events published in the last 3 days (with actual values) and scheduled in the
-            next 7 days. With indicator (keyword matched against event titles, case-insensitive): the latest
-            12 events whose title contains it, newest first, including the next scheduled one. A broad keyword
-            mixes several series ("Inflation Rate" hits YoY / MoM / Core); for one series pass the full
-            title, e.g. "Inflation Rate YoY".
-            Titles follow TradingView naming: CPI is "Inflation Rate YoY/MoM" (core: "Core Inflation Rate"),
-            NFP "Non Farm Payrolls", PCE "Core PCE Price Index MoM", Fed decision "Fed Interest Rate Decision",
-            minutes "FOMC Minutes", unemployment "Unemployment Rate".
-            Fields: time (UTC+8), title, actual, forecast, previous. An event with forecast/previous is
-            numeric: past time and no actual means not published yet; neither forecast nor previous means
-            a speech or meeting.""")
+    // 描述在词表 tool.econ_calendar（见 LocalizedToolCallbacks）
+    @Tool(name = "econ_calendar")
     public String econCalendar(
             @ToolParam(required = false, description = """
                     Keyword matched against event titles, e.g. "Inflation Rate YoY", "Non Farm Payrolls",

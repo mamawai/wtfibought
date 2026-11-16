@@ -83,10 +83,8 @@ public class NewsToolkit {
         private final NewsToolkit toolkit;
         private final AgentLang lang;
 
-        // 描述按语言取自词表 tool.news_search，注解这份只当词表缺失时的兜底
-        @Tool(name = "news_search", description = """
-                Market news flashes (title + full body + source + time). With no arguments: the latest batch.
-                With keyword and/or hours: search the local archive, newest first, at most 30 flashes.""")
+        // 描述在词表 tool.news_search（见 LocalizedToolCallbacks）
+        @Tool(name = "news_search")
         public String newsSearch(
                 @ToolParam(required = false, description = "Keyword to match in title or body, Chinese or English, case-insensitive (e.g. ETH, 解锁, hack)")
                 String keyword,

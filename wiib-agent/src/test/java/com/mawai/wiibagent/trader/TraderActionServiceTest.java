@@ -14,7 +14,7 @@ import com.mawai.wiibagent.trader.TraderActionService.ActionResult;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -454,7 +454,7 @@ class TraderActionServiceTest {
             return w.getParamNameValuePairs().containsValue(AiTraderDecision.KIND_REVIEW) ? reviewRow : wakeRow;
         });
         // 今天醒了几次：只数北京时间零点起的，跳过的不算
-        long todayStart = LocalDate.now(WakeWindow.ZONE).atStartOfDay(WakeWindow.ZONE).toInstant().toEpochMilli();
+        long todayStart = LocalDate.now(BeijingTime.ZONE).atStartOfDay(BeijingTime.ZONE).toInstant().toEpochMilli();
         when(decisionMapper.selectMaps(any())).thenAnswer(inv -> {
             QueryWrapper<AiTraderDecision> w = inv.getArgument(0);
             w.getTargetSql();

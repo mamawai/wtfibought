@@ -47,17 +47,8 @@ public class BehaviorToolkit {
         this.lang = lang;
     }
 
-    @Tool(name = "analyze_my_behavior", description = """
-            Run a full behaviour analysis of THIS user's own account across every dimension of the
-            platform (crypto spot, tokenized US equities, futures, prediction) plus
-            a risk profile and targeted suggestions.
-            ONLY call when the user EXPLICITLY asks about their own habits/style/risk profile, e.g.
-            "analyse my behaviour" / "what kind of trader am I" - never call this uninvited.
-            EXPENSIVE: 7 internal data calls plus one large deep-model call. Results are cached for
-            30 minutes, so calling it twice in a row gains nothing.
-            The full report is rendered as a card in the chat UI. Your job afterwards is to talk about
-            it, not to recite every number - unless cardShown is false, in which case the user cannot
-            see the card and you must state the key findings yourself.""")
+    // 描述在词表 tool.analyze_my_behavior（见 LocalizedToolCallbacks）
+    @Tool(name = "analyze_my_behavior")
     public String analyzeMyBehavior(ToolContext context) {
         String sessionId = ToolRunContext.sessionId(context);
         log.info("[BehaviorTool] 执行行为分析 session={} userId={}", sessionId, userId);

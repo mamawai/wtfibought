@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.TradeEvent;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import java.util.Set;
 import com.mawai.wiibagent.learning.ReviewRunner;
@@ -65,13 +66,37 @@ class TraderSchedulerTest {
         return t;
     }
 
+    /** 一根刚收盘的 5m：墙钟钉在收盘那一刻 */
+    private KlineClosedEvent fresh(TraderScheduler s, String symbol, long closeTime) {
+        s.nowMs = () -> closeTime + 1;
+        return new KlineClosedEvent(this, symbol, "5m", closeTime);
+    }
+
+    /** 收盘超过 5 分钟的旧事件（停机后重放的积压）：收盘类盯盘照常判，不发例行、不留 SKIPPED、不启动交接 */
+    @Test
+    void staleKlineEventsDoNotWake() {
+        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + TraderScheduler.STALE_EVENT_MS + 1;
+
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", H1_CLOSE));
+        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+
+        verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(H1_CLOSE), any());
+        verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(DAY_BOUNDARY - 1), any());
+        verify(runner, after(300).never()).wake(any(), anyLong());
+        verify(runner, never()).recordSkipped(any(), anyLong());
+        verify(reviewRunner, never()).review(any(), anyLong());
+        assertThat(s.isHandoverActive()).isFalse();
+    }
+
     private AlertTrigger trig() {
         return new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("63120"), AlertTrigger.DOWN, H1_BOUNDARY);
     }
 
     /** 北京时间 2026-07-27 hh:mm 的 epoch ms（与 DAY_BOUNDARY 同一天；+8 整时区，整点即 UTC 整点） */
     private static long bj(int h, int m) {
-        return ZonedDateTime.of(2026, 7, 27, h, m, 0, 0, WakeWindow.ZONE).toInstant().toEpochMilli();
+        return ZonedDateTime.of(2026, 7, 27, h, m, 0, 0, BeijingTime.ZONE).toInstant().toEpochMilli();
     }
 
     private AiTrader nightTrader() {
@@ -88,7 +113,7 @@ class TraderSchedulerTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(nightTrader()));
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", bj(12, 0) - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",bj(12, 0) - 1));
 
         verify(runner, after(300).never()).wake(any(), anyLong());
         verify(runner, never()).recordSkipped(any(), anyLong());
@@ -100,7 +125,7 @@ class TraderSchedulerTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(nightTrader()));
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", bj(22, 0) - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",bj(22, 0) - 1));
 
         verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(bj(22, 0)));
     }
@@ -149,7 +174,7 @@ class TraderSchedulerTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(t));
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
 
         verify(reviewRunner, timeout(2_000)).review(any(AiTrader.class), eq(DAY_BOUNDARY));
         verify(runner, never()).wake(any(), anyLong());
@@ -166,7 +191,7 @@ class TraderSchedulerTest {
         when(gate.released(H1_BOUNDARY)).thenReturn(release);
         TraderScheduler s = sched(gate);
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", H1_CLOSE));
+        s.onKlineClosed(fresh(s, "BTCUSDT",H1_CLOSE));
 
         verify(runner, after(300).never()).wake(any(), anyLong());
         release.complete(null);
@@ -182,7 +207,7 @@ class TraderSchedulerTest {
         when(gate.released(DAY_BOUNDARY)).thenReturn(release);
         TraderScheduler s = sched(gate);
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
 
         verify(runner, after(300).never()).wake(any(), anyLong());
         release.complete(null);
@@ -317,7 +342,7 @@ class TraderSchedulerTest {
         s.nowMs = () -> H1_BOUNDARY + 600_000L;
         WatchTrigger hit = closeHit(31L, H1_BOUNDARY + 600_000L);
 
-        s.onWatchHit(hit);
+        s.onTrigger(new TriggerFired(7L, hit));
 
         verify(runner, timeout(2_000)).wakeTriggered(any(AiTrader.class), eq(List.of(hit)));
     }
@@ -336,7 +361,7 @@ class TraderSchedulerTest {
         TraderScheduler s = sched();
         s.nowMs = () -> H1_BOUNDARY + 1_000L;
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", H1_CLOSE));
+        s.onKlineClosed(fresh(s, "BTCUSDT",H1_CLOSE));
 
         verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(H1_BOUNDARY));
         verify(runner, after(300).never()).wakeTriggered(any(), any());
@@ -354,7 +379,7 @@ class TraderSchedulerTest {
         TraderScheduler s = sched();
         s.nowMs = () -> H1_BOUNDARY + 1_000L;
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", H1_CLOSE));
+        s.onKlineClosed(fresh(s, "BTCUSDT",H1_CLOSE));
 
         verify(runner, timeout(2_000)).wakeTriggered(any(AiTrader.class), eq(List.of(hit)));
         verify(runner, never()).wake(any(), anyLong());
@@ -366,8 +391,8 @@ class TraderSchedulerTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
-        s.onKlineClosed(new KlineClosedEvent(this, "ETHUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "ETHUSDT",DAY_BOUNDARY - 1));
 
         verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(DAY_BOUNDARY - 1), any());
         verify(watchSentinel).closeHits(eq("ETHUSDT"), eq(DAY_BOUNDARY - 1), any());
@@ -460,7 +485,7 @@ class TraderSchedulerTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
 
         verify(reviewRunner, timeout(2_000)).review(any(AiTrader.class), eq(DAY_BOUNDARY));
         verify(runner).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
@@ -472,7 +497,7 @@ class TraderSchedulerTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", H1_CLOSE));
+        s.onKlineClosed(fresh(s, "BTCUSDT",H1_CLOSE));
 
         verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(H1_BOUNDARY));
         verify(reviewRunner, after(300).never()).review(any(), anyLong());
@@ -486,7 +511,7 @@ class TraderSchedulerTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(t));
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
 
         verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
         verify(reviewRunner, after(300).never()).review(any(), anyLong());
@@ -503,7 +528,7 @@ class TraderSchedulerTest {
             return null;
         }).when(runner).wake(any(), anyLong());
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
 
         verify(runner, timeout(2_000)).wake(any(), anyLong());
         verify(reviewRunner, after(300).never()).review(any(), anyLong());
@@ -527,12 +552,12 @@ class TraderSchedulerTest {
             return null;
         }).when(runner).wake(any(), anyLong());
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
 
         verify(runner, timeout(2_000)).wake(any(), anyLong());
         awaitWindowOpen(s);
         assertThat(tradeHold.getCount()).isEqualTo(1);   // 交易还卡着，窗口已经开了
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY + 900_000L - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY + 900_000L - 1));
         verify(runner, after(300).times(1)).wake(any(), anyLong());
         verify(runner, never()).recordSkipped(any(), anyLong());
         tradeHold.countDown();
@@ -550,20 +575,20 @@ class TraderSchedulerTest {
             return null;
         }).when(reviewRunner).review(any(), anyLong());
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
         verify(reviewRunner, timeout(2_000)).review(any(), anyLong());   // 复盘在跑=窗口已开
 
         // 窗口内的下一根 1h 边界事件被整个丢弃——连 SKIPPED 都不记。
         // 只断言"没 wake"不够：复盘占着 inFlight 也能挡 wake 但会记 SKIPPED，
         // 分不清是窗口丢弃还是互斥跳过（变异测试实抓过这个盲区）
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY + 3_600_000L - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY + 3_600_000L - 1));
         verify(runner, after(300).times(1)).wake(any(), anyLong());
         verify(runner, never()).recordSkipped(any(), anyLong());
 
         reviewHold.countDown();
         awaitWindowClosed(s);
         // 窗口关闭后例行恢复如常
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY + 7_200_000L - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY + 7_200_000L - 1));
         verify(runner, timeout(2_000).times(2)).wake(any(), anyLong());
     }
 
@@ -581,9 +606,9 @@ class TraderSchedulerTest {
         when(watchSentinel.closeHits(eq("BTCUSDT"), eq(inWindow), any()))
                 .thenReturn(List.of(closeHit(31L, DAY_BOUNDARY + 300_000L)));
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
         verify(reviewRunner, timeout(2_000)).review(any(), anyLong());   // 复盘在跑=窗口已开
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", inWindow));
+        s.onKlineClosed(fresh(s, "BTCUSDT",inWindow));
 
         verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(inWindow), any());
         verify(runner, after(300).never()).wakeTriggered(any(), any());
@@ -602,7 +627,7 @@ class TraderSchedulerTest {
             reviewHold.await();
             return null;
         }).when(reviewRunner).review(any(), anyLong());
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
         verify(reviewRunner, timeout(2_000)).review(any(), anyLong());
 
         s.tryTriggerWake(7L,trig());
@@ -624,7 +649,7 @@ class TraderSchedulerTest {
         doThrow(new RuntimeException("复盘炸了")).when(reviewRunner).review(argThat(t -> t.getId() == 7L), anyLong());
         TraderScheduler s = sched();
 
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
 
         verify(reviewRunner, timeout(2_000)).review(argThat(t -> t.getId() == 8L), eq(DAY_BOUNDARY));
         awaitWindowClosed(s);

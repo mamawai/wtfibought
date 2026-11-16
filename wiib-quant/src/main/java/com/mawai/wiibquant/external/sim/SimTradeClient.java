@@ -16,6 +16,7 @@ import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.Map;
 
@@ -108,9 +109,19 @@ public class SimTradeClient {
         return new BigDecimal(String.valueOf(data.get("balance")));
     }
 
-    /** 余额明细（balance + frozenBalance），AI Trader 权益计算用。 */
+    /** 余额明细：balance、frozenBalance、available（全仓下单额度）、equity（合约账户权益）。 */
     public Map<String, Object> getBalanceDetail(Long userId) {
         return unwrap(api.balance(userId));
+    }
+
+    /** 合约账户权益，sim 按它的统一口径算好的（余额 + 冻结 + 各持仓估值）。 */
+    public BigDecimal getEquity(Long userId) {
+        return equityOf(getBalanceDetail(userId));
+    }
+
+    /** 从余额明细里取权益：手里已经有一份明细的直接用它，不再多请求一次 */
+    public static BigDecimal equityOf(Map<String, Object> balanceDetail) {
+        return new BigDecimal(String.valueOf(balanceDetail.get("equity"))).setScale(8, RoundingMode.HALF_UP);
     }
 
     /** 幂等创建量化账户，返回 userId。 */

@@ -51,16 +51,8 @@ public class DelegateToolkit {
         this.lang = lang;
     }
 
-    // description 只是编译期兜底：真正发给模型的那份按语言取自词表 tool.delegate（见 LocalizedToolCallbacks）
-    @Tool(name = "delegate", description = """
-            Hand a self-contained sub-task to a background worker agent and return at once.
-            worker: "researcher" (reads the news flashes and, when the endpoint allows, the web; returns a sourced
-            digest) or "analyst" (pulls live market data and indicators for symbols; returns a structured brief).
-            brief: the whole task in one message - objective, scope (symbols / time range / sources), what the
-            report must contain and roughly how long it may be. The worker sees nothing of this conversation.
-            Returns {runId, status: "running"} immediately: keep answering what you can, do not wait or poll;
-            you will be woken with the worker's report. Several may run at once up to the user's limit;
-            a refusal comes back as {error} - then do that part yourself with your own tools.""")
+    // 描述在词表 tool.delegate（见 LocalizedToolCallbacks）
+    @Tool(name = "delegate")
     public String delegate(@ToolParam(description = "researcher | analyst") String worker,
                            @ToolParam(description = "The complete, self-contained task brief for the worker") String brief,
                            @ToolParam(required = false, description = "Short label for the process rail, e.g. 'ETF flows this week'") String label,

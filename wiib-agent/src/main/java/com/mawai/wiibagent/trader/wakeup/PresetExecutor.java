@@ -7,6 +7,7 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.StopOrders;
 import com.mawai.wiibagent.trader.trade.PendingProtection;
 import com.mawai.wiibagent.trader.trade.TargetRung;
+import com.mawai.wiibagent.trader.trade.TradeActions;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
@@ -194,7 +195,11 @@ public class PresetExecutor {
         String symbol = action.path("symbol").asString();
         String orderSide = action.path("side").asString();
         FuturesOrderResponse response = simTradeClient.cancelOrder(trader.getSimUserId(), action.path("orderId").asLong());
-        planStore.cancelEntries(trader.getId(), trader.getRoundNo(), List.of(response), w.getNote(), at, lang);
+        try {
+            planStore.cancelEntries(trader.getId(), trader.getRoundNo(), List.of(response), w.getNote(), at, lang);
+        } catch (Exception e) {
+            log.warn("[Preset] 撤单标档失败 traderId={} watchId={} msg={}", trader.getId(), w.getId(), e.toString());
+        }
         return new Done(true, prompts.get(lang, "trader.preset.cancelled", Map.of(
                 "symbol", symbol, "side", orderSide, "orderId", action.path("orderId").asLong())));
     }
@@ -206,11 +211,15 @@ public class PresetExecutor {
                 .filter(p -> p.getId() == positionId).findFirst().orElse(null);
     }
 
-    /** 往这个仓位的计划记一条修订，理由是模型布预案时写的备注 */
+    /** 往这个仓位的计划记一条修订，理由是模型布预案时写的备注；记不上只打日志 */
     private void revise(AiTrader trader, FuturesPositionDTO pos, long at, String type, String change, String reason) {
-        AiTraderPlan plan = planStore.liveFor(trader.getId(), trader.getRoundNo(), pos.getSymbol(), pos.getSide());
-        if (plan != null) {
-            planStore.appendRevision(plan.getId(), at, type, change, reason);
+        try {
+            AiTraderPlan plan = planStore.liveFor(trader.getId(), trader.getRoundNo(), pos.getSymbol(), pos.getSide());
+            if (plan != null) {
+                planStore.appendRevision(plan.getId(), at, type, change, reason);
+            }
+        } catch (Exception e) {
+            log.warn("[Preset] 修订落库失败 traderId={} {} msg={}", trader.getId(), pos.getSymbol(), e.toString());
         }
     }
 
@@ -229,7 +238,7 @@ public class PresetExecutor {
                 "result", done.text())));
         ObjectNode row = MAPPER.createObjectNode().put("tool", "preset");
         row.set("args", action);
-        row.put("status", done.ok() ? "ok" : "error").put(done.ok() ? "result" : "error", done.text());
+        row.put("status", done.ok() ? TradeActions.OK : TradeActions.ERROR).put(done.ok() ? "result" : "error", done.text());
         d.setActionsJson(MAPPER.writeValueAsString(List.of(row)));
         d.setToolCalls(1);
         if (!done.ok()) {

@@ -88,7 +88,7 @@ public class TradeRecordService {
     }
 
     /**
-     * 开仓决策：plan.openedWakeTime 精确命中那一轮（ALERT/MANUAL 轮的 wake_time 与 WakeCtx.boundaryTime 同源）。
+     * 开仓决策：plan.openedWakeTime 精确命中那一轮（ALERT/MANUAL 轮的 wake_time 与 WakeCtx.wakeTime 同源）。
      * 同一边界可能既有例行轮又有手动轮（手动唤醒的 wake_time 就是当前边界）：开了仓的那条才是"论点"所在。
      * write_plan 补立的计划 openedWakeTime 是仓位创建时刻而非任何边界，天然配不到，openDecision 留空。
      */
@@ -154,7 +154,7 @@ public class TradeRecordService {
                 String status = a.path("status").asString("pending");
                 if (!"close_position".equals(a.path("tool").asString(null))
                         || args == null || !args.hasNonNull("positionId")
-                        || a.has("rejected") || !("ok".equals(status) || "pending".equals(status))) {
+                        || a.has("rejected") || !(TradeActions.OK.equals(status) || "pending".equals(status))) {
                     continue;
                 }
                 // 升序遍历 + 覆盖 = 留最后一轮

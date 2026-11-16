@@ -3,7 +3,10 @@ package com.mawai.wiibagent.llm;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
+import com.openai.core.http.Headers;
+import com.openai.errors.UnauthorizedException;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.retry.TransientAiException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,8 +27,25 @@ class LlmErrorMessagesTest {
 
     @Test
     void 认证失败给出可操作的提示() {
-        assertThat(zh(new RuntimeException("HTTP 401 Unauthorized: invalid api key")))
+        assertThat(zh(new SseChatModel.UpstreamRejected(401, "Responses API HTTP 401: invalid api key")))
                 .contains("API key");
+    }
+
+    /** openai 协议的异常是 SDK 自己的，状态码在它身上 */
+    @Test
+    void openai协议按SDK异常的状态码认() {
+        assertThat(LlmErrorMessages.unauthorized(
+                UnauthorizedException.builder().headers(Headers.builder().build()).build())).isTrue();
+    }
+
+    /** 别处的报错文本里碰巧有 401 / 403（地址里的用户号、请求 id）不算鉴权失败 */
+    @Test
+    void 报错文本里碰巧带401不算鉴权失败() {
+        assertThat(LlmErrorMessages.unauthorized(new IllegalStateException(
+                "I/O error on GET request for \"http://sim/internal/futures/1401/positions\": Connection refused")))
+                .isFalse();
+        assertThat(LlmErrorMessages.unauthorized(new TransientAiException(
+                "Responses API HTTP 500: {\"request_id\":\"req_8a403f\"}"))).isFalse();
     }
 
     @Test
@@ -77,7 +97,7 @@ class LlmErrorMessagesTest {
     @Test
     void 从因果链里认出真正的原因() {
         Throwable wrapped = new java.util.concurrent.ExecutionException(
-                "唤醒会话执行失败", new RuntimeException("HTTP 401 Unauthorized"));
+                "唤醒会话执行失败", new SseChatModel.UpstreamRejected(401, "Responses API HTTP 401: Unauthorized"));
 
         assertThat(zh(wrapped)).contains("API key");
     }
@@ -126,7 +146,7 @@ class LlmErrorMessagesTest {
     @Test
     void 英文侧全部文案无中文() {
         for (Throwable t : new Throwable[]{
-                new RuntimeException("HTTP 401 Unauthorized"),
+                new SseChatModel.UpstreamRejected(401, "Responses API HTTP 401: Unauthorized"),
                 new RuntimeException("429 Too Many Requests"),
                 new RuntimeException("web_search tool is not supported by this model"),
                 new RuntimeException("404 model 'gpt-9' not found"),

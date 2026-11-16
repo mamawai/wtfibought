@@ -1,6 +1,6 @@
-# Tool description catalog (English). @Tool descriptions are compile-time constants and cannot be
-# swapped, so LocalizedToolCallbacks substitutes the tool.<name> entry from here instead; a tool with
-# no entry keeps the description from its annotation (so tools can be moved over one at a time).
+# Tool description catalog (English). This is the only copy of each tool description: @Tool carries
+# just the name and LocalizedToolCallbacks takes the tool.<name> entry from here; a tool with no entry
+# fails when its callbacks are built.
 # A description only says what can be looked up — never "look up more / look up less". That is an
 # open decision the system prompt hands to the model.
 tool:
@@ -254,7 +254,9 @@ tool:
   trader_decisions: |-
     Get the recent decision timeline of the user's AI trader, newest first. Each entry has
     kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / EVENT=position-event wake / WATCH=watch-condition hit / REVIEW=daily retrospective),
-    status, equity, the tools it called, and its FULL reasoning text. Can be narrowed to one kind.
+    status, equity, the tools it called, and its FULL reasoning text. A trade action that did not go through
+    carries its outcome in brackets after the tool name, e.g. open_position(rejected), close_position(not_attempted).
+    Can be narrowed to one kind.
     Use this to answer "why did it do that trade" - the reasoning text is the answer.
 
   trader_plans: |-
@@ -292,12 +294,15 @@ tool:
     Never say the note has been saved; say the form is open with your draft in it.
 
   # ---- Wake-up trading tools (the trader's action tools; guards are enforced server-side, the description is the manual) ----
+  # States what comes back and nothing more: the system prompt already says the account state is
+  # injected every round, so an "ALWAYS check" here would be two strong instructions pulling apart.
   get_account: |-
-    Get your full account state: available balance, open positions (with id, side, quantity,
-    entry price, leverage, unrealized PnL, liquidation price, current stop-loss/take-profit)
-    and pending limit orders. This same state is already injected into your opening message
-    every round (the [Account] block), so you normally do not need to call this. Use it to confirm
-    changes after your trades or fills that occurred while you were checking data.
+    Get your full account state: equity, available (what is still free for new orders after
+    position margin and pending-order reservations), wallet balance, open positions (with id,
+    side, quantity, entry price, leverage, unrealized PnL, liquidation price, current
+    stop-loss/take-profit) and pending limit orders. This same state is already injected into
+    your opening message every round (the [Account] block), so you normally do not need to call
+    this. Use it to confirm changes after your trades or fills that occurred while you were checking data.
 
   open_position: |-
     Open a futures position on your sim account (cross margin) using entries: 1–5 rungs

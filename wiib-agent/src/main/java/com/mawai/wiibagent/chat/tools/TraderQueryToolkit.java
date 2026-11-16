@@ -26,31 +26,19 @@ public class TraderQueryToolkit {
         this.lang = lang;
     }
 
-    // description 只是编译期兜底：真正发给模型的那份按语言取自词表 tool.<工具名>（见 LocalizedToolCallbacks）
+    // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
 
-    @Tool(name = "trader_overview", description = """
-            Get the current user's AI trader profile: status (RUNNING/PAUSED/LIQUIDATED and why),
-            equity vs initial balance, round number, traded symbols, wake interval, risk spec,
-            last / next wake-up time and why it cannot be woken right now (null when it can),
-            and the FULL review memory notes (what it has learned so far).
-            Returns hasTrader=false when the user has not created a trader yet.""")
+    @Tool(name = "trader_overview")
     public String traderOverview() {
         return traderChatService.overview(userId, lang);
     }
 
-    @Tool(name = "trader_positions", description = """
-            Get the current open positions of the user's AI trader: symbol, side, quantity,
-            entry price, leverage, unrealized PnL and the currently active stop-loss/take-profit orders.
-            Returns hasTrader=false when the user has not created a trader yet.""")
+    @Tool(name = "trader_positions")
     public String traderPositions() {
         return traderChatService.positions(userId, lang);
     }
 
-    @Tool(name = "trader_decisions", description = """
-            Get the recent decision timeline of the user's AI trader, newest first. Each entry has
-            kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / REVIEW=daily retrospective),
-            status, equity, the tools it called, and its FULL reasoning text. Can be narrowed to one kind.
-            Use this to answer "why did it do that trade" - the reasoning text is the answer.""")
+    @Tool(name = "trader_decisions")
     public String traderDecisions(
             @ToolParam(required = false, description = "How many decisions to return, 1-20, default 5") Integer limit,
             @ToolParam(required = false, description = "Only this kind: TRADE, ALERT, MANUAL or REVIEW. Omit for all kinds")
@@ -58,20 +46,12 @@ public class TraderQueryToolkit {
         return traderChatService.decisions(userId, limit, kind, lang);
     }
 
-    @Tool(name = "trader_plans", description = """
-            Get the trading plans of the user's AI trader: all live plans plus the recently closed ones.
-            Each plan carries the thesis (playType), the data it cited (signalsUsed), the invalidation
-            condition, entry/stop/target prices and the revision history of stop-loss moves.""")
+    @Tool(name = "trader_plans")
     public String traderPlans() {
         return traderChatService.plans(userId, lang);
     }
 
-    @Tool(name = "trader_trades", description = """
-            Get the closed trades of the user's AI trader, newest first: symbol, side, leverage, entry and
-            close price, realized PnL, open/close time, how it was closed (closeManner: stopLoss / takeProfit /
-            manual / liquidated), the plan behind it (playType, signalsUsed, invalidation condition, original
-            stop and target) and, for a manual close, the close reason it wrote. Also count, wins and total
-            realized PnL over the returned trades. Returns hasTrader=false when the user has not created a trader yet.""")
+    @Tool(name = "trader_trades")
     public String traderTrades(
             @ToolParam(required = false, description = "How many trades to return, 1-50, default 10") Integer limit) {
         return traderChatService.trades(userId, limit, lang);

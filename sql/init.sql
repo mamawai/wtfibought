@@ -698,6 +698,7 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     memory          TEXT,
     owner_note      TEXT,
     owner_note_rounds INT NOT NULL DEFAULT 0,
+    unreported_events TEXT,
     sim_user_id     BIGINT,
     round_no        INT NOT NULL DEFAULT 1,
     consecutive_failures INT NOT NULL DEFAULT 0,
@@ -730,6 +731,7 @@ COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：reviewer每日复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
 COMMENT ON COLUMN ai_trader.owner_note_rounds IS '留言剩余注入轮次，0=无待读留言。1即"念一次就清"，上限24（15m档≈6小时）。递减走条件SQL(正文匹配作前置+原子递减)：唤醒读的是调度时刻的快照，以正文匹配保证只递减自己注入的那条';
+COMMENT ON COLUMN ai_trader.unreported_events IS '对账出来、还没成功告诉过模型的事件行（一条一行）：下一轮开场白接着报，那一轮成功了清空';
 COMMENT ON COLUMN ai_trader.sim_user_id IS '当前局sim子账户userId，每局独立，重置开新账户';
 COMMENT ON COLUMN ai_trader.round_no IS '局数：爆仓/手动重置+1开新局，历史留档';
 COMMENT ON COLUMN ai_trader.leverage_min IS '杠杆区间下界：模型必须从[min,max]里选，越界护栏拒（不截断——悄悄改值会让模型的止损计算失真）';

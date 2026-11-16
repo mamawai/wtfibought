@@ -3,9 +3,11 @@ package com.mawai.wiibagent.learning;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
@@ -13,18 +15,12 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
-import com.openai.errors.OpenAIInvalidDataException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +37,7 @@ import java.util.concurrent.TimeoutException;
  * <p>
  * 没有素材（窗口内无了结、无开仓动作）静默跳过，窗口并入下次。旧的自由文本记忆第一次跑时压成账本行（一次迁移调用）。
  * 迁移 / 复盘 / 复审三次调用共用一份总预算。
- * 失败语义：ERROR 行留痕、账本不动、不计连败；一行更新都解析不出 → 正文照存、账本不动。
+ * 失败语义：ERROR 行留痕、账本不动、不计连败；一行更新都解析不出也算失败，只是正文照存。
  */
 @Slf4j
 @Component
@@ -54,8 +50,6 @@ public class ReviewRunner {
     static final String REVIEW_INTERVAL_CODE = "1d";
     /** 迁移时最多压出几条 */
     static final int MIGRATE_MAX = 10;
-    private static final DateTimeFormatter TIME_FMT =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     private final ReviewMaterialAssembler assembler;
     private final TraderModelFactory modelFactory;
@@ -121,16 +115,17 @@ public class ReviewRunner {
                 return;
             }
             List<ExperienceLedger.Op> ops = parser.parse(output, lang);
-            d.setStatus(AiTraderDecision.STATUS_OK);
             d.setReasoning(output.strip());
             d.setLatencyMs((int) (System.currentTimeMillis() - start));
             if (ops.isEmpty()) {
-                // 一行都解析不出：正文照存留痕，账本一个字不动
+                // 一行都解析不出：记成 ERROR，正文照存，账本不动；这段素材下次复盘还在窗口里
+                d.setStatus(AiTraderDecision.STATUS_ERROR);
                 d.setError(prompts.get(lang, "reviewer.error.noOps"));
                 decisionMapper.insert(d);
                 log.warn("[Review] 经验更新解析为空，账本不动 traderId={}", trader.getId());
                 return;
             }
+            d.setStatus(AiTraderDecision.STATUS_OK);
             // 先落行拿 id
             decisionMapper.insert(d);
             ExperienceLedger.Applied applied = ledger.apply(trader.getId(), trader.getRoundNo(), d.getId(), ops, lang,
@@ -256,16 +251,9 @@ public class ReviewRunner {
     /** 虚拟线程承载超时，预算＝总截止时刻剩下的秒数；用量落 finally——超时作废的调用 token 也真烧了。同一 model 实例多次调用用量累加 */
     private String call(UsageTrackingChatModel model, String system, String user, AiTraderDecision d,
                         long deadline) throws Exception {
-        Prompt prompt = new Prompt(List.of(new SystemMessage(system), new UserMessage(user)));
+        LlmClient client = LlmClient.builder().model(model).systemPrompt(system).build();
         FutureTask<String> task = new FutureTask<>(() -> {
-            ChatResponse resp;
-            try {
-                resp = model.call(prompt);
-            } catch (OpenAIInvalidDataException e) {
-                // SDK 重试盲区（读响应中断）单次补救，与 LlmClient.callModel 同款
-                log.warn("[Review] 响应读取中断（SDK不重试此类失败），单次重试: {}", e.toString());
-                resp = model.call(prompt);
-            }
+            ChatResponse resp = client.execute(List.of(new UserMessage(user)));
             return resp.getResult() == null ? "" : resp.getResult().getOutput().getText();
         });
         Thread.startVirtualThread(task);
@@ -285,10 +273,10 @@ public class ReviewRunner {
     // 包私有非 private：输出语言硬收尾那条钉子（PromptMarkParsingTest）要拿成文验它在末尾
     String userPrompt(AiTrader trader, ReviewMaterialAssembler.ReviewMaterial m, long fromMs, long toMs, AgentLang lang) {
         String from = fromMs == 0 ? prompts.get(lang, "reviewer.label.windowStart")
-                : TIME_FMT.format(Instant.ofEpochMilli(fromMs));
+                : BeijingTime.shortFormat(fromMs);
         StringBuilder sb = new StringBuilder();
         sb.append(prompts.get(lang, "reviewer.label.window", Map.of(
-                "from", from, "to", TIME_FMT.format(Instant.ofEpochMilli(toMs))))).append("\n\n");
+                "from", from, "to", BeijingTime.shortFormat(toMs)))).append("\n\n");
         // 主人的交易指令是目标与边界，排在硬事实之前；主人亲笔原样注入不翻译
         sb.append(prompts.get(lang, "reviewer.label.ownerInstructions")).append('\n');
         sb.append(trader.getCustomPrompt() == null || trader.getCustomPrompt().isBlank()

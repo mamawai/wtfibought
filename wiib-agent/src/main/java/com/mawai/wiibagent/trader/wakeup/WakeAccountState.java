@@ -19,9 +19,6 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -36,9 +33,6 @@ import static com.mawai.wiibagent.trader.trade.StopOrders.pctOfEquity;
  */
 final class WakeAccountState {
 
-    private static final DateTimeFormatter TIME_FMT =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
-
     private WakeAccountState() {
     }
 
@@ -49,25 +43,25 @@ final class WakeAccountState {
     static String accountStateJson(PromptCatalog prompts, AgentLang lang,
                                    BigDecimal equity, List<FuturesPositionDTO> positions,
                                    List<FuturesOrderResponse> pendingOrders,
-                                   List<AiTraderPlan> plans, long boundaryTime,
+                                   List<AiTraderPlan> plans, long wakeTime,
                                    Map<Long, CaseFileBuilder.MarketWindow> paths) {
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         plans.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
         ObjectNode out = MAPPER.createObjectNode();
         out.put("equity", equity.setScale(2, RoundingMode.HALF_UP));
         // 当前北京时间，带年份：set_watch 的 AT_TIME 按这个写法填
-        out.put("nowBeijing", BeijingTime.format(boundaryTime));
+        out.put("nowBeijing", BeijingTime.format(wakeTime));
         // 全部持仓的止损同时被打掉，合计亏权益的百分之几
         out.put("lossAtAllStopsPctOfEquity", pctOfEquity(
                 positions.stream().map(StopOrders::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
         // 还挂着的开仓单全部成交、再全部被各自带的止损打掉，还要多亏权益的百分之几
         out.put("lossIfPendingFillPctOfEquity", pctOfEquity(pendingOrders == null ? BigDecimal.ZERO
                 : pendingOrders.stream().map(StopOrders::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
-        out.set("positions", positionsJson(prompts, lang, equity, positions, planByKey, boundaryTime, paths));
+        out.set("positions", positionsJson(prompts, lang, equity, positions, planByKey, wakeTime, paths));
         // 挂单同样给足：开仓挂单占坑且带着计划（成交后计划全文随持仓回注，这里给轻量版）。
         // 挂出时刻与已挂时长必须在：限价单挂了多久只有代码知道，模型据此执行自己写的作废条件
         if (pendingOrders != null && !pendingOrders.isEmpty()) {
-            out.set("pendingOrders", pendingOrdersJson(prompts, lang, equity, pendingOrders, planByKey, boundaryTime));
+            out.set("pendingOrders", pendingOrdersJson(prompts, lang, equity, pendingOrders, planByKey, wakeTime));
         }
         return MAPPER.writeValueAsString(out);
     }
@@ -80,7 +74,7 @@ final class WakeAccountState {
     private static ArrayNode positionsJson(PromptCatalog prompts, AgentLang lang, BigDecimal equity,
                                            List<FuturesPositionDTO> positions,
                                            Map<String, AiTraderPlan> planByKey,
-                                           long boundaryTime, Map<Long, CaseFileBuilder.MarketWindow> paths) {
+                                           long wakeTime, Map<Long, CaseFileBuilder.MarketWindow> paths) {
         ArrayNode ps = MAPPER.createArrayNode();
         for (FuturesPositionDTO p : positions) {
             ObjectNode row = MAPPER.createObjectNode()
@@ -111,13 +105,13 @@ final class WakeAccountState {
             CaseFileBuilder.MarketWindow w = paths.get(p.getId());
             if (w != null) {
                 row.set("sinceLastWake", MAPPER.createObjectNode()
-                        .put("from", TIME_FMT.format(Instant.ofEpochMilli(w.from())))
-                        .put("to", TIME_FMT.format(Instant.ofEpochMilli(w.to())))
+                        .put("from", BeijingTime.shortFormat(w.from()))
+                        .put("to", BeijingTime.shortFormat(w.to()))
                         .put("open", w.open())
                         .put("high", w.high())
-                        .put("highAt", TIME_FMT.format(Instant.ofEpochMilli(w.highAt())))
+                        .put("highAt", BeijingTime.shortFormat(w.highAt()))
                         .put("low", w.low())
-                        .put("lowAt", TIME_FMT.format(Instant.ofEpochMilli(w.lowAt())))
+                        .put("lowAt", BeijingTime.shortFormat(w.lowAt()))
                         .put("close", w.close())
                         .put("changePct", w.changePct()));
             }
@@ -139,8 +133,8 @@ final class WakeAccountState {
                         .put("invalidationCondition", plan.getInvalidationCondition())
                         .put("entryPrice", plan.getEntryPrice())
                         .put("originalStop", plan.getStopLossPrice())
-                        .put("openedAt", TIME_FMT.format(Instant.ofEpochMilli(opened)))
-                        .put("heldFor", humanizeHeld(prompts, lang, boundaryTime - opened));
+                        .put("openedAt", BeijingTime.shortFormat(opened))
+                        .put("heldFor", humanizeHeld(prompts, lang, wakeTime - opened));
                 // 开仓时设的止盈分档；没设就没有这一项
                 List<TargetRung> targets = TargetRung.of(plan);
                 if (!targets.isEmpty()) {
@@ -151,7 +145,7 @@ final class WakeAccountState {
                     ArrayNode revisions = MAPPER.readValue(plan.getRevisionsJson(), ArrayNode.class);
                     for (JsonNode r : revisions) {
                         // 库里存 epoch 毫秒，给模型看要时刻
-                        ((ObjectNode) r).put("time", TIME_FMT.format(Instant.ofEpochMilli(r.path("time").asLong(0))));
+                        ((ObjectNode) r).put("time", BeijingTime.shortFormat(r.path("time").asLong(0)));
                     }
                     planJson.set("revisions", revisions);
                 }
@@ -169,7 +163,7 @@ final class WakeAccountState {
     /** 挂单行：订单事实 + 开仓挂单所属计划的轻量版。 */
     private static ArrayNode pendingOrdersJson(PromptCatalog prompts, AgentLang lang, BigDecimal equity,
                                                List<FuturesOrderResponse> pendingOrders,
-                                               Map<String, AiTraderPlan> planByKey, long boundaryTime) {
+                                               Map<String, AiTraderPlan> planByKey, long wakeTime) {
         ArrayNode po = MAPPER.createArrayNode();
         for (FuturesOrderResponse o : pendingOrders) {
             ObjectNode row = MAPPER.createObjectNode()
@@ -192,8 +186,8 @@ final class WakeAccountState {
                     ObjectNode planJson = MAPPER.createObjectNode()
                             .put("playType", plan.getPlayType())
                             .put("invalidationCondition", plan.getInvalidationCondition())
-                            .put("placedAt", TIME_FMT.format(Instant.ofEpochMilli(placed)))
-                            .put("pendingFor", humanizeHeld(prompts, lang, boundaryTime - placed));
+                            .put("placedAt", BeijingTime.shortFormat(placed))
+                            .put("pendingFor", humanizeHeld(prompts, lang, wakeTime - placed));
                     if (plan.getEntriesJson() != null) {
                         planJson.set("entries", PlanEntry.summary(plan));
                     }

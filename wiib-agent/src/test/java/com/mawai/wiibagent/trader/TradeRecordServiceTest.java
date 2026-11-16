@@ -196,19 +196,21 @@ class TradeRecordServiceTest {
         assertThat(trade.closeDecision().reason()).isEqualTo("反弹失效");
     }
 
-    /** 被拒/出错的 close_position 不算数：仓位早平了之后再对它下的失败动作不能顶掉真正的平仓决策 */
+    /** 被拒/出错/没执行的 close_position 不算数：仓位早平了之后再对它下的失败动作不能顶掉真正的平仓决策 */
     @Test
-    void rejectedOrErrorCloseActionsIgnored() {
+    void rejectedErrorOrNotAttemptedCloseActionsIgnored() {
         FuturesPositionDTO pos = closedLong(7L, "108");
         when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(pos));
         when(planMapper.selectList(any())).thenReturn(List.of());
         String real = "[{\"tool\":\"close_position\",\"args\":{\"positionId\":7,\"quantity\":1,\"reason\":\"失效条件触发\"},\"status\":\"ok\"}]";
         String rejected = "[{\"tool\":\"close_position\",\"args\":{\"positionId\":7,\"quantity\":1,\"reason\":\"再平一次\"},\"rejected\":\"仓位不存在\"}]";
         String error = "[{\"tool\":\"close_position\",\"args\":{\"positionId\":7,\"quantity\":1,\"reason\":\"又来\"},\"status\":\"error\",\"error\":\"sim 500\"}]";
+        String notAttempted = "[{\"tool\":\"close_position\",\"args\":{\"positionId\":7,\"quantity\":1,\"reason\":\"预算用完还在要\"},\"status\":\"not_attempted\"}]";
         when(decisionMapper.selectList(any())).thenReturn(List.of(
                 decision(101L, OPEN_MS + 900_000L, "走人", real),
                 decision(102L, OPEN_MS + 1_800_000L, "幻觉", rejected),
-                decision(103L, OPEN_MS + 3_600_000L, "又幻觉", error)));
+                decision(103L, OPEN_MS + 3_600_000L, "又幻觉", error),
+                decision(104L, OPEN_MS + 5_400_000L, "没执行", notAttempted)));
 
         TradeRecordService.TradeRecord r = service.closedTrades(trader()).get(0);
 

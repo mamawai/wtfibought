@@ -281,7 +281,7 @@ public class TraderPlanStore {
                                List<FuturesOrderResponse> pendingOrders,
                                Supplier<List<FuturesPositionDTO>> closedPositions,
                                Function<String, List<FuturesOrderResponse>> groupOrders,
-                               long boundaryTime, AgentLang lang) {
+                               long wakeTime, AgentLang lang) {
         Map<String, FuturesPositionDTO> openByKey = new HashMap<>();
         positions.forEach(p -> openByKey.put(key(p.getSymbol(), p.getSide()), p));
         Set<String> pendingKeys = new HashSet<>();
@@ -337,7 +337,7 @@ public class TraderPlanStore {
                     live.add(p);
                 } else {
                     events.add(new Cancelled(p));
-                    archive(p, boundaryTime);
+                    archive(p, wakeTime);
                     log.info("[TraderPlan] 挂单已不在，归档计划 traderId={} {} {}", traderId, p.getSymbol(), p.getSide());
                 }
                 continue;
@@ -350,15 +350,15 @@ public class TraderPlanStore {
             }
             // 本行归档绑第一笔（绑过仓的就是原来那笔），其余各补一行
             List<PlanEntry> carriedEntries = new ArrayList<>();
-            archive(p, boundaryTime, sync.pendingIds(), carriedEntries);
+            archive(p, wakeTime, sync.pendingIds(), carriedEntries);
             for (FuturesPositionDTO pos : outcomes) {
                 if (!pos.getId().equals(p.getPositionId())) {
-                    record(p, pos, boundaryTime, lang);
+                    record(p, pos, wakeTime, lang);
                 }
             }
             boolean carried = open != null || hasPending;
             if (carried) {
-                AiTraderPlan next = carryOver(p, open, boundaryTime, lang, carriedEntries);
+                AiTraderPlan next = carryOver(p, open, wakeTime, lang, carriedEntries);
                 if (open != null && p.getOrderGroup() == null) {
                     events.add(new Filled(next));
                 }
@@ -529,12 +529,12 @@ public class TraderPlanStore {
     }
 
     /** 立案后又开又平的一笔：单独补一行 CLOSED 归档行绑它。生命期就是这笔仓位自己的，开在两次唤醒之间，没有哪一轮"开"了它 */
-    private void record(AiTraderPlan from, FuturesPositionDTO pos, long boundaryTime, AgentLang lang) {
-        AiTraderPlan row = lineage(from, boundaryTime, lang);
+    private void record(AiTraderPlan from, FuturesPositionDTO pos, long wakeTime, AgentLang lang) {
+        AiTraderPlan row = lineage(from, wakeTime, lang);
         row.setStatus(AiTraderPlan.STATUS_CLOSED);
         row.setPositionId(pos.getId());
         row.setOpenedWakeTime(TradePairing.msOf(pos.getCreatedAt()));
-        row.setClosedWakeTime(boundaryTime);
+        row.setClosedWakeTime(wakeTime);
         mapper.insert(row);
     }
 
@@ -542,12 +542,12 @@ public class TraderPlanStore {
      * 续立：旧仓了结后同键还有新仓或挂单，论点随之接着跟。
      * 生命期从本轮起算，不跟归档的旧行重叠：stale 段落归属按生命期判，重叠了主人标忽略就剔不掉。
      */
-    private AiTraderPlan carryOver(AiTraderPlan from, FuturesPositionDTO open, long boundaryTime, AgentLang lang,
+    private AiTraderPlan carryOver(AiTraderPlan from, FuturesPositionDTO open, long wakeTime, AgentLang lang,
                                    List<PlanEntry> stillPending) {
-        AiTraderPlan next = lineage(from, boundaryTime, lang);
+        AiTraderPlan next = lineage(from, wakeTime, lang);
         next.setStatus(AiTraderPlan.STATUS_LIVE);
         next.setPositionId(open == null ? null : open.getId());
-        next.setOpenedWakeTime(boundaryTime);
+        next.setOpenedWakeTime(wakeTime);
         // 分档计划续立：只带真的还挂着的那几档
         if (from.getEntriesJson() != null) {
             PlanEntry.save(next, stillPending);
@@ -561,7 +561,7 @@ public class TraderPlanStore {
      * createdAt 预设为本轮边界而不是落库那一刻：它是下轮扫结局的起点，得早于本轮取持仓的时刻，
      * 取持仓到落库之间成交又平掉的仓才不会漏（自动填充是 strict 的，只填空值）。
      */
-    private AiTraderPlan lineage(AiTraderPlan from, long boundaryTime, AgentLang lang) {
+    private AiTraderPlan lineage(AiTraderPlan from, long wakeTime, AgentLang lang) {
         AiTraderPlan row = new AiTraderPlan();
         row.setTraderId(from.getTraderId());
         row.setRoundNo(from.getRoundNo());
@@ -577,8 +577,8 @@ public class TraderPlanStore {
         row.setEntryCtxJson(from.getEntryCtxJson());
         // 逐档记录不跟着抄：续立行只带还挂着的档（carryOver 里放），补归档行留空走单档重放
         row.setOrderGroup(from.getOrderGroup());
-        row.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(boundaryTime), ZoneId.systemDefault()));
-        appendRevision(row, boundaryTime, prompts.get(lang, "trader.revise.carry"),
+        row.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(wakeTime), ZoneId.systemDefault()));
+        appendRevision(row, wakeTime, prompts.get(lang, "trader.revise.carry"),
                 prompts.get(lang, "trader.revise.carryChange", Map.of("positionId", String.valueOf(from.getPositionId()))),
                 prompts.get(lang, "trader.revise.carryReason"));
         return row;

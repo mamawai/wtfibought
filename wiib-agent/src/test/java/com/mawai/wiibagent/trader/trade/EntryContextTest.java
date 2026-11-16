@@ -1,6 +1,6 @@
 package com.mawai.wiibagent.trader.trade;
 
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
@@ -59,7 +59,7 @@ class EntryContextTest {
         assertThat(json.path("leverage").asInt()).isEqualTo(20);
         assertThat(json.path("placedAt").asLong()).isEqualTo(NOW);
         assertThat(json.path("hourBj").asInt())
-                .isEqualTo(Instant.ofEpochMilli(NOW).atZone(WakeWindow.ZONE).getHour());
+                .isEqualTo(Instant.ofEpochMilli(NOW).atZone(BeijingTime.ZONE).getHour());
         assertThat(json.path("stopPct").asDecimal()).isEqualByComparingTo("1.038");
         assertThat(json.path("atr1h").asDecimal()).isPositive();
         assertThat(json.path("stopAtr").asDecimal()).isPositive();

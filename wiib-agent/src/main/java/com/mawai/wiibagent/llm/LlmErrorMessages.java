@@ -2,6 +2,7 @@ package com.mawai.wiibagent.llm;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.openai.errors.OpenAIServiceException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.retry.TransientAiException;
 
@@ -23,7 +24,7 @@ import java.util.Map;
  * 子运行失败时它会被拼进失败报告喂回模型，并随会话上下文落库。
  * <p>
  * 文案在 {@link PromptCatalog} 的 {@code llm.error.*}，按当前用户的 {@link AgentLang} 取；
- * 归类判据（401/429/404 model/超时那几组关键字）只认上游英文原文，与语言无关。
+ * 鉴权失败看状态码，其余几类（429/404 model/超时那几组关键字）只认上游英文原文，与语言无关。
  */
 @Slf4j
 public final class LlmErrorMessages {
@@ -43,14 +44,19 @@ public final class LlmErrorMessages {
     }
 
     /**
-     * 401/403 形态：{@link #classify} 的第一分支单独暴露，唤醒回路据它"key 失效立即暂停"——
-     * 按异常本身判，不按成文后的话判（各协议的 401 原文各不同：openai 路
-     * {@code UnauthorizedException: 401: Invalid API key}，responses 路 {@code Responses API HTTP 401}）。
+     * key 被上游拒了（401 / 403）：看模型层异常自带的状态码，自研协议是 {@link SseChatModel.UpstreamRejected}，
+     * openai 协议是 SDK 的 {@link OpenAIServiceException}。{@link #classify} 的第一分支，唤醒回路据它立即暂停
      */
     public static boolean unauthorized(Throwable t) {
-        String lower = chain(t).toLowerCase(Locale.ROOT);
-        return lower.contains("401") || lower.contains("403")
-                || lower.contains("unauthorized") || lower.contains("invalid api key");
+        Throwable cur = t;
+        for (int i = 0; i < MAX_CAUSE_DEPTH && cur != null; i++, cur = cur.getCause()) {
+            int status = cur instanceof SseChatModel.UpstreamRejected rejected ? rejected.status()
+                    : cur instanceof OpenAIServiceException sdk ? sdk.statusCode() : 0;
+            if (status == 401 || status == 403) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static String classify(Throwable t, PromptCatalog prompts, AgentLang lang) {

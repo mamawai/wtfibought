@@ -65,6 +65,9 @@ public class AiTrader {
      */
     private Integer ownerNoteRounds;
 
+    /** 对账出来、还没成功告诉过模型的事件行（一条一行）；下一轮开场白接着报，那一轮成功了清空 */
+    private String unreportedEvents;
+
     /** 每日复盘开关：reviewer 日线边界复盘并整理 memory；关掉只停复盘，已有笔记照常注入 */
     private Boolean reviewEnabled;
 

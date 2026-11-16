@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.mapper.AiTraderWatchMapper;
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -66,7 +66,7 @@ class TraderWatchStoreTest {
         AiTraderWatch timed = rows.getAllValues().get(2);
         assertThat(timed.getLevel()).isNull();
         assertThat(timed.getAtTime()).isEqualTo(
-                ZonedDateTime.of(2026, 7, 27, 20, 20, 0, 0, WakeWindow.ZONE).toInstant().toEpochMilli());
+                ZonedDateTime.of(2026, 7, 27, 20, 20, 0, 0, BeijingTime.ZONE).toInstant().toEpochMilli());
         verify(events).publishEvent(new WatchesChanged(7L));
     }
 

@@ -2,15 +2,14 @@ package com.mawai.wiibagent.trader.prompt;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.toolkit.EconCalendarToolkit;
-import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 /**
@@ -29,9 +28,6 @@ import java.util.List;
 public class EconCalendarAssembler {
 
     static final long PAST_WINDOW_MS = 72 * 3_600_000L;
-    /** 时刻按北京时间成文（与休眠提示同源 WakeWindow.ZONE），header 里已注明时区 */
-    private static final DateTimeFormatter BJ_FMT =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(WakeWindow.ZONE);
 
     private final EconCalendarMapper mapper;
     private final PromptCatalog prompts;
@@ -64,8 +60,8 @@ public class EconCalendarAssembler {
 
     /** 北京时间当天 24:00 */
     static long endOfDay(long nowMs) {
-        return Instant.ofEpochMilli(nowMs).atZone(WakeWindow.ZONE).toLocalDate().plusDays(1)
-                .atStartOfDay(WakeWindow.ZONE).toInstant().toEpochMilli();
+        return Instant.ofEpochMilli(nowMs).atZone(BeijingTime.ZONE).toLocalDate().plusDays(1)
+                .atStartOfDay(BeijingTime.ZONE).toInstant().toEpochMilli();
     }
 
     /** @param justPublished 刚公布段：数字型事件（有预测或前值）到点了实际值还没到，明写"暂缺"，别让模型当成讲话类 */
@@ -77,7 +73,7 @@ public class EconCalendarAssembler {
         sb.append(prompts.get(lang, labelKey)).append('\n');
         for (EconCalendarMapper.Row r : rows) {
             boolean numeric = r.getForecast() != null || r.getPrevious() != null;
-            sb.append("- ").append(BJ_FMT.format(Instant.ofEpochMilli(r.getEventTime())))
+            sb.append("- ").append(BeijingTime.shortFormat(r.getEventTime()))
                     .append(' ').append(r.getTitle());
             if (r.getActual() != null) {
                 sb.append(' ').append(prompts.get(lang, "trader.calendar.actual")).append(r.getActual());

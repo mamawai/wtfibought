@@ -44,32 +44,18 @@ public class TraderActionToolkit {
         this.lang = lang;
     }
 
-    @Tool(name = "wake_trader", description = """
-            Open the "wake trader now" form for the user. IMPORTANT: this does NOT wake the trader.
-            It only shows a card with when it last woke, when it wakes next, and a button the user presses themselves.
-            Waking is EXPENSIVE AND REAL (burns their model budget, MAY OPEN OR CLOSE POSITIONS) - that is exactly
-            why the trigger belongs to the user, not to you.
-            Never say the trader has been woken; say the form is open and waiting for them to confirm.""")
+    // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
+    @Tool(name = "wake_trader")
     public String wakeTrader(ToolContext context) {
         return openForm(ToolRunContext.sessionId(context), "wake", null, "chat.form.wake");
     }
 
-    @Tool(name = "review_trader_now", description = """
-            Open the "run retrospective now" form for the user. IMPORTANT: this does NOT run the retrospective.
-            It only shows a card with the last retrospective time, whether there is new material, and a button
-            the user presses themselves. Running it costs one deep-model call.
-            Never say the retrospective has run or claim to know what it says; say the form is open.""")
+    @Tool(name = "review_trader_now")
     public String reviewTraderNow(ToolContext context) {
         return openForm(ToolRunContext.sessionId(context), "review", null, "chat.form.review");
     }
 
-    @Tool(name = "leave_note_to_trader", description = """
-            Open the "leave a note" form, pre-filled with the note you drafted from the user's own words.
-            IMPORTANT: this does NOT save the note - the user reviews your draft, sets how many wake-ups it
-            should last, and presses save themselves.
-            A note is a passing remark carried by the next N wake-ups then erased; standing rules belong in the
-            trader's custom prompt on its config page, not here.
-            Never say the note has been saved; say the form is open with your draft in it.""")
+    @Tool(name = "leave_note_to_trader")
     public String leaveNoteToTrader(
             @ToolParam(description =
                     "The note drafted in the user's own words, <=500 chars, e.g. 'CPI print tonight, keep size light'")

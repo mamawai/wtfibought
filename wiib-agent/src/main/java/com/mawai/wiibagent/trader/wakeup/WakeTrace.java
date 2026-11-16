@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibagent.llm.WebSearchTool;
+import com.mawai.wiibagent.trader.trade.TradeActions;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
@@ -24,6 +25,8 @@ public final class WakeTrace {
     public static final int PREVIEW_CHARS = 2000;
     /** 落库形状版本 */
     private static final int VERSION = 1;
+    /** 工具"没取到数据"的回执都以它开头：数据工具自己回的，和工具抛异常被接成的结果，是同一个形状 */
+    private static final String UNAVAILABLE_HEAD = "{\"available\":false";
 
     /** 一帧：SSE 事件名 + data */
     public record Frame(String event, ObjectNode data) {
@@ -182,12 +185,23 @@ public final class WakeTrace {
         return modelEnd(call);
     }
 
-    /** 工具回执：还原原文、按前缀判状态；联网搜索保留全文 */
+    /**
+     * 工具回执：还原原文定状态，联网搜索保留全文。
+     * 状态认交易工具写在开头的前缀；工具回"没取到数据"（{@code {"available":false...}}）的单算一种
+     */
     public synchronized Frame toolResult(String id, String name, String responseData) {
-        Call call = calls.getLast();
         String text = plainText(responseData);
-        String status = text.startsWith("REJECTED:") ? "rejected" : text.startsWith("ERROR:") ? "error"
-                : text.startsWith("UNKNOWN:") ? "unknown" : text.startsWith("PARTIAL:") ? "partial" : "ok";
+        return addResult(id, name, text,
+                text.startsWith(UNAVAILABLE_HEAD) ? TradeActions.UNAVAILABLE : TradeActions.replyStatus(text));
+    }
+
+    /** 保险丝补的占位回执：这次调用没执行 */
+    public synchronized Frame toolSkipped(String id, String name, String responseData) {
+        return addResult(id, name, plainText(responseData), TradeActions.NOT_ATTEMPTED);
+    }
+
+    private Frame addResult(String id, String name, String text, String status) {
+        Call call = calls.getLast();
         String preview = !WebSearchTool.NAME.equals(name) && text.length() > PREVIEW_CHARS
                 ? text.substring(0, PREVIEW_CHARS) : text;
         ToolResult result = new ToolResult(id, name, status, preview);

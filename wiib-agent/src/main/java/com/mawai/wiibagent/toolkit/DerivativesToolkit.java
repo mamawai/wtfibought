@@ -33,21 +33,8 @@ public class DerivativesToolkit {
 
     private final MarketDataService dataService;
 
-    // 描述按语言取自词表 tool.derivatives_history，注解这份只当词表缺失时的兜底
-    @Tool(name = "derivatives_history", description = """
-            Time series of Binance USDT-M perpetual derivatives statistics for a crypto symbol: the last 30
-            points at the given period (1h = the last 30 hours, 4h = 5 days, 1d = 30 days; Binance keeps
-            only 30 days). Binance only, not a cross-exchange total. One row per point, oldest first, time
-            in UTC+8:
-            - oi: open interest in coins; oiUsd: the same in USD
-            - accountLsr: among all accounts holding a position, net-long accounts / net-short accounts
-              (a head count, so retail-weighted)
-            - topTraderPositionLsr: the top 20% of accounts by margin balance, long position notional /
-              short position notional
-            - takerBuySellRatio: taker buy volume / taker sell volume within the period; takerBuyVol /
-              takerSellVol are those two volumes in coins
-            A series Binance did not return is listed in `unavailable` and its fields are missing from the
-            rows. market_snapshot gives only the latest reading of these; this gives how they moved.""")
+    // 描述在词表 tool.derivatives_history（见 LocalizedToolCallbacks）
+    @Tool(name = "derivatives_history")
     public String derivativesHistory(
             @ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
             @ToolParam(description = "Period per point: 1h / 4h / 1d") String period) {

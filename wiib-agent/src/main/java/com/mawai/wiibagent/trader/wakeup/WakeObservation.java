@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.toolkit.BeijingTime;
@@ -19,14 +20,12 @@ import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibquant.market.service.CrossAssetService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -38,6 +37,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
+
 /**
  * 开场白里的观察包。第一段「处置」用 {@link #assemble}：收盘命中 + 上次醒来后的事件 + 账户状态（持仓带自上次完成决策以来的波动）
  * + 上一轮结论（每个币最近一次写下的那段，没变化的币沿用旧段）+ 承诺块（持仓与挂单的失效条件、布的每条盯盘条件离现价多远 / 还有多久、
@@ -46,6 +47,7 @@ import java.util.stream.Collectors;
  * 和 {@link #snapshot}（各币标记价与涨跌、美股参考）。
  * 只读不写，取数和成文都在这里。
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class WakeObservation {
@@ -54,8 +56,6 @@ public class WakeObservation {
     private static final int RECENT_DECISIONS = 5;
     /** 找每个币最近一次写的结论段，最多往回翻这么多轮；再早的不带，那个币得重写 */
     public static final int CONCLUSION_LOOKBACK = 30;
-    private static final DateTimeFormatter TIME_FMT =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     private final AiTraderDecisionMapper decisionMapper;
     /** stale 教材过滤的共用入口（与复盘时间线/chat 同一套识别逻辑） */
@@ -67,6 +67,8 @@ public class WakeObservation {
     private final PositionPath positionPath;
     /** 美股期货与 VIX，进行情快照 */
     private final CrossAssetService crossAssets;
+    /** 各币的标记价和资金费率 */
+    private final BinanceRestClient binanceRestClient;
 
     /** 大盘参考：不在可交易币里也给一行 */
     static final String BENCHMARK = "BTCUSDT";
@@ -99,12 +101,12 @@ public class WakeObservation {
      * 复盘行不进来：它的产出已经走 memory 注入，再进就是重复占字数。
      * 忽略过滤要按计划生命期判段落归属（同币另一方向没被忽略的段得留），plans 是本局全部计划。
      */
-    List<RecentWake> recentWakes(AiTrader trader, long boundaryTime, List<AiTraderPlan> plans) {
+    List<RecentWake> recentWakes(AiTrader trader, long wakeTime, List<AiTraderPlan> plans) {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
                 .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
-                .lt(AiTraderDecision::getWakeTime, boundaryTime)
+                .lt(AiTraderDecision::getWakeTime, wakeTime)
                 .orderByDesc(AiTraderDecision::getWakeTime)
                 .last("LIMIT " + CONCLUSION_LOOKBACK));
         List<RecentWake> out = new ArrayList<>(rows.size());
@@ -120,14 +122,16 @@ public class WakeObservation {
      * 第一段的观察包：收盘命中 + 事件 + 账户 + 上一轮结论 + 承诺。排在头部事实之后、第一段的问题之前。
      *
      * @param symbols      可交易币（运行器算好的白名单），承诺块只念这些币的等待行
+     * @param live         对完账还活着的计划
+     * @param planEvents   对账事件行（{@link #planEvents}），连同之前没成功告诉过它的，进"自上次唤醒以来"
      * @param hitsNow      这根收盘刚命中的收盘类盯盘条件（只有例行轮有），单起一块念
      * @param firedQuietly 命中了还没哪轮告诉过它的盯盘条件，进"自上次唤醒以来"补报
      * @param armed        还在盯的盯盘条件，进承诺块
      * @param marks        各币标记价，承诺块算"离价位多远"用；没有的币不带距离
      */
     Pack assemble(AiTrader trader, Collection<String> symbols, BigDecimal equity, List<FuturesPositionDTO> positions,
-                  List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Reconcile reconcile,
-                  List<RecentWake> recent, long boundaryTime, AgentLang lang,
+                  List<FuturesOrderResponse> pendingOrders, List<AiTraderPlan> live, String planEvents,
+                  List<RecentWake> recent, long wakeTime, AgentLang lang,
                   List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly, List<AiTraderWatch> armed,
                   Map<String, BigDecimal> marks) {
         StringBuilder sb = new StringBuilder();
@@ -139,24 +143,24 @@ public class WakeObservation {
                         "note", WatchText.note(w, prompts, lang)))).append('\n');
             }
         }
-        sb.append(events(reconcile.events(), firedQuietly, lang));
-        Long lastOk = lastOkWakeTime(trader, boundaryTime);
+        sb.append(events(planEvents, firedQuietly, lang));
+        Long lastOk = lastOkWakeTime(trader, wakeTime);
         Map<Long, CaseFileBuilder.MarketWindow> paths = new HashMap<>();
         for (FuturesPositionDTO p : positions) {
-            CaseFileBuilder.MarketWindow w = positionPath.build(p, lastOk, boundaryTime);
+            CaseFileBuilder.MarketWindow w = positionPath.build(p, lastOk, wakeTime);
             if (w != null) {
                 paths.put(p.getId(), w);
             }
         }
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
-                .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(),
-                        boundaryTime, paths)).append('\n');
+                .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, live,
+                        wakeTime, paths)).append('\n');
         Map<String, Segment> segments = latestSegments(recent, symbols);
         sb.append('\n').append(lastConclusion(latestConcluded(recent), segments, symbols, lang));
-        String commitments = commitments(trader, positions, pendingOrders, reconcile.live(),
-                armed, segments, marks, boundaryTime, lang);
+        String commitments = commitments(trader, positions, pendingOrders, live,
+                armed, segments, marks, wakeTime, lang);
         sb.append(commitments);
-        boolean busy = !hitsNow.isEmpty() || !firedQuietly.isEmpty() || !reconcile.events().isEmpty() || !commitments.isEmpty();
+        boolean busy = !hitsNow.isEmpty() || !firedQuietly.isEmpty() || !planEvents.isEmpty() || !commitments.isEmpty();
         return new Pack(sb.toString(), busy, lastOk);
     }
 
@@ -181,6 +185,22 @@ public class WakeObservation {
             out.add(BENCHMARK);
         }
         out.addAll(tradable.stream().sorted().toList());
+        return out;
+    }
+
+    /** 各币的 premiumIndex 回包（标记价 + 资金费率），一币拉一次；单币拉取失败就没有它，不挡唤醒 */
+    Map<String, JsonNode> quotes(Collection<String> symbols) {
+        Map<String, JsonNode> out = new HashMap<>();
+        for (String sym : symbols) {
+            try {
+                JsonNode p = MAPPER.readTree(binanceRestClient.getPremiumIndex(sym));
+                if (p.path("markPrice").asDecimal(null) != null) {
+                    out.put(sym, p);
+                }
+            } catch (Exception e) {
+                log.debug("[Trader] 行情快照拉取失败 {} msg={}", sym, e.getMessage());
+            }
+        }
         return out;
     }
 
@@ -233,24 +253,24 @@ public class WakeObservation {
     /**
      * 第二段的各币摘要：每个可交易币和大盘参考自上次完成决策以来的开高低收（代码按已收盘 5m 算）；一个币都算不出返回空串
      */
-    String symbolsSummary(AiTrader trader, Collection<String> symbols, Long lastOkWakeMs, long boundaryTime, AgentLang lang) {
-        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
+    String symbolsSummary(AiTrader trader, Collection<String> symbols, Long lastOkWakeMs, long wakeTime, AgentLang lang) {
+        long intervalMs = WakeIntervals.MS.get(trader.getIntervalCode());
         StringBuilder rows = new StringBuilder();
         for (String symbol : board(symbols)) {
-            CaseFileBuilder.MarketWindow w = positionPath.symbol(symbol, lastOkWakeMs, boundaryTime, intervalMs);
+            CaseFileBuilder.MarketWindow w = positionPath.symbol(symbol, lastOkWakeMs, wakeTime, intervalMs);
             if (w == null) {
                 continue;
             }
             rows.append(prompts.get(lang, "trader.wake.symbolsRow", Map.ofEntries(
                     Map.entry("tag", referenceTag(symbol, symbols, lang)),
                     Map.entry("symbol", symbol),
-                    Map.entry("from", TIME_FMT.format(Instant.ofEpochMilli(w.from()))),
-                    Map.entry("to", TIME_FMT.format(Instant.ofEpochMilli(w.to()))),
+                    Map.entry("from", BeijingTime.shortFormat(w.from())),
+                    Map.entry("to", BeijingTime.shortFormat(w.to())),
                     Map.entry("open", WatchText.num(w.open())),
                     Map.entry("high", WatchText.num(w.high())),
-                    Map.entry("highAt", TIME_FMT.format(Instant.ofEpochMilli(w.highAt()))),
+                    Map.entry("highAt", BeijingTime.shortFormat(w.highAt())),
                     Map.entry("low", WatchText.num(w.low())),
-                    Map.entry("lowAt", TIME_FMT.format(Instant.ofEpochMilli(w.lowAt()))),
+                    Map.entry("lowAt", BeijingTime.shortFormat(w.lowAt())),
                     Map.entry("close", WatchText.num(w.close())),
                     Map.entry("changePct", w.changePct().toPlainString())))).append('\n');
         }
@@ -258,24 +278,21 @@ public class WakeObservation {
     }
 
     /** 本局最近一条 OK 唤醒行（复盘行不算）的唤醒时刻，不限于 recent 那几条；一条都没有给 null */
-    private Long lastOkWakeTime(AiTrader trader, long boundaryTime) {
+    private Long lastOkWakeTime(AiTrader trader, long wakeTime) {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
                 .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
-                .lt(AiTraderDecision::getWakeTime, boundaryTime)
+                .lt(AiTraderDecision::getWakeTime, wakeTime)
                 .orderByDesc(AiTraderDecision::getWakeTime)
                 .last("LIMIT 1"));
         return rows.isEmpty() ? null : rows.getFirst().getWakeTime();
     }
 
-    /**
-     * 自上次唤醒以来：对账事件逐条成文（了结说结局、成交说成交、挂单没了说没了），同一计划内先结局后成交；
-     * 再是命中了但没叫醒它的盯盘条件。都没有返回空串
-     */
-    private String events(List<TraderPlanStore.Event> events, List<AiTraderWatch> firedQuietly, AgentLang lang) {
-        if (events.isEmpty() && firedQuietly.isEmpty()) {
+    /** 自上次唤醒以来：命中了但没叫醒它的盯盘条件，再是对账事件行。都没有返回空串 */
+    private String events(String planEvents, List<AiTraderWatch> firedQuietly, AgentLang lang) {
+        if (planEvents.isEmpty() && firedQuietly.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder("\n").append(prompts.get(lang, "trader.wake.eventsHeader")).append('\n');
@@ -285,6 +302,14 @@ public class WakeObservation {
                     "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
                     "note", WatchText.note(w, prompts, lang)))).append('\n');
         }
+        return sb.append(planEvents).toString();
+    }
+
+    /**
+     * 对账事件逐条成文，一条一行（了结说结局、成交说成交、挂单没了说没了），同一计划内先结局后成交；没有返回空串
+     */
+    String planEvents(List<TraderPlanStore.Event> events, AgentLang lang) {
+        StringBuilder sb = new StringBuilder();
         for (TraderPlanStore.Event e : events) {
             AiTraderPlan p = e.plan();
             sb.append(switch (e) {
@@ -374,7 +399,7 @@ public class WakeObservation {
             return prompts.get(lang, "trader.wake.lastConclusionNone") + "\n";
         }
         StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.wake.lastConclusionHeader", Map.of(
-                "time", TIME_FMT.format(Instant.ofEpochMilli(concluded.wakeTime())),
+                "time", BeijingTime.shortFormat(concluded.wakeTime()),
                 "equity", concluded.equity().setScale(0, RoundingMode.HALF_UP)))).append('\n');
         DecisionText.Conclusion c = decisionText.locateConclusion(concluded.reasoning(), lang);
         String intro = DecisionText.intro(c.body(concluded.reasoning()));
@@ -382,7 +407,7 @@ public class WakeObservation {
             sb.append(intro).append('\n');
         }
         segments.forEach((symbol, s) -> sb.append(prompts.get(lang, "trader.wake.lastSegment", Map.of(
-                "symbol", symbol, "time", TIME_FMT.format(Instant.ofEpochMilli(s.wakeTime())))))
+                "symbol", symbol, "time", BeijingTime.shortFormat(s.wakeTime()))))
                 .append('\n').append(s.body()).append('\n'));
         symbols.stream().sorted().filter(s -> !segments.containsKey(s)).forEach(s ->
                 sb.append(prompts.get(lang, "trader.wake.lastSegmentNone", Map.of("symbol", s))).append('\n'));
@@ -397,8 +422,8 @@ public class WakeObservation {
      */
     private String commitments(AiTrader trader, List<FuturesPositionDTO> positions,
                                List<FuturesOrderResponse> pendingOrders, List<AiTraderPlan> live, List<AiTraderWatch> armed,
-                               Map<String, Segment> segments, Map<String, BigDecimal> marks, long boundaryTime, AgentLang lang) {
-        long intervalMs = TraderScheduler.INTERVAL_MS.get(trader.getIntervalCode());
+                               Map<String, Segment> segments, Map<String, BigDecimal> marks, long wakeTime, AgentLang lang) {
+        long intervalMs = WakeIntervals.MS.get(trader.getIntervalCode());
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         live.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
         Map<String, String> lastBars = new HashMap<>();
@@ -408,7 +433,7 @@ public class WakeObservation {
             lines.add(prompts.get(lang, "trader.wake.commitPosition", Map.of(
                     "symbol", p.getSymbol(), "side", p.getSide(),
                     "invalidation", invalidation(plan),
-                    "bar", lastBars.computeIfAbsent(p.getSymbol(), s -> lastBar(s, trader.getIntervalCode(), intervalMs, boundaryTime, lang)))));
+                    "bar", lastBars.computeIfAbsent(p.getSymbol(), s -> lastBar(s, trader.getIntervalCode(), intervalMs, wakeTime, lang)))));
         }
         for (FuturesOrderResponse o : pendingOrders) {
             String side = o.getOrderSide();
@@ -420,7 +445,7 @@ public class WakeObservation {
             lines.add(prompts.get(lang, "trader.wake.commitOrder", Map.of(
                     "symbol", o.getSymbol(), "side", side,
                     "limit", WatchText.num(o.getLimitPrice()),
-                    "pendingFor", WakeAccountState.humanizeHeld(prompts, lang, boundaryTime - TradePairing.msOf(o.getCreatedAt())),
+                    "pendingFor", WakeAccountState.humanizeHeld(prompts, lang, wakeTime - TradePairing.msOf(o.getCreatedAt())),
                     "invalidation", invalidation(plan),
                     "distance", distance(o.getLimitPrice(), marks.get(o.getSymbol()), lang))));
         }
@@ -428,7 +453,7 @@ public class WakeObservation {
             if (AiTraderWatch.AT_TIME.equals(w.getKind())) {
                 lines.add(prompts.get(lang, "trader.wake.commitWatchTime", Map.of(
                         "symbol", w.getSymbol(), "at", BeijingTime.format(w.getAtTime()), "note", w.getNote(),
-                        "minutes", Math.max(0, (w.getAtTime() - boundaryTime + 59_999) / 60_000)))
+                        "minutes", Math.max(0, (w.getAtTime() - wakeTime + 59_999) / 60_000)))
                         + WatchText.action(w, prompts, lang));
             } else {
                 lines.add(prompts.get(lang, "trader.wake.commitWatchPrice", Map.of(
@@ -452,8 +477,8 @@ public class WakeObservation {
     }
 
     /** 刚收盘那根心跳周期的开高低收，接在持仓行后面；本地没有那段 5m 就不带 */
-    private String lastBar(String symbol, String interval, long intervalMs, long boundaryTime, AgentLang lang) {
-        CaseFileBuilder.MarketWindow w = positionPath.lastClosedBar(symbol, boundaryTime, intervalMs);
+    private String lastBar(String symbol, String interval, long intervalMs, long wakeTime, AgentLang lang) {
+        CaseFileBuilder.MarketWindow w = positionPath.lastClosedBar(symbol, wakeTime, intervalMs);
         return w == null ? "" : prompts.get(lang, "trader.wake.commitBar", Map.of(
                 "interval", interval,
                 "open", WatchText.num(w.open()), "high", WatchText.num(w.high()),
@@ -495,7 +520,7 @@ public class WakeObservation {
         }
         StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.wake.trajectoryHeader")).append('\n');
         for (RecentWake w : recent.subList(0, Math.min(RECENT_DECISIONS, recent.size()))) {
-            sb.append("- ").append(TIME_FMT.format(Instant.ofEpochMilli(w.wakeTime())))
+            sb.append("- ").append(BeijingTime.shortFormat(w.wakeTime()))
                     .append(" [").append(w.status()).append(']');
             if (w.equity() != null) {
                 sb.append(' ').append(prompts.get(lang, "trader.label.equity",

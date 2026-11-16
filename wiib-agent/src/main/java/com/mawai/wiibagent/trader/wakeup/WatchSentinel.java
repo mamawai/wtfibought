@@ -17,19 +17,15 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
-import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
-import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
-
 /**
- * 盯盘哨兵：盯模型用 set_watch 布的条件。触及价位和到时刻看 markPrice tick（~1s），命中就广播一个 {@link WatchTrigger}
+ * 盯盘哨兵：盯模型用 set_watch 布的条件。触及价位和到时刻看 markPrice tick（~1s），命中就广播一条 {@link TriggerFired}
  * 让调度器叫醒；周期收盘由调度器在 5m 收盘时来问 {@link #closeHits}，这样命中能并进同一刻的例行唤醒而不是叫两次。
  * 带动作的条件（预案）命中后先交给 {@link PresetExecutor} 执行，它说要叫醒才叫。
  * 命中：库里 ARMED → FIRED（CAS，并发 tick 只有一个赢），赢了才从名单摘掉。
@@ -74,16 +70,10 @@ public class WatchSentinel implements MessageListener {
     @Override
     public void onMessage(@NonNull Message message, byte[] pattern) {
         try {
-            JsonNode obj = MAPPER.readTree(message.getBody());
-            if (!"markprice".equals(obj.path("type").asString(null))) {
-                return;
+            MarkPriceTick tick = MarkPriceTick.parse(message);
+            if (tick != null) {
+                onPriceTick(tick.symbol(), tick.price(), System.currentTimeMillis());
             }
-            String symbol = obj.path("symbol").asString(null);
-            String price = obj.path("price").asString(null);
-            if (symbol == null || price == null) {
-                return;
-            }
-            onPriceTick(symbol.trim().toUpperCase(Locale.ROOT), new BigDecimal(price), System.currentTimeMillis());
         } catch (Exception e) {
             // 单条解析失败只丢本 tick，下一 tick 补上
             log.debug("[Watch] tick解析失败: {}", e.toString());
@@ -106,7 +96,7 @@ public class WatchSentinel implements MessageListener {
             if (hit && fire(w, price, now)) {
                 WatchTrigger trigger = new WatchTrigger(w, price, now);
                 if (!runPreset(trigger)) {
-                    events.publishEvent(trigger);
+                    events.publishEvent(new TriggerFired(w.getTraderId(), trigger));
                 }
             }
         }
@@ -122,7 +112,7 @@ public class WatchSentinel implements MessageListener {
         }
         presets.submit(hit.watch(), hit.price(), hit.firedAt()).thenAccept(wake -> {
             if (wake) {
-                events.publishEvent(hit);
+                events.publishEvent(new TriggerFired(hit.watch().getTraderId(), hit));
             }
         });
         return true;

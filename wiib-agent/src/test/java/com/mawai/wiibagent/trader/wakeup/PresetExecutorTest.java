@@ -31,6 +31,7 @@ import java.util.concurrent.CompletableFuture;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -222,6 +223,31 @@ class PresetExecutorTest {
         verify(watchStore).recordAction(31L, false, "新止损 97 比现挂的 98 松，没有移");
         verify(sim, never()).setStopLoss(anyLong(), any());
         verify(planStore, never()).appendRevision(anyLong(), anyLong(), any(), any(), any());
+    }
+
+    /** 动作做成了、往计划里留痕失败：照样按做成了报，撤单不叫醒 */
+    @Test
+    void doneActionStaysDoneWhenPlanBookkeepingFails() {
+        holding();
+        FuturesOrderResponse closed = new FuturesOrderResponse();
+        closed.setFilledPrice(new BigDecimal("103.9"));
+        when(sim.closePosition(eq(99L), any())).thenReturn(closed);
+        doThrow(new IllegalStateException("db down")).when(planStore).appendRevision(anyLong(), anyLong(), any(), any(), any());
+        AiTraderWatch close = watch("{\"type\":\"CLOSE\",\"positionId\":5,\"closePercent\":50,\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"}");
+
+        executor.execute(close, new BigDecimal("1899"), AT);
+
+        assertThat(close.getActionOk()).isTrue();
+
+        FuturesOrderResponse cancelled = new FuturesOrderResponse();
+        cancelled.setOrderId(600L);
+        when(sim.cancelOrder(99L, 600L)).thenReturn(cancelled);
+        doThrow(new IllegalStateException("db down")).when(planStore)
+                .cancelEntries(anyLong(), anyInt(), any(), any(), anyLong(), any());
+        AiTraderWatch cancel = watch("{\"type\":\"CANCEL_ORDER\",\"orderId\":600,\"symbol\":\"BTCUSDT\",\"side\":\"OPEN_LONG\"}");
+
+        assertThat(executor.execute(cancel, new BigDecimal("1899"), AT)).isFalse();
+        assertThat(cancel.getActionOk()).isTrue();
     }
 
     /** 结果落库失败：该叫醒的照样叫醒 */

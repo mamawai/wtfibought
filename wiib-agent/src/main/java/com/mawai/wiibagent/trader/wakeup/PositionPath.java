@@ -25,22 +25,22 @@ public class PositionPath {
 
     /**
      * @param lastOkWakeMs 本局最近一条 OK 决策行的唤醒时刻，null=本局还没有
-     * @param boundaryTime 本次边界（例行=K 线收盘时刻，警报/手动=触发时刻）
+     * @param wakeTime     这一轮的唤醒时刻（例行=K 线收盘时刻，警报/手动=触发时刻）
      */
-    public CaseFileBuilder.MarketWindow build(FuturesPositionDTO pos, Long lastOkWakeMs, long boundaryTime) {
+    public CaseFileBuilder.MarketWindow build(FuturesPositionDTO pos, Long lastOkWakeMs, long wakeTime) {
         long opened = TradePairing.msOf(pos.getCreatedAt());
         long from = lastOkWakeMs == null ? opened : Math.max(lastOkWakeMs, opened);
-        // 起点落在哪根里面，那根整根算进来；边界所在那根还没收盘，不算
-        long fromBar = from - Math.floorMod(from, BAR_MS);
-        long toBar = boundaryTime - Math.floorMod(boundaryTime, BAR_MS);
+        // 起点落在哪根里面，那根整根算进来；唤醒时刻所在那根还没收盘，不算
+        long fromBar = WakeIntervals.align(from, BAR_MS);
+        long toBar = WakeIntervals.align(wakeTime, BAR_MS);
         return caseFiles.market(pos.getSymbol(), fromBar, toBar);
     }
 
-    /** 一个币自上次 OK 轮以来的窗口；本局还没有 OK 轮次就是边界前的一个心跳周期 */
-    public CaseFileBuilder.MarketWindow symbol(String symbol, Long lastOkWakeMs, long boundaryTime, long intervalMs) {
-        long toBar = boundaryTime - Math.floorMod(boundaryTime, BAR_MS);
+    /** 一个币自上次 OK 轮以来的窗口；本局还没有 OK 轮次就是唤醒时刻前的一个心跳周期 */
+    public CaseFileBuilder.MarketWindow symbol(String symbol, Long lastOkWakeMs, long wakeTime, long intervalMs) {
+        long toBar = WakeIntervals.align(wakeTime, BAR_MS);
         long from = lastOkWakeMs == null ? toBar - intervalMs : lastOkWakeMs;
-        long fromBar = from - Math.floorMod(from, BAR_MS);
+        long fromBar = WakeIntervals.align(from, BAR_MS);
         return caseFiles.market(symbol, fromBar, toBar);
     }
 
@@ -49,9 +49,9 @@ public class PositionPath {
         return caseFiles.changes(symbol, now, 3_600_000L, 4 * 3_600_000L, 24 * 3_600_000L);
     }
 
-    /** 刚收盘的那根心跳周期 K 线（5m 合成）：边界对齐到周期，边界所在那根还没收盘不算 */
-    public CaseFileBuilder.MarketWindow lastClosedBar(String symbol, long boundaryTime, long intervalMs) {
-        long aligned = boundaryTime - Math.floorMod(boundaryTime, intervalMs);
+    /** 刚收盘的那根心跳周期 K 线（5m 合成）：唤醒时刻对齐到周期，它所在那根还没收盘不算 */
+    public CaseFileBuilder.MarketWindow lastClosedBar(String symbol, long wakeTime, long intervalMs) {
+        long aligned = WakeIntervals.align(wakeTime, intervalMs);
         return caseFiles.market(symbol, aligned - intervalMs, aligned);
     }
 }

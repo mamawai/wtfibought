@@ -55,11 +55,8 @@ public class WebSearchTool {
         this.searcher = LlmClient.builder().model(model).systemPrompt(instruction).webSearch(true).build();
     }
 
-    // description 只是兜底：发给模型的那份按语言取自词表 tool.web_search（见 LocalizedToolCallbacks）
-    @Tool(name = NAME, description = """
-            Search the web for the query. Returns an answer written from the search results (answer) and the
-            sources it drew on (sources: title and url). Returns available=false when no search event was received;
-            this does not prove there was no relevant event. Sources do not verify every claim in the answer.""")
+    // 描述在词表 tool.web_search（见 LocalizedToolCallbacks）
+    @Tool(name = NAME)
     public String webSearch(@ToolParam(description = "What to search for: a search query or a question") String query) {
         Result result = search(query);
         ObjectNode out = MAPPER.createObjectNode();
