@@ -358,9 +358,13 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
                 JsonNode error = event.get("error");
                 String errorType = error.path("type").asString(null);
                 String message = "Anthropic 流式错误: " + errorType + " " + error.path("message").asString(null);
-                // overloaded 是上游过载，换个时机再来大概率就好
-                return Flux.error("overloaded_error".equals(errorType)
-                        ? new TransientAiException(message) : new NonTransientAiException(message));
+                // overloaded 是上游过载，换个时机再来大概率就好；鉴权、权限错误带上对应的状态码
+                return Flux.error(switch (errorType) {
+                    case "overloaded_error" -> new TransientAiException(message);
+                    case "authentication_error" -> new UpstreamRejected(401, message);
+                    case "permission_error" -> new UpstreamRejected(403, message);
+                    case null, default -> new NonTransientAiException(message);
+                });
             }
             case "message_stop", "ping" -> {
                 return Flux.empty();

@@ -541,6 +541,17 @@ class AnthropicChatModelTest {
                 .hasMessageContaining("Overloaded");
     }
 
+    /** 流里报的鉴权失败带上 401，唤醒回路认作 key 失效 */
+    @Test
+    void 流式authentication_error认作key失效() {
+        events = new String[]{
+                PLAIN[0],
+                """
+                {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"""
+        };
+        assertThatThrownBy(() -> model().call(new Prompt("q"))).matches(LlmErrorMessages::unauthorized);
+    }
+
     /**
      * refusal 是 HTTP 200 + stop_reason，零输出或半截；max_tokens 是撞顶。
      * 按 STOP 收会把空回答或半截[本轮结论]以 status=OK 落库，必须显式失败且不重试

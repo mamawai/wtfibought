@@ -243,8 +243,10 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
             JsonNode error = chunk.get("error");
             Integer code = error.hasNonNull("code") ? error.get("code").asInt() : null;
             String message = "Gemini 流式错误: " + code + " " + error.path("message").asString(null);
-            return Flux.error(code != null && (code == 429 || code >= 500)
-                    ? new TransientAiException(message) : new NonTransientAiException(message));
+            // 带码的跟 HTTP 层一样归类：429/5xx 瞬时，其余带着状态码
+            return Flux.error(code == null ? new NonTransientAiException(message)
+                    : code == 429 || code >= 500 ? new TransientAiException(message)
+                    : new UpstreamRejected(code, message));
         }
         if (chunk.hasNonNull("usageMetadata")) {
             state.usage = chunk.get("usageMetadata");

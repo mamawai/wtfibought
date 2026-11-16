@@ -459,4 +459,14 @@ class GeminiChatModelTest {
                 .isInstanceOf(TransientAiException.class)
                 .hasMessageContaining("断流");
     }
+
+    /** 流里报的 403 跟 HTTP 层的一样带着状态码，唤醒回路认作 key 失效 */
+    @Test
+    void 流式403认作key失效() {
+        chunks = new String[]{
+                """
+                {"error":{"code":403,"message":"Permission denied","status":"PERMISSION_DENIED"}}"""
+        };
+        assertThatThrownBy(() -> model().call(new Prompt("q"))).matches(LlmErrorMessages::unauthorized);
+    }
 }
