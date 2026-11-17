@@ -85,7 +85,7 @@ export function MonthGrid({ cells, month, onMonthChange, selectedDate, onSelectD
               title={cellTitle}
               aria-label={cellTitle}
               onClick={() => onSelectDate(date)}
-              className={cn('c', cell.pnl >= 0 ? 'g' : 'l', k > .6 && 'deep', date === today && 'td', date === selectedDate && 'sel')}
+              className={cn('c', cell.pnl >= 0 ? 'g' : 'l', k > .6 && 'deep', date === today && 'td', date === selectedDate && 'cur')}
             >
               {day}
             </button>

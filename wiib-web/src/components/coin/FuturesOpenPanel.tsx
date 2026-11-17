@@ -211,6 +211,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
   // 确认调杠杆（Binance语义：点确认那一刻即完成调整，独立于下单）：多空共用，同时作用于该币全部仓位；
   // 失败（全仓可用不够/逐仓禁调低）toast 后端信息并把滑杆弹回持仓杠杆
   const handleAdjustLeverage = async (target: number) => {
+    if (adjustingLev) return;
     setAdjustingLev(true);
     try {
       await futuresApi.adjustLeverage({ symbol, leverage: target });
@@ -276,7 +277,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
   );
 
   return (
-    <div className="ord blk" aria-label={t('mode.futures')}>
+    <div className="ord blk" role="group" aria-label={t('mode.futures')}>
       {/* 合约/现货 + 可用 */}
       <div className="rowb">
         <TradeModeSwitch mode="futures" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />

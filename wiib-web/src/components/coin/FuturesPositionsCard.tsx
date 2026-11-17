@@ -12,6 +12,7 @@ import { Seg } from '../ui/seg';
 import { HelpTip } from '../HelpTip';
 import { EmptyState } from '../EmptyState';
 import { LeverageSlider } from '../LeverageSlider';
+import { SureButton } from '../SureButton';
 import { cn, fmtNum, fmtSignedPct, fmtSignedUsd, spinIcon } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
 import { useTradeFilter } from '../../lib/tradeFilters';
@@ -50,7 +51,7 @@ function loadBrackets(): Promise<Record<string, FuturesBracket[]>> {
 
 /**
  * 合约持仓整节（样式见 FuturesPositionsCard.css）：symbol 传入=只显示该币种（Coin页，双向持仓最多 多+空 两张），不传=全部持仓（Portfolio汇总）。
- * 每张仓位卡自订该币 futures WS 流（共享 STOMP 连接）实时算盈亏，不再依赖页面传 markPrice；
+ * 每张仓位卡自订该币 futures WS 流（共享 STOMP 连接）实时算盈亏；
  * showCloseAll 开启头部"一键全平"（两段确认，市价全平所有仓位）。
  * 加仓无独立入口（对齐Binance）：同方向再下单即自动并入，走开仓面板。
  */
@@ -73,7 +74,6 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, onPo
   const [loaded, setLoaded] = useState(false);
   const [bracketsMap, setBracketsMap] = useState<Record<string, FuturesBracket[]>>({});
   const [closingAll, setClosingAll] = useState(false);
-  const [confirmCloseAll, setConfirmCloseAll] = useState(false);
 
   useEffect(() => { loadBrackets().then(setBracketsMap).catch(() => { /* 杠杆上限降级显示 */ }); }, []);
 
@@ -93,13 +93,6 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, onPo
 
   useEffect(() => { fetchPositions(); }, [fetchPositions, refreshKey]);
 
-  // 一键全平两段确认，3s 未二次点击自动还原
-  useEffect(() => {
-    if (!confirmCloseAll) return;
-    const t = window.setTimeout(() => setConfirmCloseAll(false), 3000);
-    return () => window.clearTimeout(t);
-  }, [confirmCloseAll]);
-
   // 子块操作成功后的统一收口：刷仓位+用户+通知外部（开仓面板要跟随仓位快照）；成交类操作再通知订单表
   const handleMutated = useCallback((ordersChanged: boolean) => {
     fetchPositions();
@@ -109,7 +102,6 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, onPo
   }, [fetchPositions, fetchUser, onPositionsChanged, onOrdersChanged]);
 
   const handleCloseAll = async () => {
-    setConfirmCloseAll(false);
     setClosingAll(true);
     try {
       const res = await futuresApi.closeAll();
@@ -146,14 +138,10 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, onPo
             <RefreshCw className="ic" />
           </button>
           {showCloseAll && positions.length > 0 && (
-            <button
-              type="button"
-              disabled={closingAll}
-              onClick={() => confirmCloseAll ? void handleCloseAll() : setConfirmCloseAll(true)}
-              className={cn('linkb', confirmCloseAll && 'sure')}
-            >
-              {closingAll ? <Loader2 className="ic animate-spin" /> : confirmCloseAll ? t('pos.closeAllConfirm') : t('pos.closeAll')}
-            </button>
+            <SureButton className="linkb" sureClassName="sure" disabled={closingAll}
+                        sureLabel={t('pos.closeAllConfirm')} onConfirm={() => void handleCloseAll()}>
+              {closingAll ? <Loader2 className="ic animate-spin" /> : t('pos.closeAll')}
+            </SureButton>
           )}
         </span>
       </div>
@@ -253,7 +241,7 @@ function PositionItem({ pos, brackets, onCoinPage, onMutated }: {
     setTpRows(pos.takeProfits?.length ? pos.takeProfits.map(t => ({ price: String(t.price), quantity: String(t.quantity) })) : [fullRow]);
   };
 
-  // 通用提交包装：成功向父上报，按钮打完勾再收起面板。成败两条文案分别传——原先靠裁"成功"两字拼失败句，换语言就拼不出来了
+  // 通用提交包装：成功向父上报，按钮打完勾再收起面板。成败两条文案分别传
   const submit = async (key: SubmitKey, fn: () => Promise<unknown>, okKey: string, failKey: string, ordersChanged: boolean) => {
     const done = await fx.run(key, async () => {
       await fn();
@@ -430,8 +418,8 @@ function PositionItem({ pos, brackets, onCoinPage, onMutated }: {
         <div><i>{t('sltp.tp')}</i><span className={pos.takeProfits?.length ? 'up' : 'mute'}>{levelsText(pos.takeProfits)}</span></div>
         <div>
           <i>{t('metric.funding')}</i>
-          <s><em>{t('metric.fundingPer')}</em>{fmtNum(pos.fundingFeePerCycle)}</s>
-          <s><em>{t('metric.fundingSum')}</em>{fmtNum(pos.fundingFeeTotal)}</s>
+          <span className="fund"><em>{t('metric.fundingPer')}</em>{fmtNum(pos.fundingFeePerCycle)}</span>
+          <span className="fund"><em>{t('metric.fundingSum')}</em>{fmtNum(pos.fundingFeeTotal)}</span>
         </div>
         <div><i>{t('metric.mmr')}</i>{currentBracket ? t('metric.tier', { tier: currentBracket.tier, rate: formatRate(currentBracket.mmr) }) : '—'}</div>
         <div><i>{t('metric.realizedPnl')}</i><span className={realizedPnl >= 0 ? 'up' : 'dn'}>{realizedPnl >= 0 ? '+' : ''}{fmtNum(realizedPnl)}</span></div>
@@ -449,7 +437,11 @@ function PositionItem({ pos, brackets, onCoinPage, onMutated }: {
             type="button"
             className={cn('btn', confirmReverse && 'danger', reversing && 'busy')}
             title={t('pos.reverseHelp')}
-            onClick={() => confirmReverse ? void handleReverse() : setConfirmReverse(true)}
+            onClick={() => {
+              if (reversing) return;
+              if (confirmReverse) void handleReverse();
+              else setConfirmReverse(true);
+            }}
           >
             {confirmReverse ? t('pos.reverseConfirm') : t('pos.reverse')}
           </button>

@@ -158,7 +158,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   };
 
   return (
-    <div className="ord blk" aria-label={t('mode.spot')}>
+    <div className="ord blk" role="group" aria-label={t('mode.spot')}>
       {/* 合约/现货 + 可用 */}
       <div className="rowb">
         <TradeModeSwitch mode="spot" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />

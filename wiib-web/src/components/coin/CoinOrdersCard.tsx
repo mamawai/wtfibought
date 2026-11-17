@@ -8,10 +8,11 @@ import { Seg } from '../ui/seg';
 import { Pager } from '../ui/pager';
 import { Skeleton } from '../ui/skeleton';
 import { EmptyState } from '../EmptyState';
+import { SureButton } from '../SureButton';
 import { cn, fmtNum, fmtDateTime, spinIcon } from '../../lib/utils';
 import { formatCoinPrice } from '../../lib/coinConfig';
 import { orderSideView } from '../../lib/orderSide';
-import type { CryptoOrder, FuturesOrder, PageResult } from '../../types';
+import type { CryptoOrder, FuturesOrder } from '../../types';
 
 // 筛选/状态表都存词表 key（模块常量拿不到 t，渲染时现查，切语言才跟着变）
 const ORDER_STATUS_FILTERS = [
@@ -113,8 +114,7 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
   // 撤单：等第二下确认的是哪一行；正在撤的是哪一单
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
-  // 一键撤单：等第二下确认；正在一单单撤
-  const [confirmAll, setConfirmAll] = useState(false);
+  // 一键撤单：正在一单单撤
   const [cancellingAll, setCancellingAll] = useState(false);
 
   // 请求序号：翻页/筛选/成交刷新/撤单刷新可能叠着发，只认最后发出的那次
@@ -125,7 +125,7 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
     const seq = ++spotSeqRef.current;
     setOrdersLoading(true);
     try {
-      const res = await cryptoOrderApi.list(status || undefined, page, 10, symbol) as unknown as PageResult<CryptoOrder>;
+      const res = await cryptoOrderApi.list(status || undefined, page, 10, symbol);
       if (seq !== spotSeqRef.current) return;
       setOrders(res.records);
       setOrderPages(res.pages);
@@ -137,7 +137,7 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
     const seq = ++futuresSeqRef.current;
     setFuturesOrdersLoading(true);
     try {
-      const res = await futuresApi.orders(status || undefined, page, 10, symbol) as unknown as PageResult<FuturesOrder>;
+      const res = await futuresApi.orders(status || undefined, page, 10, symbol);
       if (seq !== futuresSeqRef.current) return;
       setFuturesOrders(res.records);
       setFuturesOrderPages(res.pages);
@@ -166,11 +166,6 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
     const timer = window.setTimeout(() => setConfirmId(null), 3000);
     return () => window.clearTimeout(timer);
   }, [confirmId]);
-  useEffect(() => {
-    if (!confirmAll) return;
-    const timer = window.setTimeout(() => setConfirmAll(false), 3000);
-    return () => window.clearTimeout(timer);
-  }, [confirmAll]);
 
   const handleCancel = async (orderId: number) => {
     try {
@@ -225,7 +220,6 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
    * 中途成交了的那单撤不掉，最后报撤了几单、几单没撤掉。止盈止损挂在仓位上不是订单，不归这里管
    */
   const handleCancelAll = async () => {
-    setConfirmAll(false);
     setCancellingAll(true);
     try {
       const pending = isFutures
@@ -299,14 +293,10 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
         </h2>
         {/* 眼前有挂着的单才出；两段确认同「一键全平」。电脑上排在最右边；手机上那一排放不下，挪到标题这一行 */}
         {rows.some(r => r.pending) && (
-          <button
-            type="button"
-            disabled={cancellingAll}
-            onClick={() => confirmAll ? void handleCancelAll() : setConfirmAll(true)}
-            className={cn('linkb order-1 max-sm:order-none text-[13px]', confirmAll && 'sure')}
-          >
-            {cancellingAll ? <Loader2 className="ic animate-spin" /> : confirmAll ? t('orders.cancelAllConfirm') : t('orders.cancelAll')}
-          </button>
+          <SureButton className="linkb order-1 max-sm:order-none text-[13px]" sureClassName="sure" disabled={cancellingAll}
+                      sureLabel={t('orders.cancelAllConfirm')} onConfirm={() => void handleCancelAll()}>
+            {cancellingAll ? <Loader2 className="ic animate-spin" /> : t('orders.cancelAll')}
+          </SureButton>
         )}
         <span className="r">
           <Seg value={filter} onChange={setFilter} options={filters.map(f => ({ value: f.value, label: t(f.labelKey) }))} />
@@ -357,7 +347,11 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
                         {r.pending && (
                           <button type="button"
                                   className={cn('btn sm', confirmId === r.id && 'danger', cancellingId === r.id && 'busy')}
-                                  onClick={() => confirmId === r.id ? void cancelOrder(mode, r.id) : setConfirmId(r.id)}>
+                                  onClick={() => {
+                                    if (cancellingId === r.id) return;
+                                    if (confirmId === r.id) void cancelOrder(mode, r.id);
+                                    else setConfirmId(r.id);
+                                  }}>
                             {confirmId === r.id ? t('orders.cancelConfirm') : t('orders.cancelShort')}
                           </button>
                         )}
@@ -418,7 +412,11 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
         {detail && detailPending && (
           <DialogFooter>
             <button type="button" className={cn('btn danger wide', cancellingId === detail.o.orderId && 'busy')}
-                    onClick={async () => { await cancelOrder(detail.kind, detail.o.orderId); setDetail(null); }}>
+                    onClick={async () => {
+                      if (cancellingId === detail.o.orderId) return;
+                      await cancelOrder(detail.kind, detail.o.orderId);
+                      setDetail(null);
+                    }}>
               {t('orders.cancelOrder')}
             </button>
           </DialogFooter>

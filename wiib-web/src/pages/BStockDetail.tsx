@@ -361,7 +361,7 @@ function BStockDetail({ symbol }: { symbol: string }) {
 
               <FuturesActionButton
                 onClick={submit}
-                disabled={qtyNum <= 0 || livePrice <= 0}
+                disabled={livePrice <= 0}
                 fx={fx.cls('order')}
                 side={side}
                 label={ticker}

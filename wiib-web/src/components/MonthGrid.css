@@ -13,14 +13,14 @@
   .month .cal .c.deep{color:#fff}
   .month .cal button.c:active{transform:scale(.92);transition-duration:0s}
   /* 今天和选中的那格：一圈墨线 */
-  .month .cal .c.td,.month .cal .c.sel{box-shadow:0 0 0 2px var(--color-background),0 0 0 3.5px var(--color-foreground)}
+  .month .cal .c.td,.month .cal .c.cur{box-shadow:0 0 0 2px var(--color-background),0 0 0 3.5px var(--color-foreground)}
   /* 过去的日子没数：一格空框 */
   .month .cal .c.none{background:none;box-shadow:inset 0 0 0 1px var(--color-border);color:var(--color-faint)}
   .month .msum{display:flex;justify-content:space-between;align-items:baseline;margin-top:auto;padding-top:12px;font-size:12px;color:var(--color-muted-foreground)}
-  .month .msum b{font-size:15px;font-weight:600;color:var(--color-foreground)}
+  .month .msum b{font-size:15px;font-weight:600}
   @media (hover:hover){
     .month .cal button.c:hover{box-shadow:0 0 0 2px var(--color-background),0 0 0 3.5px var(--color-line2)}
-    .month .cal button.c.td:hover,.month .cal button.c.sel:hover{box-shadow:0 0 0 2px var(--color-background),0 0 0 3.5px var(--color-foreground)}
+    .month .cal button.c.td:hover,.month .cal button.c.cur:hover{box-shadow:0 0 0 2px var(--color-background),0 0 0 3.5px var(--color-foreground)}
   }
   @media (prefers-reduced-motion:reduce){.month .cal .c{transition:none}}
 }

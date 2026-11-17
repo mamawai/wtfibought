@@ -60,8 +60,7 @@
     "commodity": "大宗商品",
     "commoditySub": "黄金 / 原油",
     "tradfi": "TradFi 合约",
-    "tradfiSub": "美股/ETF 永续",
-    "usStock": "美股"
+    "tradfiSub": "美股/ETF 永续"
   },
   "news": {
     "title": "实时快讯",
@@ -189,7 +188,6 @@
   },
   "intro": {
     "title": "玩法说明",
-    "welcomeTitle": "欢迎",
     "welcomeDesc": "虚拟股票交易模拟器，体验\"如果当初买了会怎样\"。所有数据均为模拟。",
     "welcomeWarn": "仅供娱乐，不构成投资建议。杠杆有风险，可能爆仓。",
     "rulesTitle": "交易规则",

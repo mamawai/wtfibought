@@ -64,8 +64,8 @@ export function OrderBook({ symbol, lastPrice, markPrice }: {
   const maxCum = Math.max(bids.at(-1)?.cum ?? 0, asks.at(-1)?.cum ?? 0);
   const decimals = ladder ? (ladder.step.split('.')[1] ?? '').length : 0;
 
-  const side = (rows: typeof bids, cls: string) => (
-    <div className={cn('ob-s', cls)}>
+  const side = (rows: typeof bids, cls: string, label: string) => (
+    <div className={cn('ob-s', cls)} role="group" aria-label={label}>
       <div className="th"><span>{t('book.price')}</span><span>{t('book.amount')}</span></div>
       {/* 行按位置固定（第几行就是第几行）：价变了只是换里面的字，后面的条才能从原来的长度滑到新的长度 */}
       {rows.map((r, i) => (
@@ -99,8 +99,8 @@ export function OrderBook({ symbol, lastPrice, markPrice }: {
       </div>
       {ladder ? (
         <>
-          {side(bids, 'bids')}
-          {side(asks, 'asks')}
+          {side(bids, 'bids', t('book.bids'))}
+          {side(asks, 'asks', t('book.asks'))}
         </>
       ) : (
         <div className="ob-wait">{t('book.waiting')}</div>

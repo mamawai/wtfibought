@@ -9,11 +9,8 @@ import { formatCoinPrice } from '../../lib/coinConfig';
 /** 视角：开仓价分布 / 强平价分布，两套桶宽不同（0.25% / 0.5% 标记价） */
 export type WhaleView = 'entry' | 'liq';
 
-/** 快照价上下各多少行 */
+/** 快照价上下各多少行（WhaleBlock.css 的 .wd-b 按它定高） */
 const HALF_ROWS = 12;
-const ROW_H = 20;
-/** 快照价那条分隔线的高 */
-const DIVIDER_H = 18;
 /** 轴要罩住多少名义，剩下的进上下两条溢出行 */
 const COVER = 0.95;
 /** 轴半径占快照价的下限、上限 */
@@ -120,8 +117,6 @@ export function WhaleDistribution({ entry, liq, price, symbol, view, onViewChang
 
   const source = view === 'entry' ? entry : liq;
   const axis = useMemo(() => buildAxis(source, price), [source, price]);
-  // 行数固定，高度跟数据无关
-  const height = 2 * HALF_ROWS * ROW_H + 2 * ROW_H + DIVIDER_H;
 
   const max = Math.max(...axis.rows.map(r => Math.max(r.long, r.short)));
   const px = (v: number) => formatCoinPrice(symbol, v);
@@ -166,9 +161,9 @@ export function WhaleDistribution({ entry, liq, price, symbol, view, onViewChang
       </div>
 
       {source.buckets.length === 0 ? (
-        <div className="flex items-center justify-center text-[13px] mute" style={{ height }}>{t('whale.none')}</div>
+        <div className="wd-b flex items-center justify-center text-[13px] mute">{t('whale.none')}</div>
       ) : (
-        <div style={{ minHeight: height }} onMouseLeave={() => setActive(null)}>
+        <div className="wd-b" onMouseLeave={() => setActive(null)}>
           {overflow(axis.over, axis.top, true)}
           {axis.rows.map((r, i) => (
             <Fragment key={r.j}>

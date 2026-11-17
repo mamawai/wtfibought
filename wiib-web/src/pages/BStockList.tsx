@@ -3,11 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { Inbox } from 'lucide-react';
 import { bstockApi } from '../api';
 import { StockMarketRow } from '../components/MarketRow';
+import { EmptyState } from '../components/EmptyState';
 import { useToast } from '../components/ui/use-toast';
 import type { BStock } from '../types';
 
 export function BStockList() {
-  const { t } = useTranslation(['market', 'common']);
+  const { t } = useTranslation('market');
   const { toast } = useToast();
   // null = 还在拉
   const [stocks, setStocks] = useState<BStock[] | null>(null);
@@ -37,7 +38,7 @@ export function BStockList() {
           ))
           : stocks.length
             ? stocks.map(s => <StockMarketRow key={s.symbol} stock={s} />)
-            : <div className="empty"><span className="ib0"><Inbox className="ic" /></span><b>{t('common:noData')}</b></div>}
+            : <EmptyState icon={<Inbox />} />}
       </div>
     </>
   );

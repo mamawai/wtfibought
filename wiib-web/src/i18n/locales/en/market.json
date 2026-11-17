@@ -232,6 +232,8 @@
     "mark": "Mark",
     "markHelp": "The mark price is used for unrealized PnL and liquidation.\nIt is derived from a weighted price index across several exchanges, so it does not jump with a single venue's trades.",
     "waiting": "Waiting for order book…",
-    "offline": "Order book disconnected"
+    "offline": "Order book disconnected",
+    "bids": "Bids",
+    "asks": "Asks"
   }
 }

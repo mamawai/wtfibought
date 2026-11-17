@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { cn } from '../lib/utils';
 
 /**
@@ -27,23 +28,17 @@ const FAQ_ITEMS: { id: string; qKey: string; aKey: string }[] = [
   { id: 'resetAccount', qKey: 'faq.resetAccount.q', aKey: 'faq.resetAccount.a' },
 ];
 
-/** 按屏宽分几列：大屏 3、中屏 2、手机 1（断点同 pages/Home.css） */
-const columnCount = () => window.innerWidth > 1180 ? 3 : window.innerWidth > 760 ? 2 : 1;
-
 /**
  * 首页新手教学：几列手风琴。条目按顺序轮流发到各列，每列自己往下排——点开一条只顶开它下面的，不动旁边那列。
  */
 export function HomeFaq() {
   const { t } = useTranslation('home');
-  const [cols, setCols] = useState(columnCount);
+  // 按屏宽分几列：大屏 3、中屏 2、手机 1（断点同 pages/Home.css）
+  const narrow = useMediaQuery('(max-width:1180px)');
+  const phone = useMediaQuery('(max-width:760px)');
+  const cols = phone ? 1 : narrow ? 2 : 3;
   // 开着的条目：换列数时条目会挪到别的列里，开合状态得留在外面
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
-
-  useEffect(() => {
-    const onResize = () => setCols(columnCount());
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   const toggle = (id: string) => setOpen(prev => {
     const next = new Set(prev);

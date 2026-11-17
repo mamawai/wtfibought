@@ -8,6 +8,8 @@
   .wd-h .lg2{display:flex;gap:14px;font-size:12px;color:var(--color-muted-foreground)}
   .wd-h .lg2 span{display:inline-flex;align-items:center;gap:6px}
   .wd-h .lg2 i{width:8px;height:8px;border-radius:2px;background:var(--c)}
+  /* 分布那一块的高，跟数据无关：快照价上下各 12 行 + 上下两条溢出行，每行 20，加分隔线 18 */
+  .wd-b{min-height:538px}
   /* 一行一个价位：左边多头名义、右边空头名义，中间价格和离快照价多远；快照价那一行上下分开 */
   .wrow{display:grid;align-items:center;gap:0 8px;width:100%;height:20px;border-radius:5px;font-size:11px;color:var(--color-faint);transition:background-color var(--fast)}
   .wrow.on{background:var(--color-fill);color:var(--color-foreground)}

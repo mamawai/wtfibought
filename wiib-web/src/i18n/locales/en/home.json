@@ -60,8 +60,7 @@
     "commodity": "Commodities",
     "commoditySub": "Gold / Oil",
     "tradfi": "TradFi futures",
-    "tradfiSub": "US equity / ETF perps",
-    "usStock": "US equity"
+    "tradfiSub": "US equity / ETF perps"
   },
   "news": {
     "title": "Live news",
@@ -190,7 +189,6 @@
   },
   "intro": {
     "title": "How it works",
-    "welcomeTitle": "Welcome",
     "welcomeDesc": "A virtual trading simulator — find out what if you had bought. All data is simulated.",
     "welcomeWarn": "Entertainment only, not investment advice. Leverage carries liquidation risk.",
     "rulesTitle": "Trading rules",
