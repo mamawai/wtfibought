@@ -500,11 +500,11 @@ export function StrategyBacktestPanel() {
 
       {/* ===== 主区：图表 + 工作记录 ===== */}
       {started && (
-        <div className="grid">
+        <div className="main">
           <div>
             <div className="cvh">
               <span className="num">{viewSymbol.replace('USDT', '')} · {ivLabel(ivMin)}{status ? ` · ${strategyName(status.strategyId)}` : ''}</span>
-              <Seg value={String(ivMin)} label={ivLabel(ivMin)} options={IV_OPTIONS.map(o => ({ value: String(o.min), label: o.label }))}
+              <Seg value={String(ivMin)} label={t('player.interval')} options={IV_OPTIONS.map(o => ({ value: String(o.min), label: o.label }))}
                    onChange={v => {
                      const min = Number(v);
                      setIvMin(min);
@@ -528,7 +528,7 @@ export function StrategyBacktestPanel() {
                         aria-label={t('player.reset')} title={t('player.reset')}>
                   <RotateCcw className="ic" />
                 </button>
-                <Seg value={String(speed)} onChange={v => setSpeed(Number(v))} label={t('player.progress')}
+                <Seg value={String(speed)} onChange={v => setSpeed(Number(v))} label={t('player.speed')}
                      options={SPEEDS.map(sp => ({ value: String(sp.bps), label: t(sp.labelKey) }))} />
                 <input type="range" min={warmupBars} max={bars.length} value={sliderCursor}
                        onChange={e => { setPlaying(false); setCursor(Number(e.target.value)); }} aria-label={t('player.progress')} />
@@ -565,7 +565,12 @@ export function StrategyBacktestPanel() {
                       {/* 循环变量避开 t：与 i18n 的 t 同名会遮蔽 */}
                       {pagedTrades.map((tr, i) => (
                         <tr key={(page - 1) * TRADES_PAGE + i} onClick={() => jumpToTime(tr.closeTime)}>
-                          <td className="num mute">{fmtDateTime(tr.openTime)}</td>
+                          {/* 键盘从这颗跳到图表；鼠标点整行 */}
+                          <td className="num mute">
+                            <button type="button" onClick={e => { e.stopPropagation(); jumpToTime(tr.closeTime); }}>
+                              {fmtDateTime(tr.openTime)}
+                            </button>
+                          </td>
                           <td>
                             <span className={cn('tag sm', tr.side === 'LONG' ? 'g' : 'r')}>
                               {tr.side === 'LONG' ? t('side.long') : t('side.short')} {tr.leverage}x

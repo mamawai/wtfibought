@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronLeft, ChevronRight, CloudOff, RefreshCw } from 'lucide-react';
+import { CloudOff, RefreshCw } from 'lucide-react';
 import { strategyAccountApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
+import { Pager } from '../components/ui/pager';
 import { Seg } from '../components/ui/seg';
 import { SureButton } from '../components/SureButton';
 import { cn, fmtDateTime, fmtNum, spinIcon } from '../lib/utils';
@@ -37,7 +38,7 @@ function Curve({ points }: { points: number[] }) {
   const mn = Math.min(0, ...points);
   const mx = Math.max(0, ...points);
   const y = (v: number) => (92 - (v - mn) / ((mx - mn) || 1) * 88).toFixed(1);
-  const x = (i: number) => (i / Math.max(1, points.length - 1) * 300).toFixed(1);
+  const x = (i: number) => (i / (points.length - 1) * 300).toFixed(1);
   const up = points[points.length - 1] >= 0;
   return (
     <div className="cv">
@@ -118,7 +119,7 @@ function StrategyColumn({ view, signals, on, canClose, closingId, onClose }: {
 }) {
   const { t } = useTranslation('strategy');
   const { name, desc } = useStrategyName()(view.strategyId);
-  const [tradePage, setTradePage] = useState(0);
+  const [tradePage, setTradePage] = useState(1);
 
   // 收益曲线：已平仓 closedPnl 按平仓时间升序累加（testnet 页同口径，从 0 起）
   const curve = useMemo(() => [...view.closedPositions].reverse()
@@ -126,8 +127,8 @@ function StrategyColumn({ view, signals, on, canClose, closingId, onClose }: {
 
   // 前端分页：overview 一次带全（≤200笔），翻页纯内存；60s 刷新后条数变化时钳住页码
   const pageCount = Math.max(1, Math.ceil(view.closedPositions.length / TRADE_PAGE_SIZE));
-  const page = Math.min(tradePage, pageCount - 1);
-  const trades = view.closedPositions.slice(page * TRADE_PAGE_SIZE, (page + 1) * TRADE_PAGE_SIZE);
+  const page = Math.min(tradePage, pageCount);
+  const trades = view.closedPositions.slice((page - 1) * TRADE_PAGE_SIZE, page * TRADE_PAGE_SIZE);
 
   return (
     <div className={cn('colx', on && 'on')}>
@@ -199,23 +200,16 @@ function StrategyColumn({ view, signals, on, canClose, closingId, onClose }: {
           </div>
 
           <div>
-            <h3>{t('strategies.trades.title')}</h3>
+            <h3>
+              {t('strategies.trades.title')}
+              {view.closedPositions.length > 0 && <small>{t('strategies.trades.count', { count: view.closedPositions.length })}</small>}
+            </h3>
             {view.closedPositions.length === 0 ? (
               <p className="none">{t('strategies.trades.empty')}</p>
             ) : (
               <>
                 {trades.map(tr => <TradeRow key={tr.id} t={tr} />)}
-                {pageCount > 1 && (
-                  <div className="pgn">
-                    <button type="button" className="ib sm" disabled={page === 0} onClick={() => setTradePage(page - 1)} aria-label={t('pager.prev')}>
-                      <ChevronLeft className="ic" />
-                    </button>
-                    <span className="num">{t('strategies.trades.pageInfo', { page: page + 1, pages: pageCount, total: view.closedPositions.length })}</span>
-                    <button type="button" className="ib sm" disabled={page >= pageCount - 1} onClick={() => setTradePage(page + 1)} aria-label={t('pager.next')}>
-                      <ChevronRight className="ic" />
-                    </button>
-                  </div>
-                )}
+                <Pager page={page} pages={pageCount} onChange={setTradePage} />
               </>
             )}
           </div>

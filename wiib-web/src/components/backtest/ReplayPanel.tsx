@@ -96,7 +96,7 @@ function AiBox({ run, title, extra, onGoConfig, onClose, raise }: {
         {onClose && <button type="button" className="xb" aria-label={t('common:close')} onClick={onClose}><X className="ic" /></button>}
       </b>
       {run.busy && !run.text && <p className="mute">{t('replay.aiThinking')}</p>}
-      {run.text && <div className="md"><Markdown content={run.text} /></div>}
+      {run.text && <div><Markdown content={run.text} /></div>}
       {run.error && (
         <p className="err">
           {run.error}
@@ -575,13 +575,13 @@ export function ReplayPanel() {
         </div>
       )}
 
-      <div className="grid">
+      <div className="main">
         {/* 左：图表 + 播放 + AI 提示 */}
         <div>
           <div className="cvh">
             <span className={cn('tag sm', blindNow && 'ink')}>{blindNow ? t('replay.blind') : t('replay.review')}</span>
             <span className="num">{session.symbol.replace('USDT', '')} · {ivLabel(ivMin)}</span>
-            <Seg value={String(ivMin)} onChange={v => switchIv(Number(v))} label={ivLabel(ivMin)}
+            <Seg value={String(ivMin)} onChange={v => switchIv(Number(v))} label={t('player.interval')}
                  options={IV_OPTIONS.map(o => ({ value: String(o.min), label: o.label }))} />
             {curBar && <span className="num">{fmtReplayTime(curBar[0])}</span>}
             <span className="sp" />
@@ -602,7 +602,7 @@ export function ReplayPanel() {
           {!finished && (
             <div className="player">
               <button type="button" className="btn ink" onClick={doNext}><SkipForward className="ic" />{t('replay.next')}</button>
-              <Seg value={String(auto)} onChange={v => setAuto(Number(v))} label={t('replay.manual')} options={[
+              <Seg value={String(auto)} onChange={v => setAuto(Number(v))} label={t('player.mode')} options={[
                 { value: '0', label: t('replay.manual') },
                 ...AUTO_SPEEDS.map(sp => ({ value: String(sp), label: t('replay.speed', { n: sp }) })),
               ]} />

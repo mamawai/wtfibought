@@ -15,6 +15,8 @@
   .p-bt .cfg .desc{flex-basis:100%;font-size:13px;line-height:1.6;color:var(--color-muted-foreground)}
   /* 排队、进度：一句话 + 一根细进度条 */
   .p-bt .prog{display:flex;align-items:center;gap:14px;margin-top:16px;font-size:13px;color:var(--color-muted-foreground)}
+  /* 失败那句标红 */
+  .p-bt .prog.dn{color:var(--color-loss)}
   .p-bt .prog b{font-weight:500;color:var(--color-foreground)}
   .p-bt .prog i{flex:1;height:3px;border-radius:2px;background:var(--color-fill2);overflow:hidden}
   .p-bt .prog i b{display:block;height:100%;background:var(--color-foreground);transition:width var(--t) var(--ease-control)}
@@ -27,8 +29,8 @@
   .p-bt .st8 b{display:block;margin-top:5px;font-size:19px;font-weight:400;letter-spacing:-.02em;white-space:nowrap}
   .p-bt .st8 small{display:block;margin-top:2px;font-size:11.5px;color:var(--color-faint)}
   /* 主区：左图右记录 */
-  .p-bt .grid{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:40px;align-items:start;margin-top:28px}
-  .p-bt .grid > div{min-width:0}
+  .p-bt .main{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:40px;align-items:start;margin-top:28px}
+  .p-bt .main > div{min-width:0}
   .p-bt .cvh{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:10px;font-size:12.5px;color:var(--color-muted-foreground)}
   .p-bt .cvh .sp,.p-bt .player .sp{flex:1}
   .p-bt .player{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px}
@@ -73,7 +75,7 @@
   .p-bt .done .st8{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:20px}
   .p-bt .done .f{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
   @media (max-width:1180px){
-    .p-bt .grid{grid-template-columns:minmax(0,1fr);gap:28px}
+    .p-bt .main{grid-template-columns:minmax(0,1fr);gap:28px}
     .p-bt .st8{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:16px}
     .p-bt .st8 > div:nth-child(5){padding-left:0;border-left:0}
   }
@@ -81,6 +83,8 @@
     .p-bt .st8,.p-bt .done .st8{grid-template-columns:repeat(2,minmax(0,1fr))}
     .p-bt .st8 > div:nth-child(odd){padding-left:0;border-left:0}
     .p-bt .cfg .go3{width:100%;margin-left:0}
+    /* 策略名长（英文）一排放不下：段选自己横着滚，不把页面撑宽 */
+    .p-bt .cfg .seg{overflow-x:auto}
   }
   @media (prefers-reduced-motion:reduce){.p-bt .prog i b{transition:none}}
 }

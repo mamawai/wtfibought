@@ -3,19 +3,18 @@
     "long": "Long",
     "short": "Short"
   },
-  "pager": {
-    "prev": "Previous page",
-    "next": "Next page"
-  },
   "player": {
     "play": "Play",
     "pause": "Pause",
     "reset": "Reset to full range",
-    "progress": "Replay progress"
+    "progress": "Replay progress",
+    "speed": "Replay speed",
+    "interval": "Interval",
+    "mode": "Playback"
   },
   "strategies": {
     "title": "Strategy accounts",
-    "subtitle": "Four strategies, four accounts · Run on the platform paper account · Decision and fill price from one source",
+    "subtitle": "One account per strategy · Run on the platform paper account · Decision and fill price from one source",
     "loading": "Loading strategy accounts...",
     "offline": "Offline",
     "name": {
@@ -151,7 +150,8 @@
     "trades": {
       "title": "Trades",
       "empty": "No trades yet",
-      "pageInfo": "{{page}} / {{pages}} · {{total}} trades",
+      "count_one": "{{count}} trade",
+      "count_other": "{{count}} trades",
       "liquidated": "Liquidated"
     },
     "pos": {
@@ -159,7 +159,6 @@
       "entry": "Entry",
       "mark": "Mark",
       "margin": "Margin",
-      "unrealized": "Unrealized PnL",
       "close": "Close",
       "closeSure": "Confirm close"
     },

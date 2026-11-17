@@ -10,7 +10,7 @@
   /* 名字前的点：账户在线绿，离线灰 */
   .p-sg .nmh b i{flex:none;width:7px;height:7px;border-radius:50%;background:var(--color-gain)}
   .p-sg .nmh b i.off{background:var(--color-line2)}
-  .p-sg .nmh span{display:block;margin-top:4px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-sg .nmh > span{display:block;margin-top:4px;font-size:13px;color:var(--color-muted-foreground)}
   .p-sg .st4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 16px}
   .p-sg .st4 b{display:block;font-size:22px;font-weight:300;letter-spacing:-.035em;line-height:1.1}
   .p-sg .st4 .eq{grid-column:1/-1}
