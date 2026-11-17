@@ -1,0 +1,19 @@
+/* 心跳条：一块浅灰里四格。第二格底下那条细线是这一拍走到哪了（工作台和配置台共用） */
+@layer components {
+  .blk.hb{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px 28px;padding:20px 24px}
+  .blk.hb .k{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--color-muted-foreground)}
+  /* 正醒着想事：一颗闪着的橙点 */
+  .blk.hb .k i{width:6px;height:6px;border-radius:50%;background:var(--color-primary);animation:wiib-blink 1.2s ease-in-out infinite}
+  .blk.hb .v{margin-top:6px;font-size:24px;font-weight:400;line-height:1.1;letter-spacing:-.03em}
+  .blk.hb .s{margin-top:5px;font-size:12.5px;color:var(--color-muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .blk.hb .beat{display:block;height:3px;margin-top:10px;border-radius:2px;background:var(--color-fill2);overflow:hidden}
+  .blk.hb .beat i{display:block;height:100%;border-radius:2px;background:var(--color-foreground);transition:width 1s linear}
+  @media (max-width:760px){
+    .blk.hb{grid-template-columns:repeat(2,minmax(0,1fr));padding:18px}
+    .blk.hb .v{font-size:21px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .blk.hb .k i{animation:none}
+    .blk.hb .beat i{transition:none}
+  }
+}

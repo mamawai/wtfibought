@@ -3,15 +3,16 @@ import { useTranslation } from 'react-i18next';
 import { traderApi } from '../../api';
 import { cn, fmtDate, fmtDateTime, fmtTime } from '../../lib/utils';
 import type { AiTraderDecisionView } from '../../types';
-import { beatsPerDay, minToHm, parseWindow } from './traderConfig';
+import { beatsPerDay, INTERVAL_MIN, minToHm, parseWindow } from './traderConfig';
 import { doneTrades, toolName } from './traderTools';
 import { useKindLabel } from './useKindLabel';
+import './HeartbeatStrip.css';
 
 /**
- * 心跳条（配置台和工作台共用）：心跳档位 / 下次心跳倒计时 / 上次醒来干了什么 / 第四格由页面给。
- * 秒级倒计时只在这里面走，不带着整页每秒重渲染。refreshKey 一变就重拉「上次醒来」
+ * 心跳条（配置台和工作台共用，样式见 HeartbeatStrip.css）：心跳档位 / 下次心跳倒计时 / 上次醒来干了什么 / 第四格由页面给。
+ * 下次心跳底下一根细线是这一拍走到哪了。秒级倒计时只在这里面走，不带着整页每秒重渲染。refreshKey 一变就重拉「上次醒来」
  */
-export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, idleText, nextWakeAt, mine, live = false, refreshKey, extra }: {
+export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, idleText, nextWakeAt, mine, live = false, refreshKey, extra, className }: {
   traderId: number;
   intervalCode: string;
   wakeWindow: string | null;
@@ -21,11 +22,12 @@ export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, id
   /** 后端算好的下次例行唤醒时刻 */
   nextWakeAt: number | null;
   mine: boolean;
-  /** 它正醒着想事（只有主人看得到），顶线变橙 */
+  /** 它正醒着想事（只有主人看得到）：第一格换成闪着的「正在想事」 */
   live?: boolean;
   refreshKey: unknown;
   /** 第四格：工作台是在盯几条，配置台是今天醒了几次 */
   extra: { k: string; v: string; s: string };
+  className?: string;
 }) {
   const { t } = useTranslation('ai');
   const kindLabel = useKindLabel();
@@ -48,16 +50,18 @@ export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, id
   const win = parseWindow(wakeWindow);
   const perDay = beatsPerDay(intervalCode, win);
   const next = running ? nextWakeAt : null;
+  const left = next != null ? next - now : 0;
   /** 离下次心跳还有多久：一小时以上到分，以内到秒 */
   const leftText = () => {
     if (next == null) return t('wb.hb.noNext');
-    const left = next - now;
     if (left <= 0) return t('wb.hb.due');
     const sec = Math.floor(left / 1000);
     const h = Math.floor(sec / 3600);
     const m = Math.floor(sec % 3600 / 60);
     return h > 0 ? t('wb.left.hm', { h, m }) : t('wb.left.ms', { m: String(m).padStart(2, '0'), s: String(sec % 60).padStart(2, '0') });
   };
+  // 这一拍走了多少：离下次心跳越近越满
+  const beatPct = Math.max(0, Math.min(100, (1 - left / (INTERVAL_MIN[intervalCode] * 60_000)) * 100));
   // 上次醒来干了什么：叫醒原因 + 做成的第一个交易动作，比如「盯盘触发 · 收紧止损 BTCUSDT」
   const act = last ? doneTrades(last)[0] : undefined;
   const lastWhat = last
@@ -66,9 +70,9 @@ export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, id
     : t('wb.hb.never');
 
   return (
-    <div className={cn('tr-hb num', live && 'live')}>
+    <div className={cn('hb blk', className)}>
       <div>
-        <div className={cn('k', live && 'lv')}>{live ? t('wb.hb.thinking') : t('wb.hb.beat')}</div>
+        <div className="k">{live ? <><i />{t('wb.hb.thinking')}</> : t('wb.hb.beat')}</div>
         <div className="v">{intervalCode}</div>
         <div className="s">
           {win ? t('wb.hb.beatWin', { from: minToHm(win.from), to: minToHm(win.to), n: perDay }) : t('wb.hb.beatAll', { n: perDay })}
@@ -78,6 +82,7 @@ export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, id
         <div className="k">{t('wb.hb.next')}</div>
         <div className="v">{next != null ? fmtTime(next) : '—'}</div>
         <div className="s">{running ? leftText() : idleText}</div>
+        {next != null && <span className="beat"><i style={{ width: `${beatPct}%` }} /></span>}
       </div>
       <div>
         <div className="k">{t('wb.hb.last')}</div>

@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronLeft, Loader2, RefreshCw, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Info, RefreshCw, SlidersHorizontal, TriangleAlert, X } from 'lucide-react';
 import { traderApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
 import { DatePicker } from '../components/ui/date-picker';
+import { Seg } from '../components/ui/seg';
+import { Tabs } from '../components/ui/tabs';
 import { Markdown } from '../components/Markdown';
 import { DecisionCard } from '../components/arena/DecisionCard';
 import { EquityCurve, type CurveEvent } from '../components/arena/EquityCurve';
@@ -15,11 +17,10 @@ import { ScoreStrip } from '../components/arena/ScoreStrip';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { TradeCard } from '../components/arena/TradeCard';
 import { doneTrades } from '../components/arena/traderTools';
-import { useCountUp } from '../hooks/useCountUp';
-import { useStagger } from '../hooks/useStagger';
-import { COIN_MAP } from '../lib/coinConfig';
-import { cn, dayBounds, fmtDate, fmtDateTime, fmtNum, fmtSignedPct, fmtTokens, parseServerTime, DAY_MS } from '../lib/utils';
+import { COIN_MAP, getCoin } from '../lib/coinConfig';
+import { cn, dayBounds, fmtDate, fmtDateTime, fmtNum, fmtTokens, parseServerTime, spinIcon, DAY_MS } from '../lib/utils';
 import type { AiTraderDecisionView, TradeDecisionRef, TradeRecordView, TraderDetailView, TraderEquityPoint } from '../types';
+import './ArenaDetail.css';
 
 const REFRESH_MS = 60_000;
 const PAGE = 50;
@@ -31,9 +32,6 @@ type Tab = 'timeline' | 'trades';
 const FILTERS = ['all', 'acted', 'woken', 'review'] as const;
 type Filter = typeof FILTERS[number];
 const WOKEN_KINDS = new Set(['WATCH', 'EVENT', 'ALERT', 'MANUAL']);
-
-/** 块头：和分节头同一套排版，只是间距紧一档 */
-const BLK_H = 'sec-h mb-4';
 
 const coinName = (symbol: string) => COIN_MAP[symbol]?.name ?? symbol.replace('USDT', '');
 
@@ -60,36 +58,33 @@ function mergeNewer(prev: AiTraderDecisionView[], page: AiTraderDecisionView[]):
   return fresh.length ? [...fresh, ...prev].sort((a, b) => b.wakeTime - a.wakeTime) : prev;
 }
 
-/**
- * 笔记一行（经验账本）：标题 + 首句预览 + 最近时间，点开才铺 markdown。
- * 笔记是参考资料，不跟实时数据抢版面。
- */
-function NotesCard({ title, time, content, empty }: {
-  title: string; time: number | null | undefined; content: string | null | undefined; empty: string;
-}) {
-  const { t } = useTranslation('ai');
+/** 笔记（经验账本）：一块浅灰，正文先露一截，底下渐隐，点「展开全文」铺开 */
+function NotesCard({ time, content }: { time: number | null | undefined; content: string | null | undefined }) {
+  const { t } = useTranslation(['ai', 'common']);
   const [open, setOpen] = useState(false);
   const text = content?.trim() || '';
-  // 预览是纯文本，去掉 markdown 符号免得一行井号
-  const preview = text.replace(/[#*`>_-]/g, '').replace(/\s+/g, ' ').slice(0, 120);
   return (
-    <>
-      <button type="button" onClick={() => text && setOpen(o => !o)} disabled={!text}
-              className="w-full text-left py-3.5 border-b border-border flex items-center gap-3 text-[14px] disabled:cursor-default">
-        <b className="font-extrabold whitespace-nowrap">{title}</b>
-        <span className="mute flex-1 min-w-0 truncate">{text ? preview : empty}</span>
-        {time != null && text && (
-          <em className="not-italic text-[12px] mute whitespace-nowrap">{t('detail.lastAt', { time: fmtDateTime(time) })}</em>
-        )}
-      </button>
-      {open && <div className="text-[14px] leading-[1.7] py-3"><Markdown content={text} /></div>}
-    </>
+    <div className="blk">
+      <div className="nt-h">
+        <b>{t('detail.memoryShort')}</b>
+        {time != null && text && <span>{t('detail.lastAt', { time: fmtDateTime(time) })}</span>}
+      </div>
+      {text ? (
+        <>
+          <div className={cn('nt-b', open && 'open')}><Markdown content={text} /></div>
+          <button type="button" className="linkb nt-more" onClick={() => setOpen(o => !o)}>
+            {open ? t('common:collapse') : t('detail.expandFull')}
+          </button>
+        </>
+      ) : <p className="nt-e">{t('detail.noMemory')}</p>}
+    </div>
   );
 }
 
 /**
- * trader 工作台：页头（背后是币代号水印）→ 心跳条 → 记分条 → 左主栏（净值 + 实时思考 + 时间线）‖ 右栏（仓位 + 盯盘 + 笔记）。
- * 时间线是这页的正餐，整页滚不封顶；窄屏两栏堆成一列，卡序另排（见布局处注释）。
+ * trader 工作台（样式见 ArenaDetail.css）：页头（名字 / 收益率大数）→ 心跳条 → 记分条 →
+ * 左主栏（净值 + 实时思考 + 时间线）‖ 右栏（仓位 + 盯盘 + 笔记）。
+ * 时间线是这页的正餐，整页滚不封顶；窄屏两栏堆成一列，块序另排（见 css）。
  */
 export function ArenaDetail() {
   const { t } = useTranslation(['ai', 'common']);
@@ -111,14 +106,12 @@ export function ArenaDetail() {
   const [day, setDay] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('timeline');
   const [filter, setFilter] = useState<Filter>('all');
-  // 从已了结交易跳过来要找的那一条决策：描边 + 滚到它
+  // 从做完的交易跳过来要找的那一条决策：底色亮一下 + 滚到它
   const [focusId, setFocusId] = useState<number | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  // 时间线/已了结共用一个逐项登场：两个列表同一时刻只有一个挂着
-  const staggerRef = useStagger<HTMLDivElement>();
+  const listRef = useRef<HTMLElement>(null);
   // 实时思考卡报上来的"刚跑完一轮"时刻：新决策行、净值点、持仓都在那一刻落库，据此立刻重拉
   const [endedAt, setEndedAt] = useState(0);
-  // 它正醒着想事（只有主人看得到）：心跳条亮橙线
+  // 它正醒着想事（只有主人看得到）：心跳条第一格换成「正在想事」
   const [liveRunning, setLiveRunning] = useState(false);
 
   // load 最近一次发请求时的 trader 和局，也就是当前筛选
@@ -237,6 +230,12 @@ export function ArenaDetail() {
       .finally(() => setLoadingMore(false));
   }, [traderId, decisions, round, day, timelineKey]);
 
+  const refresh = (e: MouseEvent<HTMLButtonElement>) => {
+    spinIcon(e);
+    load();
+    setRefreshNonce(n => n + 1);
+  };
+
   // 局与局的日期不重叠，切局时日期筛选一并清掉
   const pickRound = (r: number | null) => { setRound(r); setDay(null); setFocusId(null); };
   const changeDay = (d: string | null) => { setDay(d); setFocusId(null); };
@@ -244,7 +243,7 @@ export function ArenaDetail() {
   // 没选日期时从今天起步
   const shiftDay = (delta: number) => changeDay(fmtDate(dayBounds(day ?? today).from + delta * DAY_MS));
 
-  // 已了结交易 → 它的开/平仓那一轮：切回时间线、筛到那一天、当前局（已了结只有当前局的）。
+  // 做完的交易 → 它的开/平仓那一轮：切回时间线、筛到那一天、当前局（做完的交易只有当前局的）。
   // 总是整页重拉（同一天也拉）：目标可能在还没翻到的页里，重拉时一路翻到它
   const jumpToDecision = (d: TradeDecisionRef) => {
     jumpTargetRef.current = d.id;
@@ -268,22 +267,23 @@ export function ArenaDetail() {
     const from = curve[curve.length - 1].wakeTime - range * DAY_MS;
     return curve.filter(p => p.wakeTime >= from);
   }, [curve, range]);
-  // 区间内点不够画线（末点之前是长停工）就退到整局，按钮高亮跟着退
+  // 区间内点不够画线（末点之前是长停工）就退到整局，段选跟着退
   const effectiveRange: Range = windowed.length > 1 ? range : 0;
   const visible = effectiveRange === 0 ? curve : windowed;
   // 区间内变化：窗口首尾权益之差，百分比按窗口起点权益
   const windowDelta = visible.length > 1 ? visible[visible.length - 1].equity - visible[0].equity : null;
   const windowPct = windowDelta != null && visible[0].equity ? windowDelta / visible[0].equity * 100 : null;
 
-  // 净值图悬停时写出这个点上开平了哪笔单子
+  // 净值图上的开平仓点：开仓空心圈，平仓按盈亏绿 / 红；指到时写进读数行
   const curveEvents = useMemo<CurveEvent[]>(() => {
     const side = (s: string) => t(s === 'LONG' ? 'term.long' : 'term.short');
     const events: CurveEvent[] = [];
     for (const r of trades) {
-      events.push({ at: r.openedAt, text: t('wb.ev.open', { coin: coinName(r.symbol), side: side(r.side) }) });
+      events.push({ at: r.openedAt, type: 'open', text: t('wb.ev.open', { coin: coinName(r.symbol), side: side(r.side) }) });
       if (r.closedPnl != null) {
         events.push({
           at: r.closedAt,
+          type: r.closedPnl >= 0 ? 'win' : 'loss',
           text: t('wb.ev.close', {
             coin: coinName(r.symbol), how: t(`trade.closeManner.${r.closeMannerKey}`),
             pnl: `${r.closedPnl >= 0 ? '+' : '-'}${fmtNum(Math.abs(r.closedPnl))}`,
@@ -292,7 +292,7 @@ export function ArenaDetail() {
       }
     }
     for (const p of detail?.positions ?? []) {
-      events.push({ at: parseServerTime(p.createdAt).getTime(), text: t('wb.ev.open', { coin: coinName(p.symbol), side: side(p.side) }) });
+      events.push({ at: parseServerTime(p.createdAt).getTime(), type: 'open', text: t('wb.ev.open', { coin: coinName(p.symbol), side: side(p.side) }) });
     }
     return events;
   }, [trades, detail, t]);
@@ -306,9 +306,8 @@ export function ArenaDetail() {
   // tr=这只 trader（不叫 t，那是词表查询函数）
   const tr = detail?.trader;
   const st = tr ? (STATUS_META[tr.status] ?? STATUS_META.PAUSED) : null;
-  // 大数滚动：hook 不能挂在 tr 判空之后，值先兜 0
-  const pctRef = useCountUp<HTMLElement>(tr?.pnlPct ?? 0, fmtSignedPct);
-  const eqRef = useCountUp<HTMLElement>(tr?.equity ?? 0, v => fmtNum(v));
+  // 收益率大数：小数位另起一截压淡
+  const [pctInt, pctDec] = Math.abs(tr?.pnlPct ?? 0).toFixed(2).split('.');
   // round=null 表示跟随当前局，落到显示时统一成具体数字
   const viewingRound = round ?? tr?.roundNo ?? 1;
   const viewingHistory = tr != null && viewingRound !== tr.roundNo;
@@ -318,85 +317,77 @@ export function ArenaDetail() {
     : [];
   const roundLabel = viewingHistory ? `R${viewingRound}` : t('detail.thisRound');
 
-  // 记分条：第几天＝曲线首点到末点（末点就是最近一次唤醒）；笔数/胜率从已了结交易现算，只有当前局的
+  // 记分条：第几天＝曲线首点到末点（末点就是最近一次唤醒）；笔数/胜率从做完的交易现算，只有当前局的
   const dayNo = curve.length > 0
     ? Math.floor((curve[curve.length - 1].wakeTime - curve[0].wakeTime) / DAY_MS) + 1
     : null;
   const closed = trades.filter(r => r.closedPnl != null);
   const winRate = closed.length > 0 ? Math.round(closed.filter(r => (r.closedPnl as number) > 0).length / closed.length * 100) : null;
   const maxDd = maxDrawdownPct(curve);
-  // token 那格的微标签跟着时间线筛选走：翻到某天就是那天，没翻就是当前看的这一局
+  // token 那格的小字跟着时间线筛选走：翻到某天就是那天，没翻就是当前看的这一局
   const tokenScope = day ? day.slice(5) : roundLabel;
   // 心跳条第四格：在盯几条，其中看价格的几条
   const watchN = detail?.watches.length ?? 0;
   const priceWatchN = detail?.watches.filter(w => w.kind !== 'AT_TIME').length ?? 0;
 
-  const tabBtn = (on: boolean) => cn('pb-2.5 -mb-px inline-flex items-center gap-2 text-[15px] border-b-2 cursor-pointer',
-    on ? 'text-foreground font-extrabold border-foreground' : 'mute font-semibold border-transparent');
-
   return (
-    <div className="wrap">
-      {/* 页头：左名字 + 一行说明 + 局次，右收益率 + 权益；背后是它交易的币代号水印 */}
-      <section className="relative overflow-hidden pt-8 pb-10">
-        {tr && (
-          <div className="tr-hwm" aria-hidden="true">
-            {tr.symbols.split(',').map(s => (
-              <b key={s} style={{ '--c': COIN_MAP[s]?.chartColor ?? 'currentColor' } as CSSProperties}>{coinName(s)}</b>
-            ))}
+    <div className="page-shell p-tw">
+      {/* 页头：左名字 + 一行说明，右收益率大数 + 权益 + 局次 / 刷新 / 配置 */}
+      <div className="whd">
+        <div>
+          <Link to="/arena" className="back"><ChevronLeft className="ic" />{t('term.backToArena')}</Link>
+          <div className="nm">
+            <b>{tr?.name ?? '…'}</b>
+            {tr && st && <span className={cn('tag', st.tone)}><i className={cn(tr.status === 'RUNNING' && 'live')} />{t(st.labelKey)}</span>}
+            {tr?.mine && <span className="tag new">{t('arena.mine')}</span>}
           </div>
-        )}
-        <div className="relative grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-8 items-end">
-          <div>
-            <Link to="/arena" className="inline-flex items-center gap-1 text-[13px] mute mb-2.5">
-              <ChevronLeft className="w-3.5 h-3.5" />{t('term.backToArena')}
-            </Link>
-            <div className="flex items-center gap-3.5 flex-wrap">
-              <b className="cond text-[56px] font-bold leading-none">{tr?.name ?? '…'}</b>
-              {tr && st && (
-                <span className={cn('chip', st.chip)}>
-                  {tr.status === 'RUNNING' && <i className="dot pulse" />}{t(st.labelKey)}
-                </span>
-              )}
-              {tr?.mine && <span className="chip fill orange">{t('arena.mine')}</span>}
-            </div>
-            {tr && (
-              <div className="text-[14px] mute mt-3">
+          {tr && (
+            <div className="meta">
+              {/* 它交易的几个币：图标叠成一小串 */}
+              <span className="coins">
+                {tr.symbols.split(',').map(s => {
+                  const Icon = getCoin(s).icon;
+                  return <Icon key={s} className="ci" />;
+                })}
+              </span>
+              <span>
                 {[
                   tr.model ?? t('term.noModel'),
                   t('wb.meta.beat', { iv: tr.intervalCode }),
                   tr.wakeWindow ? t('wb.meta.window', { win: tr.wakeWindow.replace('-', '–') }) : t('detail.allDayWake'),
                   t('wb.meta.round', { n: tr.roundNo }),
                 ].join(' · ')}
-              </div>
-            )}
-          </div>
-          <div className="num xl:text-right">
-            <b ref={pctRef} className={cn('cond block text-[72px] font-bold leading-none', (tr?.pnlPct ?? 0) >= 0 ? 'up' : 'dn')} />
-            <div className="flex items-baseline gap-3.5 xl:justify-end mt-2 text-[14px] mute">
-              <span>{t('term.equity')} <b ref={eqRef} className="text-foreground text-[18px] font-semibold [font-stretch:85%]" /></span>
+              </span>
+            </div>
+          )}
+        </div>
+        {tr && (
+          <div className="px">
+            <b className={cn('big nf', tr.pnlPct >= 0 ? 'up' : 'dn')}>
+              {tr.pnlPct >= 0 ? '+' : '-'}{pctInt}<i>.{pctDec}%</i>
+            </b>
+            <div className="sub">
+              <span>{t('term.equity')} <b>{fmtNum(tr.equity)}</b></span>
               <span>{t('detail.initialLabel')}</span>
             </div>
-            <div className="flex items-center gap-2.5 flex-wrap xl:justify-end mt-3 text-[13px] mute">
+            <div className="acts">
               {/* 局次：每局是独立子账户各自注资 10000，曲线与时间线同进同出；只有一局时不出现 */}
               {rounds.length > 1 && (
                 <>
                   <span>{t('detail.round')}</span>
-                  <div className="seg">
-                    {rounds.map(r => (
-                      <button key={r} type="button" className={cn('num', r === viewingRound && 'on')}
-                              onClick={() => pickRound(r === tr?.roundNo ? null : r)}>R{r}</button>
-                    ))}
-                  </div>
+                  <Seg value={String(viewingRound)} label={t('detail.round')}
+                       onChange={v => pickRound(Number(v) === tr.roundNo ? null : Number(v))}
+                       options={rounds.map(r => ({ value: String(r), label: `R${r}` }))} />
                 </>
               )}
-              <button type="button" className="ibtn" aria-label={t('common:refresh')}
-                      onClick={() => { load(); setRefreshNonce(n => n + 1); }}>
+              <button type="button" className="ib" aria-label={t('common:refresh')} title={t('common:refresh')} onClick={refresh}>
                 <RefreshCw className="ic" />
               </button>
+              {tr.mine && <Link className="btn" to="/my-trader"><SlidersHorizontal className="ic" />{t('detail.configure')}</Link>}
             </div>
           </div>
-        </div>
-      </section>
+        )}
+      </div>
 
       {tr && st && detail && (
         <HeartbeatStrip key={traderId} traderId={traderId} intervalCode={tr.intervalCode} wakeWindow={tr.wakeWindow}
@@ -408,7 +399,6 @@ export function ArenaDetail() {
                         }} />
       )}
 
-      {/* 记分条：六格平铺，窄屏三格两行 */}
       <ScoreStrip cells={[
         { label: roundLabel, value: dayNo != null ? t('detail.dayN', { n: dayNo }) : '—' },
         { label: t('detail.closedCount'), value: t('detail.tradesN', { count: closed.length }) },
@@ -419,132 +409,113 @@ export function ArenaDetail() {
         { label: effectiveRange === 0 ? t('detail.rangeAll') : t('detail.rangeDays', { n: effectiveRange }),
           tone: windowDelta != null ? (windowDelta >= 0 ? 'up' : 'dn') : undefined,
           value: windowDelta != null && windowPct != null
-            ? `${windowDelta >= 0 ? '+' : ''}${fmtNum(windowDelta)} · ${windowDelta >= 0 ? '+' : ''}${windowPct.toFixed(2)}%`
+            ? `${windowDelta >= 0 ? '+' : '-'}${fmtNum(Math.abs(windowDelta))} · ${windowDelta >= 0 ? '+' : ''}${windowPct.toFixed(2)}%`
             : '—' },
         { label: t('detail.tokensOf', { scope: tokenScope }),
           value: tokens != null ? fmtTokens(tokens) : '—' },
       ]} />
 
-      {tr?.pausedReason && (
-        <div className="mt-3.5 border-l-4 border-warning pl-3 py-1 text-[13px] text-warning">{tr.pausedReason}</div>
-      )}
-      {/* 持仓/盯盘/已了结是实时现查当前账户的，看历史局时跟曲线不是同一局，一条横幅说清楚 */}
-      {viewingHistory && (
-        <div className="mt-3.5 border-l-4 border-warning pl-3 py-1 text-[13px] text-warning">
-          {t('detail.historyRoundBanner', { viewing: viewingRound, cur: tr.roundNo })}
+      {(tr?.pausedReason || viewingHistory) && (
+        <div className="bans">
+          {tr?.pausedReason && <div className="note w"><TriangleAlert className="ic" /><div>{tr.pausedReason}</div></div>}
+          {/* 持仓/盯盘/做完的交易是实时现查当前账户的，看历史局时跟曲线不是同一局，一条横幅说清楚 */}
+          {viewingHistory && (
+            <div className="note"><Info className="ic" /><div>{t('detail.historyRoundBanner', { viewing: viewingRound, cur: tr.roundNo })}</div></div>
+          )}
         </div>
       )}
 
-      {/* 贯通两栏：左主栏 曲线 + 实时思考（醒着才有）+ 时间线，右栏 仓位 + 盯盘 + 笔记。
-          窄屏两个栏 div 退成 contents，六块直接落进外层单列 grid，再靠 order 排成
-          曲线 → 实时思考 → 仓位 → 盯盘 → 笔记 → 时间线：时间线能一直往下加载，压在最后才不会把别的挤没 */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-10">
-        <div className="contents xl:flex xl:col-span-7 xl:flex-col xl:gap-11">
-          <div className="order-1 xl:order-none">
-            <div className={BLK_H}>
+      <div className="grid2">
+        <div className="left">
+          <section className="w-curve">
+            <div className="sec-h">
               <h2>{t('detail.equityCurve', { round: roundLabel })}</h2>
-              <div className="seg">
-                {RANGES.map(r => (
-                  <button key={r} type="button" className={cn(r === effectiveRange && 'on')} onClick={() => setRange(r)}>
-                    {r === 0 ? t('detail.rangeAll') : t('detail.rangeDays', { n: r })}
-                  </button>
-                ))}
-              </div>
+              <Seg value={String(effectiveRange)} onChange={v => setRange(Number(v) as Range)}
+                   options={RANGES.map(r => ({ value: String(r), label: r === 0 ? t('detail.rangeAll') : t('detail.rangeDays', { n: r }) }))} />
             </div>
             {visible.length > 1
               ? <EquityCurve points={visible} events={curveEvents} />
-              : <div className="h-[300px] flex items-center justify-center text-[14px] mute">{t('detail.notEnoughPoints')}</div>}
-          </div>
+              : <div className="cv"><div className="empty"><b>{t('detail.notEnoughPoints')}</b></div></div>}
+          </section>
 
-          {/* 实时思考只给主人：门控必须在这层，LiveRunCard 一挂载就建流，卡片内部 return null 拦不住 */}
-          {/* 主人这边常挂着（里面的流要一直连着），醒着才渲染出来 */}
+          {/* 实时思考只给主人：门控必须在这层，LiveRunCard 一挂载就建流，卡片内部 return null 拦不住。
+              主人这边常挂着（里面的流要一直连着），醒着才渲染出来 */}
           {tr?.mine && (
             <LiveRunCard traderId={traderId} intervalCode={tr.intervalCode} onEnded={setEndedAt} onRunning={setLiveRunning}
-                         className="order-2 xl:order-none" />
+                         className="w-live" />
           )}
 
-          <div ref={listRef} className="order-6 xl:order-none scroll-mt-16">
-            <div className="flex items-end gap-[22px] flex-wrap border-b border-foreground">
-              <button type="button" className={tabBtn(tab === 'timeline')} onClick={() => setTab('timeline')}>
-                {t('detail.timeline')}{viewingHistory && ` · R${viewingRound}`}
-              </button>
-              <button type="button" className={tabBtn(tab === 'trades')} onClick={() => setTab('trades')}>
-                {t('detail.tradesTitle')}
-                <span className="chip mute num text-[10.5px] px-[5px]">{trades.length}</span>
-              </button>
-              {/* 按天翻看：前后一天 + 日期框；清掉回到不限日期。只属于时间线 */}
-              {tab === 'timeline' && (
-                <div className="ml-auto flex items-center gap-1.5 pb-2 text-[13px]">
-                  <button type="button" className="btn xs" onClick={() => shiftDay(-1)}>{t('detail.prevDay')}</button>
-                  <DatePicker value={day ?? ''} max={today} onChange={changeDay}
-                              className="input num h-7 px-2 text-[13px]" />
-                  <button type="button" className="btn xs disabled:opacity-40" disabled={!day || day >= today}
-                          onClick={() => shiftDay(1)}>{t('detail.nextDay')}</button>
-                  {day && (
-                    <button type="button" className="btn xs" aria-label={t('detail.allDays')} onClick={() => changeDay(null)}>
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              )}
+          <section ref={listRef} className="w-tl">
+            <div className="tl-h">
+              <Tabs value={tab} onChange={setTab} items={[
+                { value: 'timeline', label: `${t('detail.timeline')}${viewingHistory ? ` · R${viewingRound}` : ''}` },
+                { value: 'trades', label: t('detail.tradesTitle'), count: trades.length },
+              ]} />
+              {/* 按天翻看：前后一天 + 日期框；清掉回到不限日期。只属于时间线，切到交易时隐身占位，页签那行不跳 */}
+              <div className={cn('dstep', tab !== 'timeline' && 'invisible')}>
+                <button type="button" className="ib sm" aria-label={t('detail.prevDay')} title={t('detail.prevDay')} onClick={() => shiftDay(-1)}>
+                  <ChevronLeft className="ic" />
+                </button>
+                <DatePicker value={day ?? ''} max={today} onChange={changeDay} />
+                <button type="button" className="ib sm" aria-label={t('detail.nextDay')} title={t('detail.nextDay')}
+                        disabled={!day || day >= today} onClick={() => shiftDay(1)}>
+                  <ChevronRight className="ic" />
+                </button>
+                {day && (
+                  <button type="button" className="xb" aria-label={t('detail.allDays')} title={t('detail.allDays')} onClick={() => changeDay(null)}>
+                    <X className="ic" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {tab === 'timeline' ? (
               <>
                 {/* 筛选只在已经拉下来的这些里挑，计数也是 */}
-                <div className="flex gap-1.5 flex-wrap mt-3.5 mb-1">
+                <div className="chips">
                   {FILTERS.map(f => (
-                    <button key={f} type="button" className={cn('tr-fchip', filter === f && 'on')} onClick={() => setFilter(f)}>
-                      {t(`wb.filter.${f}`)}<em className="num">{decisions.filter(d => passes(d, f)).length}</em>
+                    <button key={f} type="button" className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                      {t(`wb.filter.${f}`)}<em>{decisions.filter(d => passes(d, f)).length}</em>
                     </button>
                   ))}
                 </div>
                 {shown.length === 0 ? (
-                  <div className="py-10 text-center text-[14px] mute">
-                    {decisions.length > 0 ? t('wb.filter.none') : day ? t('detail.noDecisionsDay') : t('detail.noDecisions')}
+                  <div className="empty">
+                    <b>{decisions.length > 0 ? t('wb.filter.none') : day ? t('detail.noDecisionsDay') : t('detail.noDecisions')}</b>
                   </div>
                 ) : (
-                  <div ref={staggerRef}>
+                  <div>
                     {shown.map(d => <DecisionCard key={d.id} d={d} mine={tr?.mine} highlight={d.id === focusId} />)}
                   </div>
                 )}
                 {hasMore && decisions.length > 0 && (
-                  <div className="py-4">
-                    <button type="button" onClick={loadMore} disabled={loadingMore} className="btn sm w-full disabled:opacity-40">
-                      {loadingMore && <Loader2 className="ic animate-spin" />}{t('detail.loadMore')}
-                    </button>
-                  </div>
+                  <button type="button" className={cn('btn wide more', loadingMore && 'busy')} onClick={loadMore}>
+                    <span>{t('detail.loadMore')}</span>
+                  </button>
                 )}
               </>
             ) : (
-              trades.length === 0 ? (
-                <div className="py-10 text-center text-[14px] mute">{t('detail.noTrades')}</div>
-              ) : (
-                <div ref={staggerRef}>
-                  {trades.map(r => <TradeCard key={r.positionId} r={r} onJump={jumpToDecision}
-                                              onToggleStale={detail?.trader.mine ? toggleStale : undefined} />)}
-                </div>
-              )
+              trades.length === 0
+                ? <div className="empty"><b>{t('detail.noTrades')}</b></div>
+                : trades.map(r => <TradeCard key={r.positionId} r={r} onJump={jumpToDecision}
+                                             onToggleStale={tr?.mine ? toggleStale : undefined} />)
             )}
-          </div>
+          </section>
         </div>
 
-        <div className="contents xl:flex xl:col-span-5 xl:flex-col xl:gap-11">
-          <div className="order-3 xl:order-none">
-            {detail && <Holdings positions={detail.positions} orders={detail.pendingOrders} plans={detail.plans} />}
-          </div>
-          <div className="order-4 xl:order-none">
-            {detail && <WatchList watches={detail.watches} />}
-          </div>
+        <aside className="side">
+          {detail && (
+            <>
+              <section className="w-hold"><Holdings positions={detail.positions} orders={detail.pendingOrders} plans={detail.plans} /></section>
+              <section className="w-watch"><WatchList watches={detail.watches} /></section>
+            </>
+          )}
           {/* 经验账本跨局累积，不随局次切换 */}
-          <div className="order-5 xl:order-none">
-            <div className={BLK_H}>
-              <h2>{t('detail.notesTitle')}</h2>
-            </div>
-            <NotesCard title={t('detail.memoryShort')} time={detail?.lastReviewAt}
-                       content={detail?.memory} empty={t('detail.noMemory')} />
-          </div>
-        </div>
+          <section className="w-notes">
+            <div className="sec-h"><h2>{t('detail.notesTitle')}</h2></div>
+            <NotesCard time={detail?.lastReviewAt} content={detail?.memory} />
+          </section>
+        </aside>
       </div>
     </div>
   );

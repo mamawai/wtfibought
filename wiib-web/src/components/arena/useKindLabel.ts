@@ -1,8 +1,8 @@
 import { useTranslation } from 'react-i18next';
 
-/** 各种叫醒原因的徽章配色：例行墨色、盯盘触发和预案执行橙、持仓有变化和剧烈波动黄、手动灰 */
-export const KIND_CHIP: Record<string, string> = {
-  TRADE: '', WATCH: 'border-primary text-primary', PRESET: 'border-primary text-primary', EVENT: 'wn', ALERT: 'wn', MANUAL: 'mute',
+/** 各种叫醒原因的标签配色（.tag 的色）：例行灰、盯盘触发和预案执行橙、持仓有变化和剧烈波动黄、手动蓝 */
+export const KIND_TONE: Record<string, string> = {
+  TRADE: '', WATCH: 'o', PRESET: 'o', EVENT: 'w', ALERT: 'w', MANUAL: 'b',
 };
 
 /**

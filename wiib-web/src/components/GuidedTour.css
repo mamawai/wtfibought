@@ -1,0 +1,12 @@
+/* 配置引导：四周压暗、被讲到的那一块描一圈橙，旁边一张浮卡跟着走 */
+@layer components {
+  .tour-ring{position:fixed;z-index:70;border-radius:16px;box-shadow:0 0 0 2px var(--color-primary),0 0 0 100vmax rgb(0 0 0 / .28);pointer-events:none;transition:left var(--slow) var(--ease-control),top var(--slow) var(--ease-control),width var(--slow) var(--ease-control),height var(--slow) var(--ease-control)}
+  .tour-block{position:fixed;z-index:71}
+  .tour-card{position:fixed;z-index:72;width:min(360px,calc(100vw - 32px));padding:20px;border-radius:20px;background:var(--color-pop);box-shadow:var(--sh-dlg);transition:opacity var(--t) var(--ease-control)}
+  .tour-card small{font-size:12px;color:var(--color-muted-foreground)}
+  .tour-card h3{margin-top:4px;font-size:17px;font-weight:600}
+  .tour-card p{max-height:38vh;overflow-y:auto;margin-top:8px;font-size:13.5px;line-height:1.7;color:var(--color-muted-foreground);white-space:pre-line}
+  .tour-card .f{display:flex;justify-content:space-between;gap:8px;margin-top:16px}
+  .tour-card .f > span{display:flex;gap:8px}
+  @media (prefers-reduced-motion:reduce){.tour-ring,.tour-card{transition:none}}
+}

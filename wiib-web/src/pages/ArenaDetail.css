@@ -1,0 +1,249 @@
+/* Trader 工作台：页头（名字 / 收益率大数）→ 心跳条 → 记分条 → 左主栏（净值、实时思考、时间线）+ 右栏（仓位、盯盘、笔记） */
+@layer components {
+  .p-tw .whd{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 32px;padding-top:28px}
+  .p-tw .back{display:inline-flex;align-items:center;gap:3px;margin-bottom:12px;font-size:13px;color:var(--color-muted-foreground);transition:color var(--t) var(--ease-control)}
+  .p-tw .back .ic{width:14px;height:14px}
+  .p-tw .nm{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+  .p-tw .nm b{font-size:40px;font-weight:600;line-height:1;letter-spacing:-.035em}
+  .p-tw .meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:14px;font-size:13.5px;color:var(--color-muted-foreground)}
+  /* 它交易的几个币：图标叠成一小串 */
+  .p-tw .coins{display:inline-flex}
+  .p-tw .coins .ci{width:20px;height:20px;border-radius:50%;box-shadow:0 0 0 2px var(--color-background)}
+  .p-tw .coins .ci + .ci{margin-left:-5px}
+  .p-tw .px{text-align:right}
+  .p-tw .px .big{font-size:clamp(44px,5.3vw,76px)}
+  .p-tw .px .big i{color:inherit;opacity:.5}
+  .p-tw .px .sub{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:4px 14px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tw .px .sub b{font-size:15px;font-weight:500;color:var(--color-foreground)}
+  .p-tw .acts{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tw .hb{margin-top:28px}
+
+  /* ---- 记分条：六格平铺，格间一根竖线 ---- */
+  .p-tw .sc{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));margin-top:22px}
+  .p-tw .sc > div{padding:2px 0 2px 20px;border-left:1px solid var(--color-border)}
+  .p-tw .sc > div:first-child{padding-left:0;border-left:0}
+  .p-tw .sc span{display:block;font-size:12px;color:var(--color-muted-foreground)}
+  .p-tw .sc b{display:block;margin-top:5px;font-size:18px;font-weight:500;letter-spacing:-.02em;white-space:nowrap}
+  .p-tw .bans{display:flex;flex-direction:column;gap:10px;margin-top:20px}
+
+  .p-tw .grid2{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:40px;align-items:start;margin-top:44px}
+  .p-tw .left,.p-tw .side{display:flex;flex-direction:column;gap:48px;min-width:0}
+  .p-tw .sec-h{margin-bottom:14px}
+
+  /* ---- 净值曲线：上面一行读数，底下首 / 中 / 末三个时刻 ---- */
+  .p-tw .rd{display:flex;flex-wrap:wrap;gap:2px 14px;min-height:18px;margin-bottom:6px;font-size:12px;color:var(--color-muted-foreground)}
+  .p-tw .rd b{font-weight:500;color:var(--color-foreground)}
+  .p-tw .cv{position:relative;height:280px;outline-offset:4px;border-radius:4px;touch-action:pan-y}
+  .p-tw .cv.up{color:var(--color-gain)}
+  .p-tw .cv.dn{color:var(--color-loss)}
+  .p-tw .cv svg{display:block;width:100%;height:100%;overflow:visible}
+  .p-tw .cv .ln{fill:none;stroke:currentColor;stroke-width:1.75;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+  /* 初始资金那条虚线和它右上角的字 */
+  .p-tw .cv .bl{stroke:var(--color-line2);stroke-width:1;stroke-dasharray:3 4;vector-effect:non-scaling-stroke}
+  .p-tw .cv .bt{position:absolute;right:0;transform:translateY(-120%);font-size:11px;color:var(--color-faint)}
+  /* 开平仓点：开仓空心圈，平仓赚绿亏红 */
+  .p-tw .cv .evt{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-background);box-shadow:inset 0 0 0 2px var(--color-foreground)}
+  .p-tw .cv .evt.g{background:var(--color-gain);box-shadow:0 0 0 2px var(--color-background)}
+  .p-tw .cv .evt.r{background:var(--color-loss);box-shadow:0 0 0 2px var(--color-background)}
+  /* 指着的那个点：一根竖线 + 一颗墨点 */
+  .p-tw .cv .cur{position:absolute;top:0;bottom:0;width:1px;background:var(--color-line2);pointer-events:none}
+  .p-tw .cv .dot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-foreground);box-shadow:0 0 0 3px var(--color-background);pointer-events:none}
+  .p-tw .cv .empty{height:100%;justify-content:center}
+  .p-tw .xl{position:relative;height:22px;font-size:11px;color:var(--color-faint)}
+  .p-tw .xl span{position:absolute;top:8px;transform:translateX(-50%);white-space:nowrap}
+  .p-tw .xl span:first-child{transform:none}
+  .p-tw .xl span:last-child{transform:translateX(-100%)}
+
+  /* ---- 实时思考：一块浅灰，头一行状态 + 用时，底下一排格子是想到第几次了 ---- */
+  .p-tw .livebox{padding:18px 22px 20px}
+  .p-tw .live-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tw .live-h .bud{margin-left:auto;display:inline-flex;align-items:center;gap:8px}
+  .p-tw .live-h .bud i{display:block;width:72px;height:3px;border-radius:2px;background:var(--color-fill2);overflow:hidden}
+  .p-tw .live-h .bud i b{display:block;height:100%;background:var(--color-primary);transition:width 1s linear}
+  .p-tw .cells{display:flex;flex-wrap:wrap;gap:4px;margin:14px 0 16px}
+  .p-tw .cells i{width:18px;height:4px;border-radius:2px;background:var(--color-fill2)}
+  .p-tw .cells i.done{background:var(--color-foreground)}
+  .p-tw .cells i.cur{background:var(--color-primary);animation:wiib-blink 1s ease-in-out infinite}
+
+  /* ---- 过程：一轮唤醒里它想了什么、调了什么（实时思考和时间线里的「过程」同一套） ---- */
+  .p-tw .tr-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tw .tr-h b{font-weight:500;color:var(--color-foreground)}
+  .p-tw .tr-h .ic{width:13px;height:13px}
+  .p-tw .tr-pre{max-height:320px;overflow:auto;margin-top:8px;padding:12px 14px;border-radius:12px;background:var(--ctl);font:12px/1.6 var(--font-mono);color:var(--color-muted-foreground);white-space:pre-wrap;overflow-wrap:anywhere}
+  .p-tw .tr-pre small{display:block;margin-bottom:4px;font:500 11px var(--font-sans);color:var(--color-faint);letter-spacing:.02em}
+  .p-tw .tr-call{margin-top:16px}
+  .p-tw .tr-call > small{display:block;font-size:12px;font-weight:500;color:var(--color-muted-foreground)}
+  .p-tw .tr-call .tx{max-width:80ch;margin-top:5px;font-size:14.5px;line-height:1.7}
+  /* 一次工具调用一行：名字、参数、处理中；有回执的点开看全文 */
+  .p-tw .tr-tool{display:flex;align-items:baseline;gap:8px;width:100%;margin-top:6px;padding:7px 10px;border-radius:10px;background:var(--ctl);font-size:13px;text-align:left;transition:background-color var(--t) var(--ease-control)}
+  .p-tw .tr-tool b{flex:none;font-weight:600}
+  .p-tw .tr-tool span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-muted-foreground)}
+  .p-tw .tr-tool em{margin-left:auto;flex:none;font-style:normal;font-size:12px;color:var(--color-faint)}
+  .p-tw .tr-tool .ic{flex:none;align-self:center;width:13px;height:13px;margin-left:auto;color:var(--color-faint);transition:transform var(--t) var(--ease-control)}
+  .p-tw .tr-tool em + .ic{margin-left:0}
+  .p-tw .tr-tool[aria-expanded="true"] .ic{transform:rotate(90deg)}
+  .p-tw .tr-tool:disabled{cursor:default}
+  .p-tw .tr-tool.bad b{color:var(--color-loss)}
+  .p-tw .tr-tool.wait em{color:var(--color-primary)}
+  .p-tw .tr-stage{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-top:12px;border-top:1px dashed var(--color-line2);font-size:12.5px;font-weight:500}
+  .p-tw .tr-end{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:16px;padding-top:12px;border-top:1px dashed var(--color-line2);font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tw .tr-end b{font-weight:500;color:var(--color-foreground)}
+  .p-tw .tr-end b.dn{color:var(--color-loss)}
+  .p-tw .tr-end p{flex-basis:100%}
+
+  /* ---- 时间线：页签 + 按天翻，下面筛选片和一条条决策 ---- */
+  .p-tw .tl-h{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 16px;border-bottom:1px solid var(--color-border)}
+  .p-tw .tl-h .dstep{margin-bottom:8px}
+  .p-tw .w-tl .chips{margin:16px 0 4px}
+  /* 一条决策：左边一根细线串起来，圆点的颜色跟着是什么叫醒它的 */
+  .p-tw .dc{position:relative;padding:18px 0 20px 26px;border-radius:12px;scroll-margin-top:96px}
+  .p-tw .dc::before{content:"";position:absolute;left:4px;top:0;bottom:0;width:1px;background:var(--color-border)}
+  .p-tw .dc:first-child::before{top:26px}
+  .p-tw .dc:last-child::before{bottom:auto;height:26px}
+  .p-tw .dc:first-child:last-child::before{display:none}
+  .p-tw .dc::after{content:"";position:absolute;left:0;top:23px;width:9px;height:9px;border-radius:50%;background:var(--c,var(--color-line2));box-shadow:0 0 0 3px var(--color-background)}
+  .p-tw .dc.dot-o{--c:var(--color-primary)}
+  .p-tw .dc.dot-w{--c:var(--color-warning)}
+  .p-tw .dc.dot-b{--c:var(--color-info)}
+  .p-tw .dc.dot-r{--c:var(--color-loss)}
+  /* 复盘：空心圈 */
+  .p-tw .dc.rv::after{background:var(--color-background);box-shadow:0 0 0 3px var(--color-background),inset 0 0 0 2px var(--color-foreground)}
+  /* 从做完的交易跳过来的那一条：底色亮一下再退掉 */
+  .p-tw .dc.hl{animation:wiib-dchl 1.8s var(--ease-control)}
+  @keyframes wiib-dchl{0%,55%{background:var(--color-primary-soft)}100%{background:transparent}}
+  .p-tw .dc-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tw .dc-h b{font-weight:500;color:var(--color-foreground)}
+  .p-tw .dc-h .m{margin-left:auto;font-size:12px;color:var(--color-faint)}
+  .p-tw .look{margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tw .look b{font-weight:500;color:var(--color-foreground)}
+  .p-tw .look b.dn{color:var(--color-loss)}
+  /* 交易动作：一行一个，被拒 / 出错红、结果没准黄、没执行灰 */
+  .p-tw .al{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+  .p-tw .act{display:flex;align-items:baseline;gap:10px;font-size:13.5px}
+  .p-tw .act b{flex:none;font-weight:600}
+  .p-tw .act span{color:var(--color-muted-foreground)}
+  .p-tw .act small{display:block;margin-top:1px;font-size:12.5px;color:var(--color-loss)}
+  .p-tw .act.bad b{color:var(--color-loss)}
+  .p-tw .act.unsure b{color:var(--color-warning)}
+  .p-tw .act.skip b{color:var(--color-muted-foreground)}
+  .p-tw .dc .err,.p-tw .dc .why{margin-top:10px;font-size:13.5px}
+  .p-tw .dc .err{color:var(--color-loss)}
+  .p-tw .dc .why{color:var(--color-muted-foreground)}
+  /* 推理：长的折成两行 */
+  .p-tw .rs{max-width:76ch;margin-top:12px;font-size:15px;line-height:1.7}
+  .p-tw .rs.clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .p-tw .rs .part + .part{margin-top:8px}
+  .p-tw .rs .part .tag{margin-bottom:4px}
+  .p-tw .lk{display:flex;gap:16px;margin-top:8px;font-size:13px}
+  .p-tw .lk .linkb[aria-expanded="true"]{color:var(--color-foreground);text-decoration-color:var(--color-foreground)}
+  .p-tw .dc .trace{margin-top:14px;padding-top:14px;border-top:1px dashed var(--color-line2)}
+  .p-tw .rvb{margin-top:12px;padding:16px 20px;border-radius:16px;background:var(--color-fill);font-size:15px;line-height:1.7}
+  .p-tw .more{margin-top:8px}
+
+  /* ---- 做完的交易 ---- */
+  .p-tw .tc{padding:20px 0;border-bottom:1px solid var(--color-border)}
+  .p-tw .tc:last-child{border-bottom:0}
+  .p-tw .tc.stale > :not(.tc-h){opacity:.5}
+  .p-tw .tc-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+  .p-tw .tc-h .ci{width:20px;height:20px;flex:none}
+  .p-tw .tc-h > b{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .p-tw .tc-h .pr{font-size:13px;color:var(--color-muted-foreground)}
+  .p-tw .tc-h .pn{margin-left:auto;font-size:20px;font-weight:400;letter-spacing:-.03em}
+  .p-tw .tc .tm{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:8px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tw .tc .pl{margin-top:12px;font-size:13.5px;line-height:1.65}
+  .p-tw .tc .pl b{font-weight:600;margin-right:8px}
+  .p-tw .tc .pl .mute b{font-weight:500;color:var(--color-foreground)}
+  .p-tw .tc .lvs{display:flex;flex-wrap:wrap;gap:2px 20px;margin-top:8px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tw .tc .lvs b{margin-left:5px;font-size:14px;font-weight:500;color:var(--color-foreground)}
+  .p-tw .tc .lvs small{margin-left:1px;font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
+  .p-tw .tc .revs{margin-top:8px;padding-top:8px;border-top:1px dashed var(--color-line2);font-size:12.5px;line-height:1.6;color:var(--color-muted-foreground)}
+  .p-tw .tc .jp{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:12px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tw .tc .jp .btn{color:var(--color-foreground)}
+  /* 计划里的逐档入场安排（交易卡和仓位卡共用） */
+  .p-tw .ents{margin-top:8px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tw .ents ul{display:flex;flex-direction:column;gap:4px;margin-top:4px}
+  .p-tw .ents li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
+  .p-tw .ents b{font-weight:500;color:var(--color-foreground)}
+
+  /* ---- 右栏：手上的仓位，一仓一块 ---- */
+  .p-tw .hold{display:flex;flex-direction:column;gap:12px}
+  .p-tw .flt{font-size:14px;font-weight:500}
+  .p-tw .pc-h{display:flex;align-items:center;gap:10px}
+  .p-tw .pc-h .ci{width:26px;height:26px;flex:none}
+  .p-tw .pc-h > b{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .p-tw .pc-h .pn{margin-left:auto;text-align:right;font-size:20px;font-weight:400;line-height:1.1;letter-spacing:-.03em}
+  .p-tw .pc-h .pn em{display:block;margin-top:3px;font-style:normal;font-size:12px;letter-spacing:0;opacity:.8}
+  .p-tw .pc-h .pn.wait{font-size:13px;letter-spacing:0;color:var(--color-muted-foreground)}
+  .p-tw .pc-q{margin-top:8px;font-size:13px;color:var(--color-muted-foreground)}
+  /* 止损（左）到止盈（右）的一条，竖线是现价，短刻度是开仓价 */
+  .p-tw .pc-bar{position:relative;height:6px;margin:34px 0 10px;border-radius:3px;background:var(--color-fill2)}
+  .p-tw .pc-bar .f{position:absolute;top:0;bottom:0;border-radius:3px;transition:left 1s linear,width 1s linear}
+  .p-tw .pc-bar .f.up{background:var(--color-gain)}
+  .p-tw .pc-bar .f.dn{background:var(--color-loss)}
+  .p-tw .pc-bar .en{position:absolute;top:-3px;width:1px;height:12px;background:var(--color-muted-foreground)}
+  .p-tw .pc-bar .nw{position:absolute;top:-5px;width:2px;height:16px;margin-left:-1px;border-radius:1px;background:var(--color-foreground);font-style:normal;transition:left 1s linear}
+  .p-tw .pc-bar .nw span{position:absolute;bottom:20px;left:0;font-size:11.5px;font-weight:500;white-space:nowrap}
+  .p-tw .pc-ends{display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-size:12.5px;font-weight:500}
+  .p-tw .pc-ends em{display:block;margin-top:2px;font-style:normal;font-weight:400;color:var(--color-muted-foreground)}
+  .p-tw .pc-ends .r{text-align:right}
+  .p-tw .pc-ord{margin-top:8px;font-size:13px;line-height:1.6;color:var(--color-muted-foreground)}
+  /* 计划并进来：左边一列小字标签 */
+  .p-tw .pc-why{display:flex;flex-direction:column;gap:6px;margin-top:14px;padding-top:12px;border-top:1px solid var(--color-border);font-size:13px;line-height:1.6}
+  .p-tw .pc-why > div{display:flex;gap:10px}
+  .p-tw .pc-why > div > span{flex:none;width:64px;font-size:12px;line-height:1.75;color:var(--color-muted-foreground)}
+  .p-tw .pc-why .ents{margin-top:0}
+
+  /* ---- 右栏：它的盯盘 ---- */
+  .p-tw .wa{display:flex;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid var(--color-border)}
+  .p-tw .wa:last-child{border-bottom:0}
+  .p-tw .wa .ci{width:22px;height:22px;flex:none;margin-top:1px}
+  .p-tw .wa .b{flex:1;min-width:0}
+  .p-tw .wa .b b{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:14px;font-weight:500}
+  .p-tw .wa .b > span{display:block;margin-top:3px;font-size:12.5px;line-height:1.55;color:var(--color-muted-foreground)}
+  .p-tw .wa .rr{flex:none;text-align:right}
+  .p-tw .wa .rr b{display:block;font-size:14px;font-weight:500;white-space:nowrap}
+  .p-tw .wa .rr span{display:block;margin-top:3px;font-size:12px;color:var(--color-muted-foreground);white-space:nowrap}
+
+  /* ---- 右栏：笔记，先露一截，底下渐隐 ---- */
+  .p-tw .nt-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .p-tw .nt-h b{font-size:15px;font-weight:600}
+  .p-tw .nt-h span{font-size:12px;color:var(--color-muted-foreground)}
+  .p-tw .nt-b{position:relative;max-height:232px;overflow:hidden;font-size:14px;line-height:1.7}
+  .p-tw .nt-b::after{content:"";position:absolute;left:0;right:0;bottom:0;height:56px;background:linear-gradient(transparent,var(--color-fill));pointer-events:none}
+  .p-tw .nt-b.open{max-height:none}
+  .p-tw .nt-b.open::after{display:none}
+  .p-tw .nt-more{margin-top:10px;font-size:13px}
+  .p-tw .nt-e{font-size:14px;color:var(--color-muted-foreground)}
+
+  @media (hover:hover){
+    .p-tw .back:hover{color:var(--color-foreground)}
+    .p-tw .tr-tool:not(:disabled):hover{background:var(--ctl-h)}
+  }
+  /* 单列时排成：曲线 → 实时思考 → 仓位 → 盯盘 → 笔记 → 时间线（时间线能一直往下加载，压在最后） */
+  @media (max-width:1180px){
+    .p-tw .grid2{grid-template-columns:minmax(0,1fr);gap:40px}
+    .p-tw .left,.p-tw .side{display:contents}
+    .p-tw .w-curve{order:1}
+    .p-tw .w-live{order:2}
+    .p-tw .w-hold{order:3}
+    .p-tw .w-watch{order:4}
+    .p-tw .w-notes{order:5}
+    .p-tw .w-tl{order:6}
+  }
+  @media (max-width:760px){
+    .p-tw .whd{padding-top:18px}
+    .p-tw .nm b{font-size:32px}
+    .p-tw .px{text-align:left}
+    .p-tw .px .sub,.p-tw .acts{justify-content:flex-start}
+    .p-tw .sc{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:16px}
+    .p-tw .sc > div{padding-left:14px}
+    .p-tw .sc > div:nth-child(4){padding-left:0;border-left:0}
+    .p-tw .sc b{font-size:15px;white-space:normal}
+    .p-tw .cv{height:220px}
+    .p-tw .dc-h .m{margin-left:0;flex-basis:100%}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .p-tw .back,.p-tw .tr-tool,.p-tw .tr-tool .ic,.p-tw .live-h .bud i b,.p-tw .pc-bar .f,.p-tw .pc-bar .nw{transition:none}
+    .p-tw .cells i.cur,.p-tw .dc.hl{animation:none}
+  }
+}

@@ -1,5 +1,5 @@
 import i18n from '../../i18n';
-import type { AiTraderDecisionView, TraderPlanEntry } from '../../types';
+import type { AiTraderDecisionView, PlanRevision, TraderPlanEntry } from '../../types';
 
 /**
  * trader agent 每次唤醒拿到的全部工具（与后端 TraderWakeupRunner.wakeTools 同一份清单）：
@@ -54,6 +54,15 @@ export function planTargets(json: string | null | undefined): TargetRung[] {
 export function planEntries(json: string | null | undefined): TraderPlanEntry[] {
   try {
     return json ? JSON.parse(json) as TraderPlanEntry[] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 计划的修订记录；没改过或解析不了给空表 */
+export function planRevisions(json: string | null | undefined): PlanRevision[] {
+  try {
+    return json ? JSON.parse(json) as PlanRevision[] : [];
   } catch {
     return [];
   }

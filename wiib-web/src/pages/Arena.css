@@ -1,0 +1,74 @@
+/* 竞技场：一张记分牌。一行一个 Trader，名次和收益率是细体大数，点一行进它的工作台 */
+@layer components {
+  .p-ar .board{margin-top:28px}
+  .p-ar .hd,.p-ar .arow{display:grid;grid-template-columns:52px minmax(0,1.5fr) minmax(0,1fr) minmax(0,1.25fr) 112px 150px minmax(0,1.05fr);gap:20px;align-items:center}
+  .p-ar .hd{padding:0 0 9px;border-bottom:1px solid var(--color-border);font-size:12px;color:var(--color-muted-foreground)}
+  .p-ar .hd .r{text-align:right}
+  /* 一行：悬停垫一块圆角浅灰（左右各宽出 16px） */
+  .p-ar .arow{position:relative;width:100%;min-height:84px;padding:14px 0;border-bottom:1px solid var(--color-border);text-align:left;transition:transform var(--fast) var(--ease-control)}
+  .p-ar .arow::before{content:"";position:absolute;inset:0 -16px;border-radius:16px;background:var(--color-fill);opacity:0;transition:opacity var(--t) var(--ease-control)}
+  .p-ar .arow > *{position:relative;min-width:0}
+  .p-ar .arow:focus-visible::before{opacity:1}
+  .p-ar .arow:active{transform:scale(.994);transition-duration:0s}
+  /* 名次：前三名墨色，其余浅灰 */
+  .p-ar .rk{font-size:34px;line-height:1;letter-spacing:-.04em;color:var(--color-faint)}
+  .p-ar .top3 .rk{color:var(--color-foreground)}
+  .p-ar .nm b{display:flex;align-items:center;gap:9px;font-size:19px;font-weight:600;letter-spacing:-.02em}
+  .p-ar .nm b > span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 名字下面一行：状态点 + 第几局 · 短状态 */
+  .p-ar .nm small{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-ar .nm small i{width:6px;height:6px;border-radius:50%;background:var(--color-gain)}
+  .p-ar .nm small i.w{background:var(--color-warning)}
+  .p-ar .nm small i.r{background:var(--color-loss)}
+  .p-ar .md{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+  .p-ar .tp{font-size:13px;line-height:1.5;color:var(--color-muted-foreground)}
+  .p-ar .tp b{font-weight:500;color:var(--color-foreground)}
+  .p-ar .eq{text-align:right}
+  .p-ar .eq b{display:block;font-size:16px;font-weight:500;letter-spacing:-.02em}
+  .p-ar .eq small{display:block;margin-top:2px;font-size:12px;color:var(--color-muted-foreground)}
+  .p-ar .rt{text-align:right}
+  .p-ar .rt b{display:block;font-size:30px;font-weight:300;line-height:1;letter-spacing:-.045em}
+  .p-ar .rt b i{font-style:normal;opacity:.55}
+  /* 收益率下面的小刻度：中间一格是初始资金，往右是赚、往左是亏 */
+  .p-ar .mt{position:relative;display:block;width:72px;height:3px;margin:9px 0 0 auto;border-radius:2px;background:var(--color-fill2)}
+  .p-ar .mt::after{content:"";position:absolute;left:50%;top:-2px;width:1px;height:7px;background:var(--color-line2)}
+  .p-ar .mt i{position:absolute;top:0;bottom:0;border-radius:2px;background:currentColor;transition:width var(--slow) var(--ease-control)}
+  .p-ar .mt i.p{left:50%}
+  .p-ar .mt i.n{right:50%}
+  .p-ar .st small{display:block;margin-top:6px;font-size:12px;line-height:1.45;color:var(--color-muted-foreground)}
+  /* 爆仓了：名字、模型、权益都退成灰字 */
+  .p-ar .out .nm b,.p-ar .out .md,.p-ar .out .eq b{color:var(--color-muted-foreground)}
+  /* 首拉中：和一行同高的骨架 */
+  .p-ar .skr{display:grid;grid-template-columns:52px minmax(0,1.5fr) minmax(0,1fr) 150px;gap:20px;align-items:center;height:84px;border-bottom:1px solid var(--color-border)}
+
+  /* 还没有自己的 Trader：三步 */
+  .p-ar .steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px 40px}
+  .p-ar .steps i{display:block;font-style:normal;font-size:44px;line-height:1;letter-spacing:-.04em;color:var(--color-faint)}
+  .p-ar .steps b{display:block;margin-top:14px;font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .p-ar .steps p{margin-top:6px;font-size:14px;line-height:1.65;color:var(--color-muted-foreground)}
+  .p-ar .cta-row{margin-top:28px}
+
+  @media (hover:hover){
+    .p-ar .arow:hover::before{opacity:1}
+    /* 垫了底的这一行，上下两根线都收掉 */
+    .p-ar .arow:hover,.p-ar .arow:has(+ .arow:hover){border-color:transparent}
+  }
+  /* 窄了只留名次、名字、收益率 */
+  @media (max-width:1080px){
+    .p-ar .hd,.p-ar .arow{grid-template-columns:40px minmax(0,1fr) auto;gap:14px}
+    .p-ar .hd > :nth-child(n+3):not(.k),.p-ar .arow > :nth-child(n+3):not(.rt){display:none}
+    .p-ar .rk{font-size:28px}
+    .p-ar .rt b{font-size:26px}
+    .p-ar .skr{grid-template-columns:40px minmax(0,1fr) 96px}
+    .p-ar .skr > :nth-child(3){display:none}
+  }
+  @media (max-width:760px){
+    .p-ar .arow::before{inset:0 -10px}
+    .p-ar .nm b{font-size:17px}
+    .p-ar .steps{grid-template-columns:minmax(0,1fr)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .p-ar .arow,.p-ar .mt i{transition:none}
+    .p-ar .arow:active{transform:none}
+  }
+}

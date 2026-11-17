@@ -8,18 +8,16 @@ import { Markdown } from '../Markdown';
 import { ReasoningFold } from './ReasoningFold';
 import { WakeTraceView } from './WakeTraceView';
 import { parseActions, TRADE_TOOL_SET, toolName, tradeArgsSummary } from './traderTools';
-import { KIND_CHIP, useKindLabel } from './useKindLabel';
-
-/** 复盘紫：复盘行混在时间线上要能一眼分清 */
-const REVIEW_INK = '#7c5cff';
+import { KIND_TONE, useKindLabel } from './useKindLabel';
 
 /** "看了什么"一行最多点名几个工具，其余折成 +N */
 const LOOKED_MAX = 4;
 
 /**
- * 单条决策卡：徽章/时间/权益/遥测 → "看了什么"一句 → 交易动作行（参数/拒因）→ 推理折叠 + 过程。
- * 复盘不交易，左边一道色线，正文直接铺 markdown。
- * highlight=从已了结交易跳过来的那一条，描个边让人找得到。
+ * 时间线上的一条决策（样式见 ArenaDetail.css .dc）：左边一根细线串起来，圆点颜色跟着是什么叫醒它的。
+ * 从上到下：标签/时间/权益/遥测 → "看了什么"一句 → 交易动作行（参数/拒因）→ 推理折叠 + 过程。
+ * 复盘不交易，圆点是空心的，正文铺在一块浅灰里。
+ * highlight=从做完的交易跳过来的那一条，底色亮一下让人找得到。
  * mine=看的是自己的 trader，只有这时才出"过程"入口——轨迹接口对别人一律回 null。
  */
 export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; mine?: boolean; highlight?: boolean }) {
@@ -54,74 +52,65 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
     d.modelCalls != null && t('detail.modelCalls', { count: d.modelCalls }),
   ].filter(Boolean).join(' · ');
 
+  // 圆点：失败红，其余跟叫醒原因的标签同色；复盘是空心圈
+  const dot = d.status === 'ERROR' ? 'dot-r' : KIND_TONE[d.kind] ? `dot-${KIND_TONE[d.kind]}` : '';
+
   return (
-    <div id={`decision-${d.id}`}
-         className={cn('py-5 border-b border-border',
-           isReview && 'border-l-[3px] pl-[18px]',
-           highlight && 'outline outline-2 outline-primary -outline-offset-2')}
-         style={isReview ? { borderLeftColor: REVIEW_INK } : undefined}>
-      <div className="flex items-center gap-2.5 flex-wrap">
+    <div id={`decision-${d.id}`} className={cn('dc', isReview ? 'rv' : dot, highlight && 'hl')}>
+      <div className="dc-h">
         {isReview ? (
-          d.status === 'OK' ? (
-            <span className="chip" style={{ borderColor: REVIEW_INK, color: REVIEW_INK }}>
-              <NotebookPen className="w-3 h-3" />{t('term.dailyReview')}
-            </span>
-          // 观望门控跳过的复盘行（SKIPPED）不是失败：灰徽章，error 字段带着跳过缘由
-          ) : d.status === 'SKIPPED' ? <span className="chip mute">{t('decision.skipped')}</span>
-            : <span className="chip dn">{t('decision.reviewFailed')}</span>
-        ) : d.status === 'SKIPPED' ? <span className="chip mute">{t('decision.skipped')}</span> : (
+          d.status === 'OK' ? <span className="tag ink"><NotebookPen className="ic" />{t('term.dailyReview')}</span>
+            // 观望门控跳过的复盘行（SKIPPED）不是失败：灰标签，error 字段带着跳过缘由
+            : d.status === 'SKIPPED' ? <span className="tag">{t('decision.skipped')}</span>
+            : <span className="tag r">{t('decision.reviewFailed')}</span>
+        ) : d.status === 'SKIPPED' ? <span className="tag">{t('decision.skipped')}</span> : (
           <>
             {/* 是什么叫醒它的：例行心跳 / 盯盘触发 / 持仓有变化 / 剧烈波动 / 手动 */}
-            <span className={cn('chip', KIND_CHIP[d.kind])}>{kindLabel(d.kind, !!mine, d.intervalCode)}</span>
-            {d.status === 'ERROR' && <span className="chip dn">{t('decision.error')}</span>}
+            <span className={cn('tag', KIND_TONE[d.kind])}>{kindLabel(d.kind, !!mine, d.intervalCode)}</span>
+            {d.status === 'ERROR' && <span className="tag r">{t('decision.error')}</span>}
           </>
         )}
-        <span className="num text-[13px] mute">{fmtDateTime(d.wakeTime)}</span>
-        {d.equity != null && (
-          <span className="text-[13px] mute">
-            {t('term.equity')} <b className="num font-semibold text-foreground">{fmtNum(d.equity)}</b>
-          </span>
-        )}
-        {meta && <span className="ml-auto num text-[12px] mute">{meta}</span>}
+        <span>{fmtDateTime(d.wakeTime)}</span>
+        {d.equity != null && <span>{t('term.equity')} <b>{fmtNum(d.equity)}</b></span>}
+        {meta && <span className="m">{meta}</span>}
       </div>
 
       {/* 数据查询收成一句：交代"它看了什么"再决策；出错的工具标红 */}
       {looked.length > 0 && (
-        <div className="text-[13px] mute mt-2.5">
+        <div className="look">
           {t('detail.lookedAt')}{' '}
           {looked.slice(0, LOOKED_MAX).map(([tool, failed], i) => (
             <span key={tool}>
               {i > 0 && ' · '}
-              <b className={cn('font-semibold', failed ? 'text-loss' : 'text-foreground')}
-                 title={failed ? dataCalls.find(a => a.tool === tool && a.status === 'error')?.error : undefined}>
+              <b className={cn(failed && 'dn')} title={failed ? dataCalls.find(a => a.tool === tool && a.status === 'error')?.error : undefined}>
                 {toolName(tool)}
               </b>
             </span>
           ))}
-          {extra > 0 && <span> +{extra}</span>}
+          {extra > 0 && ` +${extra}`}
         </div>
       )}
 
       {/* 交易动作：独立成行带参数与拒因——"它做了什么"是时间线的主角 */}
       {trades.length > 0 && (
-        <div className="mt-1.5">
+        <div className="al">
           {trades.map((a, i) => {
             const failed = a.rejected || a.status === 'error';
-            // unknown：成交结果未确认；partial：反手未完整执行。
-            const unknown = a.status === 'unknown';
-            const partial = a.status === 'partial';
+            // unknown：成交结果未确认；partial：反手未完整执行
+            const unsure = a.status === 'unknown' || a.status === 'partial';
             // not_attempted：模型要调但没执行（调用次数用完，或参数没对上）
             const skipped = a.status === 'not_attempted';
             return (
-              <div key={i} className="flex gap-2.5 items-baseline py-0.5 text-[13.5px] border-t border-dashed border-border first:border-t-0">
-                <b className={cn('font-extrabold whitespace-nowrap', failed ? 'text-loss' : (unknown || partial) ? 'text-warning' : skipped && 'mute')}>
+              <div key={i} className={cn('act', failed ? 'bad' : unsure ? 'unsure' : skipped && 'skip')}>
+                <b>
                   {toolName(a.tool)}
-                  {a.rejected ? t('trade.rejected') : a.status === 'error' ? t('trade.errored') : unknown ? t('trade.unknown') : partial ? t('trade.partial') : skipped ? t('trade.notAttempted') : ''}
+                  {a.rejected ? t('trade.rejected') : a.status === 'error' ? t('trade.errored') : a.status === 'unknown' ? t('trade.unknown')
+                    : a.status === 'partial' ? t('trade.partial') : skipped ? t('trade.notAttempted') : ''}
                 </b>
-                <span className="mute">
+                <span>
                   {tradeArgsSummary(a)}
-                  {a.rejected && <span className="block text-loss mt-0.5">{a.rejected}</span>}
-                  {a.error && <span className="block text-loss mt-0.5">{a.error}</span>}
+                  {a.rejected && <small>{a.rejected}</small>}
+                  {a.error && <small>{a.error}</small>}
                 </span>
               </div>
             );
@@ -129,26 +118,23 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
         </div>
       )}
 
-      {d.status === 'ERROR' && d.error && <p className="text-[13.5px] text-loss mt-2.5">{d.error}</p>}
+      {d.status === 'ERROR' && d.error && <p className="err">{d.error}</p>}
       {/* SKIPPED 的缘由（调度跳过/观望门控跳过复盘）：灰字注明，不是错误 */}
-      {d.status === 'SKIPPED' && d.error && <p className="text-[13.5px] mute mt-2.5">{d.error}</p>}
+      {d.status === 'SKIPPED' && d.error && <p className="why">{d.error}</p>}
 
       {isReview
-        ? d.reasoning && <div className="text-[15px] leading-[1.7] mt-3 max-w-[80ch]"><Markdown content={d.reasoning} /></div>
+        ? d.reasoning && <div className="rvb"><Markdown content={d.reasoning} /></div>
         : (
           <ReasoningFold reasoning={d.reasoning}>
             {/* 这轮落了轨迹（hasTrace）才有过程可看 */}
             {mine && d.hasTrace && (
-              <button type="button" onClick={toggleTrace}
-                      className={cn('underline underline-offset-[3px]', traceOpen && 'font-extrabold')}>
-                {t('live.process')}
-              </button>
+              <button type="button" className="linkb" aria-expanded={traceOpen} onClick={toggleTrace}>{t('live.process')}</button>
             )}
           </ReasoningFold>
         )}
       {traceOpen && (
-        <div className="border-t border-dashed border-border mt-3 pt-3">
-          {trace ? <WakeTraceView trace={trace} /> : <Loader2 className="w-3.5 h-3.5 animate-spin mute" />}
+        <div className="trace">
+          {trace ? <WakeTraceView trace={trace} /> : <Loader2 className="ic animate-spin mute" />}
         </div>
       )}
     </div>

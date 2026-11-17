@@ -60,6 +60,24 @@ export function inWindow(w: WakeWin | null, min: number): boolean {
   return w.from <= w.to ? min >= w.from && min <= w.to : min >= w.from || min <= w.to;
 }
 
+/** 滑杆刻度不等距（1、2、3、5、10…）：值 → 尺上的位置（0~1），刻度等距摆，刻度之间线性 */
+export function posOf(v: number, nodes: number[]): number {
+  const n = nodes.length - 1;
+  if (v <= nodes[0]) return 0;
+  if (v >= nodes[n]) return 1;
+  let i = 0;
+  while (i < n - 1 && v >= nodes[i + 1]) i++;
+  return (i + (v - nodes[i]) / (nodes[i + 1] - nodes[i])) / n;
+}
+
+/** 位置（0~1）→ 值，posOf 反过来 */
+export function valueAt(p: number, nodes: number[]): number {
+  const n = nodes.length - 1;
+  const x = Math.max(0, Math.min(1, p)) * n;
+  const i = Math.min(n - 1, Math.floor(x));
+  return nodes[i] + (x - i) * (nodes[i + 1] - nodes[i]);
+}
+
 /** 一天里这一档会醒几次 */
 export function beatsPerDay(interval: string, w: WakeWin | null): number {
   const step = INTERVAL_MIN[interval];

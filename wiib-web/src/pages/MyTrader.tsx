@@ -1,30 +1,34 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import {
-  AlertTriangle, ArrowRight, BookCheck, ChevronLeft, ChevronRight, GraduationCap, Loader2, Lock, MessageSquarePlus, Pencil,
-  RotateCcw, Trash2, WandSparkles, Zap,
+  ArrowRight, ChevronLeft, ChevronRight, CircleHelp, Info, Loader2, Lock, MessageCircle, NotebookPen,
+  RotateCcw, Sparkles, Trash2, TriangleAlert, Zap,
 } from 'lucide-react';
 import { llmEndpointApi, traderApi } from '../api';
 import { CoinStage } from '../components/arena/CoinStage';
 import { ExperienceLedgerSection } from '../components/arena/ExperienceLedgerSection';
 import { HeartbeatStrip } from '../components/arena/HeartbeatStrip';
 import { STATUS_META } from '../components/arena/traderStatus';
-import { ScaleSlider, SwitchRow, WakeWindowRuler } from '../components/arena/TraderControls';
+import { RangeRail, Slider, SwitchRow, WakeRuler } from '../components/arena/TraderControls';
 import {
-  ALERT_BASE, ALERT_INTERVALS, BASE_EQUITY, beatsPerDay, INTERVALS, MAX_SYMBOLS, minToHm, parseWindow,
-  TRADER_SYMBOLS, windowText, type WakeWin,
+  ALERT_BASE, ALERT_INTERVALS, BASE_EQUITY, beatsPerDay, INTERVALS, MAX_SYMBOLS, minToHm, parseWindow, posOf,
+  TRADER_SYMBOLS, valueAt, windowText, type WakeWin,
 } from '../components/arena/traderConfig';
 import { DATA_TOOLS, TRADE_TOOLS, toolName } from '../components/arena/traderTools';
 import { useKindLabel } from '../components/arena/useKindLabel';
 import { GuidedTour, type TourStep } from '../components/GuidedTour';
 import { LlmEndpointSelect } from '../components/LlmEndpointSelect';
+import { Stepper } from '../components/Stepper';
+import { SureButton } from '../components/SureButton';
+import { Seg } from '../components/ui/seg';
 import { useToast } from '../components/ui/use-toast';
 import { COIN_MAP } from '../lib/coinConfig';
-import { cn, fmtNum, fmtSignedPct } from '../lib/utils';
+import { cn, fmtNum } from '../lib/utils';
 import type {
   LlmEndpointView, TraderActionPanel, TraderActionResult, TraderOwnerView, TraderSpec, TraderUpsertRequest,
 } from '../types';
+import './MyTrader.css';
 
 const TOUR_SEEN_KEY = 'wiib-trader-tour-seen';
 /** 动作面板多久刷一次：下次心跳、上次醒来、今天醒了几次都从它来 */
@@ -45,6 +49,8 @@ const NAME_MAX = 32;
 const DEFAULT_WIN: WakeWin = { from: 21 * 60, to: 8 * 60 + 30 };
 /** 重置按住多久才生效 */
 const HOLD_MS = 1200;
+/** 分节索引：滚到页面顶上这么多以内的那节算当前这节 */
+const SPY_TOP = 160;
 
 const DEFAULT_SPEC: TraderSpec = {
   leverageMin: 3, leverageMax: 20, marginPctMax: 20,
@@ -87,6 +93,7 @@ const SECTIONS: { id: string; keys: (keyof TraderUpsertRequest)[] }[] = [
 
 /** 左侧索引：own=只有建好的 trader 才有这一节 */
 const INDEX: { id: string; no?: string; own?: boolean; red?: boolean }[] = [
+  { id: 'name' },
   { id: 'ledger', own: true },
   { id: 'coins', no: '01' },
   { id: 'beat', no: '02' },
@@ -129,8 +136,8 @@ function fmtPct(v: number) {
 const symbolsOf = (s: string) => s.split(',').filter(Boolean);
 
 /**
- * 我的 Trader 配置台：页头（可直接改名）→ 心跳条 + 动作一排 → 左侧分节索引 ‖ 经验账本、币种、心跳与时段、仓位规格、
- * 警报与复盘、模型、交易指令、工具箱、危险区 → 有改动才升起的保存条。
+ * 我的 Trader 配置台（样式见 MyTrader.css）：页头（直接改名）→ 心跳条 + 一排动作 → 左侧分节索引 ‖ 经验账本、币种、心跳与时段、
+ * 仓位规格、警报与复盘、模型、交易指令、工具箱、危险区 → 有改动才从底边升起来的保存条。
  * 模型从 AI 页「模型配置」的端点库里选，不在这里填 key；提示词存库即热生效，下一根心跳就按新的来
  */
 export function MyTrader() {
@@ -166,9 +173,10 @@ export function MyTrader() {
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [noteRounds, setNoteRounds] = useState(1);
-  const [active, setActive] = useState('coins');
+  const [active, setActive] = useState('name');
   // 关掉时段前的那组起止，再打开还是它
   const [lastWin, setLastWin] = useState<WakeWin>(DEFAULT_WIN);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { llmEndpointApi.list().then(setEndpoints).catch(() => setEndpoints([])); }, []);
 
@@ -220,17 +228,20 @@ export function MyTrader() {
 
   const exists = mine != null;
 
-  // 左侧索引跟着滚动亮当前那节；建好 / 删掉 trader 时账本、危险区两节会出现或消失，重新挂一遍
-  const mainRef = useRef<HTMLElement>(null);
+  // 左侧索引跟着滚动亮当前那节：顶上 SPY_TOP 以内的最后一节
   useEffect(() => {
-    const root = mainRef.current;
-    if (!root || !loaded) return;
-    const io = new IntersectionObserver(entries => {
-      for (const e of entries) if (e.isIntersecting) setActive((e.target as HTMLElement).id.replace('my-', ''));
-    }, { rootMargin: '-25% 0px -65% 0px' });
-    root.querySelectorAll('section[id^="my-"]').forEach(s => io.observe(s));
-    return () => io.disconnect();
-  }, [loaded, exists]);
+    if (!loaded) return;
+    const spy = () => {
+      let cur = 'name';
+      for (const x of INDEX) {
+        const el = document.getElementById(secId(x.id));
+        if (el && el.getBoundingClientRect().top < SPY_TOP) cur = x.id;
+      }
+      setActive(cur);
+    };
+    window.addEventListener('scroll', spy, { passive: true });
+    return () => window.removeEventListener('scroll', spy);
+  }, [loaded]);
 
   const run = useCallback(async (name: string, action: () => Promise<unknown>, okMsg: string | null, after: () => void) => {
     setBusy(name);
@@ -273,77 +284,98 @@ export function MyTrader() {
     ?? endpoints.find(e => e.isDefault) ?? endpoints[0])?.webSearch ?? false;
 
   const dirty = SECTIONS.filter(s => s.keys.some(k => !same(form[k], base[k])));
-  const errors = [
-    !form.name.trim() && t('my.err.name'),
-    selected.length === 0 && t('my.err.coins'),
-    win && win.from === win.to && t('my.err.sameTime'),
-    win && win.from !== win.to && perDay === 0 && t('my.err.noBeat'),
-    form.spec.marginPctMax > MARGIN_MAX && t('my.err.margin', { max: MARGIN_MAX }),
-  ].filter((e): e is string => !!e);
 
-  const save = () => void run('save', () => exists ? traderApi.updateConfig(form) : traderApi.create(form),
-    exists ? t('toast.saved') : t('toast.created'), load);
+  const goSection = (id: string) => {
+    if (id === 'name') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      nameRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    document.getElementById(secId(id))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  /** 存之前挑出第一处填得不对的：哪一节、说什么 */
+  const firstError = (): [string, string] | null => {
+    if (!form.name.trim()) return ['name', t('my.err.name')];
+    if (selected.length === 0) return ['coins', t('my.err.coins')];
+    if (win && win.from === win.to) return ['beat', t('my.err.sameTime')];
+    if (win && perDay === 0) return ['beat', t('my.err.noBeat')];
+    if (form.spec.marginPctMax > MARGIN_MAX) return ['spec', t('my.err.margin', { max: MARGIN_MAX })];
+    return null;
+  };
+  const save = () => {
+    const err = firstError();
+    if (err) {
+      toast(err[1], 'error');
+      goSection(err[0]);
+      return;
+    }
+    void run('save', () => exists ? traderApi.updateConfig(form) : traderApi.create(form),
+      exists ? t('toast.saved') : t('toast.created'), load);
+  };
 
   if (!loaded) {
-    return <div className="page-shell p-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+    return <div className="page-shell p-mt"><div className="empty"><Loader2 className="ic animate-spin" /></div></div>;
   }
 
   const st = status ? (STATUS_META[status] ?? STATUS_META.PAUSED) : null;
   // 心跳条第四格：今天醒了几次，按叫醒原因分
   const todayWakes = Object.entries(panel?.todayWakes ?? {});
   const todayN = todayWakes.reduce((s, [, n]) => s + n, 0);
-  const goSection = (id: string) => document.getElementById(secId(id))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // 运行开关：爆仓了拨不动，有动作在跑也先等它
+  const power = (v: string) => {
+    if (busy != null || status === 'LIQUIDATED') return false;
+    void run('power', v === 'RUN' ? traderApi.start : traderApi.pause, v === 'RUN' ? t('toast.started') : t('status.paused'), refreshOwner);
+  };
+  const toggleNote = () => {
+    if (!noteOpen) {
+      setNoteText(panel?.note ?? '');
+      setNoteRounds(panel?.note ? panel.noteRounds : 1);
+    }
+    setNoteOpen(o => !o);
+  };
+  const [pctInt, pctDec] = Math.abs(mine?.pub.pnlPct ?? 0).toFixed(2).split('.');
 
   return (
-    <div className="wrap pb-24">
+    <div className="page-shell p-mt">
       <GuidedTour steps={tourSteps} open={tour} onClose={closeTour} />
 
-      {/* 页头：大名字直接点着改；右边是本局收益 */}
-      <section className="tr-hero">
+      {/* 页头：名字就是个输入框，直接点着改；右边是本局收益 */}
+      <section id={secId('name')} className="mhd">
         <div className="min-w-0">
-          <Link to="/arena" className="inline-flex items-center gap-1 text-[13px] mute">
-            <ChevronLeft className="w-3.5 h-3.5" />{t('term.backToArena')}
-          </Link>
-          <div className="tr-eyebrow">{exists ? t('my.hero.eyebrow') : t('my.hero.eyebrowNew')}</div>
-          <div className="tr-hero-n">
-            <label className="tr-nm" data-v={`${form.name || t('my.hero.namePh')} `} title={t('my.hero.nameTip')} data-tour="name">
-              <input size={1} value={form.name} maxLength={NAME_MAX} placeholder={t('my.hero.namePh')}
-                     aria-label={t('my.hero.nameAria')} onChange={e => set({ name: e.target.value })} />
-              <Pencil className="tr-nm-pen" />
+          <Link to="/arena" className="back"><ChevronLeft className="ic" />{t('term.backToArena')}</Link>
+          <div className="eye">{exists ? t('my.hero.eyebrow') : t('my.hero.eyebrowNew')}</div>
+          <div className="nmrow">
+            {/* ::after 放一份同样的字把框撑到字那么宽，输入框 size=1 不自己撑 */}
+            <label className="mname" data-v={`${form.name || t('my.hero.namePh')} `} title={t('my.hero.nameTip')} data-tour="name">
+              <input ref={nameRef} size={1} value={form.name} maxLength={NAME_MAX} placeholder={t('my.hero.namePh')}
+                     aria-label={t('my.hero.nameAria')} autoComplete="off" spellCheck={false}
+                     onChange={e => set({ name: e.target.value })} />
             </label>
-            {st ? (
-              <span className={cn('chip', st.chip)}>{running && <i className="dot pulse" />}{t(st.labelKey)}</span>
-            ) : <span className="chip mute">{t('my.hero.notCreated')}</span>}
-            {mine && <span className="chip mute num">R{mine.pub.roundNo}</span>}
+            {st
+              ? <span className={cn('tag', st.tone)}><i className={cn(running && 'live')} />{t(st.labelKey)}</span>
+              : <span className="tag">{t('my.hero.notCreated')}</span>}
           </div>
-          <div className="tr-hero-meta">
-            {exists ? (
-              <>
-                <span>{mine.pub.model ?? t('term.noModel')}</span>
-                <span>{t('wb.meta.beat', { iv: base.intervalCode })}</span>
-                <span>{base.wakeWindow ? t('wb.meta.window', { win: base.wakeWindow.replace('-', '–') }) : t('detail.allDayWake')}</span>
-                <span>{symbolsOf(base.symbols).map(s => COIN_MAP[s]?.name ?? s).join(' / ')}</span>
-              </>
-            ) : <span>{t('my.hero.metaNew')}</span>}
+          <div className="meta">
+            {exists ? [
+              mine.pub.model ?? t('term.noModel'),
+              t('wb.meta.beat', { iv: base.intervalCode }),
+              base.wakeWindow ? t('wb.meta.window', { win: base.wakeWindow.replace('-', '–') }) : t('detail.allDayWake'),
+              t('wb.meta.round', { n: mine.pub.roundNo }),
+            ].join(' · ') : t('my.hero.metaNew')}
           </div>
         </div>
-        <div className="tr-hero-r num">
-          {mine ? (
-            <>
-              <b className={mine.pub.pnlPct >= 0 ? 'up' : 'dn'}>{fmtSignedPct(mine.pub.pnlPct)}</b>
-              <div>{t('term.equity')} <strong>{fmtNum(mine.pub.equity)}</strong> · {t('detail.initialLabel')}</div>
-            </>
-          ) : (
-            <button type="button" className="btn sm" onClick={() => setTour(true)}>
-              <GraduationCap className="ic" />{t('trader.tourBtn')}
-            </button>
-          )}
-        </div>
+        {exists ? (
+          <div className="pnl">
+            <b className={cn('big nf', mine.pub.pnlPct >= 0 ? 'up' : 'dn')}>{mine.pub.pnlPct >= 0 ? '+' : '-'}{pctInt}<i>.{pctDec}%</i></b>
+            <div className="sub"><span>{t('term.equity')} <b>{fmtNum(mine.pub.equity)}</b></span><span>{t('detail.initialLabel')}</span></div>
+          </div>
+        ) : (
+          <button type="button" className="btn plain" onClick={() => setTour(true)}><CircleHelp className="ic" />{t('trader.tourBtn')}</button>
+        )}
       </section>
 
-      {mine?.pub.pausedReason && (
-        <div className="mt-4 border-l-4 border-warning pl-3 py-1 text-[13px] text-warning">{mine.pub.pausedReason}</div>
-      )}
+      {mine?.pub.pausedReason && <div className="note w mt-4"><TriangleAlert className="ic" /><div>{mine.pub.pausedReason}</div></div>}
 
       {exists ? (
         <>
@@ -357,81 +389,70 @@ export function MyTrader() {
                               || t('my.hb.todayNone'),
                           }} />
 
-          {/* 动作一排：运行开关 + 三个动作 + 去工作台 */}
-          <div className="tr-acts">
-            <button type="button" role="switch" aria-checked={running} aria-label={t('my.act.powerAria')}
-                    className={cn('tr-power', !running && 'off')} disabled={busy != null || status === 'LIQUIDATED'}
-                    onClick={() => running
-                      ? void run('power', traderApi.pause, t('status.paused'), refreshOwner)
-                      : void run('power', traderApi.start, t('toast.started'), refreshOwner)}>
-              <span className="a"><i className={cn('dot', running && 'pulse')} />{t('my.act.run')}</span>
-              <span className="b">{t('my.act.pause')}</span>
-            </button>
-            <button type="button" className="btn sm" disabled={busy != null || !!panel?.wakeBlockedReason}
+          {/* 动作一排：运行开关 + 三个动作 + 配置引导 / 去工作台 */}
+          <div className="macts">
+            <Seg value={running ? 'RUN' : 'PAUSE'} label={t('my.act.powerAria')} onChange={power}
+                 options={[
+                   { value: 'RUN', label: <><i className={cn(running && 'on')} />{t('my.act.run')}</> },
+                   { value: 'PAUSE', label: t('my.act.pause') },
+                 ]} />
+            <button type="button" className={cn('btn', busy === 'wake' && 'busy')} disabled={busy != null || !!panel?.wakeBlockedReason}
                     title={panel?.wakeBlockedReason ?? undefined} onClick={() => runAction('wake', traderApi.wake)}>
-              {busy === 'wake' ? <Loader2 className="ic animate-spin" /> : <Zap className="ic" />}{t('term.manualWake')}
+              <Zap className="ic" /><span>{t('term.manualWake')}</span>
             </button>
-            <button type="button" className={cn('btn sm', noteOpen && 'fill')} aria-expanded={noteOpen}
-                    onClick={() => {
-                      if (!noteOpen) {
-                        setNoteText(panel?.note ?? '');
-                        setNoteRounds(panel?.note ? panel.noteRounds : 1);
-                      }
-                      setNoteOpen(o => !o);
-                    }}>
-              <MessageSquarePlus className="ic" />{t('my.act.note')}
+            {/* 有一条留言还没念完时按钮是墨色的 */}
+            <button type="button" className={cn('btn', panel?.note && 'on')} aria-expanded={noteOpen} onClick={toggleNote}>
+              <MessageCircle className="ic" />{t('my.act.note')}
             </button>
-            <button type="button" className="btn sm" disabled={busy != null || !!panel?.reviewBlockedReason}
+            <button type="button" className={cn('btn', busy === 'review' && 'busy')} disabled={busy != null || !!panel?.reviewBlockedReason}
                     title={panel?.reviewBlockedReason ?? undefined} onClick={() => runAction('review', traderApi.review)}>
-              {busy === 'review' ? <Loader2 className="ic animate-spin" /> : <BookCheck className="ic" />}{t('term.reviewNow')}
+              <NotebookPen className="ic" /><span>{t('term.reviewNow')}</span>
             </button>
-            <span className="flex-1" />
-            <button type="button" className="btn sm" onClick={() => setTour(true)}>
-              <GraduationCap className="ic" />{t('trader.tourBtn')}
-            </button>
-            <Link className="btn sm fill" to={`/arena/${mine.pub.id}`}>{t('my.act.workbench')}<ArrowRight className="ic" /></Link>
+            <span className="sp" />
+            <button type="button" className="btn plain" onClick={() => setTour(true)}><CircleHelp className="ic" />{t('trader.tourBtn')}</button>
+            <Link className="btn ink" to={`/arena/${mine.pub.id}`}>{t('my.act.workbench')}<ArrowRight className="ic" /></Link>
           </div>
-          {noteOpen && panel && (
-            <div className="tr-note">
-              <div>
-                <div className="text-[12.5px] mute mb-1.5">
-                  {panel.note ? t('my.note.current', { n: panel.noteRounds }) : t('my.note.lead')}
+          <div className={cn('col', noteOpen && 'open')}>
+            <div>
+              {panel && (
+                <div className="mnote blk">
+                  <div>
+                    <div className="lead">{panel.note ? t('my.note.current', { n: panel.noteRounds }) : t('my.note.lead')}</div>
+                    <label className="inp ta">
+                      <textarea rows={2} value={noteText} maxLength={panel.noteMaxChars} placeholder={t('my.note.ph')}
+                                aria-label={t('my.act.note')} onChange={e => setNoteText(e.target.value)} />
+                      <span className="cnt">{noteText.length} / {panel.noteMaxChars}</span>
+                    </label>
+                  </div>
+                  <div className="rr">
+                    <span>{t('my.note.for')}</span>
+                    <Stepper value={noteRounds} onChange={setNoteRounds} min={1} max={panel.noteMaxRounds}
+                             label={t('my.note.for')} lessLabel={t('my.note.less')} moreLabel={t('my.note.more')} />
+                    <span>{t('my.note.wakes')}</span>
+                    {panel.note && (
+                      <button type="button" className="btn" disabled={busy != null}
+                              onClick={() => { setNoteOpen(false); runAction('note', traderApi.clearNote); }}>{t('my.note.clear')}</button>
+                    )}
+                    <button type="button" className="btn ink" disabled={busy != null || !noteText.trim()}
+                            onClick={() => { setNoteOpen(false); runAction('note', () => traderApi.saveNote(noteText.trim(), noteRounds)); }}>
+                      {t('my.act.note')}
+                    </button>
+                  </div>
                 </div>
-                <textarea value={noteText} maxLength={panel.noteMaxChars} placeholder={t('my.note.ph')}
-                          aria-label={t('my.act.note')} onChange={e => setNoteText(e.target.value)} />
-              </div>
-              <div className="tr-note-r">
-                <span className="mute text-[12.5px]">{t('my.note.for')}</span>
-                <span className="tr-stepper">
-                  <button type="button" aria-label={t('my.note.less')} disabled={noteRounds <= 1}
-                          onClick={() => setNoteRounds(n => n - 1)}>−</button>
-                  <b className="num">{noteRounds}</b>
-                  <button type="button" aria-label={t('my.note.more')} disabled={noteRounds >= panel.noteMaxRounds}
-                          onClick={() => setNoteRounds(n => n + 1)}>+</button>
-                </span>
-                <span className="mute text-[12.5px]">{t('my.note.wakes')}</span>
-                {panel.note && (
-                  <button type="button" className="btn sm" disabled={busy != null}
-                          onClick={() => { setNoteOpen(false); runAction('note', traderApi.clearNote); }}>{t('my.note.clear')}</button>
-                )}
-                <button type="button" className="btn sm orange" disabled={busy != null || !noteText.trim()}
-                        onClick={() => { setNoteOpen(false); runAction('note', () => traderApi.saveNote(noteText.trim(), noteRounds)); }}>
-                  {t('my.act.note')}
-                </button>
-              </div>
+              )}
             </div>
-          )}
+          </div>
         </>
       ) : (
-        <div className="tr-steps3">
+        <div className="steps3 blk">
           {[1, 2, 3].map(n => (
-            <div key={n}><b>{n}</b><span>{t(`my.steps.s${n}`)}</span><em>{t(`my.steps.s${n}Sub`)}</em></div>
+            <div key={n}><b className="nf">{n}</b><span>{t(`my.steps.s${n}`)}</span><em>{t(`my.steps.s${n}Sub`)}</em></div>
           ))}
         </div>
       )}
 
-      <div className="tr-body">
-        <nav className="tr-idx" aria-label={t('my.idx.aria')}>
+      <div className="mbody">
+        <nav className="midx" aria-label={t('my.idx.aria')}>
           {INDEX.filter(x => exists || !x.own).map(x => (
             <a key={x.id} href={`#${secId(x.id)}`}
                className={cn(active === x.id && 'on', dirty.some(d => d.id === x.id) && 'dirty', x.red && 'red')}
@@ -442,33 +463,34 @@ export function MyTrader() {
           <p>{t('my.idx.dirtyCap')}</p>
         </nav>
 
-        <main ref={mainRef} className="tr-main">
-          {exists && <ExperienceLedgerSection id={secId('ledger')} className="first" />}
+        <div className="mmain">
+          {exists && <ExperienceLedgerSection id={secId('ledger')} />}
 
-          <section id={secId('coins')} className={cn('tr-sec', !exists && 'first')} data-tour="symbols">
+          <section id={secId('coins')} className="msec" data-tour="symbols">
             <SecHead no="01" title={t('my.idx.coins')} desc={t('my.coins.desc', { n: TRADER_SYMBOLS.length, max: MAX_SYMBOLS })} />
             <CoinStage selected={selected} onToggle={toggleSymbol} />
           </section>
 
-          <section id={secId('beat')} className="tr-sec">
+          <section id={secId('beat')} className="msec">
             <SecHead no="02" title={t('my.idx.beat')} desc={t('my.beat.desc')} />
-            <div className="tr-iv" role="radiogroup" aria-label={t('my.beat.aria')} data-tour="interval">
-              {INTERVALS.map(iv => (
-                <button key={iv} type="button" role="radio" aria-checked={form.intervalCode === iv}
-                        className={cn(form.intervalCode === iv && 'on')} onClick={() => set({ intervalCode: iv })}>{iv}</button>
-              ))}
+            <div data-tour="interval">
+              <Seg value={form.intervalCode} onChange={iv => set({ intervalCode: iv })} label={t('my.beat.aria')}
+                   options={INTERVALS.map(iv => ({ value: iv, label: iv }))} />
+              <p className="hint">{t('my.beat.hint', { iv: form.intervalCode, n: perDay, note: t(`my.beat.note.${form.intervalCode}`) })}</p>
             </div>
-            <p className="tr-hint mt-2.5">{t('my.beat.hint', { iv: form.intervalCode, n: perDay, note: t(`my.beat.note.${form.intervalCode}`) })}</p>
-            <div className="mt-7" data-tour="wake-window">
-              <SwitchRow bare on={win != null}
+            <div className="swg" data-tour="wake-window">
+              <SwitchRow checked={win != null}
                          title={win ? t('my.window.onTitle') : t('my.window.offTitle')}
                          desc={win ? t('my.window.onDesc') : t('my.window.offDesc')}
                          onChange={on => {
                            if (!on && win) setLastWin(win);
                            set({ wakeWindow: on ? windowText(lastWin) : null });
                          }} />
-              {win && <WakeWindowRuler win={win} interval={form.intervalCode} onChange={w => set({ wakeWindow: windowText(w) })} />}
-              <p className={cn('tr-win-r', win && (win.from === win.to || perDay === 0) && 'bad')}>
+              {/* 时间尺收着的时候也挂着，开合才有动画 */}
+              <div className={cn('col', win && 'open')}>
+                <div><WakeRuler win={win ?? lastWin} onChange={w => set({ wakeWindow: windowText(w) })} /></div>
+              </div>
+              <p className={cn('hint', win && (win.from === win.to || perDay === 0) && 'dn')}>
                 {!win ? t('my.window.readAll', { iv: form.intervalCode, n: perDay })
                   : win.from === win.to ? t('my.window.readSame')
                     : perDay === 0 ? t('my.window.readNone', { iv: form.intervalCode })
@@ -480,87 +502,88 @@ export function MyTrader() {
             </div>
           </section>
 
-          <section id={secId('spec')} className="tr-sec">
+          <section id={secId('spec')} className="msec">
             <SecHead no="03" title={t('my.idx.spec')} desc={t('my.spec.desc')} />
-            <div className="tr-spec">
-              <div className="tr-fld" data-tour="leverage">
-                <div className="lab"><span>{t('my.spec.lev')}</span><span>{t('my.spec.levSub')}</span></div>
-                <b className="tr-big num">
+            <div className="two2">
+              <div className="fld" data-tour="leverage">
+                <div className="fl"><span>{t('my.spec.lev')}</span><span>{t('my.spec.levSub')}</span></div>
+                <b className="bigv nf">
                   {form.spec.leverageMin === form.spec.leverageMax
                     ? `${form.spec.leverageMin}×` : `${form.spec.leverageMin}× – ${form.spec.leverageMax}×`}
                 </b>
-                <ScaleSlider ticks={LEV_T} values={[form.spec.leverageMin, form.spec.leverageMax]}
-                             onChange={([lo, hi]) => setSpec({ leverageMin: lo, leverageMax: hi })}
-                             snap={snapLev} step={(v, d) => snapLev(v + d)} tickLabel={v => `${v}×`}
-                             ariaLabels={[t('my.spec.levMinAria'), t('my.spec.levMaxAria')]} />
+                <RangeRail values={[form.spec.leverageMin, form.spec.leverageMax]}
+                           onChange={([lo, hi]) => setSpec({ leverageMin: lo, leverageMax: hi })}
+                           pos={v => posOf(v, LEV_T)} val={p => snapLev(valueAt(p, LEV_T))} step={(v, d) => snapLev(v + d)}
+                           ticks={LEV_T.map(v => [v, `${v}×`])} text={v => `${v}×`}
+                           labels={[t('my.spec.levMinAria'), t('my.spec.levMaxAria')]} />
               </div>
-              <div className="tr-fld" data-tour="margin">
-                <div className="lab"><span>{t('my.spec.margin')}</span><span>{t('my.spec.marginSub', { max: MARGIN_MAX })}</span></div>
-                <b className="tr-big num">{fmtPct(form.spec.marginPctMax)}</b>
-                <ScaleSlider ticks={MAR_T} values={[form.spec.marginPctMax]} onChange={([v]) => setSpec({ marginPctMax: v })}
-                             snap={snapMargin} step={stepMargin} tickLabel={v => `${v}%`}
-                             ariaLabels={[t('my.spec.marginAria')]} />
+              <div className="fld" data-tour="margin">
+                <div className="fl"><span>{t('my.spec.margin')}</span><span>{t('my.spec.marginSub', { max: MARGIN_MAX })}</span></div>
+                <b className="bigv nf">{fmtPct(form.spec.marginPctMax)}</b>
+                <Slider nodes={MAR_T} value={form.spec.marginPctMax} onChange={v => setSpec({ marginPctMax: v })}
+                        snap={snapMargin} step={stepMargin} tick={v => `${v}%`} text={fmtPct} label={t('my.spec.marginAria')} />
               </div>
             </div>
-            <div className="tr-conseq num">
+            <div className="conseq blk">
               <div>
                 <div className="k">{t('my.spec.maxMargin')}</div>
-                <div className="v">{fmtNum(BASE_EQUITY * form.spec.marginPctMax / 100, 0)}<small>U</small></div>
+                <div className="v nf">{fmtNum(BASE_EQUITY * form.spec.marginPctMax / 100, 0)}<small>U</small></div>
               </div>
               <div>
                 <div className="k">{t('my.spec.maxNotional', { lev: form.spec.leverageMax })}</div>
-                <div className="v">{fmtNum(BASE_EQUITY * form.spec.marginPctMax / 100 * form.spec.leverageMax, 0)}<small>U</small></div>
+                <div className="v nf">{fmtNum(BASE_EQUITY * form.spec.marginPctMax / 100 * form.spec.leverageMax, 0)}<small>U</small></div>
               </div>
             </div>
-            <p className="tr-hint mt-2.5">{t('my.spec.hint')}</p>
-            <div className="tr-swgrid" data-tour="position-rules">
-              <SwitchRow on={form.spec.allowMultiPosition} onChange={v => setSpec({ allowMultiPosition: v })}
+            <p className="hint">{t('my.spec.hint')}</p>
+            <div className="swg" data-tour="position-rules">
+              <SwitchRow checked={form.spec.allowMultiPosition} onChange={v => setSpec({ allowMultiPosition: v })}
                          title={t('cfg.multiPos')} desc={t('my.spec.multiDesc')} />
-              <SwitchRow on={form.spec.allowHedge} onChange={v => setSpec({ allowHedge: v })} disabled={!form.spec.allowMultiPosition}
+              <SwitchRow checked={form.spec.allowHedge} onChange={v => setSpec({ allowHedge: v })} disabled={!form.spec.allowMultiPosition}
                          title={t('cfg.hedge')} desc={form.spec.allowMultiPosition ? t('my.spec.hedgeDesc') : t('cfg.hedgeNeedMulti')} />
             </div>
           </section>
 
-          <section id={secId('alert')} className="tr-sec">
+          <section id={secId('alert')} className="msec">
             <SecHead no="04" title={t('my.idx.alert')} />
             {!ALERT_INTERVALS.includes(form.intervalCode) && (
-              <p className="tr-note15"><AlertTriangle className="ic" />{t('my.alert.off15m')}</p>
+              <div className="note"><Info className="ic" /><div>{t('my.alert.off15m')}</div></div>
             )}
-            <SwitchRow on={form.alertEnabled} onChange={v => set({ alertEnabled: v })} title={t('my.alert.title')} desc={t('my.alert.desc')} />
-            <div className={cn('tr-asub tr-fld', (!form.alertEnabled || !ALERT_INTERVALS.includes(form.intervalCode)) && 'dim')}>
-              <div className="lab"><span>{t('my.alert.mult')}</span><span>{t('my.alert.multSub')}</span></div>
-              <b className="tr-big num text-[34px]">×{form.alertThresholdMult.toFixed(1)}</b>
-              <ScaleSlider ticks={SENS_T} values={[form.alertThresholdMult]} onChange={([v]) => set({ alertThresholdMult: v })}
-                           snap={snapSens} step={(v, d) => snapSens(v + d * 0.1)} tickLabel={v => `×${v.toFixed(1)}`}
-                           ariaLabels={[t('my.alert.multAria')]} disabled={!form.alertEnabled} />
-              <div className="tr-thr num">
+            <SwitchRow checked={form.alertEnabled} onChange={v => set({ alertEnabled: v })} title={t('my.alert.title')} desc={t('my.alert.desc')} />
+            <div className={cn('asub blk', (!form.alertEnabled || !ALERT_INTERVALS.includes(form.intervalCode)) && 'dim')}>
+              <div className="fld">
+                <div className="fl"><span>{t('my.alert.mult')}</span><span>{t('my.alert.multSub')}</span></div>
+                <b className="bigv nf">×{form.alertThresholdMult.toFixed(1)}</b>
+                <Slider nodes={SENS_T} value={form.alertThresholdMult} onChange={v => set({ alertThresholdMult: v })}
+                        snap={snapSens} step={(v, d) => snapSens(v + d * 0.1)} tick={v => `×${v.toFixed(1)}`}
+                        text={v => `×${v.toFixed(1)}`} label={t('my.alert.multAria')} disabled={!form.alertEnabled} />
+              </div>
+              {/* 每个选中币的生效阈值 = 平台基准 × 系数 */}
+              <div className="thr">
                 {selected.map(s => {
                   const cfg = COIN_MAP[s];
                   const Icon = cfg.icon;
-                  return <span key={s}><Icon />{cfg.name} {(ALERT_BASE[s] * Math.max(1, form.alertThresholdMult)).toFixed(2)}%</span>;
+                  return <span key={s}><Icon className="ci" />{cfg.name} {(ALERT_BASE[s] * Math.max(1, form.alertThresholdMult)).toFixed(2)}%</span>;
                 })}
               </div>
-              <p className="tr-hint mt-2">{t('my.alert.hint')}</p>
+              <p className="hint">{t('my.alert.hint')}</p>
             </div>
-            <div className="tr-swgrid">
-              <SwitchRow on={form.reviewEnabled} onChange={v => set({ reviewEnabled: v })} title={t('cfg.reviewOn')} desc={t('my.alert.reviewDesc')} />
-              <SwitchRow on={form.learnedRestrictionHold} onChange={v => set({ learnedRestrictionHold: v })}
+            <div className="swg">
+              <SwitchRow checked={form.reviewEnabled} onChange={v => set({ reviewEnabled: v })} title={t('cfg.reviewOn')} desc={t('my.alert.reviewDesc')} />
+              <SwitchRow checked={form.learnedRestrictionHold} onChange={v => set({ learnedRestrictionHold: v })}
                          title={t('cfg.restrictionHold')} desc={t('my.alert.restrictDesc')} />
             </div>
           </section>
 
-          <section id={secId('model')} className="tr-sec" data-tour="byok">
-            <div className="tr-sec-h">
-              <h2><span className="no">05</span>{t('my.idx.model')}</h2>
-              <Link to="/ai" className="d underline underline-offset-[3px]">{t('cfg.manageEndpoints')}</Link>
-            </div>
-            <LlmEndpointSelect endpoints={endpoints} value={form.llmEndpointId} onChange={id => set({ llmEndpointId: id })}
-                               className="w-full max-w-[480px] h-[46px] border-foreground bg-transparent px-3 text-[15px] font-semibold" />
-            <p className="tr-hint mt-2.5">{t('my.model.hint')}</p>
+          <section id={secId('model')} className="msec" data-tour="byok">
+            <SecHead no="05" title={t('my.idx.model')}>
+              <Link to="/ai" className="linkb d">{t('cfg.manageEndpoints')}</Link>
+            </SecHead>
+            <LlmEndpointSelect endpoints={endpoints} value={form.llmEndpointId} onChange={id => set({ llmEndpointId: id })} className="ep" />
+            <p className="hint">{t('my.model.hint')}</p>
             {/* 端点列表到手了才摆这个开关：没到手时分不清端点开没开搜索 */}
             {endpoints.length > 0 && (
-              <div className="mt-5">
-                <SwitchRow on={endpointSearch && form.webSearchEnabled} onChange={v => set({ webSearchEnabled: v })}
+              <div className="swg">
+                <SwitchRow checked={endpointSearch && form.webSearchEnabled} onChange={v => set({ webSearchEnabled: v })}
                            disabled={!endpointSearch} title={t('my.model.search')}
                            desc={endpointSearch ? t('my.model.searchDesc') : t('my.model.searchNeedEndpoint')} />
               </div>
@@ -571,42 +594,39 @@ export function MyTrader() {
 
           <Toolbox />
 
-          {exists && mine && (
+          {exists && (
             <DangerZone mine={mine} busy={busy != null}
                         onReset={carry => void run('reset', () => traderApi.reset(carry), t('toast.reset'), load)}
                         onDelete={name => void run('delete', () => traderApi.remove(name), t('toast.deleted'), load)} />
           )}
+        </div>
+      </div>
 
-          {/* 保存条：有改动（或还没创建）才从底部升起来；跑引导时也亮着，好让最后一步指得到它 */}
-          <div className={cn('tr-savebar', (!exists || dirty.length > 0 || tour) && 'show')} role="status" data-tour="save">
-            <div>
-              <div className="m">{exists ? t('my.save.dirty', { count: dirty.length }) : t('my.save.notCreated')}</div>
-              <div className="s">{exists ? dirty.map(d => t(`my.idx.${d.id}`)).join('、') : t('my.save.createSub')}</div>
-            </div>
-            {errors.map(e => <span key={e} className="e"><AlertTriangle className="w-3.5 h-3.5" />{e}</span>)}
-            <div className="r">
-              {exists && (
-                <button type="button" className="btn sm" disabled={dirty.length === 0 || busy != null} onClick={() => setForm(base)}>
-                  {t('my.save.discard')}
-                </button>
-              )}
-              <button type="button" className="btn sm orange" disabled={errors.length > 0 || busy != null || (exists && dirty.length === 0)}
-                      onClick={save}>
-                {busy === 'save' && <Loader2 className="ic animate-spin" />}{exists ? t('cfg.save') : t('cfg.create')}
-              </button>
-            </div>
-          </div>
-        </main>
+      {/* 保存条：有改动（或还没创建）才从底边升起来；跑引导时也亮着，好让最后一步指得到它 */}
+      <div className={cn('msave', (!exists || dirty.length > 0 || tour) && 'on')} role="status" data-tour="save">
+        <div className="t">
+          <b>{exists ? t('my.save.dirty', { count: dirty.length }) : t('my.save.notCreated')}</b>
+          <span>{exists ? dirty.map(d => t(`my.idx.${d.id}`)).join(' · ') : t('my.save.createSub')}</span>
+        </div>
+        {exists && (
+          <button type="button" className="btn plain" disabled={dirty.length === 0 || busy != null} onClick={() => setForm(base)}>
+            {t('my.save.discard')}
+          </button>
+        )}
+        <button type="button" className={cn('btn go2', busy === 'save' && 'busy')} disabled={busy != null || (exists && dirty.length === 0)} onClick={save}>
+          <span>{exists ? t('cfg.save') : t('cfg.create')}</span>
+        </button>
       </div>
     </div>
   );
 }
 
-function SecHead({ no, title, desc }: { no?: string; title: string; desc?: string }) {
+function SecHead({ no, title, desc, children }: { no?: string; title: string; desc?: string; children?: ReactNode }) {
   return (
-    <div className="tr-sec-h">
+    <div className="msec-h">
       <h2>{no && <span className="no">{no}</span>}{title}</h2>
       {desc && <span className="d">{desc}</span>}
+      {children}
     </div>
   );
 }
@@ -617,10 +637,11 @@ function PromptSection({ form, set, defaultInstructions }: {
 }) {
   const { t } = useTranslation('ai');
   const [template, setTemplate] = useState<string[]>([]);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   // 行号 → 闪了几次；单双数换着用两份一样的动画，连着变两次也能重播
   const [flash, setFlash] = useState<Record<number, number>>({});
   const prevRef = useRef<string[] | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
 
   // 与唤醒组装同一份文本，所见即所得。拖滑杆时连着变，停下来再拉；只认最后一次请求
   useEffect(() => {
@@ -647,51 +668,59 @@ function PromptSection({ form, set, defaultInstructions }: {
       for (const i of changed) next[i] = (next[i] ?? 0) + 1;
       return next;
     });
-    const timer = setTimeout(() => setFlash({}), 1800);
+    const timer = setTimeout(() => setFlash({}), 1500);
     return () => clearTimeout(timer);
   }, [template]);
 
   const prompt = form.customPrompt ?? '';
+  // 指令框跟着内容长高
+  useLayoutEffect(() => {
+    const el = taRef.current!;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [prompt]);
+
   const isDefault = !!defaultInstructions && prompt === defaultInstructions;
   return (
-    <section id={secId('prompt')} className="tr-sec" data-tour="prompt">
+    <section id={secId('prompt')} className="msec" data-tour="prompt">
       <SecHead no="06" title={t('my.idx.prompt')} desc={t('my.prompt.desc')} />
-      <div className="tr-ph">
-        <span className={cn('chip', isDefault ? 'mute' : 'border-primary text-primary')}>
-          {isDefault ? t('my.prompt.isDefault') : t('my.prompt.edited')}
-        </span>
-        <span className="r">
-          <button type="button" className="btn xs" disabled={!defaultInstructions || isDefault}
-                  onClick={() => {
-                    if (!prompt || window.confirm(t('cfg.resetDefaultPromptConfirm'))) set({ customPrompt: defaultInstructions });
-                  }}>
-            <RotateCcw className="w-3 h-3" />{t('cfg.resetDefaultPrompt')}
-          </button>
+      <div className="prow">
+        <span className={cn('tag', !isDefault && 'o')}>{isDefault ? t('my.prompt.isDefault') : t('my.prompt.edited')}</span>
+        <span>
+          {/* 重置会整段替换，要再点一次才生效 */}
+          <SureButton className="btn sm" sureLabel={t('cfg.resetSure')} disabled={!defaultInstructions || isDefault}
+                      onConfirm={() => set({ customPrompt: defaultInstructions })}>
+            <RotateCcw className="ic" />{t('cfg.resetDefaultPrompt')}
+          </SureButton>
           {/* 提示词生成：对话式写出交易指令，写完复制回这个框 */}
-          <Link to="/prompt-gen" className="btn xs"><WandSparkles className="w-3 h-3" />{t('cfg.genPrompt')}</Link>
+          <Link to="/prompt-gen" className="btn sm"><Sparkles className="ic" />{t('cfg.genPrompt')}</Link>
         </span>
       </div>
-      <textarea className="tr-ta" value={prompt} maxLength={PROMPT_MAX} placeholder={t('cfg.customPromptPh')}
-                aria-label={t('my.idx.prompt')} onChange={e => set({ customPrompt: e.target.value })} />
-      <div className="tr-meter num">
+      <label className="inp ta">
+        <textarea ref={taRef} value={prompt} maxLength={PROMPT_MAX} placeholder={t('cfg.customPromptPh')}
+                  aria-label={t('my.idx.prompt')} onChange={e => set({ customPrompt: e.target.value })} />
+      </label>
+      <div className="meter">
         <span>{fmtNum(prompt.length, 0)} / {fmtNum(PROMPT_MAX, 0)}</span>
-        <span className="bar"><i style={{ transform: `scaleX(${prompt.length / PROMPT_MAX})` }} /></span>
+        <i><b style={{ transform: `scaleX(${prompt.length / PROMPT_MAX})` }} /></i>
         <span>{t('my.prompt.live')}</span>
       </div>
-      <div className={cn('tr-pv', open && 'open')}>
-        <button type="button" className="tr-pv-h" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-          <Lock className="w-3.5 h-3.5" />{t('my.prompt.sys')}<span className="sub">{t('my.prompt.sysSub')}</span>
-          <ChevronRight className="chev" />
+      <div className="pv">
+        <button type="button" className="pv-h" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+          <Lock className="ic" />{t('my.prompt.sys')}<span className="sub">{t('my.prompt.sysSub')}</span>
+          <ChevronRight className="ic chev" />
         </button>
-        {open && (
-          <div className="tr-pv-b">
-            {template.map((line, i) => (
-              <div key={i} className={cn('tr-pv-l', flash[i] && (flash[i] % 2 ? 'flash' : 'flash2'))}>
-                <span className="ln">{i + 1}</span><span>{line || ' '}</span>
-              </div>
-            ))}
+        <div className={cn('col', open && 'open')}>
+          <div>
+            <div className="pv-b">
+              {template.map((line, i) => (
+                <div key={i} className={cn('pv-l', flash[i] && (flash[i] % 2 ? 'flash' : 'flash2'))}>
+                  <span className="ln">{i + 1}</span><span>{line || ' '}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        )}
+        </div>
       </div>
     </section>
   );
@@ -706,30 +735,27 @@ function Toolbox() {
     { key: 'data', tools: DATA_TOOLS },
   ] as const;
   return (
-    <section id={secId('tools')} className="tr-sec">
+    <section id={secId('tools')} className="msec">
       <SecHead title={t('my.idx.tools')} desc={t('skills.summary', { trade: TRADE_TOOLS.length, data: DATA_TOOLS.length })} />
-      <button type="button" className="btn xs" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+      <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen(o => !o)}>
         {open ? t('my.tools.close') : t('my.tools.open', { n: TRADE_TOOLS.length + DATA_TOOLS.length })}
       </button>
-      {open && (
-        <>
-          <div className="tr-sk-grid">
-            {groups.map(g => (
-              <div key={g.key} className="tr-sk-g">
-                <h3>{t(`skills.${g.key}`)}<span>{t(`skills.${g.key}Hint`)}</span></h3>
-                {g.tools.map(id => (
-                  <div key={id} className="tr-sk">
-                    <b>{toolName(id)}</b>
-                    <code>{id}</code>
-                    <p><Trans ns="ai" i18nKey={`skills.desc.${id}`} components={[<span className="wn font-bold" />]} /></p>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-          <p className="tr-sk-foot">{t('skills.foot')}</p>
-        </>
-      )}
+      <div className={cn('col', open && 'open')}>
+        <div>
+          {groups.map(g => (
+            <div key={g.key} className="tool-g">
+              <b>{t(`skills.${g.key}`)}</b><span>{t(`skills.${g.key}Hint`)}</span>
+              {g.tools.map(id => (
+                <div key={id} className="tool">
+                  <b>{toolName(id)}<small>{id}</small></b>
+                  <span><Trans ns="ai" i18nKey={`skills.desc.${id}`} components={[<b />]} /></span>
+                </div>
+              ))}
+            </div>
+          ))}
+          <p className="hint">{t('skills.foot')}</p>
+        </div>
+      </div>
     </section>
   );
 }
@@ -767,35 +793,36 @@ function DangerZone({ mine, busy, onReset, onDelete }: {
   };
 
   return (
-    <section id={secId('danger')} className="tr-sec danger">
+    <section id={secId('danger')} className="msec">
       <SecHead title={t('my.idx.danger')} desc={t('my.danger.desc')} />
-      <div className="tr-drow">
+      <div className="drow">
         <div>
           <b>{t('trader.reset')}</b>
           <p>{t('my.danger.resetDesc', { round: mine.pub.roundNo + 1 })}</p>
-          <label className="tr-check">
-            <input type="checkbox" checked={carry} onChange={e => setCarry(e.target.checked)} className="accent-primary" />
+          <label className="ck">
+            <input type="checkbox" checked={carry} onChange={e => setCarry(e.target.checked)} />
             {t('my.danger.carry')}
           </label>
         </div>
-        <button type="button" className={cn('btn tr-hold', holding && 'holding')} disabled={busy}
+        {/* 按住才生效：底下一层红从左往右填满，中途松手退回 */}
+        <button type="button" className={cn('btn risk hold', holding && 'holding')} disabled={busy}
+                style={{ '--hold': `${HOLD_MS}ms` } as CSSProperties}
                 onPointerDown={startHold} onPointerUp={stopHold} onPointerLeave={stopHold} onPointerCancel={stopHold}
                 onKeyDown={holdKey} onKeyUp={stopHold}>
-          <i className="tr-hold-fill" />
-          <span><RotateCcw className="ic" />{holding ? t('my.danger.holding') : t('my.danger.hold')}</span>
+          <span>{holding ? t('my.danger.holding') : t('my.danger.hold')}</span>
         </button>
       </div>
-      <div className="tr-drow">
+      <div className="drow">
         <div>
           <b>{t('trader.delete')}</b>
           <p>{t('trader.deleteWarn')}</p>
-          <div className="tr-delbox">
-            <input value={delName} maxLength={NAME_MAX} onChange={e => setDelName(e.target.value)}
+          <label className="inp sm">
+            <input value={delName} maxLength={NAME_MAX} autoComplete="off" onChange={e => setDelName(e.target.value)}
                    placeholder={t('my.danger.delPh', { name: mine.pub.name })} aria-label={t('my.danger.delAria')} />
-          </div>
+          </label>
         </div>
         {/* 名字一字不差才点得动；后端也拦一道 */}
-        <button type="button" className="btn border-loss text-loss" disabled={busy || delName.trim() !== mine.pub.name}
+        <button type="button" className="btn danger" disabled={busy || delName.trim() !== mine.pub.name}
                 onClick={() => onDelete(delName.trim())}>
           <Trash2 className="ic" />{t('my.danger.del')}
         </button>

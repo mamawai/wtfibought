@@ -1,9 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '../../lib/utils';
 import { Markdown } from '../Markdown';
 
 /** 结论分段标记 [BTCUSDT]（独占一行），与后端 ReviewMaterialAssembler.SEGMENT_TAG 同一形状 */
 const SEG_LINE = /^\s*\[([A-Z0-9]{2,20})\]\s*$/;
+/** 超过这么多字才折成两行、给「展开全文」 */
+const LONG_CHARS = 84;
 
 interface Block {
   symbol: string | null;
@@ -30,12 +33,11 @@ function splitBlocks(text: string): Block[] {
 }
 
 /**
- * 长文折叠：默认两行纯文本，展开成 markdown。展开/收起与「过程」并排在同一行链接里。
- * segmentable=false 关掉币种分段渲染：段标题（如英文 [REVIEW]）与币码同形状时用得上。
+ * 决策推理（样式见 ArenaDetail.css .rs）：长的默认两行纯文本，展开成 markdown；短的直接铺。
+ * 带币种分段标记的按币分块，每块前面一枚币码。展开/收起和「过程」并排在底下一行链接里
  */
-export function ReasoningFold({ reasoning, segmentable = true, children }: {
+export function ReasoningFold({ reasoning, children }: {
   reasoning: string | null;
-  segmentable?: boolean;
   /** 挂在展开/收起旁边的链接（决策卡的「过程」） */
   children?: ReactNode;
 }) {
@@ -43,35 +45,32 @@ export function ReasoningFold({ reasoning, segmentable = true, children }: {
   const [open, setOpen] = useState(false);
   const text = reasoning?.trim() || '';
   if (!text && !children) return null;
-  // 折叠态是纯文本，去掉 markdown 符号免得满屏井号；截到几行交给 line-clamp
-  const preview = text.replace(/[#*`]/g, '').replace(/\s+/g, ' ');
-  const blocks = segmentable ? splitBlocks(text) : [];
-  const segmented = blocks.some(b => b.symbol != null);
+  const long = text.length > LONG_CHARS;
+  const blocks = splitBlocks(text);
   return (
     <>
       {text && (
-        <div className="text-[15px] leading-[1.7] mt-3 max-w-[80ch]">
-          {!open ? <p className="line-clamp-2">{preview}</p>
-            : segmented ? (
-              <div className="space-y-2">
-                {blocks.map((b, i) => (
-                  <div key={i}>
-                    {b.symbol != null && <span className="chip mute num mb-1">{b.symbol}</span>}
-                    <Markdown content={b.body} />
-                  </div>
-                ))}
+        <div className={cn('rs', long && !open && 'clamp')}>
+          {/* 折叠态是纯文本，去掉 markdown 符号免得满屏井号；截到两行交给 line-clamp */}
+          {long && !open ? text.replace(/[#*`]/g, '').replace(/\s+/g, ' ')
+            : blocks.some(b => b.symbol != null) ? blocks.map((b, i) => (
+              <div key={i} className="part">
+                {b.symbol != null && <span className="tag sm">{b.symbol}</span>}
+                <Markdown content={b.body} />
               </div>
-            ) : <Markdown content={text} />}
+            )) : <Markdown content={text} />}
         </div>
       )}
-      <div className="flex gap-4 mt-2 text-[13px]">
-        {text && (
-          <button type="button" onClick={() => setOpen(!open)} className="underline underline-offset-[3px]">
-            {open ? t('common:collapse') : t('detail.expandFull')}
-          </button>
-        )}
-        {children}
-      </div>
+      {(long || children) && (
+        <div className="lk">
+          {long && (
+            <button type="button" className="linkb" onClick={() => setOpen(!open)}>
+              {open ? t('common:collapse') : t('detail.expandFull')}
+            </button>
+          )}
+          {children}
+        </div>
+      )}
     </>
   );
 }
