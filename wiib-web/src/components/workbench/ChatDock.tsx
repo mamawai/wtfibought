@@ -1,13 +1,15 @@
 import { Activity, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { KeyRound, Loader2, Sparkle, X } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
+import { useBallFace } from './useBallFace';
 import { llmEndpointApi } from '../../api';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn } from '../../lib/utils';
 import { chatStore } from './chatStore';
 import { ChatPanel } from './ChatPanel';
 import { HUB_NAME } from './chatView';
+import './ChatDock.css';
 
 const SIZE_KEY = 'wiib-chatdock-size';
 const BALL_KEY = 'wiib-chatdock-ball';
@@ -180,6 +182,7 @@ export function ChatDock() {
   const dockRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const ballBtnRef = useRef<HTMLButtonElement>(null);
+  useBallFace(ballBtnRef, unread);
   // 全屏 = 铺满浏览器视口的一个 fixed 层，不走原生 Fullscreen API：那个连地址栏、标签栏一起吃掉，
   // 整块屏幕只剩对话，跟"一边看盘一边问"是反着的。K 线那边仍用原生（看图本来就该独占屏幕）
   const [fullscreen, setFullscreen] = useState(false);
@@ -480,8 +483,8 @@ export function ChatDock() {
         {unread && (
           <span aria-hidden className="absolute inset-0 rounded-full border-[1.5px] border-primary pointer-events-none wiib-ball-ping" />
         )}
-        {/* Polaris 的星：平时偶尔眨一下，研判中慢慢转（动画在 .polaris-glyph） */}
-        <Sparkle aria-hidden className="polaris-glyph w-6 h-6 fill-current" strokeWidth={1.5} />
+        {/* 脸：两只眼睛，跟着鼠标看、会眨（见 useBallFace 和 index.css 的 .polaris-ball .face） */}
+        <span aria-hidden className="face"><i className="eye" /><i className="eye" /></span>
         {/* 答案到了：墨点，描一圈页面底色从橙球上抠出来。脉冲环扩散完的那一瞬靠它留住痕迹。打开面板即清 */}
         {unread && (
           <span className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-foreground ring-2 ring-background" />
@@ -500,17 +503,17 @@ export function ChatDock() {
           // 收放动画绕默认的中心缩放，transform-origin 别在这儿改
           style={{ '--dock-w': `${size.w}px`, '--dock-h': `${size.h}px` } as React.CSSProperties}
           className={cn(
-            'fixed z-[85] pt-card flex flex-col overflow-hidden outline-none',
+            'cdock fixed z-[85] flex flex-col overflow-hidden outline-none',
             fullscreen
               // 全屏铺满浏览器视口，浮窗那套尺寸/锚点全让开
-              ? 'inset-0 rounded-none w-full h-full max-w-none max-h-none'
+              ? 'full inset-0 w-full h-full max-w-none max-h-none'
               : cn(
                   // 移动端全屏（让开刘海），PC 锚定在球那一侧的浮窗（尺寸可拖拽，CSS 变量只在 md 生效）
-                  'inset-0 rounded-none pt-[env(safe-area-inset-top)]',
+                  'inset-0 pt-[env(safe-area-inset-top)]',
                   // 面板跟着球换边：球在左就从左下角长出来。竖直方向仍锚底——面板高度可变，
                   // 球拖到顶部时它必然要向下铺，锚底最稳，resize 的方向语义也才立得住
                   // 平板/横屏手机底部还有悬浮 Tab，让开它；左右让开灵动岛
-                  'md:inset-auto md:bottom-[calc(var(--tabbar-space)+1rem)] lg:bottom-20 md:shadow-2xl md:pt-0',
+                  'md:inset-auto md:bottom-[calc(var(--tabbar-space)+1rem)] lg:bottom-20 md:pt-0',
                   ball.side === 'left' ? 'md:left-[max(1rem,env(safe-area-inset-left))]' : 'md:right-[max(1rem,env(safe-area-inset-right))]',
                   'md:w-[var(--dock-w)] md:h-[var(--dock-h)]',
                   'md:max-w-[calc(100vw-2rem)] md:max-h-[calc(100vh-6.5rem)]',
@@ -530,41 +533,26 @@ export function ChatDock() {
                      className={cn('hidden md:block absolute top-0 h-1.5 cursor-ns-resize z-20',
                        ball.side === 'left' ? 'left-0 right-4' : 'left-4 right-0')} />
                 <div onPointerDown={resizeStart('xy')} onPointerMove={resizeMove} onPointerUp={resizeEnd} onPointerCancel={resizeEnd}
-                     className={cn('hidden md:flex absolute top-0 w-4 h-4 z-20 items-start group',
-                       ball.side === 'left' ? 'right-0 cursor-nesw-resize justify-end' : 'left-0 cursor-nwse-resize justify-start')}
-                     title={t('chat.resize')}>
-                  <span className={cn('mt-1 w-2 h-2 border-t-2 border-muted-foreground/40 group-hover:border-primary transition-colors',
-                    ball.side === 'left' ? 'mr-1 border-r-2 rounded-tr' : 'ml-1 border-l-2 rounded-tl')} />
-                </div>
+                     className={cn('hidden md:block absolute top-0 w-4 h-4 z-20',
+                       ball.side === 'left' ? 'right-0 cursor-nesw-resize' : 'left-0 cursor-nwse-resize')}
+                     title={t('chat.resize')} />
               </>
             )}
 
             {hasConfig == null ? (
               <PanelShell onClose={() => setOpenBoth(false)}>
-                <div className="flex-1 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" /> {t('loadingConfig')}
-                </div>
+                <div className="cempty"><Loader2 className="ic animate-spin" /><span>{t('loadingConfig')}</span></div>
               </PanelShell>
             ) : hasConfig ? (
               <ChatPanel onClose={() => setOpenBoth(false)} onGoConfig={goConfig}
                          fullscreen={fullscreen} onToggleFullscreen={toggleFullscreen} />
             ) : (
               <PanelShell onClose={() => setOpenBoth(false)}>
-                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
-                  <div className="w-12 h-12 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
-                    <KeyRound className="w-6 h-6" />
-                  </div>
-                  <div className="text-sm font-bold text-muted-foreground">{t('chat.byokTitle')}</div>
-                  <div className="text-[11px] text-muted-foreground/70 max-w-[16rem]">
-                    {t('chat.byokHint')}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={goConfig}
-                    className="mt-1 border border-border rounded-lg px-4 py-2 text-xs font-bold text-primary hover:bg-surface-hover"
-                  >
-                    {t('chat.goConfig')}
-                  </button>
+                <div className="cempty">
+                  <span className="cface" aria-hidden />
+                  <b>{t('chat.byokTitle')}</b>
+                  <span>{t('chat.byokHint')}</span>
+                  <button type="button" className="btn ink" onClick={goConfig}>{t('chat.goConfig')}</button>
                 </div>
               </PanelShell>
             )}
@@ -575,23 +563,21 @@ export function ChatDock() {
   );
 }
 
-/** 加载中/引导态的简壳：ChatPanel 自带顶栏，这两个状态没有，得补一个能关的头（样式与面板顶栏同款） */
+/** 加载中/引导态的简壳：ChatPanel 自带顶栏，这两个状态没有，得补一个能关的头（与面板顶栏同款） */
 function PanelShell({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   const { t } = useTranslation(['ai', 'common']);
   return (
-    <>
-      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-border">
-        <span className="pl-1.5 text-sm font-black">{HUB_NAME}</span>
-        <button
-          onClick={onClose}
-          className="ml-auto w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
-          title={t('common:close')}
-          aria-label={t('chat.closeAria')}
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
+    <div className="cmain">
+      <header className="chd">
+        <span className="cface" aria-hidden />
+        <b>{HUB_NAME}</b>
+        <span className="hb">
+          <button type="button" onClick={onClose} title={t('common:close')} aria-label={t('chat.closeAria')}>
+            <X className="ic" />
+          </button>
+        </span>
+      </header>
       {children}
-    </>
+    </div>
   );
 }

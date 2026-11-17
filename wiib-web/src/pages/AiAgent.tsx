@@ -1,26 +1,21 @@
 import { useTranslation } from 'react-i18next';
 import { AgentLangSetting } from '../components/AgentLangSetting';
 import { ModelConfig } from '../components/ModelConfig';
-import { KeyRound } from 'lucide-react';
+import './AiAgent.css';
 
 /**
- * 「配置」页：agent 提示词语言 + BYOK 模型端点，两块单列摆，没有 tab 壳。
+ * 「配置」页（样式见 AiAgent.css）：agent 提示词语言、模型端点、谁用哪条、后台子 agent。
+ * 电脑上铺满两栏（左边端点库，右边另外三节），窄屏居中一列按上面的顺序排。
  * 行为分析在对话里（analyze_my_behavior 工具，见 workbench/BehaviorReportCard）。
  */
 export function AiAgent() {
   const { t } = useTranslation('ai');
-
   return (
-    // 内容是单列窄块，整页居中一个 3xl 列，不然全贴左边
-    <div className="page-shell p-4 md:p-6">
-      <div className="max-w-3xl mx-auto space-y-4">
-        <div className="flex items-center gap-2 text-sm font-black">
-          <KeyRound className="w-4 h-4 text-primary" />
-          {t('tab.config')}
-        </div>
+    <div className="page-shell">
+      <div className="p-ai">
+        <div className="pg-h"><h1>{t('tab.config')}</h1></div>
         {/* agent 提示词语言：只在这里改，不随顶栏界面语言变 */}
         <AgentLangSetting />
-        {/* 模型配置（BYOK）：对话 agent + 交易员 agent 两份端点 */}
         <ModelConfig />
       </div>
     </div>

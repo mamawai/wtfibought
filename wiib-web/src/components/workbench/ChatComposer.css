@@ -1,0 +1,56 @@
+/* 对话输入区：快捷提问一排 → 一块浅灰输入框（左「+」菜单、右发送 / 停止）→ 一行小字（提示、上下文用量、状态） */
+@layer components {
+  .ccomp{position:relative;flex:none;padding:6px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+  /* 快捷提问：空会话才有，末尾一支铅笔是编辑入口 */
+  .csug{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:0 2px 8px}
+  .csug .chip{height:auto;min-height:28px;padding:5px 11px;background:var(--color-fill);white-space:normal;text-align:left}
+  .csug > span{font-size:12px;color:var(--color-faint)}
+  .csug .pen{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:var(--color-muted-foreground);transition:background-color var(--t) var(--ease-control),color var(--t) var(--ease-control)}
+  .csug .pen[aria-pressed="true"]{background:var(--color-fill);color:var(--color-foreground)}
+  .csug .pen .ic{width:14px;height:14px}
+  /* 输入框：聚焦时一圈墨线 */
+  .cbox{border-radius:18px;background:var(--color-fill);box-shadow:inset 0 0 0 1.5px transparent;transition:box-shadow var(--t) var(--ease-control)}
+  .cbox:focus-within{box-shadow:inset 0 0 0 1.5px var(--color-foreground)}
+  .cbox textarea{display:block;width:100%;max-height:200px;padding:12px 14px 4px;border:0;outline:0;resize:none;background:none;font-size:15px;line-height:1.55}
+  .cbox textarea:focus-visible{outline:none}
+  .cbox textarea::placeholder{color:var(--color-faint)}
+  .crow{position:relative;display:flex;align-items:center;gap:4px;padding:2px 6px 6px}
+  /* 「+」：点开转成「×」 */
+  .crow .mb{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;color:var(--color-muted-foreground);transition:background-color var(--t) var(--ease-control),color var(--t) var(--ease-control),transform var(--t) var(--ease-control)}
+  .crow .mb[aria-expanded="true"]{background:var(--color-fill2);color:var(--color-foreground);transform:rotate(45deg)}
+  .crow .mb .ic{width:17px;height:17px}
+  /* 「+」菜单：从输入框上沿往上弹 */
+  .crow .menu{top:auto;bottom:calc(100% + 6px);left:0;width:216px}
+  .crow .menu hr{height:1px;margin:6px 8px;border:0;background:var(--color-border)}
+  /* 发送：一颗墨色圆钮；忙着又没敲字时换成停止 */
+  .csend{display:grid;place-items:center;flex:none;width:32px;height:32px;margin-left:auto;border-radius:50%;background:var(--color-foreground);color:var(--color-on-ink);transition:transform var(--fast) var(--ease-control),opacity var(--t) var(--ease-control)}
+  .csend:active{transform:scale(.9);transition-duration:0s}
+  .csend:disabled{opacity:.25}
+  .csend .ic{width:16px;height:16px}
+  .csend.stop .ic{width:11px;height:11px;fill:currentColor}
+  .cfoot{display:flex;justify-content:space-between;gap:10px;padding:6px 4px 0;font-size:11px;color:var(--color-faint)}
+  .cfoot > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cfoot > span:last-child{flex:none;display:inline-flex;align-items:center;gap:12px}
+  .cfoot .st{display:inline-flex;align-items:center;gap:6px}
+  .cfoot .st i{width:6px;height:6px;border-radius:50%;background:var(--color-primary);animation:wiib-blink 1.2s ease-in-out infinite}
+  /* 上下文用到整理线：换成一句提醒 */
+  .cfoot .ctx.full{color:var(--color-warning)}
+  /* 自定义快捷提问：浮在输入区上方的一张卡 */
+  .cedit{position:absolute;left:12px;right:12px;bottom:calc(100% + 4px);z-index:4;padding:16px;border-radius:18px;background:var(--color-pop);box-shadow:var(--sh-pop)}
+  .cedit h4{font-size:14px;font-weight:600}
+  .cedit > small{display:block;margin:2px 0 10px;font-size:12px;color:var(--color-muted-foreground)}
+  .cedit .r{display:flex;gap:6px;margin-bottom:6px}
+  .cedit .r .inp{flex:1;height:36px;border-radius:10px}
+  .cedit .r .inp input{font-size:13.5px;font-weight:400}
+  .cedit .f{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .cedit .f .sp{flex:1}
+
+  @media (hover:hover){
+    .csug .pen:hover{background:var(--color-fill);color:var(--color-foreground)}
+    .crow .mb:hover{background:var(--color-fill2);color:var(--color-foreground)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .cbox,.crow .mb,.csend,.csug .pen{transition:none}
+    .crow .menu,.cfoot .st i{animation:none}
+  }
+}

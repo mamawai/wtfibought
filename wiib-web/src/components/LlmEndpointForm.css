@@ -1,0 +1,25 @@
+/* 模型端点表单（配置页的端点卡、管理页的平台配置共用）：两列，窄了一列；最后一行左边测试连通性，右边取消 / 保存 */
+@layer components {
+  .epf{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px;margin-top:18px;padding-top:18px;border-top:1px solid var(--color-border)}
+  .epf.new{margin-top:0;padding-top:0;border-top:0}
+  .epf .w2{grid-column:1/-1}
+  .epf .fl small{font-size:11.5px;font-weight:400;color:var(--color-faint)}
+  .epf .hint{font-size:12px;line-height:1.6;color:var(--color-muted-foreground)}
+  /* 模型名 + 检测 */
+  .epf .mdl{display:flex;gap:8px}
+  .epf .mdl .inp{flex:1}
+  .epf .mdl .btn{height:46px;border-radius:12px}
+  /* 检测到的模型：输入即过滤，点一个填进去 */
+  .epf .det{display:flex;flex-wrap:wrap;align-items:center;gap:6px;max-height:112px;overflow-y:auto;font-size:12px;color:var(--color-muted-foreground)}
+  .epf .det .chip{font:500 12px var(--font-mono)}
+  .epf .ck{display:flex;align-items:flex-start;gap:10px;cursor:pointer}
+  .epf .ck input{flex:none;width:16px;height:16px;margin-top:2px;accent-color:var(--color-foreground)}
+  .epf .ck b{display:block;font-size:14px;font-weight:500}
+  .epf .ck span{display:block;margin-top:2px;font-size:12px;line-height:1.6;color:var(--color-muted-foreground)}
+  .epf .ck.off{opacity:.5;cursor:not-allowed}
+  .epf .ft{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .epf .ft .sp{flex:1}
+  .epf .ft .res{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
+  .epf .ft .res .ic{width:14px;height:14px}
+  @media (max-width:640px){.epf{grid-template-columns:minmax(0,1fr)}}
+}

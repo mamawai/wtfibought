@@ -1,0 +1,58 @@
+/* 配置：提示词语言、模型端点（一条端点一块，新增和编辑是同一份表单，就地展开）、谁用哪条、后台子 agent。
+   窄屏居中一列按这个顺序往下排；电脑上铺满两栏，左边是端点库，右边是另外三节（见文件末尾） */
+@layer components {
+  .p-ai{max-width:768px;margin:0 auto}
+  .p-ai .lang-sec{margin-top:36px}
+  .p-ai .lang{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px}
+  .p-ai .lang p{max-width:56ch;font-size:13.5px;line-height:1.6;color:var(--color-muted-foreground)}
+  .p-ai .intro{max-width:70ch;margin:-4px 0 18px;font-size:13.5px;line-height:1.7;color:var(--color-muted-foreground)}
+  .p-ai .blk > .intro{margin:0 0 16px}
+
+  /* 端点：一条一块 */
+  .p-ai .eps{display:flex;flex-direction:column;gap:12px}
+  .p-ai .ep-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+  .p-ai .ep-h b{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .p-ai .ep-h .acts{display:flex;gap:6px;margin-left:auto}
+  .p-ai .ep-l{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:8px;font-size:13.5px;color:var(--color-muted-foreground)}
+  .p-ai .ep-l code{font:500 13px var(--font-mono);color:var(--color-foreground)}
+  /* 谁在用这条 */
+  .p-ai .ep-u{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .p-ai .ep-u .tag{background:var(--color-raise)}
+  .p-ai .ep-u .none{font-size:12.5px;color:var(--color-faint)}
+
+  /* 谁用哪条：左边用途和一句说明，右边下拉或一句话 */
+  .p-ai .bind{display:flex;flex-direction:column}
+  .p-ai .bind > div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,320px);gap:8px 24px;align-items:center;padding:16px 0;border-bottom:1px solid var(--color-border)}
+  .p-ai .bind > div:last-child{border-bottom:0}
+  .p-ai .bind .k b{display:block;font-size:14.5px;font-weight:500}
+  .p-ai .bind .k span{display:block;margin-top:2px;font-size:12.5px;line-height:1.55;color:var(--color-muted-foreground)}
+  .p-ai .bind .v{font-size:13.5px;color:var(--color-muted-foreground)}
+
+  /* 后台子 agent */
+  .p-ai .swg{display:flex;flex-direction:column;gap:18px}
+  .p-ai .sw-row{transition:opacity var(--t) var(--ease-control)}
+  .p-ai .sw-row.off{opacity:.45}
+
+  @media (max-width:640px){
+    .p-ai .ep-h .acts{flex-basis:100%;margin-left:0}
+    .p-ai .bind > div{grid-template-columns:minmax(0,1fr)}
+  }
+  /* 电脑：两栏。左栏端点库从上到下占满，右栏三节依次往下；页头和加载中那一行横跨两栏 */
+  @media (min-width:1181px){
+    .p-ai{max-width:none;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:auto auto auto 1fr;column-gap:72px;align-items:start}
+    .p-ai > *{grid-column:1 / -1}
+    .p-ai > .sec{margin-top:40px}
+    /* 左栏的节名旁边有按钮，行高一些；右栏的节名垫到一样高，两边才齐 */
+    .p-ai .sec-h{min-height:34px}
+    .p-ai > .ep-sec{grid-column:1;grid-row:2 / span 3}
+    .p-ai > .lang-sec{grid-column:2;grid-row:2}
+    .p-ai > .bind-sec{grid-column:2;grid-row:3}
+    .p-ai > .sub-sec{grid-column:2;grid-row:4}
+    /* 端点卡够宽就并排两张；正在填表的那张占满一行 */
+    .p-ai .eps{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));align-items:start}
+    .p-ai .eps > .edit,.p-ai .eps > .empty{grid-column:1 / -1}
+    /* 右栏窄：用途和说明在上，下拉在下面铺满 */
+    .p-ai .bind > div{grid-template-columns:minmax(0,1fr)}
+  }
+  @media (prefers-reduced-motion:reduce){.p-ai .sw-row{transition:none}}
+}

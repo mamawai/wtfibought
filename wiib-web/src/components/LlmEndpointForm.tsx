@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe, KeyRound, Loader2, PlugZap, ScanSearch } from 'lucide-react';
+import { CircleAlert, CircleCheck, Plug, Search } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { EFFORT_PRESETS } from '../lib/llmEffort';
+import { Seg } from './ui/seg';
 import { useToast } from './ui/use-toast';
+import './LlmEndpointForm.css';
 
 /** 一条端点的表单值（与后端 LlmEndpointSaveRequest 同形） */
 export interface LlmEndpointValue {
@@ -25,8 +27,6 @@ export interface LlmEndpointValue {
 
 /** 上下文窗口默认 256K；界面上的范围 128K–1000K，与后端 LlmEndpointService 同口径 */
 export const DEFAULT_CONTEXT_WINDOW = 256_000;
-const CONTEXT_WINDOW_MIN_K = 128;
-const CONTEXT_WINDOW_MAX_K = 1000;
 
 const PROTOCOLS = ['openai', 'responses', 'anthropic', 'gemini'];
 /** 各协议的 Base URL 示例，只是占位不是白名单 */
@@ -52,32 +52,36 @@ export interface LlmEndpointFormProps {
   onTest: () => Promise<void>;
   /** Admin 平台位：没有联网搜索、上下文窗口这两项 */
   platform?: boolean;
+  /** 摆在最后一行右边的按钮（取消 / 保存） */
+  actions?: ReactNode;
 }
 
 /**
- * LLM 端点表单（BYOK 端点库里的一条：名称 + 协议 + Base URL + 模型 + 思考档位 + key）。Admin 平台 LLM 配置也用它。
- * detectModels 那段有个踩过的坑（见下）。
+ * LLM 端点表单（样式见 LlmEndpointForm.css；BYOK 端点库里的一条：名称 + 协议 + Base URL + key + 模型 + 思考档位 + 上下文窗口）。
+ * Admin 平台 LLM 配置也用它。detectModels 那段有个踩过的坑（见下）。
  *
  * exists 是独立 prop 而不是从 keyTail 推导：调用方常写
  * keyTail={exists ? mine?.apiKeyTail : undefined}，一旦 apiKeyTail 恰好是 undefined，
  * 推导出的 exists 就翻成 false，key 突然变必填、"留空=不换"提示消失。
  */
-export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, onTest, platform }: LlmEndpointFormProps) {
+export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, onTest, platform, actions }: LlmEndpointFormProps) {
   const { toast } = useToast();
   const { t } = useTranslation('ai');
-  const [models, setModels] = useState<string[]>([]);
+  // 同一页可能同时开着两份表单，标签和输入框的配对 id 要各不相同
+  const uid = useId();
+  // null=还没检测；检测过就是拿到的清单（可能是空的）
+  const [models, setModels] = useState<string[] | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [testing, setTesting] = useState(false);
+  // 最近一次测试连通性的结果
+  const [tested, setTested] = useState<'ok' | 'fail' | null>(null);
 
   // 不走调用方的通用 run() 包装：检测不能触发页面重载，
   // 否则会用库里旧配置冲掉表单里未保存的 baseUrl/key
   const detect = async () => {
     setDetecting(true);
     try {
-      const list = await onDetect();
-      setModels(list);
-      toast(list.length ? t('endpoint.detected', { count: list.length }) : t('endpoint.noModels'),
-            list.length ? 'success' : 'error');
+      setModels(await onDetect());
     } catch (e) {
       toast((e as Error).message || t('endpoint.detectFailed'), 'error');
     } finally {
@@ -85,180 +89,145 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
     }
   };
 
-  // 测试连通性按钮：没勾联网搜索的保存不发上游请求，想验通不通就点这里
+  // 测试连通性按钮：没勾联网搜索的保存不发上游请求，想验通不通就点这里；失败的原话另弹一条
   const test = async () => {
     setTesting(true);
     try {
       await onTest();
-      toast(t('endpoint.testOk'), 'success');
+      setTested('ok');
     } catch (e) {
+      setTested('fail');
       toast((e as Error).message || t('endpoint.testFailed'), 'error');
     } finally {
       setTesting(false);
     }
   };
 
+  // 换了协议，之前的检测和测试结果都不作数
+  const setProtocol = (p: string) => {
+    setModels(null);
+    setTested(null);
+    onChange({ apiProtocol: p });
+  };
+
+  const searchable = SEARCHABLE.has(value.apiProtocol);
+  // 检测到的模型：模型名输入即过滤，点一个填进去；网关不支持 /models 时照常手输
+  const kw = value.model.trim().toLowerCase();
+  const hits = models?.filter(m => m.toLowerCase().includes(kw)) ?? [];
   return (
-    <div className="space-y-3">
-      <div className="grid sm:grid-cols-3 gap-3">
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground font-bold">{t('endpoint.name')}</span>
-          <input value={value.name} onChange={e => onChange({ name: e.target.value })}
-                 placeholder={t('endpoint.namePh')} maxLength={32}
-                 className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs" />
-        </label>
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground font-bold">{t('endpoint.protocol')}</span>
-          <select value={PROTOCOLS.includes(value.apiProtocol) ? value.apiProtocol : 'openai'}
-                  onChange={e => onChange({ apiProtocol: e.target.value })}
-                  className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs font-bold num">
-            {PROTOCOLS.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground font-bold">{t('endpoint.baseUrl')}</span>
-          <input value={value.baseUrl} onChange={e => onChange({ baseUrl: e.target.value })}
-                 placeholder={BASE_URL_PH[value.apiProtocol] ?? BASE_URL_PH.openai}
-                 className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
+    <div className={cn('epf', !exists && 'new')}>
+      <div className="fld">
+        <label className="fl" htmlFor={`${uid}name`}>{t('endpoint.name')}</label>
+        <label className="inp">
+          <input id={`${uid}name`} value={value.name} onChange={e => onChange({ name: e.target.value })}
+                 placeholder={t('endpoint.namePh')} maxLength={32} autoComplete="off" />
         </label>
       </div>
-
-      <div className="grid sm:grid-cols-2 gap-3">
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground font-bold">{t('endpoint.model')}</span>
-          <div className="flex gap-1.5">
-            <input value={value.model} onChange={e => onChange({ model: e.target.value })}
-                   placeholder="deepseek-chat"
-                   className="flex-1 min-w-0 h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
-            <button type="button" onClick={() => void detect()}
-                    disabled={detecting || !value.baseUrl.trim() || (!exists && !value.apiKey.trim())}
-                    title={t('endpoint.detectTitle')}
-                    className="shrink-0 border border-border hover:bg-surface-hover rounded-lg px-2.5 h-9 text-xs font-bold text-primary flex items-center gap-1 disabled:opacity-50">
-              {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                         : <ScanSearch className="w-3.5 h-3.5" />}
-              {t('endpoint.detect')}
-            </button>
+      <div className="fld">
+        <div className="fl">{t('endpoint.protocol')}</div>
+        <Seg className="full" label={t('endpoint.protocol')} value={PROTOCOLS.includes(value.apiProtocol) ? value.apiProtocol : 'openai'}
+             onChange={setProtocol} options={PROTOCOLS.map(p => ({ value: p, label: p }))} />
+      </div>
+      <div className="fld w2">
+        <label className="fl" htmlFor={`${uid}url`}>{t('endpoint.baseUrl')}</label>
+        <label className="inp">
+          <input id={`${uid}url`} value={value.baseUrl} onChange={e => onChange({ baseUrl: e.target.value })}
+                 placeholder={BASE_URL_PH[value.apiProtocol] ?? BASE_URL_PH.openai} autoComplete="off" spellCheck={false} />
+        </label>
+      </div>
+      <div className="fld w2">
+        <label className="fl" htmlFor={`${uid}key`}><span>API Key</span>{exists && <small>{t('endpoint.keyTail', { tail: keyTail })}</small>}</label>
+        <label className="inp">
+          <input id={`${uid}key`} type="password" value={value.apiKey} onChange={e => onChange({ apiKey: e.target.value })} autoComplete="off"
+                 placeholder={exists ? t('endpoint.keyPhExists') : t(platform ? 'endpoint.keyPhPlatform' : 'endpoint.keyPh')} />
+        </label>
+      </div>
+      <div className="fld w2">
+        <label className="fl" htmlFor={`${uid}model`}>{t('endpoint.model')}</label>
+        <div className="mdl">
+          <label className="inp">
+            <input id={`${uid}model`} value={value.model} onChange={e => onChange({ model: e.target.value })}
+                   placeholder="deepseek-chat" autoComplete="off" spellCheck={false} />
+          </label>
+          <button type="button" className={cn('btn', detecting && 'busy')} onClick={() => void detect()} title={t('endpoint.detectTitle')}
+                  disabled={!value.baseUrl.trim() || (!exists && !value.apiKey.trim())}>
+            <Search className="ic" /><span>{t('endpoint.detect')}</span>
+          </button>
+        </div>
+        {models && (
+          <div className="det">
+            <span>{models.length ? t('endpoint.detected', { count: models.length }) : t('endpoint.noModels')}</span>
+            {hits.map(m => (
+              <button key={m} type="button" className="chip" aria-pressed={value.model === m} onClick={() => onChange({ model: m })}>{m}</button>
+            ))}
+            {models.length > 0 && hits.length === 0 && <span>{t('endpoint.noMatch', { kw: value.model.trim() })}</span>}
           </div>
-        </label>
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground font-bold flex items-center gap-1">
-            <KeyRound className="w-3 h-3" /> API Key
-            {exists && <span className="text-muted-foreground/70 font-normal">{t('endpoint.keyTail', { tail: keyTail })}</span>}
-          </span>
-          <input value={value.apiKey} onChange={e => onChange({ apiKey: e.target.value })}
-                 type="password"
-                 placeholder={exists ? t('endpoint.keyPhExists') : t(platform ? 'endpoint.keyPhPlatform' : 'endpoint.keyPh')}
-                 className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
-        </label>
+        )}
       </div>
-
-      <div className="space-y-1 text-xs">
-        <span className="text-muted-foreground font-bold">{t('endpoint.effort')}</span>
-        {/* 输入框是唯一真值，下面的芯片只管往里填：各家档位名字自己定，写死五选一会挡住 xhigh 这类 */}
-        <input value={value.reasoningEffort} onChange={e => onChange({ reasoningEffort: e.target.value })}
-               placeholder={t('endpoint.effortPh')} maxLength={16}
-               className="w-full h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
-        <div className="flex flex-wrap gap-1.5">
+      <div className="fld">
+        <label className="fl" htmlFor={`${uid}effort`}>{t('endpoint.effort')}</label>
+        {/* 输入框是唯一真值，下面的小片只管往里填：各家档位名字自己定，写死五选一会挡住 xhigh 这类 */}
+        <label className="inp">
+          <input id={`${uid}effort`} value={value.reasoningEffort} onChange={e => onChange({ reasoningEffort: e.target.value })}
+                 placeholder={t('endpoint.effortPh')} maxLength={16} autoComplete="off" />
+        </label>
+        <div className="chips">
           {EFFORT_PRESETS.map(o => (
-            <button key={o.value} type="button" onClick={() => onChange({ reasoningEffort: o.value })}
-                    className={cn('px-2 h-7 rounded-md border text-[11px] num',
-                      (value.reasoningEffort ?? '') === o.value
-                        ? 'border-primary/60 bg-card-2 text-primary font-bold'
-                        : 'border-border text-muted-foreground hover:text-foreground')}>
+            <button key={o.value} type="button" className="chip" aria-pressed={value.reasoningEffort === o.value}
+                    onClick={() => onChange({ reasoningEffort: o.value })}>
               {o.label ?? t('effort.default')}
             </button>
           ))}
         </div>
         {/* 模型支不支持这个参数查不到：协议的 /v1/models 只回 id/object/created/owned_by。
             传给不支持的模型各家表现不一致（有的忽略，OpenAI 官方直接 400），所以只能让用户自己试 */}
-        <span className="text-[10px] text-muted-foreground/70 block">
-          {t('endpoint.effortHint')}
-        </span>
+        <p className="hint">{t('endpoint.effortHint')}</p>
       </div>
-
       {/* 上下文窗口：按 K 填、按 token 存；清空时存 0，交给后端报范围 */}
       {!platform && (
-        <label className="block space-y-1 text-xs">
-          <span className="text-muted-foreground font-bold">{t('endpoint.contextWindow')}</span>
-          <span className="flex items-center gap-1.5 w-36">
-            <input type="number" min={CONTEXT_WINDOW_MIN_K} max={CONTEXT_WINDOW_MAX_K} step={1}
-                   value={value.contextWindow ? value.contextWindow / 1000 : ''}
-                   onChange={e => onChange({
-                     contextWindow: e.target.value === '' ? 0 : Math.round(Number(e.target.value) * 1000),
-                   })}
-                   className="flex-1 min-w-0 h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
-            <span className="text-muted-foreground font-bold num">K</span>
-          </span>
-          <span className="text-[10px] text-muted-foreground/70 block">{t('endpoint.contextWindowHint')}</span>
-        </label>
+        <div className="fld">
+          <label className="fl" htmlFor={`${uid}ctx`}>{t('endpoint.contextWindow')}</label>
+          <label className="inp">
+            <input id={`${uid}ctx`} inputMode="numeric" value={value.contextWindow ? value.contextWindow / 1000 : ''}
+                   onChange={e => onChange({ contextWindow: e.target.value === '' ? 0 : Math.round(Number(e.target.value) * 1000) })} />
+            <span className="u">K</span>
+          </label>
+          <p className="hint">{t('endpoint.contextWindowHint')}</p>
+        </div>
       )}
-
-      {/* 服务端联网搜索：能声明搜索工具的协议才有勾选框（chat-completions 没有标准的服务端搜索）。
+      {/* 服务端联网搜索：chat-completions（openai 协议）没有标准的服务端搜索，勾不了。
           勾了的保存前后端会探测，探测不过不让存；只有对话的主 agent 与调研子 agent 会用它 */}
-      {platform ? null : SEARCHABLE.has(value.apiProtocol) ? (
-        <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
-          <input type="checkbox" checked={value.webSearch}
-                 onChange={e => onChange({ webSearch: e.target.checked })}
-                 className="mt-0.5 accent-primary" />
-          <span className="space-y-0.5">
-            <span className="font-bold flex items-center gap-1">
-              <Globe className="w-3 h-3" /> {t('endpoint.webSearch')}
-            </span>
-            <span className="text-[10px] text-muted-foreground/70 block">{t('endpoint.webSearchHint')}</span>
-          </span>
+      {!platform && (
+        <label className={cn('ck w2', !searchable && 'off')}>
+          <input type="checkbox" checked={searchable && value.webSearch} disabled={!searchable}
+                 onChange={e => onChange({ webSearch: e.target.checked })} />
+          <div>
+            <b>{t('endpoint.webSearch')}</b>
+            <span>{searchable ? t('endpoint.webSearchHint') : t('endpoint.webSearchOpenAiHint')}</span>
+          </div>
         </label>
-      ) : (
-        <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
-          <Globe className="w-3 h-3" /> {t('endpoint.webSearchOpenAiHint')}
-        </span>
       )}
-
       {/* Antigravity 来源：它不收搜索和本地工具在同一请求里，勾上后后端把搜索改成单独发一次只带搜索的请求 */}
       {!platform && value.apiProtocol === 'gemini' && value.webSearch && (
-        <label className="flex items-start gap-2 text-xs cursor-pointer select-none ml-5">
-          <input type="checkbox" checked={value.antigravity}
-                 onChange={e => onChange({ antigravity: e.target.checked })}
-                 className="mt-0.5 accent-primary" />
-          <span className="space-y-0.5">
-            <span className="font-bold block">{t('endpoint.antigravity')}</span>
-            <span className="text-[10px] text-muted-foreground/70 block">{t('endpoint.antigravityHint')}</span>
-          </span>
+        <label className="ck w2">
+          <input type="checkbox" checked={value.antigravity} onChange={e => onChange({ antigravity: e.target.checked })} />
+          <div><b>{t('endpoint.antigravity')}</b><span>{t('endpoint.antigravityHint')}</span></div>
         </label>
       )}
-
-      <button type="button" onClick={() => void test()}
-              disabled={testing || !value.baseUrl.trim() || !value.model.trim()
-                        || (!exists && !value.apiKey.trim())}
-              title={t('endpoint.testTitle')}
-              className="border border-border hover:bg-surface-hover rounded-lg px-2.5 h-9 text-xs font-bold text-primary flex items-center gap-1 disabled:opacity-50">
-        {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                 : <PlugZap className="w-3.5 h-3.5" />}
-        {t('endpoint.test')}
-      </button>
-
-      {/* 检测到的模型清单：模型名输入即过滤，点击填入；网关不支持 /models 时照常手输 */}
-      {models.length > 0 && (() => {
-        const kw = value.model.trim().toLowerCase();
-        const hits = models.filter(m => m.toLowerCase().includes(kw));
-        return (
-          <div className="max-h-28 overflow-y-auto flex flex-wrap gap-1.5 content-start rounded-lg border border-border bg-card-2/50 p-2">
-            {hits.map(m => (
-              <button key={m} type="button" onClick={() => onChange({ model: m })}
-                      className={cn('px-2 h-7 rounded-md border text-[11px] num',
-                        value.model === m
-                          ? 'border-primary/60 bg-card-2 text-primary font-bold'
-                          : 'border-border text-muted-foreground hover:text-foreground')}>
-                {m}
-              </button>
-            ))}
-            {hits.length === 0 && (
-              <span className="text-[11px] text-muted-foreground px-1 py-1">
-                {t('endpoint.noMatch', { kw: value.model.trim() })}
-              </span>
-            )}
-          </div>
-        );
-      })()}
+      <div className="ft w2">
+        <button type="button" className={cn('btn', testing && 'busy')} onClick={() => void test()} title={t('endpoint.testTitle')}
+                disabled={!value.baseUrl.trim() || !value.model.trim() || (!exists && !value.apiKey.trim())}>
+          <Plug className="ic" /><span>{t('endpoint.test')}</span>
+        </button>
+        {tested && (
+          <span className={cn('res', tested === 'ok' ? 'up' : 'dn')}>
+            {tested === 'ok' ? <CircleCheck className="ic" /> : <CircleAlert className="ic" />}
+            {tested === 'ok' ? t('endpoint.testOk') : t('endpoint.testFailed')}
+          </span>
+        )}
+        <span className="sp" />
+        {actions}
+      </div>
     </div>
   );
 }

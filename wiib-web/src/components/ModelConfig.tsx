@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
-import { Bot, KeyRound, Loader2, MessagesSquare, Pencil, Plus, Rocket, Sparkles, Star, Trash2, X } from 'lucide-react';
+import { Loader2, Pencil, Plug, Plus } from 'lucide-react';
 import { llmEndpointApi, traderApi, workbenchApi } from '../api';
 import { DEFAULT_CONTEXT_WINDOW, LlmEndpointForm, type LlmEndpointValue } from './LlmEndpointForm';
 import { LlmEndpointSelect } from './LlmEndpointSelect';
-import { Button } from './ui/button';
+import { Stepper } from './Stepper';
+import { SureButton } from './SureButton';
+import { Switch } from './ui/switch';
 import { useToast } from './ui/use-toast';
 import i18n from '../i18n';
 import { cn } from '../lib/utils';
@@ -39,8 +41,11 @@ function usagesOf(e: LlmEndpointView, bindings: LlmBindings, hasTrader: boolean)
   return out;
 }
 
+/** Base URL 只露主机部分 */
+const host = (url: string) => url.replace(/^https?:\/\//, '');
+
 /**
- * 模型配置（BYOK 总配置）：端点库 + 用途绑定。
+ * 模型配置（BYOK 总配置，样式见 AiAgent.css）：端点库（一条一块，新增和编辑是同一份表单，就地展开）+ 谁用哪条 + 后台子 agent。
  * 全站要选模型的地方（对话 / 交易员 / 复盘教练）都从这里配的端点里选；只配一条时它就是默认，谁都用它。
  */
 export function ModelConfig() {
@@ -126,11 +131,11 @@ export function ModelConfig() {
     }
   };
 
-  const remove = (e: LlmEndpointView) => {
+  /** 删除点第一下：说清删的是哪条；正被用着的再说一句会回落到默认端点 */
+  const warnRemove = (e: LlmEndpointView) => {
     const used = usagesOf(e, bindings, trader != null).map(u => u.label);
-    const warn = used.length ? t('model.removeWarn', { used: used.join(' / ') }) : '';
-    if (!window.confirm(t('model.removeConfirm', { name: e.name, model: e.model, warn }))) return;
-    void run(e.id, () => llmEndpointApi.remove(e.id), t('toast.endpointRemoved'));
+    toast(t('model.removeConfirm', { name: e.name, model: e.model, warn: '' }), 'info',
+      used.length ? { description: t('model.removeWarn', { used: used.join(' / ') }).trim() } : undefined);
   };
 
   const bind = async (purpose: LlmPurpose, id: number | null) => {
@@ -154,222 +159,158 @@ export function ModelConfig() {
   const chatMain = bindings.CHAT_MAIN != null ? endpoints.find(e => e.id === bindings.CHAT_MAIN) : dft;
 
   if (!loaded) {
-    return (
-      <div className="flex items-center gap-2 py-8 justify-center text-xs text-muted-foreground">
-        <Loader2 className="w-4 h-4 animate-spin" /> {t('loadingConfig')}
-      </div>
-    );
+    return <div className="empty"><Loader2 className="ic animate-spin" /><span>{t('loadingConfig')}</span></div>;
   }
 
+  const formActions = (
+    <>
+      <button type="button" className="btn" onClick={() => setEditing(null)}>{t('common:cancel')}</button>
+      <button type="button" className={cn('btn ink', saving && 'busy')} onClick={() => void save()}><span>{t('common:save')}</span></button>
+    </>
+  );
+
   return (
-    <div className="space-y-4">
+    <>
       {/* ===== 端点库 ===== */}
-      <div className="rounded-lg pt-card p-4 sm:p-5 space-y-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <KeyRound className="w-4 h-4 text-primary" />
-          <span className="text-sm font-black">{t('model.title')}</span>
-          <span className="text-[10px] text-muted-foreground">{t('model.count', { count: endpoints.length })}</span>
-          <Button size="sm" className="ml-auto" onClick={startCreate} disabled={editing != null && editing.id == null}>
-            <Plus className="w-3.5 h-3.5 mr-1" /> {t('model.add')}
-          </Button>
+      <section className="sec ep-sec">
+        <div className="sec-h">
+          <h2>{t('model.title')}{endpoints.length > 0 && <small>{t('model.count', { count: endpoints.length })}</small>}</h2>
+          {!(editing && editing.id == null) && (
+            <button type="button" className="btn ink" onClick={startCreate}><Plus className="ic" />{t('model.add')}</button>
+          )}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          {t('model.intro')}
-        </p>
+        <p className="intro">{t('model.intro')}</p>
+        <div className="eps">
+          {/* 新增：一块里就是那份表单，第一条会自动成为默认 */}
+          {editing != null && editing.id == null && (
+            <div className="blk edit">
+              {endpoints.length === 0 && <p className="intro">{t('model.firstIsDefault')}</p>}
+              <LlmEndpointForm value={form} onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                               onDetect={() => llmEndpointApi.listModels(form)} onTest={() => llmEndpointApi.test(form)}
+                               actions={formActions} />
+            </div>
+          )}
 
-        {endpoints.length === 0 && editing == null && (
-          <div className="rounded-lg border border-dashed border-border bg-card-2/50 py-8 px-4 flex flex-col items-center gap-2.5 text-center">
-            <Bot className="w-8 h-8 text-muted-foreground/50" />
-            <p className="text-xs text-muted-foreground">{t('model.empty')}</p>
-            <Button size="sm" onClick={startCreate}><Plus className="w-3.5 h-3.5 mr-1" /> {t('model.add')}</Button>
-          </div>
-        )}
+          {endpoints.length === 0 && editing == null && (
+            <div className="empty">
+              <span className="ib0"><Plug className="ic" /></span>
+              <span>{t('model.empty')}</span>
+            </div>
+          )}
 
-        <div className="space-y-2">
           {endpoints.map(e => {
             const usages = usagesOf(e, bindings, trader != null);
             const isEditing = editing?.id === e.id;
             return (
-              <div key={e.id} className={cn('rounded-lg border bg-card-2/50 p-3 space-y-2',
-                isEditing ? 'border-primary/60' : 'border-border')}>
-                <div className="flex items-start gap-2 flex-wrap">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-black truncate">{e.name}</span>
-                      <span className="text-[11px] num text-primary font-bold truncate">{e.model}</span>
-                      {e.isDefault && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/10 text-primary flex items-center gap-1">
-                          <Star className="w-3 h-3" /> {t('model.default')}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground num truncate mt-0.5">
-                      {e.apiProtocol}{e.webSearch ? '+search' : ''} · {e.baseUrl} · {e.contextWindow / 1000}K · {t('model.effortTail', {
-                        effort: e.reasoningEffort || t('effort.default'), tail: e.apiKeyTail,
-                      })}
-                    </div>
-                    {/* 用途：谁在用这条端点。经默认落上来的标"默认"，提醒改默认会连带影响 */}
-                    <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                      {usages.length === 0
-                        ? <span className="text-[10px] text-muted-foreground/70">{t('model.unused')}</span>
-                        : usages.map(u => (
-                          <span key={u.label} className={cn('text-[10px] font-bold px-1.5 py-0.5 rounded',
-                            u.viaDefault ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary')}>
-                            {u.label}{u.viaDefault ? t('model.viaDefault') : ''}
-                          </span>
-                        ))}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
+              <div key={e.id} className={cn('blk', isEditing && 'edit')}>
+                <div className="ep-h">
+                  <b>{e.name}</b>
+                  {e.isDefault && <span className="tag ink">{t('model.default')}</span>}
+                  <span className="acts">
                     {!e.isDefault && (
-                      <button type="button" disabled={busyId === e.id}
-                        onClick={() => void run(e.id, () => llmEndpointApi.setDefault(e.id), t('toast.setDefault', { name: e.name }))}
-                        title={t('model.setDefaultTitle')}
-                        className="h-8 px-2 rounded-md border border-border text-[11px] font-bold text-muted-foreground hover:text-foreground hover:bg-surface-hover flex items-center gap-1 disabled:opacity-50">
-                        <Star className="w-3.5 h-3.5" /> {t('model.setDefault')}
+                      <button type="button" className="btn sm" disabled={busyId === e.id} title={t('model.setDefaultTitle')}
+                              onClick={() => void run(e.id, () => llmEndpointApi.setDefault(e.id), t('toast.setDefault', { name: e.name }))}>
+                        {t('model.setDefault')}
                       </button>
                     )}
-                    <button type="button" onClick={() => (isEditing ? setEditing(null) : startEdit(e))} title={t('common:edit')}
-                      className="w-8 h-8 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-surface-hover flex items-center justify-center">
-                      {isEditing ? <X className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                    <button type="button" className="btn sm" aria-pressed={isEditing}
+                            onClick={() => (isEditing ? setEditing(null) : startEdit(e))}>
+                      <Pencil className="ic" />{t('common:edit')}
                     </button>
-                    <button type="button" onClick={() => remove(e)} disabled={busyId === e.id} title={t('common:delete')}
-                      className="w-8 h-8 rounded-md border border-border text-muted-foreground hover:text-loss hover:bg-surface-hover flex items-center justify-center disabled:opacity-50">
-                      {busyId === e.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
+                    <SureButton className={cn('btn sm', busyId === e.id && 'busy')} idleClassName="plain" sureLabel={t('model.removeSure')}
+                                onArm={() => warnRemove(e)}
+                                onConfirm={() => void run(e.id, () => llmEndpointApi.remove(e.id), t('toast.endpointRemoved'))}>
+                      <span>{t('common:delete')}</span>
+                    </SureButton>
+                  </span>
                 </div>
-
+                <div className="ep-l">
+                  <span className="tag sm">{e.apiProtocol}</span>
+                  <code>{e.model}</code>
+                  <span>{host(e.baseUrl)}</span>
+                </div>
+                <div className="ep-l">
+                  <span>{t('model.effortTail', { effort: e.reasoningEffort || t('effort.default'), tail: e.apiKeyTail })}</span>
+                  <span>{t('model.contextOf', { k: e.contextWindow / 1000 })}</span>
+                  {e.webSearch && <span>{t('endpoint.webSearch')}</span>}
+                </div>
+                {/* 用途：谁在用这条端点。经默认落上来的标"（默认）"，提醒改默认会连带影响 */}
+                <div className="ep-u">
+                  {usages.length === 0
+                    ? <span className="none">{t('model.unused')}</span>
+                    : usages.map(u => <span key={u.label} className="tag">{u.label}{u.viaDefault ? t('model.viaDefault') : ''}</span>)}
+                </div>
                 {isEditing && (
-                  <div className="pt-2 border-t border-border/60 space-y-3">
-                    <LlmEndpointForm
-                      value={form}
-                      onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                      exists
-                      keyTail={editing?.keyTail}
-                      onDetect={() => llmEndpointApi.listModels(form, e.id)}
-                      onTest={() => llmEndpointApi.test(form, e.id)}
-                    />
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setEditing(null)}>{t('common:cancel')}</Button>
-                      <Button size="sm" disabled={saving} onClick={() => void save()}>
-                        {saving && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />} {t('common:save')}
-                      </Button>
-                    </div>
-                  </div>
+                  <LlmEndpointForm value={form} onChange={patch => setForm(f => ({ ...f, ...patch }))} exists keyTail={editing?.keyTail}
+                                   onDetect={() => llmEndpointApi.listModels(form, e.id)} onTest={() => llmEndpointApi.test(form, e.id)}
+                                   actions={formActions} />
                 )}
               </div>
             );
           })}
         </div>
+      </section>
 
-        {/* 新增表单 */}
-        {editing != null && editing.id == null && (
-          <div className="rounded-lg border border-primary/60 bg-card-2/50 p-3 space-y-3">
-            <div className="flex items-center gap-2">
-              <Plus className="w-3.5 h-3.5 text-primary" />
-              <span className="text-xs font-black">{t('model.add')}</span>
-              {endpoints.length === 0 && <span className="text-[10px] text-muted-foreground">{t('model.firstIsDefault')}</span>}
-            </div>
-            <LlmEndpointForm
-              value={form}
-              onChange={patch => setForm(f => ({ ...f, ...patch }))}
-              onDetect={() => llmEndpointApi.listModels(form)}
-              onTest={() => llmEndpointApi.test(form)}
-            />
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="outline" onClick={() => setEditing(null)}>{t('common:cancel')}</Button>
-              <Button size="sm" disabled={saving} onClick={() => void save()}>
-                {saving && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />} {t('common:save')}
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ===== 用途绑定 ===== */}
-      <div className="rounded-lg pt-card p-4 sm:p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <MessagesSquare className="w-4 h-4 text-primary" />
-          <span className="text-sm font-black">{t('model.bindTitle')}</span>
-        </div>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <label className="space-y-1 text-xs">
-            <span className="text-muted-foreground font-bold flex items-center gap-1"><MessagesSquare className="w-3 h-3" /> {t('model.chatMain')}</span>
-            <LlmEndpointSelect endpoints={endpoints} value={bindings.CHAT_MAIN ?? null}
-              onChange={id => void bind('CHAT_MAIN', id)} className="w-full" />
-            <span className="text-[10px] text-muted-foreground/70 block">{t('model.chatMainHint')}</span>
-          </label>
-          <label className="space-y-1 text-xs">
-            <span className="text-muted-foreground font-bold flex items-center gap-1"><MessagesSquare className="w-3 h-3" /> {t('model.chatLight')}</span>
-            <LlmEndpointSelect endpoints={endpoints} value={bindings.CHAT_LIGHT ?? null}
-              onChange={id => void bind('CHAT_LIGHT', id)} className="w-full"
-              followLabel={chatMain
-                ? t('model.sameAsMain', { name: chatMain.name, model: chatMain.model })
-                : t('model.sameAsMainPlain')} />
-            <span className="text-[10px] text-muted-foreground/70 block">{t('model.chatLightHint')}</span>
-          </label>
-          <div className="space-y-1 text-xs">
-            <span className="text-muted-foreground font-bold flex items-center gap-1"><Rocket className="w-3 h-3" /> {t('term.trader')}</span>
-            {trader ? (
-              <div className="h-9 rounded-lg border border-border bg-card-2 px-2.5 flex items-center gap-2 text-xs">
-                <span className="font-bold truncate">
-                  {traderEndpoint ? `${traderEndpoint.name} · ${traderEndpoint.model}` : t('model.noEndpoint')}
-                  {bindings.TRADER == null && traderEndpoint ? t('model.viaDefault') : ''}
-                </span>
-                <Link to="/my-trader" className="ml-auto text-primary font-bold hover:underline shrink-0">{t('model.editInMyTrader')}</Link>
+      {endpoints.length > 0 && (
+        <>
+          {/* ===== 用途绑定 ===== */}
+          <section className="sec bind-sec">
+            <div className="sec-h"><h2>{t('model.bindTitle')}</h2></div>
+            <div className="bind">
+              <div>
+                <div className="k"><b>{t('model.chatMain')}</b><span>{t('model.chatMainHint')}</span></div>
+                <LlmEndpointSelect endpoints={endpoints} value={bindings.CHAT_MAIN ?? null} onChange={id => void bind('CHAT_MAIN', id)} />
               </div>
-            ) : (
-              <div className="h-9 rounded-lg border border-border bg-card-2 px-2.5 flex items-center text-xs text-muted-foreground">
-                <Trans ns="ai" i18nKey="model.noTrader"
-                       components={[<Link to="/my-trader" className="text-primary font-bold hover:underline mx-1" />]} />
+              <div>
+                <div className="k"><b>{t('model.chatLight')}</b><span>{t('model.chatLightHint')}</span></div>
+                <LlmEndpointSelect endpoints={endpoints} value={bindings.CHAT_LIGHT ?? null} onChange={id => void bind('CHAT_LIGHT', id)}
+                                   followLabel={chatMain
+                                     ? t('model.sameAsMain', { name: chatMain.name, model: chatMain.model })
+                                     : t('model.sameAsMainPlain')} />
               </div>
-            )}
-            <span className="text-[10px] text-muted-foreground/70 block">
-              {t('model.traderHint', { name: trader?.pub.name ?? t('term.trader') })}
-            </span>
-          </div>
-          <div className="space-y-1 text-xs">
-            <span className="text-muted-foreground font-bold flex items-center gap-1"><Sparkles className="w-3 h-3" /> {t('model.coach')}</span>
-            <div className="h-9 rounded-lg border border-border bg-card-2 px-2.5 flex items-center text-xs text-muted-foreground">
-              {t('model.coachValue')}
+              <div>
+                <div className="k">
+                  <b>{t('term.trader')}</b>
+                  <span>{t('model.traderHint', { name: trader?.pub.name ?? t('term.trader') })}</span>
+                </div>
+                {trader ? (
+                  <div className="v">
+                    {traderEndpoint ? `${traderEndpoint.name} · ${traderEndpoint.model}` : t('model.noEndpoint')}
+                    {bindings.TRADER == null && traderEndpoint ? t('model.viaDefault') : ''}
+                    {' '}<Link to="/my-trader" className="linkb whitespace-nowrap">{t('model.editInMyTrader')}</Link>
+                  </div>
+                ) : (
+                  <div className="v"><Trans ns="ai" i18nKey="model.noTrader" components={[<Link to="/my-trader" className="linkb" />]} /></div>
+                )}
+              </div>
+              <div>
+                <div className="k"><b>{t('model.coach')}</b><span>{t('model.coachHint')}</span></div>
+                <div className="v">{t('model.coachValue')}</div>
+              </div>
             </div>
-            <span className="text-[10px] text-muted-foreground/70 block">{t('model.coachHint')}</span>
-          </div>
-        </div>
-      </div>
+          </section>
 
-      {/* ===== 后台子 agent：主 agent 能不能派、同时最多几个 ===== */}
-      {prefs && (
-        <div className="rounded-lg pt-card p-4 sm:p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <Bot className="w-4 h-4 text-primary" />
-            <span className="text-sm font-black">{t('model.subAgentTitle')}</span>
-          </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">{t('model.subAgentIntro')}</p>
-          <div className="grid sm:grid-cols-2 gap-3 items-start">
-            <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
-              <input type="checkbox" checked={prefs.subAgentsEnabled}
-                     onChange={e => void savePrefs({ subAgentsEnabled: e.target.checked })} className="mt-0.5" />
-              <span className="space-y-0.5">
-                <span className="font-bold block">{t('model.subAgentOn')}</span>
-                <span className="text-[10px] text-muted-foreground leading-relaxed block">{t('model.subAgentOnHint')}</span>
-              </span>
-            </label>
-            <label className="space-y-1 text-xs">
-              <span className="text-muted-foreground font-bold">{t('model.subAgentLimit')}</span>
-              <select value={prefs.subAgentLimit} disabled={!prefs.subAgentsEnabled}
-                      onChange={e => void savePrefs({ subAgentLimit: Number(e.target.value) })}
-                      className="h-9 w-full rounded-lg border border-border bg-card-2 px-2.5 text-xs disabled:opacity-45">
-                {Array.from({ length: prefs.maxLimit }, (_, i) => i + 1).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-              <span className="text-[10px] text-muted-foreground/70 block">{t('model.subAgentLimitHint', { max: prefs.maxLimit })}</span>
-            </label>
-          </div>
-        </div>
+          {/* ===== 后台子 agent：主 agent 能不能派、同时最多几个 ===== */}
+          {prefs && (
+            <section className="sec sub-sec">
+              <div className="sec-h"><h2>{t('model.subAgentTitle')}</h2></div>
+              <p className="intro">{t('model.subAgentIntro')}</p>
+              <div className="swg">
+                <div className="sw-row">
+                  <div><b>{t('model.subAgentOn')}</b><span>{t('model.subAgentOnHint')}</span></div>
+                  <Switch checked={prefs.subAgentsEnabled} onChange={v => void savePrefs({ subAgentsEnabled: v })} label={t('model.subAgentOn')} />
+                </div>
+                <div className={cn('sw-row', !prefs.subAgentsEnabled && 'off')}>
+                  <div><b>{t('model.subAgentLimit')}</b><span>{t('model.subAgentLimitHint', { max: prefs.maxLimit })}</span></div>
+                  <Stepper value={prefs.subAgentLimit} min={1} max={prefs.maxLimit} disabled={!prefs.subAgentsEnabled}
+                           onChange={n => void savePrefs({ subAgentLimit: n })} label={t('model.subAgentLimit')}
+                           lessLabel={t('model.less')} moreLabel={t('model.more')} />
+                </div>
+              </div>
+            </section>
+          )}
+        </>
       )}
-    </div>
+    </>
   );
 }

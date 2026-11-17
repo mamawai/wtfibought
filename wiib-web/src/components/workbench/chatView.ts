@@ -3,9 +3,6 @@ import type { ChatItem } from './chatStore';
 /** 主 agent 的对外名字：后端事件里仍叫 supervisor，只在展示层换 */
 export const HUB_NAME = 'Polaris';
 
-/** "做着"的那颗脉冲橙点：过程轨、答案头、输入区状态行共用 */
-export const PULSE_DOT = 'w-1.5 h-1.5 shrink-0 bg-primary animate-[pt-pulse_1.2s_ease-in-out_infinite] motion-reduce:animate-none';
-
 /** 带 rid 的那几种条目就是过程条目 */
 type RailItem = Extract<ChatItem, { rid: number }>;
 

@@ -1,0 +1,113 @@
+/* 对话里的一条条：提问气泡、回答正文、工作过程、等待行、几种卡片 */
+@layer components {
+  /* 小号的 Polaris 脸：顶栏、等待行、空会话用；.think 眼睛左右来回想 */
+  .cface{position:relative;flex:none;width:20px;height:20px;border-radius:50%;background:radial-gradient(circle at 32% 28%,rgb(255 255 255 / .4),transparent 55%),var(--color-primary)}
+  .cface::before,.cface::after{content:"";position:absolute;top:7px;width:2.6px;height:6px;border-radius:2px;background:#fff}
+  .cface::before{left:5.6px}
+  .cface::after{right:5.6px}
+  .cface.think::before,.cface.think::after{top:6px;height:2.8px;animation:wiib-cthink 1.4s ease-in-out infinite}
+  @keyframes wiib-cthink{0%,100%{transform:translateX(-1.4px)}50%{transform:translateX(1.4px)}}
+
+  /* 提问：右边一块浅灰气泡，下面一行时刻；排队中的淡一半 */
+  .cu{align-self:flex-end;display:flex;flex-direction:column;align-items:flex-end;max-width:86%}
+  .cu p{padding:9px 14px;border-radius:18px 18px 6px 18px;background:var(--color-fill);font-size:14.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left}
+  .cu.q p{opacity:.55}
+  .cu small{display:block;margin-top:4px;font-size:11.5px;color:var(--color-muted-foreground);text-align:right}
+
+  /* 回答：不带框的正文；正在出字时的浮现和呼吸点是 StreamText 的 */
+  .ca{min-width:0}
+  .ca .md{font-size:14.5px;line-height:1.7}
+  /* 工作过程紧贴着它后面的回答和卡片 */
+  .cproc + .ca,.cproc + .ccard{margin-top:-10px}
+  /* 来源：一排小胶囊 */
+  .csrc{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:var(--color-muted-foreground)}
+  .csrc a,.csrc button{display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:999px;background:var(--color-fill);color:var(--color-foreground);transition:background-color var(--t) var(--ease-control)}
+  /* 复制 / 重新生成：指到这条、或者是最后一条才露；右边是模型、耗时和用量 */
+  .cact{display:flex;align-items:center;gap:2px;margin:8px 0 0 -7px;opacity:0;transition:opacity var(--t) var(--ease-control)}
+  .ca:hover .cact,.ca:focus-within .cact,.ca.last .cact{opacity:1}
+  .cact button{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:var(--color-muted-foreground);transition:background-color var(--t) var(--ease-control),color var(--t) var(--ease-control)}
+  .cact .ic{width:14px;height:14px}
+  .cact span{min-width:0;margin-left:auto;padding-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--color-faint)}
+
+  /* 工作过程：一行摘要（在跑时前面一颗闪着的橙点，后面计时），点开是左边一根细线串起来的每一步 */
+  .crail{display:inline-flex;align-items:center;gap:7px;height:28px;margin-left:-10px;padding:0 8px 0 10px;border-radius:9px;font-size:12.5px;color:var(--color-muted-foreground);transition:background-color var(--t) var(--ease-control),color var(--t) var(--ease-control)}
+  .crail .pd{width:6px;height:6px;border-radius:50%;background:var(--color-primary);animation:wiib-blink 1.2s ease-in-out infinite}
+  .crail .ic{width:13px;height:13px;transition:transform var(--t) var(--ease-control)}
+  .crail[aria-expanded="true"] .ic{transform:rotate(90deg)}
+  .crail .ck{font-variant-numeric:tabular-nums;color:var(--color-faint)}
+  .csteps{display:flex;flex-direction:column;gap:7px;margin:4px 0 2px;padding-left:12px;border-left:1.5px solid var(--color-border)}
+  .cstep{display:flex;align-items:baseline;gap:8px;font-size:12.5px;line-height:1.5;color:var(--color-muted-foreground)}
+  button.cstep{width:100%;text-align:left}
+  .cstep > .ic{flex:none;align-self:center;width:13px;height:13px;color:var(--color-faint)}
+  .cstep b{flex:none;font-weight:500;color:var(--color-foreground)}
+  .cstep.hot b{color:var(--color-primary)}
+  .cstep span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cstep em{flex:none;margin-left:auto;font-style:normal;font-size:11.5px;color:var(--color-faint)}
+  .cstep em .ic{width:12px;height:12px;vertical-align:-2px;transition:transform var(--t) var(--ease-control)}
+  .cstep[aria-expanded="true"] em .ic{transform:rotate(90deg)}
+  .cstep.bad em,.cstep.bad b{color:var(--color-loss)}
+  /* 搜过的网站：一列小链接 */
+  .csites{display:flex;flex-direction:column;gap:2px;max-height:176px;overflow-y:auto;margin-left:21px;font-size:12px}
+  .csites a{display:flex;align-items:baseline;gap:8px;min-width:0;color:var(--color-muted-foreground);transition:color var(--t) var(--ease-control)}
+  .csites a b{flex:none;font-weight:400;color:var(--color-faint)}
+  .csites a span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 后台任务：一块浅灰，点开看任务书和它里面的每一步 */
+  .cchild{padding:9px 12px;border-radius:12px;background:var(--color-fill)}
+  .cchild > button{display:flex;align-items:center;gap:8px;width:100%;font-size:12.5px;text-align:left}
+  .cchild > button b{flex:none;font-weight:500}
+  .cchild > button span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-muted-foreground)}
+  .cchild > button em{flex:none;margin-left:auto;font-style:normal;font-size:11.5px;color:var(--color-muted-foreground)}
+  .cchild > button em.on{color:var(--color-primary)}
+  .cchild > button em.bad{color:var(--color-loss)}
+  .cchild .in{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .cchild .in .cstep span{white-space:normal}
+  .cchild .brief{font-size:12px;line-height:1.55;color:var(--color-muted-foreground)}
+  .cchild .brief b{margin-right:8px;font-weight:500;color:var(--color-foreground)}
+  .cchild .in .bad{font-size:12px;line-height:1.55;color:var(--color-loss)}
+  /* 一条过程都还没有时：想事的小脸 + 一句 + 计时 */
+  .cthink{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--color-muted-foreground)}
+  .cthink .ck{font-variant-numeric:tabular-nums;color:var(--color-faint)}
+  .cerr{font-size:13px;color:var(--color-loss)}
+
+  /* 卡片：深度研判确认、给 Trader 的三个动作、行为报告。卡里的控件是白的 */
+  .ccard{--ctl:var(--color-raise);--ctl-h:var(--color-raise-h);padding:16px 18px;border-radius:18px;background:var(--color-fill)}
+  .ccard h4{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14.5px;font-weight:600}
+  .ccard > p{margin-top:6px;font-size:13px;line-height:1.6;color:var(--color-muted-foreground)}
+  .ccard > p.err{color:var(--color-loss)}
+  .ccard .kv{margin-top:8px}
+  .ccard .kv > div{padding:6px 0;font-size:13px}
+  .ccard .f{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px}
+  .ccard .f .sp{flex:1}
+  .ccard .inp.ta{margin-top:10px}
+  .ccard .rounds{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .ccard .done{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .ccard .done .ic{width:14px;height:14px}
+  /* 行为报告：两个大数、资产分布条、走势；下面一类一节 */
+  .cbr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px;margin-top:12px}
+  .cbr > div > span{display:block;font-size:12px;color:var(--color-muted-foreground)}
+  .cbr > div > b{display:block;margin-top:2px;font-size:18px;font-weight:400;letter-spacing:-.02em}
+  .cbr .bar{grid-column:1/-1;display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--color-fill2)}
+  .cbr .bar i{display:block;height:100%}
+  .cbr .lg{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--color-muted-foreground)}
+  .cbr .lg i{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:2px}
+  .cbr .trend{grid-column:1/-1;display:block;width:100%;height:36px}
+  .ccat{margin-top:12px;padding-top:12px;border-top:1px solid var(--color-border)}
+  .ccat > b{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600}
+  .ccat > b .ic{width:14px;height:14px;color:var(--color-muted-foreground)}
+  .ccat .row{display:flex;flex-wrap:wrap;gap:2px 16px;margin-top:6px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .ccat .row b{font-weight:500;color:var(--color-foreground)}
+  .ccat .row b.up{color:var(--color-gain)}
+  .ccat .row b.dn{color:var(--color-loss)}
+  .ccat ul{margin-top:6px;padding-left:18px;list-style:disc;font-size:13px;line-height:1.65}
+
+  @media (hover:hover){
+    .csrc a:hover,.csrc button:hover{background:var(--color-fill2)}
+    .cact button:hover{background:var(--color-fill);color:var(--color-foreground)}
+    .crail:hover{background:var(--color-fill);color:var(--color-foreground)}
+    .csites a:hover{color:var(--color-foreground)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .crail .pd,.cface.think::before,.cface.think::after{animation:none}
+    .cact,.crail,.crail .ic,.cact button,.csrc a,.csrc button,.cstep em .ic,.csites a{transition:none}
+  }
+}

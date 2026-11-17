@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowUp, BadgeCheck, ChevronLeft, CircleHelp, Copy, FileText, Loader2, MessagesSquare, Play, RotateCcw, SkipForward, Square, Undo2 } from 'lucide-react';
+import { ArrowUp, Check, ChevronLeft, Copy, RotateCcw, Square } from 'lucide-react';
 import { llmEndpointApi, promptGenApi, userApi } from '../api';
 import { LlmEndpointSelect } from '../components/LlmEndpointSelect';
-import { Markdown } from '../components/Markdown';
-import { FluidOrb } from '../components/ui/fluid-orb';
+import type { PopChunk } from '../components/Markdown';
+import { StreamText } from '../components/StreamText';
+import { SureButton } from '../components/SureButton';
+import { Seg } from '../components/ui/seg';
 import { useToast } from '../components/ui/use-toast';
-import { MAX_MESSAGE_CHARS, SEND_BTN } from '../components/workbench/ChatComposer';
+import { MAX_MESSAGE_CHARS } from '../components/workbench/ChatComposer';
 import { ProcessRail, ThinkingRow } from '../components/workbench/ChatMessages';
-import { PULSE_DOT, type RailStep } from '../components/workbench/chatView';
-import { useIsDark } from '../hooks/useIsDark';
+import type { RailStep } from '../components/workbench/chatView';
+import { popText, useStreamReveal } from '../hooks/useStreamReveal';
 import { cn } from '../lib/utils';
 import { SUPPORTED_LANGS, type Lang } from '../i18n';
 import type { LlmEndpointView, PromptGenEvent, PromptGenItem, PromptGenQuestion, PromptGenView } from '../types';
+import './PromptGen.css';
 
 /** 指令正文上限，与后端 TraderService.MAX_CUSTOM_PROMPT 同数 */
 const MAX_CHARS = 4000;
@@ -21,13 +24,6 @@ const MAX_CHARS = 4000;
 const POLL_MS = 3000;
 /** 输入框自动长高的上限 */
 const INPUT_MAX_H = 160;
-/** 球的两套颜色，取 index.css 的 --color-primary 与 --color-card-2 */
-const ORB_LIGHT = { color: '#f25f0a', base: '#f0f0ec' };
-const ORB_DARK = { color: '#f97316', base: '#1a1b1f' };
-/** 两栏同高、各自滚动：对话再长输入框也在手边 */
-const PANEL = 'pt-card flex flex-col h-[calc(100dvh-12rem)] min-h-[30rem]';
-/** 流式输出尾巴上的光标 */
-const CURSOR = 'inline-block w-1.5 h-3.5 bg-primary/80 ml-0.5 align-middle animate-pulse motion-reduce:animate-none';
 /** 单独一行的段名：【目标】或 [Goal] */
 const SECTION_LINE = /^\s*(【[^】]+】|\[[A-Za-z][^\]]*\])\s*$/;
 
@@ -37,7 +33,7 @@ type ToolCall = { name: string; args?: Record<string, unknown>; active?: boolean
 type LiveEntry = { kind: 'text'; text: string } | { kind: 'tools'; calls: ToolCall[] } | { kind: 'version'; no: number };
 /** 对话里的一块：相邻的读数据并成一条过程轨 */
 type Block = { kind: 'item'; item: PromptGenItem; index: number } | { kind: 'rail'; key: string; calls: ToolCall[] };
-/** 对话区的一行；side=agent 的连着几行只挂一次署名，mark（版本分隔线）不打断 */
+/** 对话区的一行；side=agent 的连着几行只挂一次署名，mark（写出一版）不打断 */
 type Row = { key: string; side: 'agent' | 'user' | 'mark'; node: ReactNode };
 
 function groupItems(items: PromptGenItem[]): Block[] {
@@ -81,21 +77,20 @@ function settleCalls(live: LiveEntry[]): LiveEntry[] {
 }
 
 /**
- * 提示词生成：agent 先看 trader 数据，再一题一题问，信息够了写一版；用户提修改它接着问，直到它认为写完了。
+ * 提示词生成（样式见 PromptGen.css）：agent 先看 trader 数据，再一题一题问，信息够了写一版；用户提修改它接着问，直到它认为写完了。
  * 后端在 agent（/api/ai/prompt-gen），每轮走 SSE，轮结束重新拉一次 session；最近 3 版可以回到当时接着聊。
- * 左栏是对话（过程轨、题卡、输入框），右栏是正文；手机上两栏切着看。
+ * 左栏是对话（过程轨、题卡、输入框），右栏是正文；窄屏两栏切着看。
  */
 export function PromptGen() {
   const { t } = useTranslation(['promptGen', 'ai']);
   const { toast } = useToast();
-  const orb = useIsDark() ? ORB_DARK : ORB_LIGHT;
 
   const [endpoints, setEndpoints] = useState<LlmEndpointView[]>([]);
   const [endpointId, setEndpointId] = useState<number | null>(null);
   const [outputLang, setOutputLang] = useState<Lang>('zh');
 
   const [view, setView] = useState<PromptGenView | null>(null);
-  /** 点了「重新开始」：先回到开场设置，点开始才真覆盖旧对话 */
+  /** 点了「重新开始」：对话底下出开场设置，点开始才真覆盖旧对话 */
   const [restarting, setRestarting] = useState(false);
   /** 非 null = 本页正在收这一轮的流 */
   const [stage, setStage] = useState<Stage | null>(null);
@@ -119,7 +114,7 @@ export function PromptGen() {
   const [picked, setPicked] = useState('');
   /** 过程轨的开合；没点过的都展开，和工作台一样 */
   const [railOpen, setRailOpen] = useState<Record<string, boolean>>({});
-  /** 手机上一次只看一栏 */
+  /** 窄屏上一次只看一栏 */
   const [tab, setTab] = useState<'chat' | 'doc'>('chat');
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -180,13 +175,7 @@ export function PromptGen() {
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stuckRef.current) el.scrollTop = el.scrollHeight;
-  }, [view, live, sent, busy]);
-  // 正文流式写时跟到底
-  useEffect(() => {
-    const el = docRef.current;
-    if (el && draft && docStuckRef.current) el.scrollTop = el.scrollHeight;
-  }, [draft]);
-
+  }, [view, live, sent, busy, restarting]);
   const onEvent = useCallback((e: PromptGenEvent) => {
     switch (e.type) {
       case 'status':
@@ -311,7 +300,7 @@ export function PromptGen() {
   const say = (text: string, restore: () => void) => reply({ text }, text, restore);
 
   const continueFrom = (no: number) => {
-    if (busy || !window.confirm(t('rollbackConfirm', { no }))) return;
+    if (busy) return;
     promptGenApi.rollback(no)
       .then(v => {
         apply(v);
@@ -341,10 +330,18 @@ export function PromptGen() {
   const shownNo = viewing ?? view?.currentNo ?? view?.versions[0]?.no ?? null;
   const shown = view?.versions.find(v => v.no === shownNo) ?? null;
   const body = draft ?? shown?.body ?? '';
+  // 正文流式写时字是攒够一段整段弹出来的；每放出一段跟到底
+  const doc = useStreamReveal(docRef, body, draft != null);
+  useEffect(() => {
+    const el = docRef.current;
+    if (el && draft && docStuckRef.current) el.scrollTop = el.scrollHeight;
+  }, [draft, doc.text]);
   const question = active && !busy ? view?.question ?? null : null;
   const stageKey = background ? 'background'
     : stage ?? (!active ? 'idle' : view?.done ? 'done' : question ? 'asking' : 'yourTurn');
   const endpoint = endpoints.find(e => e.id === view?.endpointId);
+  // 看的不是当前对话停着的那版：可以回到那版接着聊
+  const canContinue = !!view?.active && !!shown && shown.no !== view.currentNo && !busy && draft == null;
 
   const copy = () => {
     navigator.clipboard.writeText(body)
@@ -381,7 +378,7 @@ export function PromptGen() {
       case 'question':
         // 还没答的那道在最下面的题卡里
         if (item.answer == null || !item.question) break;
-        rows.push({ key: `q${index}`, side: 'agent', node: <AskedLine text={item.question.question} /> });
+        rows.push({ key: `q${index}`, side: 'agent', node: <div className="md"><p>{item.question.question}</p></div> });
         rows.push({
           key: `qa${index}`, side: 'user', node: (
             <UserBubble text={item.answer}
@@ -438,10 +435,7 @@ export function PromptGen() {
     });
   }
   if (active && !busy && view?.failure) {
-    rows.push({
-      key: 'failure', side: 'agent',
-      node: <p className="text-[12.5px] leading-relaxed text-loss">{t('lastFailed', { message: view.failure })}</p>,
-    });
+    rows.push({ key: 'failure', side: 'agent', node: <p className="err">{t('lastFailed', { message: view.failure })}</p> });
   }
   if (question) {
     rows.push({
@@ -453,252 +447,157 @@ export function PromptGen() {
   }
   let prevSide: Row['side'] | null = null;
 
+  // 开场设置：没对话时占满左栏；点了重新开始挂在对话底下
+  const setup = (
+    <div className="blk setup">
+      <div className="row">
+        <div className="fld">
+          <div className="fl">{t('endpoint')}</div>
+          <LlmEndpointSelect endpoints={endpoints} value={endpointId} onChange={setEndpointId} disabled={busy} />
+        </div>
+        <div className="fld">
+          <div className="fl">{t('outputLang')}</div>
+          <Seg value={outputLang} onChange={setOutputLang} label={t('outputLang')}
+               options={SUPPORTED_LANGS.map(l => ({ value: l, label: t(`lang.${l}`) }))} />
+        </div>
+      </div>
+      <div className="ft">
+        <span>{endpoints.length === 0 ? t('noEndpoint') : restarting ? t('restartHint') : t('startHint')}</span>
+        {restarting && <button type="button" className="btn" onClick={() => setRestarting(false)}>{t('cancelRestart')}</button>}
+        <button type="button" className="btn ink" onClick={start} disabled={busy || endpoints.length === 0}>{t('start')}</button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="page-shell p-4 md:p-6 space-y-4 max-w-6xl">
-      <div className="flex items-center gap-3">
-        <Link to="/my-trader" aria-label={t('back')} className="ibtn shrink-0">
-          <ChevronLeft className="w-4 h-4" />
-        </Link>
-        <div className="min-w-0">
-          <h1 className="text-lg font-black leading-tight">{t('title')}</h1>
-          {active && endpoint && (
-            <p className="text-[11px] text-muted-foreground truncate">
-              {endpoint.name} · {t(`lang.${view?.outputLang ?? outputLang}`)}
-            </p>
-          )}
+    <div className="page-shell">
+      <div className="p-pg">
+        <div className="phd">
+          <div>
+            <Link className="back" to="/my-trader"><ChevronLeft className="ic" />{t('back')}</Link>
+            <h1>{t('title')}</h1>
+            <p>{t('desc')}</p>
+            {active && endpoint && <p>{endpoint.name} · {t(`lang.${view?.outputLang ?? outputLang}`)}</p>}
+          </div>
+          <span className={cn('stg', busy && 'on', stageKey === 'done' && 'ok')}><i /><span>{t(`stage.${stageKey}`)}</span></span>
         </div>
-        <div className="ml-auto flex items-center gap-3 shrink-0">
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground">
-            {busy && <span className={PULSE_DOT} />}
-            {t(`stage.${stageKey}`)}
-          </span>
-          {active && (
-            <button type="button" onClick={() => setRestarting(true)} disabled={busy} className="btn xs">
-              <RotateCcw className="w-3 h-3" />{t('restart')}
-            </button>
-          )}
-        </div>
-      </div>
 
-      {/* 开场设置：没对话、或点了重新开始才出来；对话开着时端点和语言在标题下面那行 */}
-      {!active && (
-        <div className="pt-card p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
-            <div className="space-y-1.5">
-              <span className="microlabel block">{t('endpoint')}</span>
-              <LlmEndpointSelect endpoints={endpoints} value={endpointId} onChange={setEndpointId}
-                                 disabled={busy} className="w-full sm:min-w-[280px]" />
+        <Seg className="mtabs" value={tab} onChange={setTab} label={t('body')} options={[
+          { value: 'chat', label: t('dialog') },
+          { value: 'doc', label: <>{t('body')}{draft != null && <i className="pd" />}</> },
+        ]} />
+
+        <div className="ws" data-pane={tab}>
+          {/* 左栏：对话 */}
+          <div className="pane left">
+            <div ref={scrollRef} className="talk"
+                 onScroll={e => {
+                   const el = e.currentTarget;
+                   stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                 }}>
+              {!view?.active && !busy ? setup : (
+                <>
+                  {rows.map(row => {
+                    const signed = row.side === 'agent' && prevSide !== 'agent';
+                    if (row.side !== 'mark') prevSide = row.side;
+                    if (row.side === 'user') return <Fragment key={row.key}>{row.node}</Fragment>;
+                    return (
+                      <div key={row.key} className="ca">
+                        {signed && <div className="who"><span className="cface" aria-hidden />{t('agentName')}</div>}
+                        {row.node}
+                      </div>
+                    );
+                  })}
+                  {restarting && setup}
+                </>
+              )}
             </div>
-            <div className="space-y-1.5">
-              <span className="microlabel block">{t('outputLang')}</span>
-              <div className="seg">
-                {SUPPORTED_LANGS.map(l => (
-                  <button key={l} type="button" disabled={busy} onClick={() => setOutputLang(l)}
-                          className={cn(outputLang === l && 'on')} aria-pressed={outputLang === l}>
-                    {t(`lang.${l}`)}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={start} disabled={busy || endpoints.length === 0} className="btn sm orange">
-                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                {t('start')}
-              </button>
-              {restarting && (
-                <button type="button" onClick={() => setRestarting(false)} className="btn sm">
-                  {t('cancelRestart')}
-                </button>
+            {active && (
+              <Composer busy={busy} stopping={stopping} onSend={say} onStop={stop} onRestart={() => setRestarting(true)}
+                        placeholder={question ? t('freePh') : view?.done ? t('doneHint') : t('composerPh')} />
+            )}
+          </div>
+
+          {/* 右栏：版本与正文 */}
+          <div className="pane right">
+            <div className="doc blk">
+              {!body && draft == null ? (
+                <p className="dempty">{t('empty')}</p>
+              ) : (
+                <>
+                  <div className="dh">
+                    <b>{t('versions')}</b>
+                    {versions.length > 0 && shownNo != null && (
+                      <Seg value={String(shownNo)} onChange={v => setViewing(Number(v))} label={t('versions')}
+                           options={versions.map(v => ({
+                             value: String(v.no),
+                             label: <>{t('version', { no: v.no })}{v.no === view?.currentNo && <i className="cur" />}</>,
+                           }))} />
+                    )}
+                    <small>{t('keepHint')}</small>
+                    <span className="r">
+                      {draft != null ? (
+                        <span className="orb"><span className="cface think" aria-hidden />{draft ? t('writingNow') : t('orbHint')}</span>
+                      ) : (
+                        <>
+                          {shown?.finalVersion && <span className="tag g"><Check className="ic" />{t('final')}</span>}
+                          {canContinue && (
+                            <SureButton className="btn sm" sureLabel={t('rollbackSure')} title={t('rollbackConfirm', { no: shown.no })}
+                                        onConfirm={() => continueFrom(shown.no)}>
+                              {t('continueFrom')}
+                            </SureButton>
+                          )}
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <div className="dt num">
+                    <b>{t('body')}</b>
+                    <span className={cn(body.length > MAX_CHARS && 'over')}>{t('chars', { n: body.length, max: MAX_CHARS })}</span>
+                    <span className="r">
+                      <button type="button" className="btn sm" onClick={copy} disabled={!body || draft != null}>
+                        <Copy className="ic" />{t('copy')}
+                      </button>
+                    </span>
+                  </div>
+                  <div ref={docRef} className="body sx"
+                       onScroll={e => {
+                         const el = e.currentTarget;
+                         docStuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                       }}>
+                    <InstructionText text={doc.text} chunks={doc.chunks} />
+                  </div>
+                  {shown?.notes && draft == null && <div className="notes"><b>{t('notes')}</b>{shown.notes}</div>}
+                </>
               )}
             </div>
           </div>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            {endpoints.length === 0 ? t('noEndpoint') : restarting ? t('restartHint') : t('startHint')}
-          </p>
         </div>
-      )}
-
-      <div className="seg lg:hidden">
-        <button type="button" onClick={() => setTab('chat')} className={cn(tab === 'chat' && 'on')} aria-pressed={tab === 'chat'}>
-          {t('dialog')}
-        </button>
-        <button type="button" onClick={() => setTab('doc')} className={cn(tab === 'doc' && 'on')} aria-pressed={tab === 'doc'}>
-          {t('body')}
-          {draft != null && <span className={PULSE_DOT} />}
-        </button>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* 左栏：对话 */}
-        <section className={cn(PANEL, tab !== 'chat' && 'hidden lg:flex')}>
-          <div ref={scrollRef}
-               onScroll={e => {
-                 const el = e.currentTarget;
-                 stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-               }}
-               className="flex-1 min-h-0 overflow-y-auto px-4 py-5">
-            {!active && !busy ? (
-              <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
-                <MessagesSquare className="w-7 h-7 text-primary" />
-                <p className="text-[13px] leading-relaxed text-muted-foreground max-w-sm">{t('desc')}</p>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {rows.map(row => {
-                  const signed = row.side === 'agent' && prevSide !== 'agent';
-                  if (row.side !== 'mark') prevSide = row.side;
-                  return (
-                    <div key={row.key} className="space-y-2">
-                      {signed && <Signature name={t('agentName')} />}
-                      {row.node}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          {active && (
-            <Composer busy={busy} stopping={stopping} onSend={say} onStop={stop}
-                      placeholder={question ? t('freePh') : view?.done ? t('doneHint') : t('composerPh')} />
-          )}
-        </section>
-
-        {/* 右栏：版本与正文 */}
-        <section className={cn(PANEL, tab !== 'doc' && 'hidden lg:flex')}>
-          <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-border">
-            <span className="text-xs font-black">{t('body')}</span>
-            {versions.length > 0 && (
-              <div className="flex items-center gap-1" title={t('keepHint')} aria-label={t('versions')}>
-                {versions.map(v => (
-                  <button key={v.no} type="button" onClick={() => setViewing(v.no)}
-                          aria-pressed={v.no === shownNo && draft == null}
-                          className={cn('btn xs num', v.no === shownNo && draft == null && 'fill')}>
-                    {t('version', { no: v.no })}
-                    {/* 当前对话停在这一版 */}
-                    {v.no === view?.currentNo && <span className="w-1.5 h-1.5 bg-primary" />}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="ml-auto flex items-center gap-2">
-              {view?.active && shown && shown.no !== view.currentNo && !busy && draft == null && (
-                <button type="button" onClick={() => continueFrom(shown.no)} className="btn xs">
-                  <Undo2 className="w-3 h-3" />{t('continueFrom')}
-                </button>
-              )}
-              <button type="button" onClick={copy} disabled={!body || draft != null} className="btn xs">
-                <Copy className="w-3 h-3" />{t('copy')}
-              </button>
-            </div>
-          </div>
-
-          <div ref={docRef}
-               onScroll={e => {
-                 const el = e.currentTarget;
-                 docStuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-               }}
-               className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
-            {draft === '' ? (
-              <WritingOrb color={orb.color} base={orb.base} hint={t('orbHint')} />
-            ) : body ? (
-              <InstructionText text={body} streaming={draft != null} />
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center gap-2 text-center px-6">
-                <FileText className="w-6 h-6 text-muted-foreground/50" />
-                <p className="text-[12px] leading-relaxed text-muted-foreground max-w-xs">{t('empty')}</p>
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-border px-4 py-2.5 space-y-2">
-            <div className="flex items-center gap-3">
-              {draft != null ? (
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground">
-                  <span className={PULSE_DOT} />{t('writingNow')}
-                </span>
-              ) : shown?.finalVersion && (
-                <span className="chip up text-gain">
-                  <BadgeCheck className="w-3 h-3" />{t('final')}
-                </span>
-              )}
-              <span className={cn('ml-auto text-[11px] num', body.length > MAX_CHARS ? 'text-loss' : 'text-muted-foreground')}>
-                {t('chars', { n: body.length, max: MAX_CHARS })}
-              </span>
-            </div>
-            {shown?.notes && draft == null && (
-              <details className="border border-border bg-card-2/50">
-                <summary className="px-3 py-2 text-[11px] font-bold text-muted-foreground cursor-pointer">{t('notes')}</summary>
-                <p className="max-h-40 overflow-y-auto px-3 pb-3 text-[11.5px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                  {shown.notes}
-                </p>
-              </details>
-            )}
-          </div>
-        </section>
       </div>
     </div>
   );
 }
 
-/** agent 署名：橙方块 + 名字 */
-function Signature({ name }: { name: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-[7px] h-[7px] bg-primary shrink-0" />
-      <span className="microlabel text-foreground font-bold">{name}</span>
-    </div>
-  );
+/** agent 说的话：无框正文，流式时字是一段段弹出来的 */
+function AgentText({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  return <StreamText className="md" content={text} streaming={streaming} />;
 }
 
-/** agent 说的话：无框正文，流式时尾巴挂光标 */
-function AgentText({ text, streaming }: { text: string; streaming?: boolean }) {
-  return (
-    <div className="min-w-0 text-[14px] leading-relaxed">
-      <Markdown content={text} />
-      {streaming && <span className={CURSOR} />}
-    </div>
-  );
-}
-
-/** 答过的题：agent 那侧的题面 */
-function AskedLine({ text }: { text: string }) {
-  return (
-    <p className="flex items-start gap-2 text-[14px] font-semibold leading-relaxed">
-      <CircleHelp className="w-4 h-4 shrink-0 mt-[3px] text-primary" />
-      <span className="min-w-0">{text}</span>
-    </p>
-  );
-}
-
-/** 用户的话：右侧色块气泡；note 是气泡下面一行小字 */
+/** 用户的话：右边一块气泡；note 是气泡下面一行小字 */
 function UserBubble({ text, note }: { text: string; note?: string }) {
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="max-w-[85%] bg-card-2 px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words">
-        {text}
-      </div>
-      {note && <span className="microlabel">{note}</span>}
+    <div className="cu">
+      <p>{text}</p>
+      {note && <small>{note}</small>}
     </div>
   );
 }
 
-/** 写出一版：一道带字的分隔线，点了右栏看这版 */
+/** 写出一版：一颗绿标签，点了右栏看这版；被挤掉的那版打不开，灰的 */
 function VersionMark({ label, onOpen }: { label: string; onOpen?: () => void }) {
-  return (
-    <div className="flex items-center gap-3 text-[11px] font-bold text-muted-foreground">
-      <span className="h-px flex-1 bg-border" />
-      {onOpen ? (
-        <button type="button" onClick={onOpen} className="inline-flex items-center gap-1.5 hover:text-primary">
-          <FileText className="w-3.5 h-3.5" />{label}
-        </button>
-      ) : (
-        <span className="inline-flex items-center gap-1.5 opacity-60">
-          <FileText className="w-3.5 h-3.5" />{label}
-        </span>
-      )}
-      <span className="h-px flex-1 bg-border" />
-    </div>
-  );
+  return onOpen
+    ? <button type="button" className="tag g" onClick={onOpen}><Check className="ic" />{label}</button>
+    : <span className="tag"><Check className="ic" />{label}</span>;
 }
 
 /** 等回答的题卡：推荐项带理由，其余选项一行一个；自己写的从下面输入框发 */
@@ -711,35 +610,25 @@ function QuestionCard({ question, picked, onPick, onSubmit, onSkip }: {
 }) {
   const { t } = useTranslation('promptGen');
   return (
-    <div className="border border-border border-l-[3px] border-l-primary bg-card p-3.5 space-y-3 animate-in fade-in slide-in-from-bottom-2">
-      <div className="flex items-start gap-2">
-        <CircleHelp className="w-4 h-4 shrink-0 mt-[3px] text-primary" />
-        <p className="flex-1 min-w-0 text-[14px] font-semibold leading-relaxed">{question.question}</p>
-        {question.required && <span className="chip shrink-0">{t('required')}</span>}
-      </div>
-      <div role="radiogroup" aria-label={question.question} className="space-y-1.5">
+    <div className="ccard qc">
+      <h4>{question.question}{question.required && <span className="tag sm o">{t('required')}</span>}</h4>
+      <div className="opts" role="radiogroup" aria-label={question.question}>
         <OptionRow text={question.recommended} on={picked === question.recommended} onPick={onPick}
                    badge={t('recommended')} reason={question.reason} />
         {question.options.map(op => (
           <OptionRow key={op} text={op} on={picked === op} onPick={onPick} />
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">{t('typeHint')}</span>
-        <div className="ml-auto flex items-center gap-2">
-          {!question.required && (
-            <button type="button" onClick={onSkip} className="btn xs">
-              <SkipForward className="w-3 h-3" />{t('skip')}
-            </button>
-          )}
-          <button type="button" onClick={onSubmit} disabled={!picked} className="btn xs fill">{t('submit')}</button>
-        </div>
+      <div className="f">
+        <small>{t('typeHint')}</small>
+        {!question.required && <button type="button" className="btn" onClick={onSkip}>{t('skip')}</button>}
+        <button type="button" className="btn ink" onClick={onSubmit} disabled={!picked}>{t('submit')}</button>
       </div>
     </div>
   );
 }
 
-/** 一个选项：方形单选点 + 文字；推荐项多一个标和一行理由 */
+/** 一个选项：圆形单选点 + 文字；推荐项多一个标和一行理由 */
 function OptionRow({ text, on, onPick, badge, reason }: {
   text: string;
   on: boolean;
@@ -748,32 +637,25 @@ function OptionRow({ text, on, onPick, badge, reason }: {
   reason?: string;
 }) {
   return (
-    <button type="button" role="radio" aria-checked={on} onClick={() => onPick(text)}
-            className={cn(
-              'w-full flex items-start gap-2.5 border px-3 py-2 text-left transition-colors',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-              on ? 'border-primary bg-primary/8' : 'border-border hover:bg-surface-hover',
-            )}>
-      <span className={cn('mt-[6px] w-2.5 h-2.5 shrink-0 border', on ? 'border-primary bg-primary' : 'border-muted-foreground/60')} />
-      <span className="flex-1 min-w-0 space-y-1">
-        <span className="flex items-start gap-2">
-          <span className="flex-1 min-w-0 text-[13px] leading-relaxed">{text}</span>
-          {badge && <span className="chip fill orange shrink-0">{badge}</span>}
-        </span>
-        {reason && <span className="block text-[11.5px] leading-relaxed text-muted-foreground">{reason}</span>}
-      </span>
+    <button type="button" role="radio" aria-checked={on} className="opt" onClick={() => onPick(text)}>
+      <i />
+      <div>
+        <b>{text}{badge && <span className="tag sm g">{badge}</span>}</b>
+        {reason && <span>{reason}</span>}
+      </div>
     </button>
   );
 }
 
 /** 底部输入框：多行自适应，Enter 发送、Shift+Enter 换行；跑着时可以先打字，发送键换成停止键 */
-function Composer({ busy, stopping, placeholder, onSend, onStop }: {
+function Composer({ busy, stopping, placeholder, onSend, onStop, onRestart }: {
   busy: boolean;
   stopping: boolean;
   placeholder: string;
   /** restore：后端没接下时把这句放回输入框 */
   onSend: (text: string, restore: () => void) => void;
   onStop: () => void;
+  onRestart: () => void;
 }) {
   const { t } = useTranslation(['promptGen', 'ai']);
   const [text, setText] = useState('');
@@ -795,8 +677,8 @@ function Composer({ busy, stopping, placeholder, onSend, onStop }: {
   };
 
   return (
-    <div className="border-t border-border p-3 shrink-0">
-      <div className="border border-border bg-card-2 transition-colors focus-within:border-foreground">
+    <div className="comp">
+      <div className="cbox">
         <textarea
           ref={ref}
           rows={1}
@@ -810,58 +692,43 @@ function Composer({ busy, stopping, placeholder, onSend, onStop }: {
             }
           }}
           placeholder={placeholder}
-          className="block w-full bg-transparent px-3 pt-2.5 text-[14px] leading-relaxed resize-none focus:outline-none placeholder:text-muted-foreground/60"
+          aria-label={placeholder}
         />
-        <div className="flex items-center gap-2 px-1.5 pb-1.5 pt-1">
-          <span className="pl-1.5 text-[10px] text-muted-foreground/60 truncate">{t('ai:composer.hint')}</span>
+        <div className="crow">
+          <button type="button" className="btn sm plain" onClick={onRestart} disabled={busy}>
+            <RotateCcw className="ic" />{t('restart')}
+          </button>
           {busy ? (
-            <button type="button" onClick={onStop} disabled={stopping}
+            <button type="button" className="csend stop" onClick={onStop} disabled={stopping}
                     title={stopping ? t('ai:chat.stopping') : t('ai:chat.stopTitle')}
-                    aria-label={stopping ? t('ai:chat.stopping') : t('ai:chat.stopTitle')}
-                    className={SEND_BTN}>
-              {stopping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3 h-3 fill-current" />}
+                    aria-label={stopping ? t('ai:chat.stopping') : t('ai:chat.stopTitle')}>
+              <Square className="ic" />
             </button>
           ) : (
-            <button type="button" onClick={send} disabled={!text.trim()}
-                    title={t('send')} aria-label={t('send')} className={SEND_BTN}>
-              <ArrowUp className="w-4 h-4" />
+            <button type="button" className="csend" onClick={send} disabled={!text.trim()} title={t('send')} aria-label={t('send')}>
+              <ArrowUp className="ic" />
             </button>
           )}
         </div>
       </div>
+      <div className="hintl">{t('ai:composer.hint')}</div>
     </div>
   );
 }
 
-/** 写稿人还没出字：球隔一会儿跳一下，底下影子跟着缩 */
-function WritingOrb({ color, base, hint }: { color: string; base: string; hint: string }) {
-  return (
-    <div className="h-full min-h-[14rem] flex flex-col items-center justify-center gap-4">
-      <div className="flex flex-col items-center">
-        <div className="wiib-orb-hop">
-          <FluidOrb size={88} color={color} base={base} />
-        </div>
-        <div className="wiib-orb-shade mt-1.5 h-2 w-14 rounded-[50%] bg-foreground/40 blur-[3px]" />
-      </div>
-      <p className="wiib-shimmer text-[12px] font-semibold">{hint}</p>
-    </div>
-  );
-}
-
-/** 正文按行排：单独一行的段名加粗当小标题，其余原样；复制出去的还是原文 */
-function InstructionText({ text, streaming }: { text: string; streaming: boolean }) {
+/**
+ * 正文按行排：单独一行的段名加粗当小标题，其余原样；复制出去的还是原文。
+ * chunks 是流式写时刚放出来的几段（在整篇里的位置），落在里面的字包起来弹出来
+ */
+function InstructionText({ text, chunks }: { text: string; chunks: PopChunk[] }) {
   const lines = text.split('\n');
+  // 每一行在整篇里从第几个字开始（行与行之间隔一个换行符）
+  const starts = lines.map((_, i) => lines.slice(0, i).reduce((at, l) => at + l.length + 1, 0));
   return (
-    <div className="text-[13.5px] leading-[1.75] break-words">
-      {lines.map((line, i) => {
-        const heading = SECTION_LINE.test(line);
-        return (
-          <p key={i} className={cn('whitespace-pre-wrap', heading && 'font-bold', heading && i > 0 && 'mt-4')}>
-            {line || ' '}
-            {streaming && i === lines.length - 1 && <span className={CURSOR} />}
-          </p>
-        );
-      })}
-    </div>
+    <>
+      {lines.map((line, i) => (
+        <p key={i} className={cn(SECTION_LINE.test(line) && 'sh')}>{line ? popText(line, starts[i], chunks) : ' '}</p>
+      ))}
+    </>
   );
 }
