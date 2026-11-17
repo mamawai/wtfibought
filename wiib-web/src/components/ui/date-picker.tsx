@@ -21,15 +21,13 @@ interface DatePickerProps {
   disabled?: boolean;
   /** 没选时钮上的字，不传用通用的「选择日期」 */
   placeholder?: string;
-  /** 加在触发钮上 */
-  className?: string;
 }
 
 /**
  * 日期选择：一颗小钮点开一张月历，月份和星期名跟站内语言走（样式见 index.css .dp）。
  * 值一律 yyyy-MM-dd 字符串，范围直接按字典序比。
  */
-export function DatePicker({ value, onChange, min, max, disabled, placeholder, className }: DatePickerProps) {
+export function DatePicker({ value, onChange, min, max, disabled, placeholder }: DatePickerProps) {
   const { t } = useTranslation('common');
   // 月历翻到哪个月 [年, 月(0 起)]；null = 收起
   const [view, setView] = useState<[number, number] | null>(null);
@@ -66,11 +64,11 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
          onKeyDown={e => { if (e.key === 'Escape' && view) { close(); btnRef.current?.focus(); } }}>
       <button ref={btnRef} type="button" disabled={disabled} onClick={toggle}
               aria-haspopup="dialog" aria-expanded={view != null}
-              className={cn(!value && 'ph', className)}>
+              className={cn(!value && 'ph')}>
         <CalendarDays className="ic" />
         <span>{value || placeholder || t('datePicker.placeholder')}</span>
       </button>
-      {/* 开着才挂：收着的时候它也占位置，贴右边的日期钮会把页面撑出横向滚动 */}
+      {/* 月历开着才挂 */}
       {view && (
         <div role="dialog" className={cn('menu', alignRight && 'rt')}>
           <MonthGrid y={view[0]} m={view[1]} value={value} min={min} max={max} onMonth={goMonth} onPick={pick} />

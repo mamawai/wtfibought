@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { userApi } from '../api';
-import { Seg } from './ui/seg';
+import { LangSeg } from './LanguageSwitcher';
 import { useToast } from './ui/use-toast';
 import type { Lang } from '../i18n';
-
-/** 语言名用本族语写死，同 LanguageSwitcher */
-const LANG_LABEL: Record<Lang, string> = { zh: '中文', en: 'English' };
 
 /**
  * 配置页的「Agent 提示词语言」一节（样式见 AiAgent.css .lang）：落 user.lang，只在这里改，顶栏的界面语言切换碰不到它。
@@ -40,8 +37,7 @@ export function AgentLangSetting() {
       <div className="sec-h"><h2>{t('agentLang.title')}</h2></div>
       <div className="lang">
         <p>{t('agentLang.desc')}</p>
-        <Seg value={lang ?? ''} onChange={v => pick(v as Lang)} label={t('agentLang.title')}
-             options={(['zh', 'en'] as const).map(l => ({ value: l, label: LANG_LABEL[l] }))} />
+        <LangSeg value={lang} onChange={pick} label={t('agentLang.title')} />
       </div>
     </section>
   );

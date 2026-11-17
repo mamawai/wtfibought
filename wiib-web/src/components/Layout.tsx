@@ -13,6 +13,7 @@ import { OfflineBanner } from './OfflineBanner';
 import { ChatDock } from './workbench/ChatDock';
 import { cn } from '../lib/utils';
 import { MARKET_PATHS, lastMarket, marketOf, rememberMarket } from '../lib/markets';
+import { REDUCED_MOTION } from '../lib/motion';
 import {
   Home, Briefcase, Sun, Moon,
   BarChart3, User, ChevronDown, List, DollarSign,
@@ -103,7 +104,6 @@ const LENS_K = 0.2, LENS_DAMP = 0.62;
 const LENS_BAND = 0.3;
 /** 松手后浏览器补的那个 click，这么久以内都算这次手势的 */
 const TAB_CLICK_SWALLOW_MS = 500;
-const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** 一次按压里透镜的账：p/v 透镜左缘位置和速度，target 要去的位置，s 鼓起倍数；left/iw/w 按下时量的 Tab 左缘、一格宽、整排宽 */
 interface LensGesture {
@@ -265,8 +265,7 @@ export function Layout({ children }: Props) {
   // 顶栏的收拢、底边细线、导航收纳，一个 effect 管：都是量 DOM、改类名，滚动不走 React 状态。
   // useLayoutEffect：收拢后的宽度靠量出来的 --w，放不放得下也得在首帧画出来之前算好
   useLayoutEffect(() => {
-    const hdr = hdrRef.current, top = topRef.current, nav = navRef.current;
-    if (!hdr || !top || !nav) return;
+    const hdr = hdrRef.current!, top = topRef.current!, nav = navRef.current!;
 
     const fit = () => {
       // 手机上这一行是藏着的，量不出东西
@@ -297,11 +296,7 @@ export function Layout({ children }: Props) {
     };
     fitRef.current = fit;
 
-    const onScroll = () => {
-      const want = window.scrollY > COLLAPSE_AT;
-      hdr.classList.toggle('stuck', want);
-      hdr.classList.toggle('collapsed', want);
-    };
+    const onScroll = () => { hdr.classList.toggle('collapsed', window.scrollY > COLLAPSE_AT); };
 
     fit();
     // 刷新时页面可能已在半路：先按位摆好，下一帧再挂 ready 开过渡，不然会从头播一遍

@@ -1,5 +1,4 @@
 {
-  "confirm": "确认",
   "cancel": "取消",
   "save": "保存",
   "delete": "删除",
@@ -17,7 +16,6 @@
   "more": "更多",
   "expand": "展开",
   "collapse": "收起",
-  "settings": "设置",
   "loading": "加载中",
   "loadFailed": "加载失败",
   "noData": "暂无数据",

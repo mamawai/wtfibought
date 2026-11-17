@@ -9,6 +9,18 @@ import type { Lang } from '../i18n';
  */
 const LANG_LABEL: Record<Lang, string> = { zh: '中文', en: 'English' };
 
+/** 中文 / English 两格的段选；value 给 null 就哪格都不亮 */
+export function LangSeg({ value, onChange, label }: {
+  value: Lang | null;
+  onChange: (v: Lang) => void | boolean;
+  label: string;
+}) {
+  return (
+    <Seg value={value ?? ''} onChange={v => onChange(v as Lang)} label={label}
+         options={(['zh', 'en'] as const).map(l => ({ value: l, label: LANG_LABEL[l] }))} />
+  );
+}
+
 /** 「我的」页设置块里的一行：左边名字，右边中文 / English 分段 */
 export function LanguageSettingRow() {
   const { t } = useTranslation();
@@ -17,9 +29,7 @@ export function LanguageSettingRow() {
   return (
     <div className="sw-row">
       <div><b>{t('language.label')}</b></div>
-      <Seg value={current} label={t('language.label')}
-           onChange={v => { if (v !== current) toggle(); }}
-           options={(['zh', 'en'] as const).map(l => ({ value: l, label: LANG_LABEL[l] }))} />
+      <LangSeg value={current} onChange={toggle} label={t('language.label')} />
     </div>
   );
 }

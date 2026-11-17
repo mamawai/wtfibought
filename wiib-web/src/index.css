@@ -47,21 +47,9 @@
   --color-warning-soft: rgb(168 112 10 / .13);
   --color-primary-soft: rgb(242 95 10 / .11);
   --color-info-soft: rgb(37 99 235 / .1);
-  /* 旧页面用的名字，都指到上面的色 */
-  --color-card: var(--color-background);
-  --color-card-foreground: var(--color-foreground);
-  --color-card-2: var(--color-fill);
-  --color-secondary: var(--color-fill);
-  --color-secondary-foreground: var(--color-foreground);
+  /* muted 同浅灰块，ring 是键盘焦点那一圈的色 */
   --color-muted: var(--color-fill);
-  --color-accent: var(--color-primary);
-  --color-accent-foreground: var(--color-primary-foreground);
-  --color-destructive: var(--color-loss);
-  --color-success: var(--color-gain);
-  --color-input: var(--color-fill);
   --color-ring: var(--color-primary);
-  --color-surface: var(--color-background);
-  --color-surface-hover: var(--color-fill);
   /* 中文回落系统字体，不打包 CJK */
   --font-sans: "Geist Variable", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "Cascadia Mono", Consolas, ui-monospace, monospace;
@@ -463,10 +451,6 @@ html.pwa nav a {
   }
 }
 
-/* 机加工边缘：实体感控件（开关/按钮）顶部 1px 高光 */
-.machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
-html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
-
 /* 行情副条 marquee：两份等宽内容首尾相接，走完一份宽度即无缝循环 */
 @keyframes wiib-ticker { to { transform: translateX(-50%); } }
 
@@ -615,6 +599,7 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   @keyframes wiib-flash{from{opacity:1;scale:.15 1.6}to{opacity:0;scale:1.5 1.6}}
   /* 没成：晃两下 */
   .btn.nope,.cta.nope{animation:wiib-nope 180ms var(--ease-control) 2}
+  @keyframes wiib-nope{25%{translate:-3px}75%{translate:3px}}
 
   /* ---- 表单：一栏 = 标签行 + 控件 + 提示 ---- */
   .fld{display:flex;flex-direction:column;gap:7px;min-width:0}
@@ -622,21 +607,15 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   .fld:focus-within > .fl{color:var(--color-foreground)}
   .fl > span{display:inline-flex;align-items:center;gap:4px}
   .fhint{font-size:12px;line-height:1.5;color:var(--color-muted-foreground)}
-  .fhint.err{color:var(--color-loss)}
   /* 输入框：聚焦时一圈墨线 160ms 亮起，占位不变；.u 是右边的单位 */
   .inp{display:flex;align-items:center;gap:8px;height:46px;padding:0 14px;border-radius:12px;background:var(--ctl);cursor:text;box-shadow:inset 0 0 0 1.5px transparent;transition:box-shadow var(--t) var(--ease-control)}
   .inp.sm{height:38px;border-radius:10px;padding:0 12px}
   @media (hover:hover){.inp:hover{box-shadow:inset 0 0 0 1.5px var(--color-line2)}}
   .inp:focus-within{box-shadow:inset 0 0 0 1.5px var(--color-foreground)}
-  /* 填错了：红圈；.bad 多抖一下 */
-  .inp.err,.inp.bad{box-shadow:inset 0 0 0 1.5px var(--color-loss)}
-  .inp.bad{animation:wiib-nope 180ms var(--ease-control)}
-  @keyframes wiib-nope{25%{translate:-3px}75%{translate:3px}}
   .inp input,.inp textarea{flex:1;min-width:0;width:100%;border:0;outline:0;padding:0;background:none;font-size:16px;font-weight:500}
   .inp.sm input{font-size:14px}
   .inp input::placeholder,.inp textarea::placeholder{color:var(--color-faint);font-weight:400}
   .inp .u{display:inline-flex;align-items:center;gap:6px;align-self:stretch;font-size:12.5px;color:var(--color-muted-foreground);white-space:nowrap}
-  .inp > .ic{color:var(--color-muted-foreground)}
   /* 单位能点（切换计价币这类）：左边一道细线隔开 */
   .inp button.u{padding-left:13px;border-left:1px solid var(--color-border);transition:color var(--t) var(--ease-control)}
   .inp button.u .ic{width:13px;height:13px;transition:transform var(--slow) var(--ease-control)}
@@ -678,23 +657,15 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   .tbl.hov tbody tr{cursor:pointer}
   .tbl .sym{display:inline-flex;align-items:center;gap:8px;font-size:15px;font-weight:600}
   .tbl .sub{display:block;margin-top:1px;font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
+  .tbl .sub.up{color:var(--color-gain)}.tbl .sub.dn{color:var(--color-loss)}
   /* 盈亏那一列 */
   .tbl td.pn{font-weight:500}
-  /* 能排序的表头：箭头平时不出，悬停半透明，当前列是实的 */
-  .tbl th button{display:inline-flex;align-items:center;gap:3px;color:inherit;transition:color var(--t) var(--ease-control)}
-  .tbl th.r button{flex-direction:row-reverse}
-  .tbl th button .ic{width:12px;height:12px;opacity:0;transition:opacity var(--t) var(--ease-control),transform var(--slow) var(--ease-control)}
-  .tbl th[aria-sort] button{color:var(--color-foreground)}
-  .tbl th[aria-sort] button .ic{opacity:1}
-  .tbl th[aria-sort="ascending"] button .ic{transform:rotate(180deg)}
   /* 行尾小箭头：悬停往右挪 2px */
   .tbl .chev{width:28px;padding-left:0;color:var(--color-faint)}
   .tbl .chev .ic{width:15px;height:15px;transition:transform var(--t) var(--ease-control),color var(--t) var(--ease-control)}
   @media (hover:hover){
     .tbl.hov tbody tr:hover td{background:var(--ctl)}
     .tbl.hov tbody tr:hover td::before,.tbl.hov tbody tr:hover + tr td::before{background:none}
-    .tbl th:not([aria-sort]) button:hover{color:var(--color-foreground)}
-    .tbl th:not([aria-sort]) button:hover .ic{opacity:.5}
     .tbl.hov tr:hover .chev .ic{transform:translateX(2px);color:var(--color-foreground)}
   }
 
@@ -713,13 +684,12 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   .sk.t{height:12px;border-radius:6px}
   @keyframes wiib-sk{50%{opacity:.45}}
   /* ---- 横幅提示：淡色底的一条，说清怎么了、接下来会怎样 ---- */
-  .note{--ctl:var(--color-raise);--ctl-h:var(--color-raise-h);display:flex;align-items:flex-start;gap:10px;padding:11px 14px;border-radius:12px;background:var(--color-fill);font-size:13px;line-height:1.55;color:var(--color-muted-foreground)}
+  .note{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;border-radius:12px;background:var(--color-fill);font-size:13px;line-height:1.55;color:var(--color-muted-foreground)}
   .note .ic{margin-top:2px;width:15px;height:15px;color:var(--color-muted-foreground)}
   .note b{font-weight:500;color:var(--color-foreground)}
   .note.r{background:var(--color-loss-soft)}.note.r .ic,.note.r b{color:var(--color-loss)}
   .note.w{background:var(--color-warning-soft)}.note.w .ic,.note.w b{color:var(--color-warning)}
   .note > div{flex:1;min-width:0}
-  .note .btn{margin:-3px -4px -3px 0}
   /* ---- 头像：圆底一个字 ---- */
   .ava{display:inline-grid;place-items:center;width:32px;height:32px;flex:none;border-radius:50%;background:var(--color-fill2);font-size:13px;font-weight:600;color:var(--color-muted-foreground)}
   .ava.sm{width:24px;height:24px;font-size:11px}
@@ -759,7 +729,7 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   /* ---- 弹窗：遮罩 160ms 淡入，面板 200ms 上浮 8px；手机上从底边升起 ---- */
   .dlg{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px}
   .dlg .scrim{position:absolute;inset:0;background:var(--color-scrim);animation:wiib-fade-in var(--t) var(--ease-control)}
-  .dlg .panel{position:relative;display:flex;flex-direction:column;gap:18px;width:min(440px,100%);max-height:min(86vh,760px);overflow-y:auto;padding:24px;border-radius:24px;background:var(--color-pop);box-shadow:var(--sh-dlg);animation:wiib-dlg-in var(--slow) var(--ease-control)}
+  .dlg .panel{position:relative;display:flex;flex-direction:column;gap:18px;width:min(440px,100%);max-height:min(86vh,760px);overflow-y:auto;padding:24px;border-radius:24px;background:var(--color-pop);box-shadow:var(--sh-dlg);outline:none;animation:wiib-dlg-in var(--slow) var(--ease-control)}
   @keyframes wiib-dlg-in{from{opacity:0;transform:translateY(8px) scale(.985)}}
   .dlg .panel.sm{width:min(380px,100%)}
   .dlg .panel.lg{width:min(560px,100%)}
@@ -788,9 +758,9 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
     .blk{padding:18px;border-radius:20px}
   }
   @media (prefers-reduced-motion:reduce){
-    .btn,.cta,.ib,.xb,.chip,.pct button,.inp,.linkb,a.go,a.go .ic,.tbl td,.tbl th button,.tbl th button .ic,.tbl .chev .ic{transition:none}
+    .btn,.cta,.ib,.xb,.chip,.pct button,.inp,.linkb,a.go,a.go .ic,.tbl td,.tbl .chev .ic{transition:none}
     .btn:active,.cta:active,.ib:active,.xb:active,.chip:active,.pct button:active{transform:none}
-    .sk,.tag i.live,.inp.bad,.cta .lb,.btn.ok,.cta.ok,.btn.ok::after,.cta.ok::after,.btn.ok::before,.cta.ok::before,.btn.nope,.cta.nope,.dlg .scrim,.dlg .panel{animation:none}
+    .sk,.tag i.live,.cta .lb,.btn.ok,.cta.ok,.btn.ok::after,.cta.ok::after,.btn.ok::before,.cta.ok::before,.btn.nope,.cta.nope,.dlg .scrim,.dlg .panel{animation:none}
     .btn.busy::after,.cta.busy::after{animation:wiib-spin .6s linear infinite}
     .col,.col > div,.tabs .bar2{transition:none}
   }
@@ -801,14 +771,14 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   /* 顶栏：一条实底的栏钉在顶上，滚过 8px 底边出一根细线，同时整体收拢成 WIIB. + 图标、正中浮出图形 logo，回顶展开。
      --pf 是淡出 / 淡入的进度，只走前半段时长；--ps 是滑拢 / 滑开的进度，走满时长。
      收拢：字母和文字前半段淡掉，同时剩下的滑拢；展开倒过来：先滑开，最后半段才淡回来。
-     脚本只管按滚动位置切 .collapsed / .stuck，以及把各处的自然宽量好写进 --w */
+     脚本只管按滚动位置切 .collapsed，以及把各处的自然宽量好写进 --w */
   .hdr{--pf:0;--ps:0;--dur:520ms;--icw:16px;position:sticky;top:0;z-index:50;background:var(--color-background)}
   .hdr.collapsed{--pf:1;--ps:1}
   /* .ready 首帧之后才挂：刷新时页面可能已经在半路，先按位摆好再开过渡，不然会从头播一遍 */
   .hdr.ready{transition:--pf calc(var(--dur) * .5) cubic-bezier(.77,0,.175,1) calc(var(--dur) * .5),--ps var(--dur) cubic-bezier(.77,0,.175,1)}
   .hdr.ready.collapsed{transition:--pf calc(var(--dur) * .5) cubic-bezier(.77,0,.175,1) 0s,--ps var(--dur) cubic-bezier(.77,0,.175,1)}
   .hdr::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--color-border);opacity:0;transition:opacity var(--t) var(--ease-control)}
-  .hdr.stuck::after{opacity:1}
+  .hdr.collapsed::after{opacity:1}
   /* 高度恒定：sticky 元素自身高度一变整页内容就跟着挪 */
   .top{position:relative;display:flex;align-items:center;gap:30px;height:60px}
   /* 栏正中的图形 logo：平时不在；收拢时等导航滑拢了才从下面浮上来，展开时它先淡掉、不等导航 */

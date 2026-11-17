@@ -1,5 +1,4 @@
 {
-  "confirm": "Confirm",
   "cancel": "Cancel",
   "save": "Save",
   "delete": "Delete",
@@ -17,7 +16,6 @@
   "more": "More",
   "expand": "Expand",
   "collapse": "Collapse",
-  "settings": "Settings",
   "loading": "Loading",
   "loadFailed": "Failed to load",
   "noData": "No data",

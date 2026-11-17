@@ -50,6 +50,11 @@ export function toCents(p: number): number {
   return +(p * 100).toFixed(1);
 }
 
+/** 带正负号的数，零也带 +：+1,284.30 / -460.00。 */
+export function fmtSigned(n: number, decimals = 2): string {
+  return `${n >= 0 ? '+' : ''}${fmtNum(n, decimals)}`;
+}
+
 /** 带正负号的百分比：+28.41% / -1.02%。 */
 export function fmtSignedPct(n: number, decimals = 2): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(decimals)}%`;

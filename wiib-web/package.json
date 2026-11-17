@@ -15,7 +15,6 @@
     "@number-flow/react": "^0.6.2",
     "@stomp/stompjs": "^7.2.1",
     "axios": "^1.13.2",
-    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "country-flag-icons": "^1.6.20",
     "echarts": "^6.0.0",

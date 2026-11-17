@@ -58,11 +58,9 @@ export interface LwcTheme {
   fg: string;
   bg: string;
   mute: string;
-  border: string;
   gain: string;
   loss: string;
   warning: string;
-  primary: string;
   /** 三条线的固定配色：MA / EMA / RSI 三档按序取，DIF/DEA 取前两个 */
   col3: [string, string, string];
   /** 直接喂 createChart / applyOptions */
@@ -91,7 +89,7 @@ export function lwcTheme(): LwcTheme {
   // 十字线：两条浅灰线，轴上的标签是墨底；落在副图上时标签自动显示那个 pane 的值
   const cross = { color: line2, width: 1 as const, style: LineStyle.Solid, labelBackgroundColor: fg };
   return {
-    fg, bg, mute, border, gain, loss, warning, primary,
+    fg, bg, mute, gain, loss, warning,
     col3: [primary, info, '#7c5cff'],
     options: {
       layout: {

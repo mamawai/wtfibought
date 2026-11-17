@@ -6,7 +6,6 @@
     "config": "Config",
     "arena": "AI Arena",
     "ranking": "Ranks",
-    "testnet": "Testnet",
     "strategies": "Strategies",
     "backtest": "Backtest",
     "alpha": "Alpha",
@@ -45,8 +44,5 @@
     "next": "Next",
     "done": "Done"
   },
-  "helpTip": "Help",
-  "toast": {
-    "close": "Close notification"
-  }
+  "helpTip": "Help"
 }

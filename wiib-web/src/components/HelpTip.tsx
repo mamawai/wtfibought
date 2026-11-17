@@ -8,9 +8,7 @@ import './HelpTip.css';
 /**
  * 说明小问号：鼠标停上去 80ms 后出墨色气泡、移开就收；触屏和键盘点一下开、点外面收（样式见 HelpTip.css）。
  *
- * 气泡走 portal 挂到 body + position:fixed：absolute 定位在图标里的话，
- * 图标一靠近屏幕边缘气泡就溢出屏幕（手机上几乎必现），外层只要有 overflow:hidden 还会被整块裁掉。
- * 现在由 useAnchoredPosition 按实测位置钳进视口。气泡默认在上方，放不下会自动翻面。
+ * 气泡走 portal 挂到 body + position:fixed，由 useAnchoredPosition 按实测位置钳进视口。气泡默认在上方，放不下会自动翻面。
  */
 export function HelpTip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -26,7 +24,7 @@ export function HelpTip({ text }: { text: string }) {
 
   useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
 
-  // 点击外部 / Esc 关闭。气泡在 body 上，不能靠祖先节点判断"外部"，改用两个 ref 各判一次
+  // 点击外部 / Esc 关闭。气泡在 body 上，不能靠祖先节点判断"外部"，锚点和气泡各判一次
   useEffect(() => {
     if (!open) {
       return;

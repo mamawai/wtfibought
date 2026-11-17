@@ -70,7 +70,7 @@
         if (pwa) document.documentElement.classList.add('pwa');
 
         // 状态栏色：App 内跟顶栏同色才不割裂；浏览器里维持品牌橙。
-        // 放这儿是因为晚到 React 挂载会先闪一下旧色。取值须同 index.css 的 --color-card
+        // 放这儿是因为晚到 React 挂载会先闪一下旧色。取值须同 index.css 的 --color-background
         if (pwa) {
           document.querySelector('meta[name="theme-color"]')
             .setAttribute('content', dark ? '#0c0c0d' : '#ffffff');
