@@ -102,7 +102,8 @@ export function RangeRail({ values, onChange, pos, val, step, ticks, marks, wrap
         ))}
         {values.map((v, i) => (
           <i key={i} className={cn('kn', drag === i && 'drag')} data-i={i} tabIndex={0} role="slider"
-             aria-label={labels[i]} aria-valuenow={v} aria-valuetext={text(v)} style={{ left: `${pos(v) * 100}%` }}
+             aria-label={labels[i]} aria-valuenow={v} aria-valuemin={val(0)} aria-valuemax={val(1)} aria-valuetext={text(v)}
+             style={{ left: `${pos(v) * 100}%` }}
              onKeyDown={e => { const nv = keyStep(e, v, step); if (nv != null) put(i, nv); }} />
         ))}
       </div>
@@ -112,7 +113,7 @@ export function RangeRail({ values, onChange, pos, val, step, ticks, marks, wrap
 }
 
 /**
- * 单头滑杆（保证金上限、警报系数；样式见 MyTrader.css .sl）：旋钮跟手不加缓动；底下的刻度能点，点了滑过去。
+ * 单头滑杆（保证金上限、警报系数；样式见 MyTrader.css .msl）：旋钮跟手不加缓动；底下的刻度能点，点了滑过去。
  * 刻度在尺上等距排，段内线性取值
  */
 export function Slider({ nodes, value, onChange, snap, step, tick, label, text, disabled }: {
@@ -144,10 +145,11 @@ export function Slider({ nodes, value, onChange, snap, step, tick, label, text, 
   };
   const p = posOf(value, nodes) * 100;
   return (
-    <div className={cn('sl', drag && 'drag', glide && 'glide', disabled && 'off')}>
+    <div className={cn('msl', drag && 'drag', glide && 'glide', disabled && 'off')}>
       <div className="rail">
         <i className="fi" style={{ width: `${p}%` }} />
         <i className="kn" tabIndex={disabled ? -1 : 0} role="slider" aria-label={label} aria-valuenow={value}
+           aria-valuemin={nodes[0]} aria-valuemax={nodes[nodes.length - 1]}
            aria-valuetext={text(value)} aria-disabled={disabled} style={{ left: `${p}%` }}
            onKeyDown={e => { const nv = keyStep(e, value, step); if (nv != null) set(nv, false); }} />
         <div className="hit"

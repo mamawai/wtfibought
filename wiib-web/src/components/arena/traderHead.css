@@ -1,0 +1,18 @@
+/* trader 两页的页头（工作台 ArenaDetail、配置台 MyTrader 共用）：左边返回链接 + 名字那一块各页自己排，右边本局收益大数 + 权益一行 */
+@layer components {
+  .trhd{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 32px;padding-top:28px}
+  .trhd .back{display:inline-flex;align-items:center;gap:3px;margin-bottom:12px;font-size:13px;color:var(--color-muted-foreground);transition:color var(--t) var(--ease-control)}
+  .trhd .back .ic{width:14px;height:14px}
+  /* 右边的本局收益：大数的字号各页自己定 */
+  .trhd .pnl{text-align:right}
+  .trhd .pnl .big i{color:inherit;opacity:.5}
+  .trhd .pnl .sub{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:4px 14px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .trhd .pnl .sub b{font-size:15px;font-weight:500;color:var(--color-foreground)}
+  @media (hover:hover){.trhd .back:hover{color:var(--color-foreground)}}
+  @media (max-width:760px){
+    .trhd{padding-top:18px}
+    .trhd .pnl{text-align:left}
+    .trhd .pnl .sub{justify-content:flex-start}
+  }
+  @media (prefers-reduced-motion:reduce){.trhd .back{transition:none}}
+}

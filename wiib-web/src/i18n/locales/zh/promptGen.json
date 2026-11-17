@@ -29,6 +29,7 @@
   "railLive_other": "正在看你的交易数据 · {{count}} 项",
   "railDone_other": "看了 {{count}} 项交易数据",
   "dialog": "对话",
+  "paneSwitch": "看对话还是正文",
   "recommended": "推荐",
   "required": "必答",
   "typeHint": "选一项提交，或在下面输入框里自己写",

@@ -105,7 +105,6 @@
     "noDecisionsDay": "这天没有决策",
     "loadMore": "加载更早",
     "round": "局次",
-    "initialLabel": "初始 10,000",
     "allDayWake": "全天唤醒",
     "notesTitle": "笔记",
     "memoryShort": "经验账本",
@@ -197,7 +196,6 @@
       "rejected": "被拒绝",
       "not_attempted": "未下单"
     },
-    "setAt": "{{time}} 立",
     "revisions_other": "修订 {{count}} 次"
   },
   "trade": {
@@ -826,9 +824,9 @@
     "setDefault": "设为默认",
     "setDefaultTitle": "设为默认：没按用途指定的地方都用它",
     "firstIsDefault": "第一条会自动成为默认",
-    "removeConfirm": "删除端点「{{name}}」（{{model}}）？{{warn}}",
+    "removeConfirm": "删除端点「{{name}}」（{{model}}）？",
     "removeSure": "确认删除",
-    "removeWarn": "\n正在被 {{used}} 使用，删除后这些用途回落到默认端点。",
+    "removeWarn": "正在被 {{used}} 使用，删除后这些用途回落到默认端点。",
     "bindTitle": "谁用哪条",
     "usageChat": "对话·主模型",
     "usageChatLight": "对话·轻模型",
@@ -888,8 +886,6 @@
     "selectEmpty": "还没有可用的模型端点，<0>去 AI 页模型配置里添加</0>"
   },
   "toast": {
-    "analyzeDone": "分析完成",
-    "analyzeFailed": "分析失败",
     "actionFailed": "操作失败",
     "started": "已启动，下一根K线开始唤醒",
     "reset": "已重置开新一局",

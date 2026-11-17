@@ -12,6 +12,8 @@ const FLUSH_MS = 650;
 const STALL_MS = 1200;
 /** 最近放出来的几段一直包着：弹出动画 0.28 秒，出字再快也不会有段还没弹完就被拆包 */
 const KEEP_CHUNKS = 3;
+/** 弹出动画多长（StreamText.css 的 wiib-pop-rise） */
+const POP_MS = 280;
 
 const HARD_STOPS = '。！？!?；;\n';
 const SOFT_STOPS = '，、：';
@@ -77,6 +79,13 @@ export function useStreamReveal(ref: RefObject<HTMLElement | null>, content: str
       el.classList.remove('stall');
     };
   }, [ref, content, streaming]);
+
+  // 流停了、最后一段弹完就拆包：一直包着的话，祖先藏起来再显示时会再弹一次
+  useEffect(() => {
+    if (streaming || rel.chunks.length === 0) return;
+    const timer = window.setTimeout(() => setRel(r => ({ ...r, chunks: [] })), POP_MS);
+    return () => window.clearTimeout(timer);
+  }, [streaming, rel.chunks]);
 
   return { text: content.slice(0, rel.shown), chunks: rel.chunks };
 }

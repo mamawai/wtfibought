@@ -108,7 +108,6 @@
     "noDecisionsDay": "No decisions on this day",
     "loadMore": "Load earlier",
     "round": "Round",
-    "initialLabel": "starts at 10,000",
     "allDayWake": "wakes all day",
     "notesTitle": "Notes",
     "memoryShort": "Ledger",
@@ -202,7 +201,6 @@
       "rejected": "Rejected",
       "not_attempted": "Not submitted"
     },
-    "setAt": "set {{time}}",
     "revisions_one": "revised once",
     "revisions_other": "revised {{count}}×"
   },
@@ -850,9 +848,9 @@
     "setDefault": "Set as default",
     "setDefaultTitle": "Set as default: used wherever nothing is bound",
     "firstIsDefault": "The first one becomes the default automatically",
-    "removeConfirm": "Delete the endpoint “{{name}}” ({{model}})?{{warn}}",
+    "removeConfirm": "Delete the endpoint “{{name}}” ({{model}})?",
     "removeSure": "Confirm delete",
-    "removeWarn": "\nIt is in use by {{used}}; after deletion those purposes fall back to the default endpoint.",
+    "removeWarn": "It is in use by {{used}}; after deletion those purposes fall back to the default endpoint.",
     "bindTitle": "Who uses which",
     "usageChat": "Chat · main",
     "usageChatLight": "Chat · light",
@@ -913,8 +911,6 @@
     "selectEmpty": "No model endpoint yet — <0>add one under Model config on the AI page</0>"
   },
   "toast": {
-    "analyzeDone": "Analysis done",
-    "analyzeFailed": "Analysis failed",
     "actionFailed": "Action failed",
     "started": "Started — it wakes on the next candle",
     "reset": "Reset, new round started",

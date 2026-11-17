@@ -111,8 +111,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), M
 /**
  * 全站悬浮对话入口（Layout 挂载，登录后可见）：可拖的悬浮球 + PC 浮窗 / 移动端全屏层。
  * <p>
- * <b>球</b>：橙色小球 + 白色四角星。按住拖走，松手吸最近的左右边（竖向随手停），位置记 localStorage；
- * 呼吸、眨星、研判中的转弧、未读的脉冲环和弹跳都是纯 CSS（见 index.css 的 .polaris-ball）。
+ * <b>球</b>：橙色小球，脸上两只白眼睛。按住拖走，松手吸最近的左右边（竖向随手停），位置记 localStorage；
+ * 眼睛跟着鼠标看、隔几秒眨一下（见 useBallFace），呼吸、研判中的转弧、未读的脉冲环和弹跳是 CSS（见 index.css 的 .polaris-ball）。
  * 开着面板时球收起来——它能停在任意高度，而面板锚点固定，两者重叠时球会盖住面板的按钮。
  * <p>
  * <b>面板</b>：跟着球换边（球在左就从左下角长出来），拖拽把手在外侧边缘、增量方向随之镜像，
@@ -182,7 +182,6 @@ export function ChatDock() {
   const dockRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const ballBtnRef = useRef<HTMLButtonElement>(null);
-  useBallFace(ballBtnRef, unread);
   // 全屏 = 铺满浏览器视口的一个 fixed 层，不走原生 Fullscreen API：那个连地址栏、标签栏一起吃掉，
   // 整块屏幕只剩对话，跟"一边看盘一边问"是反着的。K 线那边仍用原生（看图本来就该独占屏幕）
   const [fullscreen, setFullscreen] = useState(false);
@@ -426,6 +425,7 @@ export function ChatDock() {
     ? ballDrag.y
     : clamp(bounds.minY + ball.yRatio * (bounds.maxY - bounds.minY), bounds.minY, bounds.maxY);
   const dragging = ballDrag != null;
+  useBallFace(ballBtnRef, unread, present, ballX + bounds.size / 2, ballY + bounds.size / 2);
 
   return (
     <>
@@ -475,7 +475,7 @@ export function ChatDock() {
           present && !canAnimateDock() && 'invisible',
         )}
       >
-        {/* 研判中：一道白弧沿球的内沿转。inset-[3px] 让环带贴在内沿，压在星下面不挡它 */}
+        {/* 研判中：一道白弧沿球的内沿转。inset-[3px] 让环带贴在内沿，压在眼睛下面不挡它 */}
         {loading && (
           <span aria-hidden className="absolute inset-[3px] rounded-full pointer-events-none wiib-ball-sweep" />
         )}

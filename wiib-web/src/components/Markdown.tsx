@@ -107,7 +107,8 @@ interface HastNode {
 /**
  * 把落在 chunks 里的文字包进行内元素 <wiib-pop-{seq} class="pop">，流式正文靠它让刚放出来的一段弹出来（见 StreamText）。
  * 标签名带段号：同一段在重渲染之间是同一个元素，动画不会被打断；新的一段是新元素，动画从头播。
- * 只认带源文位置的文字节点（行内代码里的字没有位置，不包）；转义、实体让长度对不上的，整个节点一起包
+ * 只包字数跟源文位置对得上的文字节点；对不上的不包，直接出：转义、实体、行内代码（位置连着反引号）、
+ * 多行引用和列表的续行（位置里夹着 > 和缩进）
  */
 function rehypePop(chunks: PopChunk[]) {
   const wrap = (chunk: PopChunk, value: string): HastNode => ({
@@ -116,10 +117,9 @@ function rehypePop(chunks: PopChunk[]) {
   });
   const split = (node: HastNode): HastNode[] => {
     const start = node.position?.start.offset, end = node.position?.end.offset, value = node.value ?? '';
-    if (start == null || end == null) return [node];
+    if (start == null || end == null || value.length !== end - start) return [node];
     const hits = chunks.filter(c => c.from < end && c.to > start);
     if (hits.length === 0) return [node];
-    if (value.length !== end - start) return [wrap(hits[hits.length - 1], value)];
     const out: HastNode[] = [];
     let cursor = start;
     for (const c of hits) {

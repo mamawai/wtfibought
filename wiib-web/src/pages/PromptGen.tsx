@@ -171,10 +171,12 @@ export function PromptGen() {
     return () => window.clearInterval(timer);
   }, [background, apply]);
 
-  // 对话往下长时跟到底
+  // 对话往下长时跟到底：盯着每一行的高度，agent 说的话是 StreamText 自己一段段放出来的，不经过这里重渲染
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el && stuckRef.current) el.scrollTop = el.scrollHeight;
+    const el = scrollRef.current!;
+    const ro = new ResizeObserver(() => { if (stuckRef.current) el.scrollTop = el.scrollHeight; });
+    for (const child of el.children) ro.observe(child);
+    return () => ro.disconnect();
   }, [view, live, sent, busy, restarting]);
   const onEvent = useCallback((e: PromptGenEvent) => {
     switch (e.type) {
@@ -300,7 +302,6 @@ export function PromptGen() {
   const say = (text: string, restore: () => void) => reply({ text }, text, restore);
 
   const continueFrom = (no: number) => {
-    if (busy) return;
     promptGenApi.rollback(no)
       .then(v => {
         apply(v);
@@ -482,7 +483,7 @@ export function PromptGen() {
           <span className={cn('stg', busy && 'on', stageKey === 'done' && 'ok')}><i /><span>{t(`stage.${stageKey}`)}</span></span>
         </div>
 
-        <Seg className="mtabs" value={tab} onChange={setTab} label={t('body')} options={[
+        <Seg className="mtabs" value={tab} onChange={setTab} label={t('paneSwitch')} options={[
           { value: 'chat', label: t('dialog') },
           { value: 'doc', label: <>{t('body')}{draft != null && <i className="pd" />}</> },
         ]} />
@@ -527,9 +528,10 @@ export function PromptGen() {
                 <>
                   <div className="dh">
                     <b>{t('versions')}</b>
+                    {/* 写新一版时点不动、也不亮哪一版：正文是正在写的那版 */}
                     {versions.length > 0 && shownNo != null && (
-                      <Seg value={String(shownNo)} onChange={v => setViewing(Number(v))} label={t('versions')}
-                           options={versions.map(v => ({
+                      <Seg value={draft != null ? '' : String(shownNo)} disabled={draft != null} onChange={v => setViewing(Number(v))}
+                           label={t('versions')} options={versions.map(v => ({
                              value: String(v.no),
                              label: <>{t('version', { no: v.no })}{v.no === view?.currentNo && <i className="cur" />}</>,
                            }))} />

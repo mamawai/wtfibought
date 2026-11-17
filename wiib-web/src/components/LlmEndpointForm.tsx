@@ -79,6 +79,8 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
   // 不走调用方的通用 run() 包装：检测不能触发页面重载，
   // 否则会用库里旧配置冲掉表单里未保存的 baseUrl/key
   const detect = async () => {
+    // 转圈的钮键盘还按得动
+    if (detecting) return;
     setDetecting(true);
     try {
       setModels(await onDetect());
@@ -91,6 +93,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
 
   // 测试连通性按钮：没勾联网搜索的保存不发上游请求，想验通不通就点这里；失败的原话另弹一条
   const test = async () => {
+    if (testing) return;
     setTesting(true);
     try {
       await onTest();
@@ -103,11 +106,16 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
     }
   };
 
-  // 换了协议，之前的检测和测试结果都不作数
+  // 后端测连通性看的几项（协议、地址、key、模型、档位、联网搜索、Antigravity）改了，上次的测试结果不作数
+  const setProbed = (patch: Partial<LlmEndpointValue>) => {
+    setTested(null);
+    onChange(patch);
+  };
+
+  // 换了协议，之前的检测结果也不作数
   const setProtocol = (p: string) => {
     setModels(null);
-    setTested(null);
-    onChange({ apiProtocol: p });
+    setProbed({ apiProtocol: p });
   };
 
   const searchable = SEARCHABLE.has(value.apiProtocol);
@@ -131,14 +139,14 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
       <div className="fld w2">
         <label className="fl" htmlFor={`${uid}url`}>{t('endpoint.baseUrl')}</label>
         <label className="inp">
-          <input id={`${uid}url`} value={value.baseUrl} onChange={e => onChange({ baseUrl: e.target.value })}
+          <input id={`${uid}url`} value={value.baseUrl} onChange={e => setProbed({ baseUrl: e.target.value })}
                  placeholder={BASE_URL_PH[value.apiProtocol] ?? BASE_URL_PH.openai} autoComplete="off" spellCheck={false} />
         </label>
       </div>
       <div className="fld w2">
         <label className="fl" htmlFor={`${uid}key`}><span>API Key</span>{exists && <small>{t('endpoint.keyTail', { tail: keyTail })}</small>}</label>
         <label className="inp">
-          <input id={`${uid}key`} type="password" value={value.apiKey} onChange={e => onChange({ apiKey: e.target.value })} autoComplete="off"
+          <input id={`${uid}key`} type="password" value={value.apiKey} onChange={e => setProbed({ apiKey: e.target.value })} autoComplete="off"
                  placeholder={exists ? t('endpoint.keyPhExists') : t(platform ? 'endpoint.keyPhPlatform' : 'endpoint.keyPh')} />
         </label>
       </div>
@@ -146,7 +154,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
         <label className="fl" htmlFor={`${uid}model`}>{t('endpoint.model')}</label>
         <div className="mdl">
           <label className="inp">
-            <input id={`${uid}model`} value={value.model} onChange={e => onChange({ model: e.target.value })}
+            <input id={`${uid}model`} value={value.model} onChange={e => setProbed({ model: e.target.value })}
                    placeholder="deepseek-chat" autoComplete="off" spellCheck={false} />
           </label>
           <button type="button" className={cn('btn', detecting && 'busy')} onClick={() => void detect()} title={t('endpoint.detectTitle')}
@@ -158,7 +166,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
           <div className="det">
             <span>{models.length ? t('endpoint.detected', { count: models.length }) : t('endpoint.noModels')}</span>
             {hits.map(m => (
-              <button key={m} type="button" className="chip" aria-pressed={value.model === m} onClick={() => onChange({ model: m })}>{m}</button>
+              <button key={m} type="button" className="chip" aria-pressed={value.model === m} onClick={() => setProbed({ model: m })}>{m}</button>
             ))}
             {models.length > 0 && hits.length === 0 && <span>{t('endpoint.noMatch', { kw: value.model.trim() })}</span>}
           </div>
@@ -168,13 +176,13 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
         <label className="fl" htmlFor={`${uid}effort`}>{t('endpoint.effort')}</label>
         {/* 输入框是唯一真值，下面的小片只管往里填：各家档位名字自己定，写死五选一会挡住 xhigh 这类 */}
         <label className="inp">
-          <input id={`${uid}effort`} value={value.reasoningEffort} onChange={e => onChange({ reasoningEffort: e.target.value })}
+          <input id={`${uid}effort`} value={value.reasoningEffort} onChange={e => setProbed({ reasoningEffort: e.target.value })}
                  placeholder={t('endpoint.effortPh')} maxLength={16} autoComplete="off" />
         </label>
         <div className="chips">
           {EFFORT_PRESETS.map(o => (
             <button key={o.value} type="button" className="chip" aria-pressed={value.reasoningEffort === o.value}
-                    onClick={() => onChange({ reasoningEffort: o.value })}>
+                    onClick={() => setProbed({ reasoningEffort: o.value })}>
               {o.label ?? t('effort.default')}
             </button>
           ))}
@@ -183,13 +191,13 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
             传给不支持的模型各家表现不一致（有的忽略，OpenAI 官方直接 400），所以只能让用户自己试 */}
         <p className="hint">{t('endpoint.effortHint')}</p>
       </div>
-      {/* 上下文窗口：按 K 填、按 token 存；清空时存 0，交给后端报范围 */}
+      {/* 上下文窗口：按 K 填、按 token 存，只收数字和小数点；清空时存 0，交给后端报范围 */}
       {!platform && (
         <div className="fld">
           <label className="fl" htmlFor={`${uid}ctx`}>{t('endpoint.contextWindow')}</label>
           <label className="inp">
             <input id={`${uid}ctx`} inputMode="numeric" value={value.contextWindow ? value.contextWindow / 1000 : ''}
-                   onChange={e => onChange({ contextWindow: e.target.value === '' ? 0 : Math.round(Number(e.target.value) * 1000) })} />
+                   onChange={e => onChange({ contextWindow: Math.round((parseFloat(e.target.value.replace(/[^\d.]/g, '')) || 0) * 1000) })} />
             <span className="u">K</span>
           </label>
           <p className="hint">{t('endpoint.contextWindowHint')}</p>
@@ -200,7 +208,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
       {!platform && (
         <label className={cn('ck w2', !searchable && 'off')}>
           <input type="checkbox" checked={searchable && value.webSearch} disabled={!searchable}
-                 onChange={e => onChange({ webSearch: e.target.checked })} />
+                 onChange={e => setProbed({ webSearch: e.target.checked })} />
           <div>
             <b>{t('endpoint.webSearch')}</b>
             <span>{searchable ? t('endpoint.webSearchHint') : t('endpoint.webSearchOpenAiHint')}</span>
@@ -210,7 +218,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
       {/* Antigravity 来源：它不收搜索和本地工具在同一请求里，勾上后后端把搜索改成单独发一次只带搜索的请求 */}
       {!platform && value.apiProtocol === 'gemini' && value.webSearch && (
         <label className="ck w2">
-          <input type="checkbox" checked={value.antigravity} onChange={e => onChange({ antigravity: e.target.checked })} />
+          <input type="checkbox" checked={value.antigravity} onChange={e => setProbed({ antigravity: e.target.checked })} />
           <div><b>{t('endpoint.antigravity')}</b><span>{t('endpoint.antigravityHint')}</span></div>
         </label>
       )}

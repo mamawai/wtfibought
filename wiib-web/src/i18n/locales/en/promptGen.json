@@ -31,6 +31,7 @@
   "railDone_one": "Read {{count}} trading data source",
   "railDone_other": "Read {{count}} trading data sources",
   "dialog": "Conversation",
+  "paneSwitch": "Show the conversation or the instructions",
   "recommended": "Recommended",
   "required": "Required",
   "typeHint": "Pick one and submit, or type your own answer below",

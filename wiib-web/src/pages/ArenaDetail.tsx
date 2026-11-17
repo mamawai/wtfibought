@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Info, RefreshCw, SlidersHorizontal, TriangleAlert, X } from 'lucide-react';
@@ -13,6 +13,7 @@ import { EquityCurve, type CurveEvent } from '../components/arena/EquityCurve';
 import { HeartbeatStrip } from '../components/arena/HeartbeatStrip';
 import { Holdings, WatchList } from '../components/arena/HoldingsPanel';
 import { LiveRunCard } from '../components/arena/LiveRunCard';
+import { PnlPct } from '../components/arena/PnlPct';
 import { ScoreStrip } from '../components/arena/ScoreStrip';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { TradeCard } from '../components/arena/TradeCard';
@@ -20,6 +21,7 @@ import { doneTrades } from '../components/arena/traderTools';
 import { COIN_MAP, getCoin } from '../lib/coinConfig';
 import { cn, dayBounds, fmtDate, fmtDateTime, fmtNum, fmtTokens, parseServerTime, spinIcon, DAY_MS } from '../lib/utils';
 import type { AiTraderDecisionView, TradeDecisionRef, TradeRecordView, TraderDetailView, TraderEquityPoint } from '../types';
+import '../components/arena/traderHead.css';
 import './ArenaDetail.css';
 
 const REFRESH_MS = 60_000;
@@ -58,11 +60,23 @@ function mergeNewer(prev: AiTraderDecisionView[], page: AiTraderDecisionView[]):
   return fresh.length ? [...fresh, ...prev].sort((a, b) => b.wakeTime - a.wakeTime) : prev;
 }
 
-/** 笔记（经验账本）：一块浅灰，正文先露一截，底下渐隐，点「展开全文」铺开 */
+/** 笔记（经验账本）：一块浅灰，正文先露一截；比露出来的长才底下渐隐、出「展开全文」，点了铺开 */
 function NotesCard({ time, content }: { time: number | null | undefined; content: string | null | undefined }) {
   const { t } = useTranslation(['ai', 'common']);
   const [open, setOpen] = useState(false);
+  // 收着时正文有没有被截掉；栏宽变了会重新折行，跟着再量
+  const [long, setLong] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const text = content?.trim() || '';
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || open) return;
+    const measure = () => setLong(el.scrollHeight > el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, open]);
   return (
     <div className="blk">
       <div className="nt-h">
@@ -71,10 +85,12 @@ function NotesCard({ time, content }: { time: number | null | undefined; content
       </div>
       {text ? (
         <>
-          <div className={cn('nt-b', open && 'open')}><Markdown content={text} /></div>
-          <button type="button" className="linkb nt-more" onClick={() => setOpen(o => !o)}>
-            {open ? t('common:collapse') : t('detail.expandFull')}
-          </button>
+          <div ref={bodyRef} className={cn('nt-b', open && 'open', long && 'long')}><Markdown content={text} /></div>
+          {long && (
+            <button type="button" className="linkb nt-more" onClick={() => setOpen(o => !o)}>
+              {open ? t('common:collapse') : t('detail.expandFull')}
+            </button>
+          )}
         </>
       ) : <p className="nt-e">{t('detail.noMemory')}</p>}
     </div>
@@ -217,7 +233,8 @@ export function ArenaDetail() {
 
   const loadMore = useCallback(() => {
     const oldest = decisions[decisions.length - 1];
-    if (!oldest) return;
+    // 上一页还没回来就不再拉：转圈的钮键盘还按得动
+    if (!oldest || loadingMore) return;
     const key = timelineKey;
     const bounds = day ? dayBounds(day) : null;
     setLoadingMore(true);
@@ -228,7 +245,7 @@ export function ArenaDetail() {
         setHasMore(list.length >= PAGE);
       })
       .finally(() => setLoadingMore(false));
-  }, [traderId, decisions, round, day, timelineKey]);
+  }, [traderId, decisions, loadingMore, round, day, timelineKey]);
 
   const refresh = (e: MouseEvent<HTMLButtonElement>) => {
     spinIcon(e);
@@ -306,8 +323,6 @@ export function ArenaDetail() {
   // tr=这只 trader（不叫 t，那是词表查询函数）
   const tr = detail?.trader;
   const st = tr ? (STATUS_META[tr.status] ?? STATUS_META.PAUSED) : null;
-  // 收益率大数：小数位另起一截压淡
-  const [pctInt, pctDec] = Math.abs(tr?.pnlPct ?? 0).toFixed(2).split('.');
   // round=null 表示跟随当前局，落到显示时统一成具体数字
   const viewingRound = round ?? tr?.roundNo ?? 1;
   const viewingHistory = tr != null && viewingRound !== tr.roundNo;
@@ -333,7 +348,7 @@ export function ArenaDetail() {
   return (
     <div className="page-shell p-tw">
       {/* 页头：左名字 + 一行说明，右收益率大数 + 权益 + 局次 / 刷新 / 配置 */}
-      <div className="whd">
+      <div className="trhd">
         <div>
           <Link to="/arena" className="back"><ChevronLeft className="ic" />{t('term.backToArena')}</Link>
           <div className="nm">
@@ -362,13 +377,11 @@ export function ArenaDetail() {
           )}
         </div>
         {tr && (
-          <div className="px">
-            <b className={cn('big nf', tr.pnlPct >= 0 ? 'up' : 'dn')}>
-              {tr.pnlPct >= 0 ? '+' : '-'}{pctInt}<i>.{pctDec}%</i>
-            </b>
+          <div className="pnl">
+            <b className={cn('big nf', tr.pnlPct >= 0 ? 'up' : 'dn')}><PnlPct value={tr.pnlPct} /></b>
             <div className="sub">
               <span>{t('term.equity')} <b>{fmtNum(tr.equity)}</b></span>
-              <span>{t('detail.initialLabel')}</span>
+              <span>{t('arena.initial')}</span>
             </div>
             <div className="acts">
               {/* 局次：每局是独立子账户各自注资 10000，曲线与时间线同进同出；只有一局时不出现 */}

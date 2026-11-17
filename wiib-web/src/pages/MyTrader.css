@@ -1,9 +1,7 @@
 /* Trader 配置台：页头直接改名 → 心跳条 → 一排动作 → 左边分节索引 + 右边一节一节的表单 → 有改动才升起来的保存条 */
 @layer components {
   .p-mt{padding-bottom:96px}
-  .p-mt .mhd{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 32px;padding-top:28px}
-  .p-mt .back{display:inline-flex;align-items:center;gap:3px;margin-bottom:12px;font-size:13px;color:var(--color-muted-foreground);transition:color var(--t) var(--ease-control)}
-  .p-mt .back .ic{width:14px;height:14px}
+  /* 页头：跟工作台共用的那份在 components/arena/traderHead.css，这里只写这页自己的 */
   .p-mt .eye{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--color-muted-foreground)}
   .p-mt .nmrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:8px}
   /* 名字就是个输入框：平时看着像标题，指上去或点进去才露出底线；::after 放一份同样的字把框撑到字那么宽 */
@@ -15,11 +13,7 @@
   .p-mt .mname input:focus{border-color:var(--color-foreground)}
   .p-mt .meta{margin-top:10px;font-size:13.5px;color:var(--color-muted-foreground)}
   /* 右边的本局收益 */
-  .p-mt .pnl{text-align:right}
   .p-mt .pnl .big{font-size:clamp(40px,4.4vw,64px)}
-  .p-mt .pnl .big i{color:inherit;opacity:.5}
-  .p-mt .pnl .sub{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:4px 14px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
-  .p-mt .pnl .sub b{font-size:15px;font-weight:500;color:var(--color-foreground)}
   .p-mt .hb{margin-top:24px}
 
   /* ---- 动作一排 + 留言 ---- */
@@ -154,21 +148,21 @@
   .p-mt .rg .ticks span{position:absolute;top:4px;transform:translateX(-50%);white-space:nowrap}
   .p-mt .ruler{margin:38px 14px 0;padding-bottom:20px}
   /* 滑杆：旋钮跟手，不加缓动；点刻度才滑过去（.glide） */
-  .p-mt .sl{position:relative;padding:0 10px}
-  .p-mt .sl .rail{position:relative;height:24px}
-  .p-mt .sl .rail::before{content:"";position:absolute;left:-10px;right:-10px;top:10px;height:4px;border-radius:2px;background:var(--color-line2)}
-  .p-mt .sl .fi{position:absolute;left:-10px;top:10px;height:4px;border-radius:2px;background:var(--color-foreground);box-sizing:content-box;padding-right:10px}
-  .p-mt .sl .kn{position:absolute;top:2px;width:20px;height:20px;margin-left:-10px;border-radius:50%;background:#fff;box-shadow:var(--sh-knob);transition:transform var(--fast) var(--ease-control)}
-  .p-mt .sl .hit{position:absolute;inset:-4px -10px;cursor:grab;touch-action:none}
-  .p-mt .sl.drag .hit{cursor:grabbing}
-  .p-mt .sl.drag .kn{transform:scale(1.2)}
-  .p-mt .sl.glide .kn{transition:left var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
-  .p-mt .sl.glide .fi{transition:width var(--t) var(--ease-control)}
-  .p-mt .sl .ticks{position:relative;height:22px;font-size:11px;color:var(--color-faint)}
-  .p-mt .sl .ticks button{position:absolute;top:0;transform:translateX(-50%);min-width:24px;height:22px;border-radius:6px;transition:color var(--t) var(--ease-control)}
-  .p-mt .sl .ticks button[aria-pressed="true"]{color:var(--color-foreground);font-weight:600}
-  /* 点不动的时候不另外压淡：外面那块已经淡了 */
-  .p-mt .sl.off{opacity:1;pointer-events:none}
+  .p-mt .msl{position:relative;padding:0 10px}
+  .p-mt .msl .rail{position:relative;height:24px}
+  .p-mt .msl .rail::before{content:"";position:absolute;left:-10px;right:-10px;top:10px;height:4px;border-radius:2px;background:var(--color-line2)}
+  .p-mt .msl .fi{position:absolute;left:-10px;top:10px;height:4px;border-radius:2px;background:var(--color-foreground);box-sizing:content-box;padding-right:10px}
+  .p-mt .msl .kn{position:absolute;top:2px;width:20px;height:20px;margin-left:-10px;border-radius:50%;background:#fff;box-shadow:var(--sh-knob);transition:transform var(--fast) var(--ease-control)}
+  .p-mt .msl .hit{position:absolute;inset:-4px -10px;cursor:grab;touch-action:none}
+  .p-mt .msl.drag .hit{cursor:grabbing}
+  .p-mt .msl.drag .kn{transform:scale(1.2)}
+  .p-mt .msl.glide .kn{transition:left var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
+  .p-mt .msl.glide .fi{transition:width var(--t) var(--ease-control)}
+  .p-mt .msl .ticks{position:relative;height:22px;font-size:11px;color:var(--color-faint)}
+  .p-mt .msl .ticks button{position:absolute;top:0;transform:translateX(-50%);min-width:24px;height:22px;border-radius:6px;transition:color var(--t) var(--ease-control)}
+  .p-mt .msl .ticks button[aria-pressed="true"]{color:var(--color-foreground);font-weight:600}
+  /* 点不动时不接手势 */
+  .p-mt .msl.off{pointer-events:none}
 
   /* ---- 仓位规格 / 警报 ---- */
   .p-mt .two2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px 48px}
@@ -248,13 +242,12 @@
   .p-mt .msave .btn:disabled{opacity:.4}
 
   @media (hover:hover){
-    .p-mt .back:hover{color:var(--color-foreground)}
     .p-mt .mname input:hover:not(:focus){border-color:var(--color-line2)}
     .p-mt .midx a:hover{background:var(--color-fill);color:var(--color-foreground)}
     .p-mt .tile:hover:not(.locked){transform:translateY(-3px)}
     .p-mt .rg .kn:hover{transform:scale(1.1)}
-    .p-mt .sl:hover .kn{transform:scale(1.1)}
-    .p-mt .sl .ticks button:hover{color:var(--color-foreground)}
+    .p-mt .msl:hover .kn{transform:scale(1.1)}
+    .p-mt .msl .ticks button:hover{color:var(--color-foreground)}
     .p-mt .msave .btn.plain:hover:not(:disabled){background:color-mix(in srgb,var(--color-on-ink) 14%,transparent);opacity:1}
     .p-mt .msave .btn.go2:hover:not(:disabled){opacity:.88}
   }
@@ -273,10 +266,7 @@
   @media (max-width:767px){.p-mt .midx{margin:0 -16px;padding:8px 16px}}
   @media (max-width:760px){
     .p-mt{padding-bottom:160px}
-    .p-mt .mhd{padding-top:18px}
     .p-mt .mname::after,.p-mt .mname input{font-size:32px}
-    .p-mt .pnl{text-align:left}
-    .p-mt .pnl .sub{justify-content:flex-start}
     .p-mt .mnote{grid-template-columns:minmax(0,1fr)}
     .p-mt .steps3,.p-mt .two2,.p-mt .conseq,.p-mt .lhelp .two,.p-mt .lhelp .todo{grid-template-columns:minmax(0,1fr)}
     .p-mt .lhelp .flow{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -292,8 +282,8 @@
   }
   @media (prefers-reduced-motion:reduce){
     .p-mt .tile,.p-mt .tile *,.p-mt .wm b{transition:none!important;animation:none!important}
-    .p-mt .back,.p-mt .mname input,.p-mt .midx a,.p-mt .midx a i,.p-mt .sw-row,.p-mt .rg .kn,.p-mt .sl .kn,
-    .p-mt .sl.glide .kn,.p-mt .sl.glide .fi,.p-mt .sl .ticks button,.p-mt .asub,.p-mt .meter i b,.p-mt .pv-h .chev,.p-mt .pips i,
+    .p-mt .mname input,.p-mt .midx a,.p-mt .midx a i,.p-mt .sw-row,.p-mt .rg .kn,.p-mt .msl .kn,
+    .p-mt .msl.glide .kn,.p-mt .msl.glide .fi,.p-mt .msl .ticks button,.p-mt .asub,.p-mt .meter i b,.p-mt .pv-h .chev,.p-mt .pips i,
     .p-mt .hold::before,.p-mt .hold > span,.p-mt .msave{transition:none}
     .p-mt .macts .seg button i.on,.p-mt .pv-l.flash,.p-mt .pv-l.flash2{animation:none}
   }

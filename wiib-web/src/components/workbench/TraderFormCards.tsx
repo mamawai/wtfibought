@@ -176,7 +176,7 @@ export function TraderFormCard({ form, prefill, status, result, onSettle, onCanc
       {error && <p className="err">{error}</p>}
       <div className="f">
         {/* 撤回只在真有未读留言时露出：没留言可撤，按钮点了也是空操作 */}
-        {form === 'note' && hasNote && !noTrader && (
+        {form === 'note' && hasNote && (
           <button type="button" className={cn('btn plain', busy === 'clear' && 'busy')} disabled={submitting}
                   onClick={() => submit('clear', () => traderApi.clearNote())}>
             <span>{t('card.clear')}</span>

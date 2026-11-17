@@ -1,6 +1,7 @@
 /* 对话输入区：快捷提问一排 → 一块浅灰输入框（左「+」菜单、右发送 / 停止）→ 一行小字（提示、上下文用量、状态） */
 @layer components {
-  .ccomp{position:relative;flex:none;padding:6px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+  /* 底边留白：手机上面板整屏，跟底部横条取大的那个 */
+  .ccomp{position:relative;flex:none;padding:6px 12px max(10px,env(safe-area-inset-bottom,0px))}
   /* 快捷提问：空会话才有，末尾一支铅笔是编辑入口 */
   .csug{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:0 2px 8px}
   .csug .chip{height:auto;min-height:28px;padding:5px 11px;background:var(--color-fill);white-space:normal;text-align:left}
@@ -45,12 +46,14 @@
   .cedit .f{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
   .cedit .f .sp{flex:1}
 
+  /* ≥768 固定 10px：浮窗不贴底，不用让横条 */
+  @media (min-width:768px){.ccomp{padding-bottom:10px}}
   @media (hover:hover){
     .csug .pen:hover{background:var(--color-fill);color:var(--color-foreground)}
     .crow .mb:hover{background:var(--color-fill2);color:var(--color-foreground)}
   }
   @media (prefers-reduced-motion:reduce){
     .cbox,.crow .mb,.csend,.csug .pen{transition:none}
-    .crow .menu,.cfoot .st i{animation:none}
+    .cfoot .st i{animation:none}
   }
 }

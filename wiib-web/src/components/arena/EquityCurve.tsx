@@ -32,7 +32,7 @@ function nearestPoint(points: TraderEquityPoint[], at: number): number {
 const pct = (y: number) => `${y / H * 100}%`;
 
 /**
- * 净值曲线（样式见 ArenaDetail.css .cv）：初始资金画一条虚线，末值在它之上整条线绿、之下红，往虚线方向渐隐。
+ * 净值曲线（样式见 ArenaDetail.css .cv）：初始资金画一条虚线，末值在它之上整条线绿、之下红；曲线和虚线之间铺一层同色，往虚线方向渐隐。
  * 上面一行读数（默认最后一个点，指到哪个点读哪个，左右方向键也能逐点走），底下首 / 中 / 末三个时刻。
  * 点是每次醒来记一次，横轴按点等距（跟后端落点一一对应），不是按时间。至少两个点才画
  */
@@ -76,6 +76,7 @@ export function EquityCurve({ points, events = NO_EVENTS, base = BASE_EQUITY }: 
   const p = points[h ?? n - 1];
   const diff = p.equity - base;
   const hovered = h != null ? v.at.get(h) : undefined;
+  const up = points[n - 1].equity >= base;
 
   const move = (e: PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -98,11 +99,12 @@ export function EquityCurve({ points, events = NO_EVENTS, base = BASE_EQUITY }: 
         </span>
         {hovered && <span><b>{hovered.map(e => e.text).join(' · ')}</b></span>}
       </div>
-      <div className={cn('cv', points[n - 1].equity >= base ? 'up' : 'dn')} tabIndex={0} role="img" aria-label={t('detail.curveAria')}
+      <div className={cn('cv', up ? 'up' : 'dn')} tabIndex={0} role="img" aria-label={t('detail.curveAria')}
            onPointerMove={move} onPointerLeave={() => setHover(null)} onKeyDown={step} onBlur={() => setHover(null)}>
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
           <defs>
-            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            {/* 浓的一头贴着曲线：亏的时候曲线在虚线下面，上下对调 */}
+            <linearGradient id={gid} x1="0" y1={up ? 0 : 1} x2="0" y2={up ? 1 : 0}>
               <stop offset="0" stopColor="currentColor" stopOpacity=".14" />
               <stop offset="1" stopColor="currentColor" stopOpacity="0" />
             </linearGradient>

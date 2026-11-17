@@ -10,9 +10,9 @@
   /* 现在在干什么：干活时一颗闪着的橙点，写完了绿点 */
   .p-pg .stg{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--color-muted-foreground)}
   .p-pg .stg i{width:6px;height:6px;border-radius:50%;background:var(--color-line2)}
-  .p-pg .stg.on i,.p-pg .pd{background:var(--color-primary);animation:wiib-blink 1.2s ease-in-out infinite}
+  .p-pg .stg.on i,.p-pg .mtabs .pd{background:var(--color-primary);animation:wiib-blink 1.2s ease-in-out infinite}
   .p-pg .stg.ok i{background:var(--color-gain)}
-  .p-pg .pd{display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;vertical-align:2px}
+  .p-pg .mtabs .pd{display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;vertical-align:2px}
   .p-pg .mtabs{display:none;margin-top:16px}
   .p-pg .ws{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:32px;height:calc(100vh - 348px);min-height:480px;margin-top:22px}
   .p-pg .pane{display:flex;flex-direction:column;min-width:0;min-height:0}
@@ -78,7 +78,7 @@
     .p-pg .doc{padding:16px}
   }
   @media (prefers-reduced-motion:reduce){
-    .p-pg .stg.on i,.p-pg .pd{animation:none}
+    .p-pg .stg.on i,.p-pg .mtabs .pd{animation:none}
     .p-pg .back,.p-pg .qc .opt,.p-pg .qc .opt > i,.p-pg .qc .opt > i::after,.p-pg button.tag{transition:none}
   }
 }

@@ -9,6 +9,7 @@ import { llmEndpointApi, traderApi } from '../api';
 import { CoinStage } from '../components/arena/CoinStage';
 import { ExperienceLedgerSection } from '../components/arena/ExperienceLedgerSection';
 import { HeartbeatStrip } from '../components/arena/HeartbeatStrip';
+import { PnlPct } from '../components/arena/PnlPct';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { RangeRail, Slider, SwitchRow, WakeRuler } from '../components/arena/TraderControls';
 import {
@@ -28,6 +29,7 @@ import { cn, fmtNum } from '../lib/utils';
 import type {
   LlmEndpointView, TraderActionPanel, TraderActionResult, TraderOwnerView, TraderSpec, TraderUpsertRequest,
 } from '../types';
+import '../components/arena/traderHead.css';
 import './MyTrader.css';
 
 const TOUR_SEEN_KEY = 'wiib-trader-tour-seen';
@@ -334,14 +336,13 @@ export function MyTrader() {
     }
     setNoteOpen(o => !o);
   };
-  const [pctInt, pctDec] = Math.abs(mine?.pub.pnlPct ?? 0).toFixed(2).split('.');
 
   return (
     <div className="page-shell p-mt">
       <GuidedTour steps={tourSteps} open={tour} onClose={closeTour} />
 
       {/* 页头：名字就是个输入框，直接点着改；右边是本局收益 */}
-      <section id={secId('name')} className="mhd">
+      <section id={secId('name')} className="trhd">
         <div className="min-w-0">
           <Link to="/arena" className="back"><ChevronLeft className="ic" />{t('term.backToArena')}</Link>
           <div className="eye">{exists ? t('my.hero.eyebrow') : t('my.hero.eyebrowNew')}</div>
@@ -367,8 +368,8 @@ export function MyTrader() {
         </div>
         {exists ? (
           <div className="pnl">
-            <b className={cn('big nf', mine.pub.pnlPct >= 0 ? 'up' : 'dn')}>{mine.pub.pnlPct >= 0 ? '+' : '-'}{pctInt}<i>.{pctDec}%</i></b>
-            <div className="sub"><span>{t('term.equity')} <b>{fmtNum(mine.pub.equity)}</b></span><span>{t('detail.initialLabel')}</span></div>
+            <b className={cn('big nf', mine.pub.pnlPct >= 0 ? 'up' : 'dn')}><PnlPct value={mine.pub.pnlPct} /></b>
+            <div className="sub"><span>{t('term.equity')} <b>{fmtNum(mine.pub.equity)}</b></span><span>{t('arena.initial')}</span></div>
           </div>
         ) : (
           <button type="button" className="btn plain" onClick={() => setTour(true)}><CircleHelp className="ic" />{t('trader.tourBtn')}</button>

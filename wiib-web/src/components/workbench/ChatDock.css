@@ -23,6 +23,8 @@
   .cwrap{position:relative;flex:1;display:flex;flex-direction:column;min-height:0}
   .cmsgs{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:18px;padding:8px 16px 16px;overscroll-behavior:contain}
   .cdock.full .cmsgs > *,.cdock.full .ccomp > *{width:100%;max-width:760px;margin-inline:auto}
+  /* 编辑卡是绝对定位、左右已经贴住，宽度不另给，只跟输入框一样限宽居中 */
+  .cdock.full .ccomp > .cedit{width:auto}
   /* 空会话 / 还没配模型 / 读配置中 */
   .cempty{display:flex;flex-direction:column;align-items:center;gap:8px;margin:auto;padding:24px 12px;text-align:center}
   .cempty .cface{width:44px;height:44px;margin-bottom:8px}

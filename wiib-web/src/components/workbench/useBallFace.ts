@@ -1,4 +1,5 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
+import { REDUCED_MOTION } from '../../lib/motion';
 
 /** 眼睛最多偏这么多 px */
 const MAX_EYE = 3.2;
@@ -6,18 +7,22 @@ const MAX_EYE = 3.2;
 const NEAR_PX = 110;
 /** 答案到了笑这么久 */
 const HAPPY_MS = 2200;
-const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
  * 悬浮球的脸：眼睛跟着鼠标看，隔几秒眨一下，鼠标停久了自己回正、偶尔朝别处瞥一眼；answered 一挂上笑两秒。
- * 研判中（data-busy）这些都让开，由 CSS 接管成"往上看着想"。
+ * 研判中（data-busy）这些都让开，由 CSS 接管成"往上看着想"；hidden（面板开着，球收起来了）时全停。
+ * cx/cy 是球心，ChatDock 算好传进来（拖着跟手、吸边、窗口变了都是它算的）。
  * 全部直接改 DOM（--ex/--ey 两个变量和 blink / near / happy 三个类），不走 React 渲染。
  */
-export function useBallFace(ref: RefObject<HTMLButtonElement | null>, answered: boolean) {
+export function useBallFace(ref: RefObject<HTMLButtonElement | null>, answered: boolean, hidden: boolean, cx: number, cy: number) {
+  // 球心存一份给 pointermove 用
+  const center = useRef({ x: cx, y: cy });
+  useEffect(() => { center.current = { x: cx, y: cy }; }, [cx, cy]);
+
   useEffect(() => {
     const ball = ref.current;
     const face = ball?.querySelector<HTMLElement>('.face');
-    if (!ball || !face || REDUCED) return;
+    if (!ball || !face || REDUCED_MOTION || hidden) return;
     const busy = () => ball.dataset.busy === 'true';
 
     // ex/ey 眼睛现在偏到哪，tx/ty 要去哪
@@ -33,8 +38,7 @@ export function useBallFace(ref: RefObject<HTMLButtonElement | null>, answered: 
 
     const onMove = (e: PointerEvent) => {
       lastMove = performance.now();
-      const r = ball.getBoundingClientRect();
-      const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+      const dx = e.clientX - center.current.x, dy = e.clientY - center.current.y;
       // 越远偏得越多，200px 外到顶
       const d = Math.hypot(dx, dy) || 1, k = Math.min(1, d / 200);
       tx = dx / d * MAX_EYE * k;
@@ -84,11 +88,11 @@ export function useBallFace(ref: RefObject<HTMLButtonElement | null>, answered: 
       cancelAnimationFrame(raf);
       ball.classList.remove('blink', 'near');
     };
-  }, [ref]);
+  }, [ref, hidden]);
 
   useEffect(() => {
     const ball = ref.current;
-    if (!ball || !answered || REDUCED) return;
+    if (!ball || !answered || REDUCED_MOTION) return;
     ball.classList.add('happy');
     const timer = window.setTimeout(() => ball.classList.remove('happy'), HAPPY_MS);
     return () => { window.clearTimeout(timer); ball.classList.remove('happy'); };

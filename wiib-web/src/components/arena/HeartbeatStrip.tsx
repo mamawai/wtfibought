@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { traderApi } from '../../api';
-import { cn, fmtDate, fmtDateTime, fmtTime } from '../../lib/utils';
+import { fmtDate, fmtDateTime, fmtTime } from '../../lib/utils';
 import type { AiTraderDecisionView } from '../../types';
 import { beatsPerDay, INTERVAL_MIN, minToHm, parseWindow } from './traderConfig';
 import { doneTrades, toolName } from './traderTools';
@@ -12,7 +12,7 @@ import './HeartbeatStrip.css';
  * 心跳条（配置台和工作台共用，样式见 HeartbeatStrip.css）：心跳档位 / 下次心跳倒计时 / 上次醒来干了什么 / 第四格由页面给。
  * 下次心跳底下一根细线是这一拍走到哪了。秒级倒计时只在这里面走，不带着整页每秒重渲染。refreshKey 一变就重拉「上次醒来」
  */
-export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, idleText, nextWakeAt, mine, live = false, refreshKey, extra, className }: {
+export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, idleText, nextWakeAt, mine, live = false, refreshKey, extra }: {
   traderId: number;
   intervalCode: string;
   wakeWindow: string | null;
@@ -27,7 +27,6 @@ export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, id
   refreshKey: unknown;
   /** 第四格：工作台是在盯几条，配置台是今天醒了几次 */
   extra: { k: string; v: string; s: string };
-  className?: string;
 }) {
   const { t } = useTranslation('ai');
   const kindLabel = useKindLabel();
@@ -70,7 +69,7 @@ export function HeartbeatStrip({ traderId, intervalCode, wakeWindow, running, id
     : t('wb.hb.never');
 
   return (
-    <div className={cn('hb blk', className)}>
+    <div className="hb blk">
       <div>
         <div className="k">{live ? <><i />{t('wb.hb.thinking')}</> : t('wb.hb.beat')}</div>
         <div className="v">{intervalCode}</div>

@@ -1,8 +1,6 @@
 /* Trader 工作台：页头（名字 / 收益率大数）→ 心跳条 → 记分条 → 左主栏（净值、实时思考、时间线）+ 右栏（仓位、盯盘、笔记） */
 @layer components {
-  .p-tw .whd{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 32px;padding-top:28px}
-  .p-tw .back{display:inline-flex;align-items:center;gap:3px;margin-bottom:12px;font-size:13px;color:var(--color-muted-foreground);transition:color var(--t) var(--ease-control)}
-  .p-tw .back .ic{width:14px;height:14px}
+  /* 页头：跟配置台共用的那份在 components/arena/traderHead.css，这里只写这页自己的 */
   .p-tw .nm{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
   .p-tw .nm b{font-size:40px;font-weight:600;line-height:1;letter-spacing:-.035em}
   .p-tw .meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:14px;font-size:13.5px;color:var(--color-muted-foreground)}
@@ -10,11 +8,7 @@
   .p-tw .coins{display:inline-flex}
   .p-tw .coins .ci{width:20px;height:20px;border-radius:50%;box-shadow:0 0 0 2px var(--color-background)}
   .p-tw .coins .ci + .ci{margin-left:-5px}
-  .p-tw .px{text-align:right}
-  .p-tw .px .big{font-size:clamp(44px,5.3vw,76px)}
-  .p-tw .px .big i{color:inherit;opacity:.5}
-  .p-tw .px .sub{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:4px 14px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
-  .p-tw .px .sub b{font-size:15px;font-weight:500;color:var(--color-foreground)}
+  .p-tw .pnl .big{font-size:clamp(44px,5.3vw,76px)}
   .p-tw .acts{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px;font-size:13px;color:var(--color-muted-foreground)}
   .p-tw .hb{margin-top:28px}
 
@@ -23,7 +17,7 @@
   .p-tw .sc > div{padding:2px 0 2px 20px;border-left:1px solid var(--color-border)}
   .p-tw .sc > div:first-child{padding-left:0;border-left:0}
   .p-tw .sc span{display:block;font-size:12px;color:var(--color-muted-foreground)}
-  .p-tw .sc b{display:block;margin-top:5px;font-size:18px;font-weight:500;letter-spacing:-.02em;white-space:nowrap}
+  .p-tw .sc b{display:block;margin-top:5px;font-size:18px;font-weight:500;letter-spacing:-.02em}
   .p-tw .bans{display:flex;flex-direction:column;gap:10px;margin-top:20px}
 
   .p-tw .grid2{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:40px;align-items:start;margin-top:44px}
@@ -34,8 +28,6 @@
   .p-tw .rd{display:flex;flex-wrap:wrap;gap:2px 14px;min-height:18px;margin-bottom:6px;font-size:12px;color:var(--color-muted-foreground)}
   .p-tw .rd b{font-weight:500;color:var(--color-foreground)}
   .p-tw .cv{position:relative;height:280px;outline-offset:4px;border-radius:4px;touch-action:pan-y}
-  .p-tw .cv.up{color:var(--color-gain)}
-  .p-tw .cv.dn{color:var(--color-loss)}
   .p-tw .cv svg{display:block;width:100%;height:100%;overflow:visible}
   .p-tw .cv .ln{fill:none;stroke:currentColor;stroke-width:1.75;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
   /* 初始资金那条虚线和它右上角的字 */
@@ -204,19 +196,17 @@
   .p-tw .wa .rr b{display:block;font-size:14px;font-weight:500;white-space:nowrap}
   .p-tw .wa .rr span{display:block;margin-top:3px;font-size:12px;color:var(--color-muted-foreground);white-space:nowrap}
 
-  /* ---- 右栏：笔记，先露一截，底下渐隐 ---- */
+  /* ---- 右栏：笔记，先露一截，被截掉了（.long）底下渐隐 ---- */
   .p-tw .nt-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
   .p-tw .nt-h b{font-size:15px;font-weight:600}
   .p-tw .nt-h span{font-size:12px;color:var(--color-muted-foreground)}
   .p-tw .nt-b{position:relative;max-height:232px;overflow:hidden;font-size:14px;line-height:1.7}
-  .p-tw .nt-b::after{content:"";position:absolute;left:0;right:0;bottom:0;height:56px;background:linear-gradient(transparent,var(--color-fill));pointer-events:none}
+  .p-tw .nt-b.long:not(.open)::after{content:"";position:absolute;left:0;right:0;bottom:0;height:56px;background:linear-gradient(transparent,var(--color-fill));pointer-events:none}
   .p-tw .nt-b.open{max-height:none}
-  .p-tw .nt-b.open::after{display:none}
   .p-tw .nt-more{margin-top:10px;font-size:13px}
   .p-tw .nt-e{font-size:14px;color:var(--color-muted-foreground)}
 
   @media (hover:hover){
-    .p-tw .back:hover{color:var(--color-foreground)}
     .p-tw .tr-tool:not(:disabled):hover{background:var(--ctl-h)}
   }
   /* 单列时排成：曲线 → 实时思考 → 仓位 → 盯盘 → 笔记 → 时间线（时间线能一直往下加载，压在最后） */
@@ -229,21 +219,23 @@
     .p-tw .w-watch{order:4}
     .p-tw .w-notes{order:5}
     .p-tw .w-tl{order:6}
+    /* 记分条一行六格放不下：三格两行 */
+    .p-tw .sc{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:16px}
+    .p-tw .sc > div:nth-child(4){padding-left:0;border-left:0}
   }
   @media (max-width:760px){
-    .p-tw .whd{padding-top:18px}
     .p-tw .nm b{font-size:32px}
-    .p-tw .px{text-align:left}
-    .p-tw .px .sub,.p-tw .acts{justify-content:flex-start}
-    .p-tw .sc{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:16px}
+    .p-tw .acts{justify-content:flex-start}
+    /* 局次多了一排放不下（最多 10 局）：段选自己横着滚，不把页面撑宽 */
+    .p-tw .pnl{min-width:0}
+    .p-tw .acts .seg{overflow-x:auto}
     .p-tw .sc > div{padding-left:14px}
-    .p-tw .sc > div:nth-child(4){padding-left:0;border-left:0}
-    .p-tw .sc b{font-size:15px;white-space:normal}
+    .p-tw .sc b{font-size:15px}
     .p-tw .cv{height:220px}
     .p-tw .dc-h .m{margin-left:0;flex-basis:100%}
   }
   @media (prefers-reduced-motion:reduce){
-    .p-tw .back,.p-tw .tr-tool,.p-tw .tr-tool .ic,.p-tw .live-h .bud i b,.p-tw .pc-bar .f,.p-tw .pc-bar .nw{transition:none}
+    .p-tw .tr-tool,.p-tw .tr-tool .ic,.p-tw .live-h .bud i b,.p-tw .pc-bar .f,.p-tw .pc-bar .nw{transition:none}
     .p-tw .cells i.cur,.p-tw .dc.hl{animation:none}
   }
 }

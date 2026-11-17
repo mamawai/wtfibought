@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Bot, CloudOff, RefreshCw } from 'lucide-react';
 import { traderApi } from '../api';
+import { PnlPct } from '../components/arena/PnlPct';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { cn, fmtNum, spinIcon } from '../lib/utils';
 import type { TraderPublicView } from '../types';
@@ -123,7 +124,6 @@ function ArenaRow({ tr, rank }: { tr: TraderPublicView; rank: number }) {
   const { t } = useTranslation('ai');
   const st = STATUS_META[tr.status] ?? STATUS_META.PAUSED;
   const up = tr.pnlPct >= 0;
-  const [int, dec] = Math.abs(tr.pnlPct).toFixed(2).split('.');
   return (
     <Link to={`/arena/${tr.id}`} className={cn('arow', rank <= 3 && 'top3', tr.status === 'LIQUIDATED' && 'out')}>
       <span className="rk nf">{rank}</span>
@@ -135,7 +135,7 @@ function ArenaRow({ tr, rank }: { tr: TraderPublicView; rank: number }) {
       <span className="tp"><b>{tr.intervalCode}</b>{tr.wakeWindow && ` · ${tr.wakeWindow}`} · {symbolList(tr.symbols)}</span>
       <span className="eq nf"><b>{fmtNum(tr.equity)}</b><small>{t('arena.initial')}</small></span>
       <span className={cn('rt nf', up ? 'up' : 'dn')}>
-        <b>{up ? '+' : '-'}{int}<i>.{dec}%</i></b>
+        <b><PnlPct value={tr.pnlPct} /></b>
         {/* 小刻度：中点是初始资金，往右赚往左亏，±25% 到头 */}
         <span className="mt"><i className={up ? 'p' : 'n'} style={{ width: `${Math.min(50, Math.abs(tr.pnlPct) * 2)}%` }} /></span>
       </span>

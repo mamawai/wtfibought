@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMarkPrices } from '../../hooks/useMarkPrices';
 import { formatCoinPrice, getCoin } from '../../lib/coinConfig';
-import { cn, fmtDateTime, fmtNum, fmtSignedPct, fmtTime } from '../../lib/utils';
+import { cn, fmtDateTime, fmtSigned, fmtSignedPct, fmtTime } from '../../lib/utils';
 import type { AiTraderPlanView, FuturesOrder, FuturesPosition, TraderWatch } from '../../types';
 import { HelpTip } from '../HelpTip';
 import { PlanEntries } from './PlanEntries';
@@ -10,8 +10,6 @@ import { planRevisions } from './traderTools';
 
 /** 盯盘价离现价不到这么多（%）就标「快到了」 */
 const NEAR_PCT = 0.35;
-
-const signed = (v: number) => `${v >= 0 ? '+' : '-'}${fmtNum(Math.abs(v))}`;
 
 /** 多单最高的止损、空单最低的止损先被打到；止盈反过来取离现价最近的那档 */
 function nearestSl(p: FuturesPosition): number | null {
@@ -90,7 +88,7 @@ function PositionCard({ p, plan, mark }: { p: FuturesPosition; plan?: AiTraderPl
         <b>{cfg.name}</b>
         <span className={cn('tag', long ? 'g' : 'r')}>{t(long ? 'wb.hold.long' : 'wb.hold.short', { lev: p.leverage })}</span>
         <span className={cn('pn', pnl >= 0 ? 'up' : 'dn')}>
-          {signed(pnl)}
+          {fmtSigned(pnl)}
           <em>{t('wb.hold.ofMargin', { pct: fmtSignedPct(p.margin > 0 ? pnl / p.margin * 100 : 0) })}</em>
         </span>
       </div>
@@ -175,7 +173,7 @@ export function Holdings({ positions, orders, plans }: {
     <>
       <div className="sec-h">
         <h2>{t('wb.hold.title')}<small>{t('wb.hold.positionsN', { count: positions.length })} · {t('wb.hold.ordersN', { count: orders.length })}</small></h2>
-        {positions.length > 0 && <b className={cn('flt', floating >= 0 ? 'up' : 'dn')}>{t('wb.hold.floating', { v: signed(floating) })}</b>}
+        {positions.length > 0 && <b className={cn('flt', floating >= 0 ? 'up' : 'dn')}>{t('wb.hold.floating', { v: fmtSigned(floating) })}</b>}
       </div>
       {positions.length === 0 && orders.length === 0
         ? <div className="empty left"><b>{t('wb.hold.flat')}</b></div>

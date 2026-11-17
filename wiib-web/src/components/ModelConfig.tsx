@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import { Loader2, Pencil, Plug, Plus } from 'lucide-react';
@@ -41,7 +41,7 @@ function usagesOf(e: LlmEndpointView, bindings: LlmBindings, hasTrader: boolean)
   return out;
 }
 
-/** Base URL 只露主机部分 */
+/** Base URL 去掉开头的 http(s):// 再显示 */
 const host = (url: string) => url.replace(/^https?:\/\//, '');
 
 /**
@@ -62,6 +62,8 @@ export function ModelConfig() {
   const [form, setForm] = useState<LlmEndpointValue>(EMPTY);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  // 后台子 agent 那两项存到第几次了
+  const prefsSeq = useRef(0);
 
   const load = useCallback(() => {
     Promise.all([
@@ -77,15 +79,19 @@ export function ModelConfig() {
     }).finally(() => setLoaded(true));
   }, []);
 
-  /** 后台子 agent 的开关/上限：先落界面，失败再滚回 */
+  /** 后台子 agent 的开关/上限：先落界面，失败再滚回；连着改时只认最后一次的回包 */
   const savePrefs = async (patch: Partial<Pick<WorkbenchPrefs, 'subAgentsEnabled' | 'subAgentLimit'>>) => {
     if (!prefs) return;
     const next = { ...prefs, ...patch };
+    const seq = ++prefsSeq.current;
     setPrefs(next);
     try {
-      setPrefs(await workbenchApi.savePrefs({ subAgentsEnabled: next.subAgentsEnabled, subAgentLimit: next.subAgentLimit }));
+      const saved = await workbenchApi.savePrefs({ subAgentsEnabled: next.subAgentsEnabled, subAgentLimit: next.subAgentLimit });
+      if (seq !== prefsSeq.current) return;
+      setPrefs(saved);
       toast(t('toast.prefsSaved'), 'success');
     } catch (e) {
+      if (seq !== prefsSeq.current) return;
       setPrefs(prefs);
       toast((e as Error).message || t('toast.saveFailed'), 'error');
     }
@@ -104,6 +110,8 @@ export function ModelConfig() {
   };
 
   const save = async () => {
+    // 转圈的钮键盘还按得动
+    if (saving) return;
     setSaving(true);
     try {
       if (editing?.id != null) await llmEndpointApi.update(editing.id, form);
@@ -134,8 +142,8 @@ export function ModelConfig() {
   /** 删除点第一下：说清删的是哪条；正被用着的再说一句会回落到默认端点 */
   const warnRemove = (e: LlmEndpointView) => {
     const used = usagesOf(e, bindings, trader != null).map(u => u.label);
-    toast(t('model.removeConfirm', { name: e.name, model: e.model, warn: '' }), 'info',
-      used.length ? { description: t('model.removeWarn', { used: used.join(' / ') }).trim() } : undefined);
+    toast(t('model.removeConfirm', { name: e.name, model: e.model }), 'info',
+      used.length ? { description: t('model.removeWarn', { used: used.join(' / ') }) } : undefined);
   };
 
   const bind = async (purpose: LlmPurpose, id: number | null) => {

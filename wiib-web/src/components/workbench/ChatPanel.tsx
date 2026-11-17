@@ -69,9 +69,14 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
     setStuckToBottom(true);
   }, []);
 
+  // 贴底时盯着每一条的高度，长了就跟到底：流式回答是 StreamText 自己一段段放出来的，不经过这里重渲染
   useEffect(() => {
-    if (stuckToBottom) scrollToBottom();
-  }, [items, stuckToBottom, scrollToBottom]);
+    if (!stuckToBottom) return;
+    const el = scrollRef.current!;
+    const ro = new ResizeObserver(() => { el.scrollTop = el.scrollHeight; });
+    for (const child of el.children) ro.observe(child);
+    return () => ro.disconnect();
+  }, [items, stuckToBottom]);
 
   // 首挂：回放历史 + 感知后台运行状态（store 级幂等；关面板再开时 store 状态还在，直接续显）
   useEffect(() => { chatStore.init(); }, []);
