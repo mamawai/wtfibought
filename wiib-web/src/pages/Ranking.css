@@ -1,0 +1,49 @@
+/* 排行：口径段选 → 我的排名一条 → 前三名一排三块 → 其余进表，点行进用户主页 */
+@layer components {
+  .p-rk .sub{margin-top:8px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-rk .sub b{font-weight:500;color:var(--color-foreground)}
+  .p-rk .sortrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:22px;font-size:13px;color:var(--color-muted-foreground)}
+  /* 我的排名：大号名次 + 名字 + 三个数；没上榜换成一句 */
+  .p-rk .rme{display:grid;grid-template-columns:auto minmax(0,1fr) repeat(3,auto);gap:10px 36px;align-items:center;margin-top:22px;padding:18px 24px;transition:background-color var(--t) var(--ease-control)}
+  .p-rk .rme .rno{font-size:34px;font-weight:300;line-height:1;letter-spacing:-.04em}
+  .p-rk .rme .rno small{margin-right:2px;font-size:16px;color:var(--color-faint)}
+  .p-rk .rme .who,.p-rk .pod .who{display:flex;align-items:center;gap:10px;min-width:0;font-weight:600}
+  .p-rk .rme .who{font-size:16px}
+  .p-rk .who .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .p-rk .rme .m > span{display:block;font-size:12px;color:var(--color-muted-foreground)}
+  .p-rk .rme .m > b{display:block;margin-top:2px;font-size:17px;font-weight:500;letter-spacing:-.02em}
+  .p-rk .rme.none{grid-template-columns:auto minmax(0,1fr);font-size:14px;color:var(--color-muted-foreground)}
+  /* 前三：一排三块，冠军那块的字大一号 */
+  .p-rk .top3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .p-rk .pod{display:block;min-width:0;padding:22px;border-radius:24px;background:var(--color-fill);text-align:left;transition:background-color var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
+  .p-rk .pod:active{transform:scale(.985);transition-duration:0s}
+  .p-rk .pod .pl{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--color-muted-foreground)}
+  .p-rk .pod .pl .ic{width:15px;height:15px}
+  .p-rk .pod.first .pl{color:var(--color-primary)}
+  .p-rk .pod .who{margin-top:14px;font-size:17px}
+  .p-rk .pod .big{margin-top:18px;font-size:34px}
+  .p-rk .pod.first .big{font-size:42px}
+  .p-rk .pod .ln{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-rk .pod .ln b{font-weight:500}
+  /* 明细表：按哪个口径排，那列的表头和数加深 */
+  .p-rk .tbl .u{display:inline-flex;align-items:center;gap:10px;font-weight:500}
+  .p-rk .tbl .rkc{width:56px;font-size:15px;color:var(--color-muted-foreground)}
+  .p-rk .tbl td.b{font-weight:500}
+  .p-rk .tbl tr.mine td{background:var(--color-fill)}
+  .p-rk .tbl th .on{color:var(--color-foreground)}
+  .p-rk .rh{font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-rk .skr{display:flex;flex-direction:column;gap:8px}
+  @media (hover:hover){
+    .p-rk .pod:hover,.p-rk a.rme:hover{background:var(--color-fill2)}
+  }
+  @media (max-width:860px){
+    .p-rk .rme{grid-template-columns:auto minmax(0,1fr);gap:12px 16px}
+    .p-rk .top3{grid-template-columns:minmax(0,1fr)}
+    .p-rk .pod.first .big{font-size:34px}
+    .p-rk .tbl .hide{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .p-rk .pod,.p-rk .rme{transition:none}
+    .p-rk .pod:active{transform:none}
+  }
+}

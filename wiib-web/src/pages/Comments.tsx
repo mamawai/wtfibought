@@ -1,19 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useSearchParams } from 'react-router-dom';
-import {
-  ArrowLeft, ChevronDown, CornerDownRight, Loader2, MessageSquare, Pencil,
-  RefreshCcw, Send, ShieldAlert, ThumbsDown, ThumbsUp, Trash2, VolumeX,
-} from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Ban, ChevronLeft, LogIn, MessageCircle, Pencil, RefreshCw, Reply, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react';
 import { commentApi } from '../api';
 import { useUserStore } from '../stores/userStore';
-import { LoginPrompt } from '../components/LoginPrompt';
+import { Avatar } from '../components/Avatar';
+import { EmptyState } from '../components/EmptyState';
+import { SureButton } from '../components/SureButton';
 import { useToast } from '../components/ui/use-toast';
-import { Button } from '../components/ui/button';
-import { Dialog, DialogHeader, DialogContent, DialogFooter } from '../components/ui/dialog';
-import { cn, fmtDateTime } from '../lib/utils';
+import { Dialog, DialogContent, DialogHeader } from '../components/ui/dialog';
+import { cn, fmtDateTime, fmtRelative, spinIcon } from '../lib/utils';
 import i18n from '../i18n';
 import type { CommentItem } from '../types';
+import './Comments.css';
 
 const ADMIN_USER_ID = 1;
 const MAX_LEN = 500;
@@ -21,11 +20,11 @@ const ROOT_PAGE_SIZE = 20;
 const CHILD_PAGE_SIZE = 10;
 const ISSUE_URL = 'https://github.com/mamawai/wtfibought/issues/new';
 
-/** 可选禁言天数，-1 为永久。文案在渲染时按天数现查，不写死在数组里 */
-const MUTE_OPTIONS = [1, 7, -1];
+/** 可选禁言天数；永久禁言单独一颗钮（传 -1）。文案在渲染时按天数现查，不写死在数组里 */
+const MUTE_DAYS = [1, 7];
 
-/** 正在回复谁：rootId 恒指向根评论（回复子评论也是），toUserId 决定"回复 @xxx"挂在谁身上 */
-type ReplyTarget = { rootId: number; toUserId: number; toUsername: string };
+/** 正在回复谁：id 是点了「回复」的那条（回复框挂在它底下），rootId 恒指向根评论（回复子评论也是），toUserId 决定"回复 @xxx"挂在谁身上 */
+type ReplyTarget = { id: number; rootId: number; toUserId: number; toUsername: string };
 
 /** 就地改一条评论（根或子），赞踩后不必整页重拉。结构固定两层，不做递归 */
 function patchComment(roots: CommentItem[], id: number, fn: (c: CommentItem) => CommentItem): CommentItem[] {
@@ -45,94 +44,59 @@ function dropComment(roots: CommentItem[], id: number): CommentItem[] {
       : r));
 }
 
-/** 头像：有图用图，没图退化成用户名首字圆盘 */
-function Avatar({ username, avatar, small }: { username: string; avatar?: string; small?: boolean }) {
-  const dim = small ? 'w-7 h-7' : 'w-9 h-9';
-  if (avatar) {
-    return <img src={avatar} alt="" referrerPolicy="no-referrer" className={cn(dim, 'rounded-full object-cover shrink-0 border border-border')} />;
-  }
-  return (
-    <div className={cn(dim, 'rounded-full shrink-0 border border-border bg-primary/10 text-primary flex items-center justify-center font-black',
-      small ? 'text-[10px]' : 'text-xs')}>
-      {username.slice(0, 1).toUpperCase()}
-    </div>
-  );
-}
-
-/** 评论行上的小动作按钮：拟物小凸起；禁用时压暗且不再变色 */
-function ActionButton({ disabled, title, onClick, hoverClass, children }: {
-  disabled?: boolean;
-  title?: string;
-  onClick: () => void;
-  hoverClass?: string;
-  children: React.ReactNode;
+/** 发帖、回复、编辑三处共用的输入框：右下角字数，超了变红 */
+function TextBox({ value, onChange, disabled, placeholder, label, rows = 2, autoFocus }: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+  placeholder: string;
+  label: string;
+  rows?: number;
+  autoFocus?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      title={title}
-      onClick={onClick}
-      className={cn(
-        'border border-border hover:bg-surface-hover px-2 py-1 rounded-lg text-[11px] font-bold tabular-nums flex items-center gap-1 transition-colors text-muted-foreground',
-        disabled ? 'opacity-45 cursor-not-allowed' : cn('cursor-pointer', hoverClass),
-      )}
-    >
-      {children}
-    </button>
+    <label className="inp ta">
+      <textarea value={value} rows={rows} disabled={disabled} placeholder={placeholder} aria-label={label}
+                autoFocus={autoFocus} onChange={e => onChange(e.target.value)} />
+      <span className={cn('cnt num', value.length > MAX_LEN && 'over')}>{value.length} / {MAX_LEN}</span>
+    </label>
   );
 }
 
-/** 发帖、回复、编辑三处共用的输入框。ready=false 是 user 还没拉回来，先禁用免得拿不到自己的 id */
-function ComposeBox({ value, onChange, onSubmit, submitting, ready, placeholder, rows = 3, onCancel, submitLabel }: {
+/** 回复、编辑的小框：输入框 + 取消 / 提交。ready=false 是 user 还没拉回来，先禁用免得拿不到自己的 id */
+function InlineBox({ value, onChange, onSubmit, onCancel, submitting, ready, placeholder, label, submitLabel }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
+  onCancel: () => void;
   submitting: boolean;
   ready: boolean;
   placeholder: string;
-  rows?: number;
-  onCancel?: () => void;
-  submitLabel?: string;
+  label: string;
+  submitLabel: string;
 }) {
-  const { t } = useTranslation(['community', 'common']);
-  const over = value.length > MAX_LEN;
+  const { t } = useTranslation('common');
   return (
-    <div className="space-y-2">
-      <textarea
-        value={value}
-        rows={rows}
-        disabled={!ready || submitting}
-        placeholder={placeholder}
-        onChange={e => onChange(e.target.value)}
-        className={cn(
-          'w-full rounded-xl bg-background px-3.5 py-2.5 text-sm border border-border bg-card-2 resize-none',
-          'placeholder:text-muted-foreground transition-all duration-150',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-        )}
-      />
-      <div className="flex items-center gap-2">
-        <span className={cn('text-[11px] tabular-nums mr-auto', over ? 'text-destructive' : 'text-muted-foreground')}>
-          {value.length} / {MAX_LEN}
-        </span>
-        {onCancel && <Button variant="ghost" size="sm" onClick={onCancel}>{t('common:cancel')}</Button>}
-        <Button size="sm" disabled={!ready || submitting || !value.trim() || over} onClick={onSubmit}>
-          {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-          {submitLabel ?? t('comments.post')}
-        </Button>
+    <div className="rbox">
+      <TextBox value={value} onChange={onChange} disabled={!ready || submitting} placeholder={placeholder} label={label} autoFocus />
+      <div className="f">
+        <button type="button" className="btn sm" onClick={onCancel}>{t('cancel')}</button>
+        <button type="button" className={cn('btn sm ink', submitting && 'busy')} onClick={onSubmit}
+                disabled={!ready || submitting || !value.trim() || value.length > MAX_LEN}>
+          <span>{submitLabel}</span>
+        </button>
       </div>
     </div>
   );
 }
 
-/** 单条评论：头像 + 昵称/回复对象 + 正文 + 赞踩/回复/编辑/管理动作 */
-function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote, onReply, onEdit, onDelete, onMute }: {
+/** 单条评论：头像 + 名字时间 + 正文 + 赞踩/回复/编辑/管理动作；replyBox 是挂在它底下的回复框，children 是根评论底下那串回复 */
+function CommentRow({ c, focused, currentUserId, isAdmin, guest, busy, onVote, onReply, onEdit, onDelete, onMute, replyBox, children }: {
   c: CommentItem;
-  isChild?: boolean;
-  focused?: boolean;
+  focused: boolean;
   currentUserId: number | null;
   isAdmin: boolean;
+  guest: boolean;
   busy: boolean;
   onVote: (c: CommentItem, type: 'like' | 'dislike') => void;
   onReply: (c: CommentItem) => void;
@@ -140,8 +104,11 @@ function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote,
   onEdit: (c: CommentItem, content: string) => Promise<void>;
   onDelete: (c: CommentItem) => void;
   onMute: (c: CommentItem) => void;
+  replyBox?: ReactNode;
+  children?: ReactNode;
 }) {
   const { t } = useTranslation(['community', 'common']);
+  const { toast } = useToast();
   // 编辑态就地自管：提上去要往每一行传 4 个 props，而它跟别的行毫无关系
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
@@ -155,6 +122,12 @@ function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote,
   const canDelete = isMine ? !c.selfDeleted : isAdmin;
   // voted 一置就同时锁死赞和踩：一人对一条评论只有一次表态机会
   const voteTitle = c.voted ? t('comments.voteAlready') : undefined;
+
+  /** 游客点赞踩、回复：提示去登录；登录了但 user 还没拉回来就先不动 */
+  const act = (fn: () => void) => () => {
+    if (guest) toast(t('comments.loginToPost'), 'info');
+    else if (ready) fn();
+  };
 
   const startEdit = () => {
     setEditText(c.content);   // 每次打开都取当下正文，免得留着上一轮的草稿
@@ -174,39 +147,23 @@ function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote,
   };
 
   return (
-    <div className={cn('flex gap-2.5', focused && 'rounded-lg border border-border bg-card-2 px-3 py-2.5')}>
-      <Avatar username={c.username} avatar={c.avatar} small={isChild} />
-      <div className="flex-1 min-w-0 space-y-1">
-        <div className="flex items-baseline gap-2">
-          <span className="text-xs font-black truncate">{c.username}</span>
-          {c.replyToUsername && (
-            <span className="text-[11px] text-muted-foreground shrink-0">
-              {t('comments.replyToUser', { name: c.replyToUsername })}
-            </span>
-          )}
-          {c.updatedAt && !c.selfDeleted && (
-            <span className="text-[10px] text-muted-foreground shrink-0">{t('comments.edited')}</span>
-          )}
-          <span className="ml-auto text-[10px] text-muted-foreground shrink-0">{fmtDateTime(c.createdAt)}</span>
+    <div className={cn('cm', focused && 'hl')}>
+      <Avatar name={c.username} src={c.avatar} />
+      <div>
+        <div className="cm-h">
+          <b>{c.username}</b>
+          {isMine && <span className="tag new">{t('ranking.me.badge')}</span>}
+          <span className="num" title={fmtDateTime(c.createdAt)}>{fmtRelative(c.createdAt)}</span>
+          {c.updatedAt && !c.selfDeleted && <span>{t('comments.edited')}</span>}
         </div>
 
         {editing ? (
-          <ComposeBox
-            value={editText}
-            onChange={setEditText}
-            onSubmit={() => void submitEdit()}
-            submitting={saving}
-            ready={ready}
-            placeholder={t('comments.editPlaceholder')}
-            rows={2}
-            submitLabel={t('common:save')}
-            onCancel={() => setEditing(false)}
-          />
+          <InlineBox value={editText} onChange={setEditText} onSubmit={() => void submitEdit()} onCancel={() => setEditing(false)}
+                     submitting={saving} ready={ready} placeholder={t('comments.editPlaceholder')}
+                     label={t('comments.editPlaceholder')} submitLabel={t('common:save')} />
         ) : (
-          <p className={cn(
-            'text-[13px] leading-relaxed whitespace-pre-wrap break-words',
-            c.selfDeleted && 'italic text-muted-foreground',
-          )}>
+          <p className={cn('tx', c.selfDeleted && 'del')}>
+            {c.replyToUsername && <span className="at">{t('comments.replyToUser', { name: c.replyToUsername })}</span>}
             {/* 自删的正文在后端被中文占位覆盖掉了，这里认 selfDeleted 标出自己的词条，
                 存量行照样跟着界面语言走 */}
             {c.selfDeleted ? t('comments.deletedPlaceholder') : c.content}
@@ -215,48 +172,28 @@ function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote,
 
         {/* 编辑时收起动作区：边改边点赞是个没意义的中间态 */}
         {!editing && (
-          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-            <ActionButton
-              disabled={!ready || c.voted || busy}
-              title={voteTitle}
-              hoverClass="hover:text-gain"
-              onClick={() => onVote(c, 'like')}
-            >
-              <ThumbsUp className="w-3 h-3" /> {c.likeCount}
-            </ActionButton>
-            <ActionButton
-              disabled={!ready || c.voted || busy}
-              title={voteTitle}
-              hoverClass="hover:text-loss"
-              onClick={() => onVote(c, 'dislike')}
-            >
-              <ThumbsDown className="w-3 h-3" /> {c.dislikeCount}
-            </ActionButton>
-            <ActionButton
-              disabled={!ready}
-              hoverClass="hover:text-primary"
-              onClick={() => onReply(c)}
-            >
-              <CornerDownRight className="w-3 h-3" /> {t('comments.reply')}
-            </ActionButton>
-
-            {canEdit && (
-              <ActionButton hoverClass="hover:text-primary" onClick={startEdit}>
-                <Pencil className="w-3 h-3" /> {t('common:edit')}
-              </ActionButton>
-            )}
+          <div className="cm-a">
+            <button type="button" disabled={c.voted || busy} title={voteTitle} aria-label={t('comments.like')} onClick={act(() => onVote(c, 'like'))}>
+              <ThumbsUp className="ic" /><span className="num">{c.likeCount || ''}</span>
+            </button>
+            <button type="button" disabled={c.voted || busy} title={voteTitle} aria-label={t('comments.dislike')} onClick={act(() => onVote(c, 'dislike'))}>
+              <ThumbsDown className="ic" /><span className="num">{c.dislikeCount || ''}</span>
+            </button>
+            <button type="button" onClick={act(() => onReply(c))}><Reply className="ic" />{t('comments.reply')}</button>
+            {canEdit && <button type="button" onClick={startEdit}><Pencil className="ic" />{t('common:edit')}</button>}
             {canDelete && (
-              <ActionButton hoverClass="hover:text-destructive" onClick={() => onDelete(c)}>
-                <Trash2 className="w-3 h-3" /> {t('common:delete')}
-              </ActionButton>
+              <SureButton className="risk0" sureClassName="sure" onConfirm={() => onDelete(c)}
+                          sureLabel={<><Trash2 className="ic" />{t('comments.deleteSure')}</>}>
+                <Trash2 className="ic" />{t('common:delete')}
+              </SureButton>
             )}
             {isAdmin && !isMine && (
-              <ActionButton hoverClass="hover:text-destructive" onClick={() => onMute(c)}>
-                <VolumeX className="w-3 h-3" /> {t('comments.mute')}
-              </ActionButton>
+              <button type="button" className="risk0" onClick={() => onMute(c)}><Ban className="ic" />{t('comments.mute')}</button>
             )}
           </div>
         )}
+        {replyBox}
+        {children}
       </div>
     </div>
   );
@@ -294,6 +231,8 @@ export function Comments() {
   const loadSeq = useRef(0);
 
   const [text, setText] = useState('');
+  // 留言规范默认收着
+  const [rulesOpen, setRulesOpen] = useState(false);
   // 发主楼和发回复各一个 in-flight 标志。早先共用一个 posting，再靠 `posting && !replyTo`
   // 反推是谁在提交——只要回复框开着，主发帖框就永远算不出"正在提交"，双击能发两条
   const [postingRoot, setPostingRoot] = useState(false);
@@ -489,216 +428,148 @@ export function Comments() {
     }
   };
 
+  /** 点「回复」：回复框挂到这条底下，再点一次收起。回复子评论时 rootId 仍取它的根：结构只有两层，永不出现三层嵌套 */
   const startReply = (c: CommentItem) => {
-    // 回复子评论时 rootId 仍取它的根：结构只有两层，永不出现三层嵌套
-    setReplyTo({ rootId: c.rootId ?? c.id, toUserId: c.userId, toUsername: c.username });
+    setReplyTo(prev => (prev?.id === c.id ? null : { id: c.id, rootId: c.rootId ?? c.id, toUserId: c.userId, toUsername: c.username }));
     setReplyText('');
   };
 
-  return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-11 h-11 rounded-lg pt-card flex items-center justify-center bg-primary/10 shrink-0">
-          <MessageSquare className="w-5.5 h-5.5 text-primary" />
-        </div>
-        <div className="min-w-0">
-          <h1 className="text-xl font-black tracking-tight">{t('comments.title')}</h1>
-          <p className="text-[11px] text-muted-foreground">{t('comments.subtitle')}</p>
-        </div>
-        <button
-          onClick={() => { void load(); }}
-          className="ml-auto border border-border hover:bg-surface-hover w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary cursor-pointer"
-          aria-label={t('common:refresh')}
-        >
-          <RefreshCcw className={cn('w-4 h-4', loading && 'animate-spin')} />
-        </button>
-      </div>
-
-      {/* 留言规范：默认折叠，不占地方但随手能看 */}
-      <details className="group rounded-lg pt-card px-4 py-3">
-        <summary className="flex items-center gap-2 cursor-pointer text-sm font-bold list-none [&::-webkit-details-marker]:hidden">
-          <ShieldAlert className="w-4 h-4 text-primary" />
-          {t('comments.rulesTitle')}
-          <ChevronDown className="w-4 h-4 ml-auto text-muted-foreground transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="mt-3 pt-3 border-t border-border/50 space-y-2 text-xs leading-relaxed text-muted-foreground">
-          <p>{t('comments.rulesWelcome')}</p>
-          <p>
-            <Trans
-              ns="community"
-              i18nKey="comments.rulesIssue"
-              components={[
-                <a key="issue" href={ISSUE_URL} target="_blank" rel="noreferrer"
-                   className="text-primary font-bold underline underline-offset-2 ml-1" />,
-              ]}
-            />
-          </p>
-          <p className="text-destructive font-bold">
-            {t('comments.rulesBan')}
-          </p>
-        </div>
-      </details>
-
-      {/* 发帖框；游客换成去登录 */}
-      <div className="rounded-lg pt-card p-4">
-        {guest ? (
-          <LoginPrompt text={t('comments.loginToPost')} />
-        ) : (
-          <ComposeBox
-            value={text}
-            onChange={setText}
-            onSubmit={() => void submitRoot()}
-            submitting={postingRoot}
-            ready={ready}
-            placeholder={t('comments.composePlaceholder')}
-          />
-        )}
-      </div>
-
-      {/* 聚焦视图提示条 */}
-      {focusId && (
-        <button
-          onClick={() => setParams({}, { replace: true })}
-          className="flex items-center gap-2 text-xs font-bold text-primary border border-border hover:bg-surface-hover rounded-xl px-3 py-2 cursor-pointer"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          {t('comments.backToAll')}
-        </button>
+  const row = (c: CommentItem, replies?: ReactNode) => (
+    <CommentRow
+      key={c.id}
+      c={c}
+      focused={focusId === String(c.id)}
+      currentUserId={currentUserId}
+      isAdmin={isAdmin}
+      guest={guest}
+      busy={votingId === c.id}
+      onVote={(x, type) => void handleVote(x, type)}
+      onReply={startReply}
+      onEdit={handleEdit}
+      onDelete={x => void handleDelete(x)}
+      onMute={setMuteTarget}
+      replyBox={replyTo?.id === c.id && (
+        <InlineBox value={replyText} onChange={setReplyText} onSubmit={() => void submitReply()}
+                   onCancel={() => { setReplyTo(null); setReplyText(''); }}
+                   submitting={postingReply} ready={ready} placeholder={t('comments.replyPlaceholder')}
+                   label={t('comments.replyToUser', { name: replyTo.toUsername })} submitLabel={t('comments.reply')} />
       )}
+    >
+      {replies}
+    </CommentRow>
+  );
 
-      {/* 列表 */}
-      {loading && roots.length === 0 ? (
-        <div className="flex items-center justify-center py-16 gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" /> {t('comments.loading')}
-        </div>
-      ) : roots.length === 0 ? (
-        <div className="rounded-lg border border-border bg-card-2 flex flex-col items-center justify-center gap-2.5 py-14 px-4 text-center">
-          <div className="w-11 h-11 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
-            <MessageSquare className="w-5 h-5" />
+  return (
+    <div className="page-shell">
+      <div className="p-bd">
+        <div className="pg-h">
+          <div>
+            <h1>{t('comments.title')}</h1>
+            <p className="sub">{t('comments.subtitle')}</p>
           </div>
-          <div className="text-xs font-bold text-muted-foreground">{t('comments.emptyTitle')}</div>
-          <div className="text-[10px] text-muted-foreground/70">{t('comments.emptyHint')}</div>
+          <div className="r">
+            <button type="button" className="ib" title={t('common:refresh')} aria-label={t('common:refresh')}
+                    onClick={e => { spinIcon(e); void load(); }}>
+              <RefreshCw className="ic" />
+            </button>
+          </div>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {roots.map(root => {
+
+        {/* 发帖框；游客换成去登录 */}
+        {guest ? (
+          <div className="guest blk">
+            <span>{t('comments.loginToPost')}</span>
+            <Link to="/login" className="btn ink"><LogIn className="ic" />{t('layout:header.login')}</Link>
+          </div>
+        ) : (
+          <div className="post">
+            <TextBox value={text} onChange={setText} disabled={!ready || postingRoot}
+                     placeholder={t('comments.composePlaceholder')} label={t('comments.composePlaceholder')} />
+            <div className="f">
+              <button type="button" className="linkb" aria-expanded={rulesOpen} onClick={() => setRulesOpen(v => !v)}>
+                {t('comments.rulesTitle')}
+              </button>
+              <button type="button" className={cn('btn ink', postingRoot && 'busy')} onClick={() => void submitRoot()}
+                      disabled={!ready || postingRoot || !text.trim() || text.length > MAX_LEN}>
+                <span>{t('comments.post')}</span>
+              </button>
+            </div>
+            <div className={cn('col', rulesOpen && 'open')}>
+              <div>
+                <div className="rules blk">
+                  <b>{t('comments.rulesTitle')}</b>
+                  <p>{t('comments.rulesWelcome')}</p>
+                  <p>
+                    <Trans ns="community" i18nKey="comments.rulesIssue"
+                           components={[<a key="issue" className="linkb" href={ISSUE_URL} target="_blank" rel="noreferrer" />]} />
+                  </p>
+                  <p>{t('comments.rulesBan')}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 聚焦视图：从通知跳进来只看那一串 */}
+        {focusId && (
+          <div className="focus">
+            <button type="button" className="btn" onClick={() => setParams({}, { replace: true })}>
+              <ChevronLeft className="ic" />{t('comments.backToAll')}
+            </button>
+          </div>
+        )}
+
+        <div className="list">
+          {loading && roots.length === 0 ? (
+            <div className="empty">{t('comments.loading')}</div>
+          ) : roots.length === 0 ? (
+            <EmptyState icon={<MessageCircle />} text={t('comments.emptyTitle')}><span>{t('comments.emptyHint')}</span></EmptyState>
+          ) : roots.map(root => {
             const children = root.children ?? [];
             const started = childPage[root.id] !== undefined;
             const rest = root.childCount - children.length;
-            const replying = replyTo?.rootId === root.id;
-
-            return (
-              <div key={root.id} className="rounded-lg pt-card p-4 space-y-3">
-                <CommentRow
-                  c={root}
-                  focused={focusId === String(root.id)}
-                  currentUserId={currentUserId}
-                  isAdmin={isAdmin}
-                  busy={votingId === root.id}
-                  onVote={(c, t) => void handleVote(c, t)}
-                  onReply={startReply}
-                  onEdit={handleEdit}
-                  onDelete={c => void handleDelete(c)}
-                  onMute={setMuteTarget}
-                />
-
-                {children.length > 0 && (
-                  <div className="pl-4 ml-1 border-l border-border/60 space-y-3">
-                    {children.map(child => (
-                      <CommentRow
-                        key={child.id}
-                        c={child}
-                        isChild
-                        focused={focusId === String(child.id)}
-                        currentUserId={currentUserId}
-                        isAdmin={isAdmin}
-                        busy={votingId === child.id}
-                        onVote={(c, t) => void handleVote(c, t)}
-                        onReply={startReply}
-                        onEdit={handleEdit}
-                        onDelete={c => void handleDelete(c)}
-                        onMute={setMuteTarget}
-                      />
-                    ))}
-                  </div>
-                )}
-
+            return row(root, (children.length > 0 || rest > 0) && (
+              <div className="rps">
+                {children.map(child => row(child))}
                 {rest > 0 && (
-                  <button
-                    disabled={expanding.has(root.id)}
-                    onClick={() => void loadChildren(root)}
-                    className="ml-5 text-[11px] font-bold text-primary hover:underline disabled:opacity-50 cursor-pointer flex items-center gap-1"
-                  >
-                    {expanding.has(root.id) && <Loader2 className="w-3 h-3 animate-spin" />}
+                  <button type="button" className="linkb more" disabled={expanding.has(root.id)} onClick={() => void loadChildren(root)}>
                     {started
                       ? t('comments.moreReplies', { count: rest })
                       : t('comments.viewAllReplies', { count: root.childCount })}
                   </button>
                 )}
-
-                {replying && (
-                  <div className="pl-4 ml-1 border-l border-primary/40">
-                    <div className="text-[11px] font-bold text-muted-foreground mb-1.5">
-                      {t('comments.replyToUser', { name: replyTo.toUsername })}
-                    </div>
-                    <ComposeBox
-                      value={replyText}
-                      onChange={setReplyText}
-                      onSubmit={() => void submitReply()}
-                      submitting={postingReply}
-                      ready={ready}
-                      placeholder={t('comments.replyPlaceholder')}
-                      rows={2}
-                      onCancel={() => { setReplyTo(null); setReplyText(''); }}
-                    />
-                  </div>
-                )}
               </div>
-            );
+            ));
           })}
-
-          {hasMore && (
-            <Button variant="outline" className="w-full" disabled={loadingMore} onClick={() => void loadMoreRoots()}>
-              {loadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {t('comments.loadMore')}
-            </Button>
-          )}
         </div>
-      )}
 
-      {/* 管理员禁言：选时长即生效，-1 为永久 */}
-      <Dialog open={muteTarget != null} onClose={() => setMuteTarget(null)}>
-        <DialogHeader>
-          <h2 className="text-lg font-bold">{t('comments.muteTitle')}</h2>
-        </DialogHeader>
-        <DialogContent>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            <Trans
-              ns="community"
-              i18nKey="comments.muteDesc"
-              values={{ name: muteTarget?.username ?? '' }}
-              components={[<strong key="name" className="text-foreground" />]}
-            />
-          </p>
-          <div className="grid grid-cols-3 gap-2 mt-4">
-            {MUTE_OPTIONS.map(days => (
-              <Button
-                key={days}
-                variant="outline"
-                size="sm"
-                disabled={muting}
-                onClick={() => void handleMute(days)}
-              >
-                {days === -1 ? t('comments.mutePermanent') : t('comments.muteDays', { count: days })}
-              </Button>
+        {hasMore && (
+          <button type="button" className={cn('btn wide lm', loadingMore && 'busy')} disabled={loadingMore} onClick={() => void loadMoreRoots()}>
+            <span>{t('comments.loadMore')}</span>
+          </button>
+        )}
+
+        {/* 管理员禁言：选时长即生效 */}
+        <Dialog open={muteTarget != null} onClose={() => setMuteTarget(null)} className="sm">
+          <DialogHeader><h3>{t('comments.muteTitle')}</h3></DialogHeader>
+          <DialogContent>
+            <p className="txt">
+              <Trans ns="community" i18nKey="comments.muteDesc" values={{ name: muteTarget?.username ?? '' }}
+                     components={[<strong key="name" />]} />
+            </p>
+          </DialogContent>
+          <div className="mopts">
+            {MUTE_DAYS.map(days => (
+              <button key={days} type="button" className="btn" disabled={muting} onClick={() => void handleMute(days)}>
+                {t('comments.muteDays', { count: days })}
+              </button>
             ))}
           </div>
-        </DialogContent>
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={() => setMuteTarget(null)}>{t('common:cancel')}</Button>
-        </DialogFooter>
-      </Dialog>
+          <button type="button" className="btn risk wide" disabled={muting} onClick={() => void handleMute(-1)}>
+            {t('comments.mutePermanent')}
+          </button>
+        </Dialog>
+      </div>
     </div>
   );
 }

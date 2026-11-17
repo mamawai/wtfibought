@@ -1,23 +1,26 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Bot, ChevronLeft, Lock, Receipt, Trophy } from 'lucide-react';
 import { rankingApi } from '../api';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Button } from '../components/ui/button';
-import { Badge } from '../components/ui/badge';
-import { Skeleton } from '../components/ui/skeleton';
+import { Avatar } from '../components/Avatar';
 import { EmptyState } from '../components/EmptyState';
-import { TabButton } from '../components/TabButton';
+import { HelpTip } from '../components/HelpTip';
 import { PositionHistoryList } from '../components/PositionHistoryList';
+import { BigNum } from '../components/ui/big-num';
+import { Pager } from '../components/ui/pager';
+import { Skeleton } from '../components/ui/skeleton';
+import { Tabs } from '../components/ui/tabs';
+import { useUserStore } from '../stores/userStore';
 import { cn, fmtDateTime, fmtNum } from '../lib/utils';
-import { formatCoinPrice } from '../lib/coinConfig';
+import { COIN_MAP, formatCoinPrice } from '../lib/coinConfig';
+import { getStockBrand } from '../lib/stockConfig';
 import { orderSideView, tradeHref, tradeSymbolName } from '../lib/orderSide';
-import {
-  ArrowLeft, Briefcase, ChevronLeft, ChevronRight, EyeOff, Trophy, Bot, History, Receipt,
-} from 'lucide-react';
 import type {
   PageResult, PositionHistoryItem, ProfilePosition, PublicTrade, UserProfile as UserProfileData,
 } from '../types';
+import './records.css';
+import './UserProfile.css';
 
 const TRADE_PAGE_SIZE = 20;
 
@@ -29,91 +32,78 @@ const EMPTY_POSITIONS: PageResult<PositionHistoryItem> = {
   records: [], total: 0, size: TRADE_PAGE_SIZE, current: 1, pages: 0,
 };
 
-function ProfitText({ value, className }: { value: number | null; className?: string }) {
-  // 缺价时后端给 null，显示 "—"。填 0 会被读成"这仓一分不赚"，那是另一回事
-  if (value == null) return <span className={cn('text-muted-foreground', className)}>—</span>;
-  const up = value >= 0;
-  return (
-    <span className={cn('num', up ? 'text-gain' : 'text-loss', className)}>
-      {up ? '+' : ''}{fmtNum(value)}
-    </span>
-  );
+/** 带号金额 */
+const signed = (v: number) => `${v >= 0 ? '+' : ''}${fmtNum(v)}`;
+
+/** 币或美股的小图标 */
+function SymIcon({ symbol }: { symbol: string }) {
+  const cfg = COIN_MAP[symbol];
+  if (cfg) return <cfg.icon className={cn('ci', cfg.colorClass)} />;
+  const Brand = getStockBrand(symbol.replace(/BUSDT$/, '')).icon;
+  return <Brand className="ci" />;
 }
 
+/** 一笔持仓：点了去那个标的的交易页 */
 function PositionRow({ p, onOpen }: { p: ProfilePosition; onOpen: () => void }) {
   const { t } = useTranslation('account');
-  const isFutures = p.side != null;
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 border-b border-border/25 last:border-b-0 hover:bg-accent/30 transition-colors group"
-    >
-      <div className="min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[13px] font-bold group-hover:text-primary transition-colors">
-            {tradeSymbolName(p.symbol)}
-          </span>
-          {isFutures && (
+    <button type="button" className="hr" onClick={onOpen}>
+      <SymIcon symbol={p.symbol} />
+      <div className="nm">
+        <b>
+          {tradeSymbolName(p.symbol)}
+          <small className="num">{fmtNum(p.quantity, 4)}</small>
+          {p.side != null && (
             <>
-              <Badge variant={p.side === 'LONG' ? 'success' : 'destructive'} className="text-[10px] px-1.5 py-0">
-                {p.side === 'LONG' ? t('profile.long') : t('profile.short')}
-              </Badge>
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                {p.marginMode === 'CROSS' ? t('profile.cross') : t('profile.isolated')} {p.leverage}x
-              </Badge>
+              <span className={cn('tag sm', p.side === 'LONG' ? 'g' : 'r')}>
+                {p.side === 'LONG' ? t('profile.long') : t('profile.short')} {p.leverage}x
+              </span>
+              <span className="tag sm">{p.marginMode === 'CROSS' ? t('profile.cross') : t('profile.isolated')}</span>
             </>
           )}
-        </div>
-        <div className="mt-0.5 num text-[11px] text-muted-foreground">
-          {fmtNum(p.quantity, 4)} · {t('profile.avgPrice', { price: formatCoinPrice(p.symbol, p.entryPrice) })}
+        </b>
+        <span className="num">
+          {t('profile.avgPrice', { price: formatCoinPrice(p.symbol, p.entryPrice) })}
           {p.currentPrice != null && <> · {t('profile.lastPrice', { price: formatCoinPrice(p.symbol, p.currentPrice) })}</>}
-        </div>
+        </span>
       </div>
-      <div className="text-right shrink-0">
-        <div className="num text-[13px] font-bold">
-          {p.value == null ? '—' : fmtNum(p.value)}
-        </div>
-        <ProfitText value={p.profit} className="text-[11px] font-medium" />
+      <div className="vr num">
+        <b>{p.value == null ? '—' : `₮${fmtNum(p.value)}`}</b>
+        {/* 缺价时后端给 null，显示 "—"。填 0 会被读成"这仓一分不赚"，那是另一回事 */}
+        {p.profit == null ? <span className="mute">—</span> : <span className={p.profit >= 0 ? 'up' : 'dn'}>{signed(p.profit)}</span>}
       </div>
     </button>
   );
 }
 
-function PositionCard({ title, positions, onOpen }: {
+function PositionSection({ title, positions, onOpen }: {
   title: string;
   positions: ProfilePosition[];
   onOpen: (symbol: string) => void;
 }) {
   const { t } = useTranslation('account');
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-black flex items-center gap-2">
-          {title}
-          <span className="text-xs text-muted-foreground font-normal">{t('profile.count', { count: positions.length })}</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        {positions.map(p => (
-          <PositionRow key={`${p.symbol}-${p.side ?? 'SPOT'}`} p={p} onOpen={() => onOpen(p.symbol)} />
-        ))}
-      </CardContent>
-    </Card>
+    <section className="sec">
+      <div className="sec-h"><h2>{title}<small>{t('profile.count', { count: positions.length })}</small></h2></div>
+      {positions.length > 0
+        ? positions.map(p => <PositionRow key={`${p.symbol}-${p.side ?? 'SPOT'}`} p={p} onOpen={() => onOpen(p.symbol)} />)
+        : <div className="empty left"><b>{t('profile.noPositions')}</b></div>}
+    </section>
   );
 }
 
 export function UserProfile() {
-  const { t } = useTranslation('account');
+  const { t } = useTranslation(['account', 'community']);
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const userId = Number(id);
+  const myUserId = useUserStore(s => s.user?.id);
 
   const [profile, setProfile] = useState<UserProfileData | null>(null);
   // 对方关了公开开关 → 后端 403，这里要给一句人话，而不是空白页
   const [denied, setDenied] = useState(false);
 
-  // 底部那张卡两个视角：仓位历史一行是一笔完整仓位（开仓到全部平掉），成交明细一行是一笔委托。
+  // 历史两个视角：仓位历史一行是一笔完整仓位（开仓到全部平掉），成交明细一行是一笔委托。
   // 默认落在仓位历史——「这人赚没赚钱」比「这人几点下了什么单」更该先回答
   const [tab, setTab] = useState<'positions' | 'trades'>('positions');
 
@@ -167,11 +157,13 @@ export function UserProfile() {
     return () => { cancelled = true; };
   }, [tab, tradeKey, loadedTradeKey, userId, tradePage]);
 
+  const back = <Link className="back" to="/ranking"><ChevronLeft className="ic" />{t('profile.back')}</Link>;
+
   if (loading) {
     return (
-      <div className="page-shell p-4 md:p-6 space-y-4">
-        <Skeleton className="h-32 w-full rounded-xl" />
-        <Skeleton className="h-48 w-full rounded-xl" />
+      <div className="page-shell rec p-up">
+        <div className="pg-h"><div>{back}<Skeleton className="h-12 w-56" /></div></div>
+        <div className="st3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-20" />)}</div>
       </div>
     );
   }
@@ -180,132 +172,66 @@ export function UserProfile() {
   // 分开等于把"这个 id 有没有人"当探针送出去，后端也是统一回应的
   if (denied || !profile) {
     return (
-      <div className="page-shell p-4 md:p-6 space-y-4">
-        <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => navigate('/ranking')}>
-          <ArrowLeft className="w-4 h-4" />
-          {t('profile.back')}
-        </Button>
-        <Card>
-          <CardContent className="p-0">
-            <EmptyState icon={<EyeOff />} text={t('profile.private')} />
-          </CardContent>
-        </Card>
+      <div className="page-shell rec p-up">
+        <div className="pg-h"><div>{back}</div></div>
+        <EmptyState icon={<Lock />} text={t('profile.private')} />
       </div>
     );
   }
 
+  // 概览：口径与排行榜完全一致（后端直接复用榜单行）
   const s = profile.summary;
-  const up = s.profitPct >= 0;
-  const hasSpot = profile.spotPositions.length > 0;
-  const hasFutures = profile.futuresPositions.length > 0;
+  const openTrade = (symbol: string) => navigate(tradeHref(symbol));
 
   return (
-    <div className="page-shell p-4 md:p-6 space-y-4">
-      <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => navigate('/ranking')}>
-        <ArrowLeft className="w-4 h-4" />
-        {t('profile.back')}
-      </Button>
-
-      {/* 概览：口径与排行榜完全一致（后端直接复用榜单行） */}
-      <Card>
-        <CardContent className="pt-5 pb-5">
-          <div className="flex items-start gap-4 flex-wrap">
-            {s.avatar ? (
-              <img src={s.avatar} alt="" referrerPolicy="no-referrer" className="w-14 h-14 rounded-full object-cover ring-2 ring-primary/25 ring-offset-2 ring-offset-card" />
-            ) : (
-              <div className="w-14 h-14 rounded-full bg-linear-to-br from-primary/20 to-accent/10 flex items-center justify-center text-xl font-bold ring-2 ring-primary/25 ring-offset-2 ring-offset-card">
-                {s.username.charAt(0).toUpperCase()}
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-lg font-black truncate">{s.username}</h1>
-                {s.rank != null && (
-                  <Badge variant="secondary" className="gap-1 text-xs">
-                    <Trophy className="w-3 h-3 text-amber-500" />
-                    NO.{s.rank}
-                  </Badge>
-                )}
-              </div>
-              <div className="mt-2 grid grid-cols-3 gap-x-6 gap-y-2">
-                <div>
-                  <div className="microlabel">{t('profile.totalAssets')}</div>
-                  <div className="num text-base font-bold">{fmtNum(s.totalAssets)}</div>
-                </div>
-                <div>
-                  <div className="microlabel">{t('profile.return')}</div>
-                  <div className={cn('num text-base font-bold', up ? 'text-gain' : 'text-loss')}>
-                    {up ? '+' : ''}{s.profitPct.toFixed(2)}%
-                  </div>
-                </div>
-                <div>
-                  <div className="microlabel" title={t('profile.tradingProfitHint')}>{t('profile.tradingProfit')}</div>
-                  <ProfitText value={s.tradingProfit} className="text-base font-bold" />
-                </div>
-              </div>
-            </div>
+    <div className="page-shell rec p-up">
+      <div className="pg-h">
+        <div>
+          {back}
+          <div className="uh">
+            <Avatar name={s.username} src={s.avatar} />
+            <b>{s.username}</b>
+            {s.userId === myUserId && <span className="tag new">{t('community:ranking.me.badge')}</span>}
+            {s.rank != null && <span className="tag"><Trophy className="ic" />#{s.rank}</span>}
           </div>
-        </CardContent>
-      </Card>
-
-      {/* 当前持仓 */}
-      {hasSpot || hasFutures ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          {hasSpot && (
-            <PositionCard title={t('profile.spotTitle')} positions={profile.spotPositions} onOpen={s2 => navigate(tradeHref(s2))} />
-          )}
-          {hasFutures && (
-            <PositionCard title={t('profile.futuresTitle')} positions={profile.futuresPositions} onOpen={s2 => navigate(tradeHref(s2))} />
-          )}
         </div>
-      ) : (
-        <Card><CardContent className="p-0"><EmptyState icon={<Briefcase />} text={t('profile.noPositions')} /></CardContent></Card>
-      )}
+      </div>
 
-      {/* 历史：仓位历史 / 成交明细 两个粒度，同一张卡切换 */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-1 p-1 rounded-lg bg-card-2 border border-border/50">
-            <TabButton
-              active={tab === 'positions'}
-              onClick={() => setTab('positions')}
-              icon={<History className="w-3.5 h-3.5" />}
-            >
-              {t('profile.tabPositions')}
-              {!positionsLoading && <span className="text-xs text-muted-foreground font-normal">{positions.total}</span>}
-            </TabButton>
-            <TabButton
-              active={tab === 'trades'}
-              onClick={() => setTab('trades')}
-              icon={<Receipt className="w-3.5 h-3.5" />}
-            >
-              {t('profile.tabTrades')}
-              {tab === 'trades' && !tradesLoading && (
-                <span className="text-xs text-muted-foreground font-normal">{trades.total}</span>
-              )}
-            </TabButton>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {tab === 'positions' ? (
-            <PositionHistoryList
-              records={positions.records}
-              page={positions.current}
-              pages={positions.pages}
-              loading={positionsLoading}
-              onPage={setPositionPage}
-              emptyText={t('profile.emptyHistory')}
-            />
-          ) : (
-            <TradesPanel
-              trades={trades}
-              loading={tradesLoading}
-              onPage={setTradePage}
-              onOpen={symbol => navigate(tradeHref(symbol))}
-            />
-          )}
-        </CardContent>
-      </Card>
+      <div className="st3">
+        <div><span>{t('profile.totalAssets')}</span><b className="big num"><BigNum value={s.totalAssets} /></b></div>
+        <div>
+          <span>{t('profile.return')}</span>
+          <b className={cn('big num', s.profitPct >= 0 ? 'up' : 'dn')}>{s.profitPct >= 0 ? '+' : ''}{s.profitPct.toFixed(2)}%</b>
+        </div>
+        <div>
+          <span>{t('profile.tradingProfit')}<HelpTip text={t('profile.tradingProfitHint')} /></span>
+          <b className={cn('big num', s.tradingProfit >= 0 ? 'up' : 'dn')}>{signed(s.tradingProfit)}</b>
+        </div>
+      </div>
+
+      <div className="two">
+        <PositionSection title={t('profile.spotTitle')} positions={profile.spotPositions} onOpen={openTrade} />
+        <PositionSection title={t('profile.futuresTitle')} positions={profile.futuresPositions} onOpen={openTrade} />
+      </div>
+
+      <section className="sec">
+        <Tabs value={tab} onChange={setTab} className="tabline" items={[
+          { value: 'positions', label: t('profile.tabPositions'), count: positionsLoading ? undefined : positions.total },
+          { value: 'trades', label: t('profile.tabTrades'), count: tab === 'trades' && !tradesLoading ? trades.total : undefined },
+        ]} />
+        {tab === 'positions' ? (
+          <PositionHistoryList
+            records={positions.records}
+            page={positions.current}
+            pages={positions.pages}
+            loading={positionsLoading}
+            onPage={setPositionPage}
+            emptyText={t('profile.emptyHistory')}
+          />
+        ) : (
+          <TradesPanel trades={trades} loading={tradesLoading} onPage={setTradePage} onOpen={openTrade} />
+        )}
+      </section>
     </div>
   );
 }
@@ -320,61 +246,28 @@ function TradesPanel({ trades, loading, onPage, onOpen }: {
   // 这里订一份 t 不只为下面几句：orderSideView 的方向标签走 i18n 实例现查，靠本组件重渲染跟上切语言
   const { t } = useTranslation('account');
   if (loading) {
-    return (
-      <div className="p-4 space-y-2.5">
-        {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}
-      </div>
-    );
+    return <div className="skr">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-11" />)}</div>;
   }
   if (trades.records.length === 0) {
-    return <EmptyState icon={<Briefcase />} text={t('profile.emptyTrades')} />;
+    return <EmptyState icon={<Receipt />} text={t('profile.emptyTrades')} />;
   }
   return (
     <>
       {trades.records.map(tr => {
         const { label, tone } = orderSideView(tr.orderSide);
         return (
-          <button
-            key={`${tr.kind}-${tr.tradeId}`}
-            type="button"
-            onClick={() => onOpen(tr.symbol)}
-            className="w-full text-left px-4 py-2.5 flex items-center gap-3 border-b border-border/25 last:border-b-0 hover:bg-accent/30 transition-colors"
-          >
-            <span className={cn(
-              'text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0',
-              tone === 'buy' ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss',
-            )}>
-              {label}
-            </span>
-            <span className="text-[13px] font-semibold truncate">{tradeSymbolName(tr.symbol)}</span>
-            {tr.kind === 'FUTURES' && <span className="text-[10px] text-muted-foreground shrink-0">{t('profile.futuresTag')}</span>}
-            {tr.isAi && <Bot className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
-            <span className="num text-[11px] text-muted-foreground ml-auto shrink-0 hidden sm:inline">
-              {fmtNum(tr.quantity, 4)} @ {formatCoinPrice(tr.symbol, tr.filledPrice)}
-            </span>
-            <span className="num text-[13px] font-bold shrink-0">${fmtNum(tr.filledAmount)}</span>
-            <span className="num text-[10px] text-muted-foreground shrink-0 w-20 text-right">
-              {fmtDateTime(tr.createdAt)}
-            </span>
+          <button key={`${tr.kind}-${tr.tradeId}`} type="button" className="tr" onClick={() => onOpen(tr.symbol)}>
+            <span className={cn('tag sm', tone === 'buy' ? 'g' : 'r')}>{label}</span>
+            <b>{tradeSymbolName(tr.symbol)}</b>
+            {tr.kind === 'FUTURES' && <span className="k">{t('profile.futuresTag')}</span>}
+            {tr.isAi && <Bot className="ic" />}
+            <span className="q num">{fmtNum(tr.quantity, 4)} @ {formatCoinPrice(tr.symbol, tr.filledPrice)}</span>
+            <span className="am num">₮{fmtNum(tr.filledAmount)}</span>
+            <span className="tm num">{fmtDateTime(tr.createdAt)}</span>
           </button>
         );
       })}
-
-      {trades.pages > 1 && (
-        <div className="flex items-center justify-between px-4 py-3 border-t border-border/30">
-          <span className="text-xs text-muted-foreground">{t('profile.page', { page: trades.current, pages: trades.pages })}</span>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0"
-              disabled={trades.current <= 1} onClick={() => onPage(trades.current - 1)}>
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0"
-              disabled={trades.current >= trades.pages} onClick={() => onPage(trades.current + 1)}>
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <Pager page={trades.current} pages={trades.pages} onChange={onPage} />
     </>
   );
 }

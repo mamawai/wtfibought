@@ -1,0 +1,38 @@
+/* 用户主页：名字 + 三颗数 → 现货持仓、合约持仓 → 历史（仓位历史 / 成交明细） */
+@layer components {
+  .p-up .uh{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:4px}
+  .p-up .uh .ava{width:48px;height:48px;font-size:19px}
+  .p-up .uh b{min-width:0;overflow-wrap:anywhere;font-size:32px;font-weight:600;letter-spacing:-.03em}
+  .p-up .st3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px 40px;margin-top:28px}
+  .p-up .st3 > div > span{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-up .st3 .big{margin-top:10px;font-size:clamp(28px,3.4vw,44px)}
+  .p-up .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 48px}
+  /* 一笔持仓：币 + 名字数量 + 均价现价，右边市值和盈亏 */
+  .p-up .hr{display:flex;align-items:center;gap:12px;width:100%;padding:14px 0;border-bottom:1px solid var(--color-border);text-align:left}
+  .p-up .hr:last-child{border-bottom:0}
+  .p-up .hr .ci{width:28px;height:28px;flex:none}
+  .p-up .hr .nm{flex:1;min-width:0}
+  .p-up .hr .nm b{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:15px;font-weight:600}
+  .p-up .hr .nm b small{font-size:13px;font-weight:400;color:var(--color-muted-foreground)}
+  .p-up .hr .nm > span{display:block;margin-top:2px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-up .hr .vr{text-align:right}
+  .p-up .hr .vr b{display:block;font-size:16px;font-weight:500;letter-spacing:-.02em}
+  .p-up .hr .vr span{display:block;margin-top:1px;font-size:12.5px}
+  .p-up .tabs{margin-bottom:8px}
+  /* 一笔成交：方向 + 名字 + 数量价格 + 金额 + 时间，点了去那个标的的交易页 */
+  .p-up .tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;width:100%;padding:13px 0;border-bottom:1px solid var(--color-border);font-size:14px;text-align:left}
+  .p-up .tr b{font-weight:500}
+  .p-up .tr > .ic{width:14px;height:14px;color:var(--color-gain)}
+  .p-up .tr .k{font-size:12px;color:var(--color-muted-foreground)}
+  .p-up .tr .q{margin-left:auto;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-up .tr .am{min-width:92px;text-align:right;font-weight:500}
+  .p-up .tr .tm{min-width:84px;text-align:right;font-size:12px;color:var(--color-muted-foreground)}
+  .p-up .skr{display:flex;flex-direction:column;gap:8px}
+  @media (max-width:860px){
+    .p-up .two{grid-template-columns:minmax(0,1fr)}
+    .p-up .st3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+    .p-up .uh b{font-size:26px}
+    .p-up .tr .q{display:none}
+    .p-up .tr .am{margin-left:auto}
+  }
+}

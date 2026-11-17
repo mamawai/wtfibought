@@ -1,0 +1,27 @@
+/* 玩法说明：一篇能从头读到尾的说明。欢迎 → 三种交易各一块 → 双钱包、量化策略、预测市场 → 风险声明 */
+@layer components {
+  /* 底下留出浮着的那排按钮的位置 */
+  .p-in{padding-bottom:84px}
+  .p-in .lead{max-width:62ch;margin-top:14px;font-size:17px;line-height:1.7}
+  .p-in .warnl{display:inline-flex;align-items:center;gap:8px;margin-top:14px;font-size:13.5px;color:var(--color-warning)}
+  .p-in .warnl .ic{width:15px;height:15px}
+  .p-in .rules{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .p-in .rule{padding:24px}
+  .p-in .rule .n{display:block;font-size:13px;color:var(--color-faint)}
+  .p-in .rule h3{margin-top:10px;font-size:18px;font-weight:600;letter-spacing:-.01em}
+  .p-in .rule ul{display:flex;flex-direction:column;gap:10px;margin:14px 0 0;padding:0;list-style:none}
+  .p-in .rule li{position:relative;padding-left:16px;font-size:14px;line-height:1.65;color:var(--color-muted-foreground)}
+  .p-in .rule li::before{content:"";position:absolute;left:2px;top:.72em;width:5px;height:5px;border-radius:50%;background:var(--color-line2)}
+  .p-in .rule li b{font-weight:500;color:var(--color-foreground)}
+  .p-in .more{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px 48px}
+  .p-in .more h3{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:600}
+  .p-in .more h3 .ic{width:17px;height:17px;color:var(--color-muted-foreground)}
+  .p-in .more p{margin-top:8px;font-size:14px;line-height:1.7;color:var(--color-muted-foreground)}
+  .p-in .more p b{font-weight:500;color:var(--color-foreground)}
+  /* 底下两颗按钮浮在页面底边；手机上叠在底部 Tab 上面 */
+  .p-in .ok{position:fixed;left:50%;bottom:24px;z-index:40;display:flex;gap:8px;width:min(480px,calc(100vw - 32px));padding:8px;border-radius:18px;background:var(--color-pop);box-shadow:var(--sh-pop);transform:translateX(-50%)}
+  .p-in .ok .btn{flex:1;height:42px;border-radius:12px;font-size:14.5px}
+  .p-in .risk{max-width:80ch;margin-top:56px;padding-top:20px;border-top:1px solid var(--color-border);font-size:12.5px;line-height:1.7;color:var(--color-faint)}
+  @media (max-width:1080px){.p-in .rules,.p-in .more{grid-template-columns:minmax(0,1fr)}}
+  @media (max-width:1023px){.p-in .ok{bottom:calc(var(--tabbar-space) + 12px)}}
+}

@@ -1,0 +1,55 @@
+/* 留言板：单列。发帖框（留言规范默认收着）→ 两层评论 */
+@layer components {
+  .p-bd{max-width:896px;margin:0 auto}
+  .p-bd .sub{margin-top:8px;font-size:14px;color:var(--color-muted-foreground)}
+  .p-bd .post{margin-top:24px}
+  .p-bd .post .inp.ta textarea{min-height:72px;font-size:15px}
+  .p-bd .post .f{display:flex;align-items:center;gap:12px;margin-top:10px}
+  .p-bd .post .f .linkb{font-size:13px}
+  .p-bd .post .f .btn{margin-left:auto}
+  .p-bd .rules{margin-top:12px;padding:16px 18px;font-size:13.5px;line-height:1.75;color:var(--color-muted-foreground)}
+  .p-bd .rules b{display:block;margin-bottom:4px;font-size:13px;font-weight:600;color:var(--color-foreground)}
+  .p-bd .guest{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:24px;padding:16px 20px;font-size:14px;color:var(--color-muted-foreground)}
+  .p-bd .focus{display:flex;margin-top:24px}
+  .p-bd .list{margin-top:28px}
+  /* 一条留言：头像 + 名字时间 + 正文 + 一排小动作 */
+  .p-bd .cm{display:grid;grid-template-columns:36px minmax(0,1fr);gap:0 12px;padding:18px 0;border-bottom:1px solid var(--color-border)}
+  .p-bd .cm .ava{width:36px;height:36px}
+  .p-bd .cm-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-bd .cm-h b{font-size:14.5px;font-weight:600;color:var(--color-foreground)}
+  .p-bd .cm .tx{margin-top:5px;font-size:15px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+  .p-bd .cm .tx.del{color:var(--color-faint)}
+  .p-bd .cm .tx .at{margin-right:1em;color:var(--color-muted-foreground)}
+  .p-bd .cm-a{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin:8px 0 0 -8px}
+  .p-bd .cm-a button{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 8px;border-radius:8px;font-size:12.5px;color:var(--color-muted-foreground);transition:background-color var(--t) var(--ease-control),color var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
+  .p-bd .cm-a button:active{transform:scale(.94);transition-duration:0s}
+  .p-bd .cm-a button:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .p-bd .cm-a button .ic{width:14px;height:14px}
+  /* 删除点了第一下：变红等第二下 */
+  .p-bd .cm-a .sure{color:var(--color-loss)}
+  /* 回复：缩进一层，左边一根细线 */
+  .p-bd .cm .rps{margin-top:12px;padding-left:14px;border-left:1.5px solid var(--color-border)}
+  .p-bd .cm .rps .cm{grid-template-columns:28px minmax(0,1fr);gap:0 10px;padding:10px 0;border-bottom:0}
+  .p-bd .cm .rps .cm .ava{width:28px;height:28px;font-size:11.5px}
+  .p-bd .cm .rps .cm .tx{font-size:14.5px}
+  .p-bd .cm .more{margin-top:6px;font-size:13px}
+  .p-bd .cm .rbox{margin-top:10px}
+  .p-bd .cm .rbox .inp.ta textarea{min-height:44px}
+  .p-bd .cm .rbox .f{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+  /* 从通知跳进来的那条闪一下 */
+  .p-bd .cm.hl{animation:wiib-cmhl 1.8s var(--ease-control)}
+  @keyframes wiib-cmhl{0%,55%{background:var(--color-primary-soft)}100%{background:transparent}}
+  .p-bd .lm{margin-top:18px}
+  /* 禁言时长 */
+  .p-bd .mopts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .p-bd .mopts .btn{height:40px}
+  @media (hover:hover){
+    .p-bd .cm-a button:hover:not(:disabled){background:var(--color-fill);color:var(--color-foreground)}
+    .p-bd .cm-a button.risk0:hover:not(:disabled){color:var(--color-loss)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .p-bd .cm-a button{transition:none}
+    .p-bd .cm-a button:active{transform:none}
+    .p-bd .cm.hl{animation:none}
+  }
+}

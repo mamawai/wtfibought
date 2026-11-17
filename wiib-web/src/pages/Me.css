@@ -1,0 +1,29 @@
+/* 我的：手机底部 Tab 的最后一站。窄单列：我是谁 → 通知 → 各处入口 → 三个设置 → 重置 → 退出 */
+@layer components {
+  /* 页壳里再包的一层，定宽居中 */
+  .p-me{display:flex;flex-direction:column;gap:14px;max-width:512px;margin:0 auto;padding:28px 0}
+  .p-me .who{display:flex;align-items:center;gap:16px;padding:6px 4px 14px}
+  .p-me .who .ava{width:56px;height:56px;font-size:22px}
+  .p-me .who b{display:block;font-size:24px;font-weight:600;letter-spacing:-.02em}
+  .p-me .who div > span{display:block;margin-top:2px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-me .who .as{margin-left:auto;text-align:right}
+  .p-me .who .as b{font-size:20px;font-weight:400}
+  .p-me .who .as .up{color:var(--color-gain)}
+  .p-me .who .as .dn{color:var(--color-loss)}
+  .p-me .grp{padding:6px}
+  /* 一行入口：左图标、名字，右边去向箭头 */
+  .p-me .row{display:flex;align-items:center;gap:12px;width:100%;height:48px;padding:0 12px;border-radius:14px;font-size:15px;text-align:left;transition:background-color var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
+  .p-me .row:active{transform:scale(.985);transition-duration:0s}
+  .p-me .row > .ic:first-child{width:18px;height:18px;color:var(--color-muted-foreground)}
+  .p-me .row .go2{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-me .row .go2 .ic{width:15px;height:15px;color:var(--color-faint);transition:transform var(--t) var(--ease-control)}
+  .p-me .row[aria-expanded="true"] .go2 .ic{transform:rotate(90deg)}
+  /* 未读数 */
+  .p-me .row em{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--color-primary);color:#fff;font-size:11px;font-style:normal;font-weight:600;line-height:18px;text-align:center}
+  .p-me .nl{padding:0 6px 6px}
+  .p-me .set{display:flex;flex-direction:column;gap:18px;padding:18px}
+  .p-me .rst b{display:block;font-size:15px;font-weight:600}
+  .p-me .rst p{margin:4px 0 14px;font-size:13px;line-height:1.65;color:var(--color-muted-foreground)}
+  @media (hover:hover){.p-me .row:hover{background:var(--color-raise)}}
+  @media (prefers-reduced-motion:reduce){.p-me .row,.p-me .row .go2 .ic{transition:none}}
+}
