@@ -1,0 +1,32 @@
+/* 合约盘口，在 K 线下面：头一行是名字和价格单位，第二行是最新价和标记价，下面买卖各半——
+   买在左（绿）、卖在右（红），买盘那半边左右对调，两边的价格都挨着中缝；每行后面垫一条淡色的累计量，从中缝往外长 */
+@layer components {
+  .ob{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:8px;min-width:0;font-size:12.5px}
+  .ob-h,.ob-mid,.ob-wait{grid-column:1 / -1}
+  .ob-h{display:flex;align-items:center;gap:10px;height:28px;margin-bottom:8px}
+  .ob-h b{font-size:15px;font-weight:600}
+  .ob-h .sel{margin-left:auto}
+  .ob-off{font-size:12px;color:var(--color-warning)}
+  /* 最新价带涨跌箭头，右边是标记价 */
+  .ob-mid{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 6px 10px}
+  .ob-mid b{display:inline-flex;align-items:center;gap:3px;font-size:20px;font-weight:500;letter-spacing:-.02em;transition:color var(--t) var(--ease-control)}
+  .ob-mid b .ic{width:15px;height:15px}
+  .ob-mid span{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--color-muted-foreground);white-space:nowrap}
+
+  .ob .th{display:flex;justify-content:space-between;padding:0 6px 5px;font-size:11.5px;color:var(--color-muted-foreground)}
+  .ob .r{position:relative;display:flex;align-items:center;justify-content:space-between;height:22px;padding:0 6px}
+  .ob .bids .th,.ob .bids .r{flex-direction:row-reverse}
+  /* 累计条：从最优价累计到这一行占两边最大累计量的几成。量变了条是涨过去、落回来的，不是直接换一个长度 */
+  .ob .r::before{content:"";position:absolute;top:1px;bottom:1px;left:0;width:var(--w);border-radius:3px;background:var(--color-loss-soft);transition:width 320ms ease-out}
+  .ob .bids .r::before{left:auto;right:0;background:var(--color-gain-soft)}
+  .ob .r span{position:relative}
+  .ob .r span:first-child{font-weight:500;color:var(--color-loss)}
+  .ob .bids .r span:first-child{color:var(--color-gain)}
+  /* 断了：盘口压淡，头上有一句话 */
+  .ob.stale .ob-s{opacity:.4}
+  .ob-wait{display:grid;place-items:center;min-height:140px;color:var(--color-faint)}
+
+  @media (prefers-reduced-motion:reduce){
+    .ob .r::before,.ob-mid b{transition:none}
+  }
+}
