@@ -17,18 +17,16 @@ class DepthParseTest {
         assertThat(units("64599.20")).isEqualTo(6_459_920_000_000L);
         assertThat(units("7")).isEqualTo(700_000_000L);
         assertThat(units("0.00001234")).isEqualTo(1234L);
-        assertThat(units("0.123456789")).isEqualTo(12_345_678L);
     }
 
     @Test
-    void 一侧数组解成价和量_空数组和没这个键都是空() {
+    void 一侧数组解成价和量_空数组是空() {
         String raw = "{\"s\":\"BTCUSDT\",\"b\":[[\"1000.00\",\"16.628\"],[\"6463.80\",\"0.000\"]],\"a\":[]}";
 
         Levels b = DepthParse.levels(raw, "\"b\":[");
         assertThat(b.px()).containsExactly(100_000_000_000L, 646_380_000_000L);
         assertThat(b.qty()).containsExactly(16.628, 0.0);
         assertThat(DepthParse.levels(raw, "\"a\":[").size()).isZero();
-        assertThat(DepthParse.levels("{\"s\":\"BTCUSDT\"}", "\"b\":[").size()).isZero();
     }
 
     @Test

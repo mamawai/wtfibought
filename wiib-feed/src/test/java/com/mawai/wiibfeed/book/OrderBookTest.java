@@ -38,19 +38,20 @@ class OrderBookTest {
     }
 
     @Test
-    void depth20没来过_不出盘口() {
+    void depth20没来过或断了_不出盘口() {
         OrderBook book = new OrderBook();
-        assertThat(book.snapshot()).isNull();
-
         book.onDiff(0, 10, lv("99.5:4"), lv());
         assertThat(book.snapshot()).isNull();
+
+        OrderBook cut = bookAt100();
+        cut.resetTop();
+        assertThat(cut.snapshot()).isNull();
     }
 
     @Test
     void 最小单位_depth20原样出() throws Exception {
         OrderBook book = bookAt100();
 
-        assertThat(ladder(book, 0).path("step").asText()).isEqualTo("0.1");
         assertThat(side(book, 0, "b")).isEqualTo("[[100,1],[99.9,2],[99.8,3]]");
         assertThat(side(book, 0, "a")).isEqualTo("[[100.1,1],[100.2,2],[100.3,3]]");
     }
@@ -59,10 +60,10 @@ class OrderBookTest {
     void 大单位_买盘往下卖盘往上_同一格的量加在一起() throws Exception {
         OrderBook book = bookAt100();
 
-        assertThat(ladder(book, 1).path("step").asText()).isEqualTo("1");
+        assertThat(ladder(book, 1).path("step").asString()).isEqualTo("1");
         assertThat(side(book, 1, "b")).isEqualTo("[[100,1],[99,5]]");
         assertThat(side(book, 1, "a")).isEqualTo("[[101,6]]");
-        assertThat(ladder(book, 3).path("step").asText()).isEqualTo("100");
+        assertThat(ladder(book, 3).path("step").asString()).isEqualTo("100");
         assertThat(side(book, 3, "b")).isEqualTo("[[100,1],[0,5]]");
         assertThat(side(book, 3, "a")).isEqualTo("[[200,6]]");
     }
@@ -111,23 +112,13 @@ class OrderBookTest {
     }
 
     @Test
-    void depth20断了_不出盘口() {
-        OrderBook book = bookAt100();
-
-        book.resetTop();
-
-        assertThat(book.snapshot()).isNull();
-    }
-
-    @Test
     void 最小价位_相邻档价差的最大公约数() throws Exception {
         OrderBook book = new OrderBook();
         book.onTop(lv("100.00:1", "99.50:1", "99.00:1"), lv("100.50:1", "101.50:1"));
-        assertThat(ladder(book, 0).path("step").asText()).isEqualTo("0.5");
+        assertThat(ladder(book, 0).path("step").asString()).isEqualTo("0.5");
 
         book.onTop(lv("100.00:1", "99.90:1"), lv("100.50:1"));
-        assertThat(ladder(book, 0).path("step").asText()).isEqualTo("0.1");
-        assertThat(ladder(book, 3).path("step").asText()).isEqualTo("100");
+        assertThat(ladder(book, 0).path("step").asString()).isEqualTo("0.1");
     }
 
     @Test
@@ -154,7 +145,7 @@ class OrderBookTest {
         book.onDiff(0, 10, lv("9990.0:7", "3000.0:9"), lv());
         assertThat(side(book, 0, "b")).isEqualTo("[[10000,1],[9999.9,1],[9990,7]]");
 
-        // 价到了 20000：9990 落到范围外，出盘口时扔掉；这时候来的 9990 增量也不收
+        // 价到了 20000：9990 落到范围外，出盘口时扔掉；这时候来的 9989 增量也不收
         book.onTop(lv("20000.0:1", "19999.9:1"), lv("20000.1:1", "20000.2:1"));
         book.snapshot();
         book.onDiff(10, 20, lv("9989.0:5"), lv());

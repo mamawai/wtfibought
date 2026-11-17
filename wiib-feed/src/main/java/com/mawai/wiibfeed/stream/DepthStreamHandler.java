@@ -52,6 +52,6 @@ public class DepthStreamHandler implements StreamHandler {
         String depthJson = StreamParse.dataObject(raw).replace("\"b\":", "\"bids\":").replace("\"a\":", "\"asks\":");
 
         depthStreamCache.onDepthUpdate(symbol, depthJson, conn.frameReceivedAt());
-        books.onTop(symbol, raw);
+        books.onTop(symbol, raw, conn.frameReceivedAt());
     }
 }

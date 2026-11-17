@@ -89,7 +89,7 @@ final class OrderBook {
 
     /**
      * 出一份给前端的 JSON：{"ladders":[{"step":"0.1","b":[[价,量],...],"a":[[价,量],...]},...]}，
-     * 单位从小到大，每侧从最优价往外最多 {@link #ROWS} 行。depth20 还没来过返回 null
+     * 单位从小到大，每侧从最优价往外最多 {@link #ROWS} 行。depth20 还没来过或断了返回 null
      */
     synchronized String snapshot() {
         if (tick == 0 || topBids.size() == 0 || topAsks.size() == 0) return null;

@@ -5,6 +5,7 @@ import com.mawai.wiibfeed.book.OrderBooks;
 import org.junit.jupiter.api.Test;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /** 增量深度：从报文里取币名和两个更新号（pu 接上一条、u 是这一条），原文交给本地盘口 */
@@ -24,12 +25,14 @@ class DepthDiffStreamHandlerTest {
     }
 
     @Test
-    void 重连就让盘口从头攒() {
+    void 断开和重连都让盘口从头攒() {
         OrderBooks books = mock(OrderBooks.class);
         DepthDiffStreamHandler handler = new DepthDiffStreamHandler(new BinanceProperties(), books);
 
-        handler.onConnected(null);
-
+        handler.onDisconnected();
         verify(books).resetDiff();
+
+        handler.onConnected(null);
+        verify(books, times(2)).resetDiff();
     }
 }

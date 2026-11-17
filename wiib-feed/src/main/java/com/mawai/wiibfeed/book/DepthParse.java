@@ -10,13 +10,11 @@ final class DepthParse {
     private DepthParse() {}
 
     /**
-     * 取 key 后面的那个数组，key 形如 {@code "\"b\":["}；报文里没有这个键返回空。
+     * 取 key 后面的那个数组，key 形如 {@code "\"b\":["}。
      * 币安的报文不带空白，按固定位置跳：["价","量"] 的价从 [" 后开始，量从 "," 后开始。
      */
     static Levels levels(String raw, String key) {
-        int i = raw.indexOf(key);
-        if (i < 0) return Levels.EMPTY;
-        i += key.length();
+        int i = raw.indexOf(key) + key.length();
         long[] px = new long[32];
         double[] qty = new double[32];
         int n = 0;
@@ -35,7 +33,7 @@ final class DepthParse {
         return new Levels(Arrays.copyOf(px, n), Arrays.copyOf(qty, n));
     }
 
-    /** 十进制价乘 1e8 取整："64599.20" → 6459920000000。超过 8 位的小数丢掉 */
+    /** 十进制价乘 1e8 取整："64599.20" → 6459920000000 */
     static long units(String s, int from, int to) {
         long v = 0;
         int frac = -1;
@@ -45,7 +43,7 @@ final class DepthParse {
                 frac = 0;
                 continue;
             }
-            if (frac >= 0 && ++frac > 8) break;
+            if (frac >= 0) frac++;
             v = v * 10 + (c - '0');
         }
         for (int k = Math.max(frac, 0); k < 8; k++) v *= 10;

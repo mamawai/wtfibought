@@ -32,6 +32,11 @@ public class DepthDiffStreamHandler implements StreamHandler {
     }
 
     @Override
+    public void onDisconnected() {
+        books.resetDiff();
+    }
+
+    @Override
     public void onMessage(String raw) {
         // 组合流: {"stream":"btcusdt@depth@500ms","data":{"e":"depthUpdate","E":...,"T":...,"s":"BTCUSDT","ps":"BTCUSDT",
         //          "U":157,"u":160,"pu":149,"b":[["价","量"],...],"a":[...]}}，单流没有外面那层
