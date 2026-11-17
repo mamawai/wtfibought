@@ -24,10 +24,6 @@ function fmt$(n?: number | null, compact = false) {
   if (compact && n != null && Number.isFinite(n) && Math.abs(n) >= 1e4) return (n / 1e3).toFixed(1) + 'K';
   return fmtNum(n);
 }
-/** 毫秒时刻 → 东八区 yyyy-MM-dd（与后端 dailyGrid 切日口径一致）。 */
-function cnDate(ms: number) {
-  return new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
-}
 function fmtDuration(sec: number) {
   if (!sec || sec <= 0) return '-';
   if (sec < 60) return sec.toFixed(0) + 's';
@@ -104,7 +100,7 @@ function TradeRow({ trade }: { trade: TnTrade }) {
  * 三颗钮——下单、市价平仓、撤挂单；下面一条是刚才那一下的结果
  */
 function ManualTradePanel({ onDone }: { onDone: () => void }) {
-  const { t } = useTranslation('strategy');
+  const { t } = useTranslation(['strategy', 'portfolio', 'trade']);
   const { toast } = useToast();
   const fx = useSubmitFx();
   const [open, setOpen] = useState(false);
@@ -118,8 +114,8 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
 
   // 跑一个请求：成了把返回的摘要摆出来并刷新看板，没成摆错误原文（Binance / 权限 / 校验的原话）
   const run = (key: string, fn: () => Promise<string>) => {
-    setResult(null);
     void fx.run(key, async () => {
+      setResult(null);
       setResult({ ok: true, text: await fn() });
       onDone();
     }, e => {
@@ -174,11 +170,11 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
         <div>
           <div className="manual">
             <div className="segs">
-              <Seg value={symbol} onChange={setSymbol} label={t('testnet.manual.title')}
+              <Seg value={symbol} onChange={setSymbol} label={t('portfolio:field.symbol')}
                    options={[{ value: 'BTCUSDT', label: 'BTC' }, { value: 'ETHUSDT', label: 'ETH' }]} />
-              <Seg value={side} onChange={setSide} label={t('testnet.manual.buy')}
+              <Seg value={side} onChange={setSide} label={t('portfolio:field.side')}
                    options={[{ value: 'BUY', label: t('testnet.manual.buy') }, { value: 'SELL', label: t('testnet.manual.sell') }]} />
-              <Seg value={type} onChange={setType} label={t('testnet.manual.market')}
+              <Seg value={type} onChange={setType} label={t('trade:orderType.label')}
                    options={[{ value: 'MARKET', label: t('testnet.manual.market') }, { value: 'LIMIT', label: t('testnet.manual.limit') }]} />
             </div>
             <div className="gen">
@@ -241,7 +237,7 @@ export function TestnetMonitor() {
  * 四个指标 → 权益曲线和盈亏月历（点某天看当天成交）→ 当前持仓和挂单 → fill 对账 → 近 30 天成交 → 最底下手动交易自检。
  */
 function TestnetMonitorPage() {
-  const { t } = useTranslation(['strategy', 'common']);
+  const { t } = useTranslation(['strategy', 'common', 'portfolio']);
   const { toast } = useToast();
   const [overview, setOverview] = useState<TnOverview | null>(null);
   const [trades, setTrades] = useState<TnTrade[]>([]);          // 近 30 天：成交列表、胜率
@@ -300,7 +296,7 @@ function TestnetMonitorPage() {
 
   // 选中某天的成交（东八区切日，与月历一致）
   const dayTrades = useMemo(
-    () => (selectedDate ? gridTrades.filter((x) => cnDate(x.time) === selectedDate) : []),
+    () => (selectedDate ? gridTrades.filter((x) => fmtDate(x.time) === selectedDate) : []),
     [selectedDate, gridTrades],
   );
 
@@ -315,7 +311,7 @@ function TestnetMonitorPage() {
           <p className="d">{t('testnet.subtitle')}</p>
         </div>
         <div className="r">
-          <Seg value={symbol} onChange={setSymbol} label={t('testnet.title')}
+          <Seg value={symbol} onChange={setSymbol} label={t('portfolio:field.symbol')}
                options={[{ value: 'ALL', label: t('common:all') }, { value: 'BTCUSDT', label: 'BTC' }, { value: 'ETHUSDT', label: 'ETH' }]} />
           <button type="button" className="ib" aria-label={t('common:refresh')} title={t('common:refresh')}
                   onClick={() => { void load(); toast(t('testnet.refreshed'), 'info'); }}>

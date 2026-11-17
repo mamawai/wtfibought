@@ -13,6 +13,7 @@ import { JvmMonitors } from '../components/JvmMonitors';
 import { SureButton } from '../components/SureButton';
 import { DEFAULT_CONTEXT_WINDOW, LlmEndpointForm, type LlmEndpointValue } from '../components/LlmEndpointForm';
 import { cn } from '../lib/utils';
+import i18n from '../i18n';
 import './Admin.css';
 
 /** 功能位名称的词表 key，顺序即页面上的行序。常量在组件外，存翻译结果会在模块加载那一刻定死，切语言不跟着变 */
@@ -99,19 +100,22 @@ export function Admin() {
     setInviteCodes(list);
   }, []);
 
-  // 四样一起拉，哪样没拉到就留着原来的
+  // 四样一起拉，哪样没拉到就留着原来的；有没拉到的就抛出去
   const reload = useCallback(async () => {
-    await Promise.allSettled([fetchInterestRate(), fetchAiKeys(), fetchAssignments(), fetchInviteCodes()]);
+    const results = await Promise.allSettled([fetchInterestRate(), fetchAiKeys(), fetchAssignments(), fetchInviteCodes()]);
     setLoaded(true);
+    const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed) throw failed.reason;
   }, [fetchInterestRate, fetchAiKeys, fetchAssignments, fetchInviteCodes]);
 
   // 进页拉一遍；放进 then 里调，effect 里不直接写状态
   useEffect(() => {
-    if (user?.id === 1) void Promise.resolve().then(reload);
-  }, [user, reload]);
+    if (user?.id === 1) {
+      void Promise.resolve().then(reload).catch(() => toast(i18n.t('common:loadFailed'), 'error'));
+    }
+  }, [user, reload, toast]);
 
   // 外层守卫保证 token 存在，user 为 null 只能是 fetchUser 还没回来 —— 等它。
-  // 早先这里 !user 也一起弹，管理员刷新本页会被自己的代码踢回首页（user 没持久化，刷新必为 null）
   if (!user) return null;
   if (user.id !== 1) return <Navigate to="/" replace />;
 
@@ -260,212 +264,214 @@ export function Admin() {
   );
 
   return (
-    <div className="page-shell p-adm">
-      <div className="pg-h">
-        <h1>{t('admin.title')}</h1>
-        <div className="r">
-          {/* 因子挖掘只有管理员用，入口就放这儿；页面是 wiib-alpha 自己托管的，整页跳过去 */}
-          <a href="/alpha/" className="linkb">{t('admin.alphaLink')}</a>
-          <button type="button" className={cn('btn', fx.cls('reload'))} disabled={off('reload')}
-                  onClick={() => void fx.run('reload', reload, fail(t('common:loadFailed')))}>
-            <RefreshCw className="ic" /><span>{t('common:refresh')}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 三个进程的状况：订的是实时推送，不跟着上面那颗刷新走 */}
-      <JvmMonitors />
-
-      <div className="cols">
-        <div>
-          {/* feed 的行情数据流：自己拉自己订，管理员进页即见 */}
-          <FeedStreams />
-
-          {/* ===== 配置 LLM（一条 = key + baseUrl + model） ===== */}
-          <section className="sec">
-            <div className="sec-h">
-              <h2>{t('admin.llm.title')}{aiKeys.length > 0 && <small>{aiKeys.length}</small>}</h2>
-              {!(editingKey && editingKey.id == null) && (
-                <button type="button" className="btn ink" onClick={() => setEditingKey({ form: BLANK_FORM })}>
-                  <Plus className="ic" />{t('admin.llm.add')}
-                </button>
-              )}
-            </div>
-            <p className="intro">{t('admin.llm.hint')}</p>
-            <div className="eps">
-              {editingKey && editingKey.id == null && <div className="blk edit">{keyForm}</div>}
-              {loaded && aiKeys.length === 0 && !editingKey && <div className="empty"><span>{t('admin.llm.empty')}</span></div>}
-              {aiKeys.map(key => {
-                const isEditing = editingKey?.id === key.id;
-                return (
-                  <div key={key.id} className={cn('blk', isEditing && 'edit')}>
-                    <div className="ep-h">
-                      <b>{key.configName}</b>
-                      <span className="acts">
-                        <button type="button" className="btn sm" aria-pressed={isEditing}
-                                onClick={() => setEditingKey(isEditing ? null : { id: key.id, keyTail: key.apiKeyTail, form: {
-                                  ...BLANK_FORM, name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
-                                  model: key.model || '', reasoningEffort: key.reasoningEffort || '',
-                                } })}>
-                          <Pencil className="ic" />{t('common:edit')}
-                        </button>
-                        <SureButton className={cn('btn sm', fx.cls(`key-${key.id}`))} idleClassName="plain" sureLabel={t('admin.llm.removeSure')}
-                                    disabled={off(`key-${key.id}`)} onConfirm={() => void handleDeleteKey(key.id)}>
-                          <span>{t('common:delete')}</span>
-                        </SureButton>
-                      </span>
-                    </div>
-                    <div className="ep-l">
-                      <span className="tag sm">{PROTO_NAME[key.apiProtocol || 'openai'] ?? key.apiProtocol}</span>
-                      {key.model && <code>{key.model}</code>}
-                      <span>{key.baseUrl}</span>
-                    </div>
-                    <div className="ep-l">
-                      <span>****{key.apiKeyTail}</span>
-                      {key.reasoningEffort && <span>{t('admin.llm.effortBadge', { value: key.reasoningEffort })}</span>}
-                    </div>
-                    {isEditing && keyForm}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* ===== 更换 LLM（功能位 → 配置，保存才生效） ===== */}
-          <section className="sec">
-            <div className="sec-h"><h2>{t('admin.assign.title')}</h2></div>
-            <p className="intro">{t('admin.assign.hint')}</p>
-            <div className="bind">
-              {assignmentsDraft.map(a => (
-                <div key={a.functionName}>
-                  <b>{fnLabel(a.functionName)}</b>
-                  <Select className="wide" label={fnLabel(a.functionName)} placeholder={t('admin.assign.select')}
-                          value={String(a.configId ?? '')}
-                          onChange={v => updateDraft(a.functionName, v ? Number(v) : null)}
-                          options={OPTIONAL_FUNCTIONS.has(a.functionName)
-                            ? [{ value: '', label: t('admin.assign.none') }, ...keyOptions]
-                            : keyOptions} />
-                </div>
-              ))}
-            </div>
-            <button type="button" className={cn('btn ink', fx.cls('assign'))} disabled={off('assign') || assignmentsDraft.length === 0}
-                    onClick={() => void handleSaveAssignments()}>
-              <span>{t('admin.assign.save')}</span>
+    <div className="page-shell">
+      <div className="p-adm">
+        <div className="pg-h">
+          <h1>{t('admin.title')}</h1>
+          <div className="r">
+            {/* 因子挖掘只有管理员用，入口就放这儿；页面是 wiib-alpha 自己托管的，整页跳过去 */}
+            <a href="/alpha/" className="linkb">{t('admin.alphaLink')}</a>
+            <button type="button" className={cn('btn', fx.cls('reload'))} disabled={off('reload')}
+                    onClick={() => void fx.run('reload', reload, fail(t('common:loadFailed')))}>
+              <RefreshCw className="ic" /><span>{t('common:refresh')}</span>
             </button>
-          </section>
+          </div>
         </div>
 
-        <div>
-          {/* ===== 杠杆日利率 ===== */}
-          <section className="sec">
-            <div className="sec-h">
-              <h2>
-                {t('admin.rate.title')}
-                {interestRateDecimal != null && (
-                  <small>
-                    {t('admin.rate.current', {
-                      value: t('admin.rate.value', { pct: (interestRateDecimal * 100).toFixed(4), decimal: interestRateDecimal }),
-                    })}
-                  </small>
-                )}
-              </h2>
-            </div>
-            <div className="gen">
-              <div className="fld grow">
-                <label className="inp sm">
-                  <input value={interestRatePct} onChange={e => setInterestRatePct(e.target.value)} inputMode="decimal"
-                         placeholder={t('admin.rate.placeholder')} aria-label={t('admin.rate.title')} />
-                  <span className="u">%</span>
-                </label>
-              </div>
-              <button type="button" className={cn('btn ink', fx.cls('rate'))} disabled={off('rate')} onClick={handleSaveRate}>
-                <span>{t('common:save')}</span>
-              </button>
-            </div>
-            <p className="fhint">{t('admin.rate.hint')}</p>
-          </section>
+        {/* 三个进程的状况：订的是实时推送，不跟着上面那颗刷新走 */}
+        <JvmMonitors />
 
-          {/* ===== 邀请码（注册凭证：可配次数、批量生成、作废） ===== */}
-          <section className="sec">
-            <div className="sec-h">
-              <h2>{t('admin.invite.title')}{inviteCodes.length > 0 && <small>{inviteCodes.length}</small>}</h2>
-            </div>
-            <div className="gen">
-              <div className="fld">
-                <label className="fl" htmlFor="adm-inv-uses"><span>{t('admin.invite.maxUses')}</span></label>
-                <label className="inp sm">
-                  <input id="adm-inv-uses" value={inviteMaxUses} onChange={e => setInviteMaxUses(e.target.value)} inputMode="numeric" />
-                </label>
+        <div className="cols">
+          <div>
+            {/* feed 的行情数据流：自己拉自己订，管理员进页即见 */}
+            <FeedStreams />
+
+            {/* ===== 配置 LLM（一条 = key + baseUrl + model） ===== */}
+            <section className="sec">
+              <div className="sec-h">
+                <h2>{t('admin.llm.title')}{aiKeys.length > 0 && <small>{aiKeys.length}</small>}</h2>
+                {!(editingKey && editingKey.id == null) && (
+                  <button type="button" className="btn ink" onClick={() => setEditingKey({ form: BLANK_FORM })}>
+                    <Plus className="ic" />{t('admin.llm.add')}
+                  </button>
+                )}
               </div>
-              <div className="fld">
-                <label className="fl" htmlFor="adm-inv-count"><span>{t('admin.invite.count')}</span></label>
-                <label className="inp sm">
-                  <input id="adm-inv-count" value={inviteCount} onChange={e => setInviteCount(e.target.value)} inputMode="numeric" />
-                </label>
-              </div>
-              <button type="button" className={cn('btn ink', fx.cls('invite'))} disabled={off('invite')} onClick={() => void handleGenerateInvites()}>
-                <Plus className="ic" /><span>{t('admin.invite.generate')}</span>
-              </button>
-            </div>
-            {loaded && inviteCodes.length === 0 && <div className="empty"><span>{t('admin.invite.empty')}</span></div>}
-            {inviteCodes.length > 0 && (
-              <div className="invs">
-                {inviteCodes.map(ic => {
-                  const usedUp = ic.usedCount >= ic.maxUses;
+              <p className="intro">{t('admin.llm.hint')}</p>
+              <div className="eps">
+                {editingKey && editingKey.id == null && <div className="blk edit">{keyForm}</div>}
+                {loaded && aiKeys.length === 0 && !editingKey && <div className="empty"><span>{t('admin.llm.empty')}</span></div>}
+                {aiKeys.map(key => {
+                  const isEditing = editingKey?.id === key.id;
                   return (
-                    <div key={ic.id}>
-                      <button type="button" className="code" title={t('admin.invite.copyTitle')} onClick={() => void copyInviteCode(ic.code)}>
-                        {ic.code}
-                      </button>
-                      <span className="use">{ic.usedCount}/{ic.maxUses}</span>
-                      {!ic.enabled ? <span className="tag sm">{t('admin.invite.revoked')}</span>
-                        : usedUp ? <span className="tag sm">{t('admin.invite.usedUp')}</span>
-                        : <span className="tag sm g">{t('admin.invite.active')}</span>}
-                      <span className="day">{ic.createdAt?.slice(0, 10)}</span>
-                      {ic.enabled && !usedUp && (
-                        <SureButton className={cn('btn sm', fx.cls(`inv-${ic.id}`))} idleClassName="plain" sureLabel={t('admin.invite.revokeSure')}
-                                    disabled={off(`inv-${ic.id}`)} onConfirm={() => void handleDisableInvite(ic.id)}>
-                          <span>{t('admin.invite.revoke')}</span>
-                        </SureButton>
-                      )}
+                    <div key={key.id} className={cn('blk', isEditing && 'edit')}>
+                      <div className="ep-h">
+                        <b>{key.configName}</b>
+                        <span className="acts">
+                          <button type="button" className="btn sm" aria-pressed={isEditing}
+                                  onClick={() => setEditingKey(isEditing ? null : { id: key.id, keyTail: key.apiKeyTail, form: {
+                                    ...BLANK_FORM, name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
+                                    model: key.model || '', reasoningEffort: key.reasoningEffort || '',
+                                  } })}>
+                            <Pencil className="ic" />{t('common:edit')}
+                          </button>
+                          <SureButton className={cn('btn sm', fx.cls(`key-${key.id}`))} idleClassName="plain" sureLabel={t('admin.llm.removeSure')}
+                                      disabled={off(`key-${key.id}`)} onConfirm={() => void handleDeleteKey(key.id)}>
+                            <span>{t('common:delete')}</span>
+                          </SureButton>
+                        </span>
+                      </div>
+                      <div className="ep-l">
+                        <span className="tag sm">{PROTO_NAME[key.apiProtocol || 'openai'] ?? key.apiProtocol}</span>
+                        {key.model && <code>{key.model}</code>}
+                        <span>{key.baseUrl}</span>
+                      </div>
+                      <div className="ep-l">
+                        <span>****{key.apiKeyTail}</span>
+                        {key.reasoningEffort && <span>{t('admin.llm.effortBadge', { value: key.reasoningEffort })}</span>}
+                      </div>
+                      {isEditing && keyForm}
                     </div>
                   );
                 })}
               </div>
-            )}
-          </section>
+            </section>
 
-          {/* ===== 手动触发 ===== */}
-          <section className="sec">
-            <div className="sec-h"><h2>{t('admin.manual.title')}</h2></div>
-            <div className="grp">
-              <span>{t('admin.manual.settleGroup')}</span>
-              <div className="acts">
-                {SETTLE_TASKS.map(task => (
-                  <button key={task.key} type="button" className={cn('btn', fx.cls(task.key))} disabled={off(task.key)}
-                          onClick={() => void fx.run(task.key, task.run, fail(t('admin.actionFailed')))}>
-                    <span>{t(task.labelKey)}</span>
-                  </button>
+            {/* ===== 更换 LLM（功能位 → 配置，保存才生效） ===== */}
+            <section className="sec">
+              <div className="sec-h"><h2>{t('admin.assign.title')}</h2></div>
+              <p className="intro">{t('admin.assign.hint')}</p>
+              <div className="bind">
+                {assignmentsDraft.map(a => (
+                  <div key={a.functionName}>
+                    <b>{fnLabel(a.functionName)}</b>
+                    <Select className="wide" label={fnLabel(a.functionName)} placeholder={t('admin.assign.select')}
+                            value={String(a.configId ?? '')}
+                            onChange={v => updateDraft(a.functionName, v ? Number(v) : null)}
+                            options={OPTIONAL_FUNCTIONS.has(a.functionName)
+                              ? [{ value: '', label: t('admin.assign.none') }, ...keyOptions]
+                              : keyOptions} />
+                  </div>
                 ))}
               </div>
-            </div>
-            {/* 快讯补拉：断档超出定时拉取窗口时用 */}
-            <div className="grp">
-              <span>{t('admin.manual.newsGroup')}</span>
+              <button type="button" className={cn('btn ink', fx.cls('assign'))} disabled={off('assign') || assignmentsDraft.length === 0}
+                      onClick={() => void handleSaveAssignments()}>
+                <span>{t('admin.assign.save')}</span>
+              </button>
+            </section>
+          </div>
+
+          <div>
+            {/* ===== 杠杆日利率 ===== */}
+            <section className="sec">
+              <div className="sec-h">
+                <h2>
+                  {t('admin.rate.title')}
+                  {interestRateDecimal != null && (
+                    <small>
+                      {t('admin.rate.current', {
+                        value: t('admin.rate.value', { pct: (interestRateDecimal * 100).toFixed(4), decimal: interestRateDecimal }),
+                      })}
+                    </small>
+                  )}
+                </h2>
+              </div>
               <div className="gen">
-                <div className="fld">
-                  <label className="fl" htmlFor="adm-backfill"><span>{t('admin.manual.backfillCount')}</span></label>
+                <div className="fld grow">
                   <label className="inp sm">
-                    <input id="adm-backfill" value={backfillCount} onChange={e => setBackfillCount(e.target.value)} inputMode="numeric" />
+                    <input value={interestRatePct} onChange={e => setInterestRatePct(e.target.value)} inputMode="decimal"
+                           placeholder={t('admin.rate.placeholder')} aria-label={t('admin.rate.title')} />
+                    <span className="u">%</span>
                   </label>
                 </div>
-                <button type="button" className={cn('btn', fx.cls('backfill'))} disabled={off('backfill')} onClick={handleBackfillNews}>
-                  <span>{t('admin.manual.backfill')}</span>
+                <button type="button" className={cn('btn ink', fx.cls('rate'))} disabled={off('rate')} onClick={handleSaveRate}>
+                  <span>{t('common:save')}</span>
                 </button>
               </div>
-              <p className="fhint">{t('admin.manual.backfillHint', { max: MAX_BACKFILL_COUNT })}</p>
-            </div>
-          </section>
+              <p className="fhint">{t('admin.rate.hint')}</p>
+            </section>
+
+            {/* ===== 邀请码（注册凭证：可配次数、批量生成、作废） ===== */}
+            <section className="sec">
+              <div className="sec-h">
+                <h2>{t('admin.invite.title')}{inviteCodes.length > 0 && <small>{inviteCodes.length}</small>}</h2>
+              </div>
+              <div className="gen">
+                <div className="fld">
+                  <label className="fl" htmlFor="adm-inv-uses"><span>{t('admin.invite.maxUses')}</span></label>
+                  <label className="inp sm">
+                    <input id="adm-inv-uses" value={inviteMaxUses} onChange={e => setInviteMaxUses(e.target.value)} inputMode="numeric" />
+                  </label>
+                </div>
+                <div className="fld">
+                  <label className="fl" htmlFor="adm-inv-count"><span>{t('admin.invite.count')}</span></label>
+                  <label className="inp sm">
+                    <input id="adm-inv-count" value={inviteCount} onChange={e => setInviteCount(e.target.value)} inputMode="numeric" />
+                  </label>
+                </div>
+                <button type="button" className={cn('btn ink', fx.cls('invite'))} disabled={off('invite')} onClick={() => void handleGenerateInvites()}>
+                  <Plus className="ic" /><span>{t('admin.invite.generate')}</span>
+                </button>
+              </div>
+              {loaded && inviteCodes.length === 0 && <div className="empty"><span>{t('admin.invite.empty')}</span></div>}
+              {inviteCodes.length > 0 && (
+                <div className="invs">
+                  {inviteCodes.map(ic => {
+                    const usedUp = ic.usedCount >= ic.maxUses;
+                    return (
+                      <div key={ic.id}>
+                        <button type="button" className="code" title={t('admin.invite.copyTitle')} onClick={() => void copyInviteCode(ic.code)}>
+                          {ic.code}
+                        </button>
+                        <span className="use">{ic.usedCount}/{ic.maxUses}</span>
+                        {!ic.enabled ? <span className="tag sm">{t('admin.invite.revoked')}</span>
+                          : usedUp ? <span className="tag sm">{t('admin.invite.usedUp')}</span>
+                          : <span className="tag sm g">{t('admin.invite.active')}</span>}
+                        <span className="day">{ic.createdAt?.slice(0, 10)}</span>
+                        {ic.enabled && !usedUp && (
+                          <SureButton className={cn('btn sm', fx.cls(`inv-${ic.id}`))} idleClassName="plain" sureLabel={t('admin.invite.revokeSure')}
+                                      disabled={off(`inv-${ic.id}`)} onConfirm={() => void handleDisableInvite(ic.id)}>
+                            <span>{t('admin.invite.revoke')}</span>
+                          </SureButton>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* ===== 手动触发 ===== */}
+            <section className="sec">
+              <div className="sec-h"><h2>{t('admin.manual.title')}</h2></div>
+              <div className="grp">
+                <span>{t('admin.manual.settleGroup')}</span>
+                <div className="acts">
+                  {SETTLE_TASKS.map(task => (
+                    <button key={task.key} type="button" className={cn('btn', fx.cls(task.key))} disabled={off(task.key)}
+                            onClick={() => void fx.run(task.key, task.run, fail(t('admin.actionFailed')))}>
+                      <span>{t(task.labelKey)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 快讯补拉：断档超出定时拉取窗口时用 */}
+              <div className="grp">
+                <span>{t('admin.manual.newsGroup')}</span>
+                <div className="gen">
+                  <div className="fld">
+                    <label className="fl" htmlFor="adm-backfill"><span>{t('admin.manual.backfillCount')}</span></label>
+                    <label className="inp sm">
+                      <input id="adm-backfill" value={backfillCount} onChange={e => setBackfillCount(e.target.value)} inputMode="numeric" />
+                    </label>
+                  </div>
+                  <button type="button" className={cn('btn', fx.cls('backfill'))} disabled={off('backfill')} onClick={handleBackfillNews}>
+                    <span>{t('admin.manual.backfill')}</span>
+                  </button>
+                </div>
+                <p className="fhint">{t('admin.manual.backfillHint', { max: MAX_BACKFILL_COUNT })}</p>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </div>

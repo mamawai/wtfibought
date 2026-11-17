@@ -2,11 +2,11 @@
  * 管理页（/admin）和 testnet 页（/testnet）的假数据。
  * 这两页只有 1 号用户能进：开页时网址带 ?admin，当前用户就变成 1 号（见 traderMock 里的 wiib-mock-admin）。
  */
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
+export const MIN = 60_000;
+export const HOUR = 60 * MIN;
+export const DAY = 24 * HOUR;
 
-const r2 = (v: number) => Math.round(v * 100) / 100;
+export const r2 = (v: number) => Math.round(v * 100) / 100;
 /** 东八区 yyyy-MM-dd，跟 testnet 页切日的口径一样 */
 const cnDate = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
 

@@ -11,13 +11,9 @@ import { basePrice, hasFutures, klines, livePrice, roundPrice } from './market';
 import { handleQuotes } from './stompMock';
 import { LEDGER_BIZ_TYPES, LEDGER_ENTRIES, rankingRows } from './account';
 import {
-  ADMIN_ASSIGNMENTS, ADMIN_KEYS, ADMIN_RATE, TN_FILL_STATS, feedStreams, inviteCodes,
+  ADMIN_ASSIGNMENTS, ADMIN_KEYS, ADMIN_RATE, DAY, HOUR, MIN, TN_FILL_STATS, feedStreams, inviteCodes, r2,
   tnDailyGrid, tnEquity, tnOverview, tnTrades,
 } from './admin';
-
-const MIN = 60_000;
-const HOUR = 3_600_000;
-const DAY = 86_400_000;
 
 /** 页面首屏拿到的时间要贴着"现在"，写死时间戳会让曲线和时间线看着像上个月的 */
 const now = () => Date.now();
@@ -487,7 +483,6 @@ const decisionTrace = () => {
 // ==================== 首页：资产 / 成交 / 快讯 / 爆仓 ====================
 
 const pad = (n: number) => String(n).padStart(2, '0');
-const r2 = (n: number) => Math.round(n * 100) / 100;
 /** 后端发的是本地时区的 'yyyy-MM-dd HH:mm:ss' 字符串，mock 照这个形状给 */
 const dateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const timeStr = (ms: number) => {
