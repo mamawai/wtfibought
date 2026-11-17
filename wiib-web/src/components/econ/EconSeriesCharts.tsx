@@ -55,11 +55,11 @@ export function EconSeriesCharts({ country, titles, sourceId, eventTime }: Props
   const unit = rows?.flatMap(r => [r.actual, r.forecast, r.previous]).map(valueSuffix).find(Boolean) ?? '';
 
   return (
-    <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+    <div className="hc grid gap-4 sm:grid-cols-[2fr_1fr]">
       <Block title={t('chart.history')}>
         {!sel ? <Skeleton className={CHART_H} />
           : pts.length ? <HistoryLine pts={pts} sel={sel} unit={unit} onPick={setSelId} />
-          : <p className="text-sm text-muted-foreground">{t('chart.noData')}</p>}
+          : <p className="py-[22px] text-[12.5px] text-faint">{t('chart.noData')}</p>}
       </Block>
       <Block title={t('chart.release', { date: fmtDate(sel?.eventTime ?? eventTime) })}>
         {sel ? <ReleaseBars row={sel} unit={unit} /> : <Skeleton className={CHART_H} />}
@@ -72,13 +72,13 @@ export function EconSeriesCharts({ country, titles, sourceId, eventTime }: Props
 function Block({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <div className="mb-2 text-[12px] text-muted-foreground">{title}</div>
+      <div className="mb-1.5 text-[11.5px] text-faint">{title}</div>
       {children}
     </div>
   );
 }
 
-/** 历次实际值折线，选中那次叠一个主色点 */
+/** 历次实际值折线：线和点用浅灰，选中那次叠一颗墨色点 */
 function HistoryLine({ pts, sel, unit, onPick }: {
   /** 有实际值的那些期，按时间正序 */
   pts: EconCalendarEvent[];
@@ -111,6 +111,7 @@ function HistoryLine({ pts, sel, unit, onPick }: {
 
   useEffect(() => {
     const ui = chartUi(isDark);
+    const line = cssVar('--color-line2', '#d9d9de');
     const selV = parseValue(sel.actual);
     const enc = echarts.format.encodeHTML;
     chartRef.current!.setOption({
@@ -147,17 +148,17 @@ function HistoryLine({ pts, sel, unit, onPick }: {
           data: pts.map(r => [r.eventTime, parseValue(r.actual)]),
           smooth: false,
           symbol: 'circle',
-          symbolSize: 6,
-          lineStyle: { width: 2, color: ui.fg },
-          itemStyle: { color: ui.fg },
+          symbolSize: 5,
+          lineStyle: { width: 1.5, color: line },
+          itemStyle: { color: line },
         },
-        // 选中点：主色填充 + 面色描边环压在线上；还没公布的那次不标
+        // 选中点：墨色填充 + 底色描边环压在线上；还没公布的那次不标
         {
           id: 'selected',
           type: 'scatter',
           data: selV == null ? [] : [[sel.eventTime, selV]],
           symbolSize: 10,
-          itemStyle: { color: cssVar('--color-primary', '#f25f0a'), borderColor: ui.card, borderWidth: 2 },
+          itemStyle: { color: ui.fg, borderColor: ui.card, borderWidth: 2 },
           silent: true,
           tooltip: { show: false },
           z: 3,

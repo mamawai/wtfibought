@@ -1,0 +1,16 @@
+/* 爆仓记录：顶上多空两颗大数 + 总名义金额，一条多空占比；下面是明细表（返回链接、页头说明、筛选一排见 records.css） */
+@layer components {
+  .p-fo .st3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px 40px;margin-bottom:8px}
+  .p-fo .st3 span{display:block;font-size:13px;color:var(--color-muted-foreground)}
+  .p-fo .st3 .big{margin-top:10px;font-size:clamp(30px,3.6vw,46px)}
+  .p-fo .st3 small{display:block;margin-top:8px;font-size:12px;color:var(--color-faint)}
+  /* 多空占比：一条细线分两段 */
+  .p-fo .ratio{display:flex;height:4px;margin-top:18px;border-radius:2px;overflow:hidden;background:var(--color-fill2)}
+  .p-fo .ratio i{display:block;height:100%;transition:width var(--slow) var(--ease-control)}
+  .p-fo .st3-sk{height:96px}
+  @media (max-width:760px){
+    .p-fo .st3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+    .p-fo .st3 > :last-child{grid-column:1/-1}
+  }
+  @media (prefers-reduced-motion:reduce){.p-fo .ratio i{transition:none}}
+}

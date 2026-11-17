@@ -1,0 +1,31 @@
+/* 财经日历：周导航 → 国家筛选 → 按天分组的事件行，点开看解读和历次走势（行本身的样式见 EconEventRow.css，这里是日历页放宽的那些） */
+@layer components {
+  /* 页壳里再包的一层，定宽居中 */
+  .p-ec{max-width:980px;margin:0 auto}
+  .p-ec .sub{margin-top:8px;font-size:13.5px;color:var(--color-muted-foreground)}
+  .p-ec .wk{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:24px}
+  .p-ec .wk b{min-width:168px;padding:0 6px;font-size:17px;font-weight:600;letter-spacing:-.01em;text-align:center}
+  .p-ec .wk .sp{flex:1}
+  .p-ec .chips{margin-top:14px}
+  .p-ec .day{display:flex;align-items:baseline;gap:10px;margin:30px 0 2px;font-size:14px;font-weight:600}
+  .p-ec .day small{font-size:12.5px;font-weight:400;color:var(--color-muted-foreground)}
+  .p-ec .day .tag{align-self:center}
+  .p-ec .ev.nodate > button{grid-template-columns:52px minmax(0,1fr) auto;gap:4px 14px;align-items:center;padding:13px 0;font-size:14.5px}
+  .p-ec .ev .nm{align-items:center;gap:9px}
+  .p-ec .ev .cc{min-width:58px;font-weight:400}
+  .p-ec .ev.us .cc{font-weight:600}
+  .p-ec .ev.us .tt{font-weight:500}
+  .p-ec .ev .vals{gap:4px 12px;font-size:12.5px}
+  .p-ec .ev.nodate .ex{padding:2px 0 18px 66px;line-height:1.7}
+  .p-ec .ev .ex p + p{margin-top:6px}
+  /* 解读下面的走势图，跟解读左对齐 */
+  .p-ec .hc{padding:0 0 18px 66px}
+  .p-ec > .empty{margin-top:32px}
+  @media (max-width:760px){
+    .p-ec .wk b{min-width:0;padding:0 2px;font-size:14.5px;white-space:nowrap}
+    .p-ec .wk .sp{display:none}
+    .p-ec .ev.nodate > button{grid-template-columns:44px minmax(0,1fr)}
+    .p-ec .ev .cc{min-width:0}
+    .p-ec .ev.nodate .ex,.p-ec .hc{padding-left:58px}
+  }
+}

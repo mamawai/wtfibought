@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton';
 import { DatePicker } from '../components/ui/date-picker';
 import { CountryFlag } from '../components/CountryFlag';
+import { EmptyState } from '../components/EmptyState';
 import { EconEventRow } from '../components/econ/EconEventRow';
 import { EconSeriesCharts } from '../components/econ/EconSeriesCharts';
 import { quantApi, type EconCalendarEvent } from '../api';
 import { currentLang } from '../i18n';
 import { findEntry } from '../lib/econCatalog';
-import { DAY_MS, cn, dayBounds, fmtDate } from '../lib/utils';
+import { DAY_MS, dayBounds, fmtDate } from '../lib/utils';
+import './EconCalendar.css';
 
 /** 可翻到的最早日期 */
 const MIN_DAY = '2022-01-01';
 const WEEK_MS = 7 * DAY_MS;
-/** 国家按钮，按 2022 年起 High 事件条数从多到少 */
+/** 国家筛选的先后，按 2022 年起 High 事件条数从多到少 */
 const COUNTRIES = ['US', 'GB', 'CN', 'DE', 'AU', 'CA', 'JP', 'EU', 'IT', 'FR', 'IN', 'ES', 'CH', 'KR'];
 /** 选中的国家记在浏览器里，空数组 = 全部 */
 const COUNTRY_KEY = 'wiib-econ-countries';
+/** 周导航上的日期：11月16日 / Nov 16 */
+const MONTH_DAY = { month: 'short', day: 'numeric' } as const;
 
 /** 某天（站点时区 yyyy-MM-dd）所在那周的周一 */
 function mondayOf(day: string): string {
@@ -28,10 +33,9 @@ function mondayOf(day: string): string {
 
 const FIRST_WEEK = mondayOf(MIN_DAY);
 
-/** 分组标题：09/14 周一 */
-function fmtDayHead(ts: number): string {
-  return new Date(ts).toLocaleDateString(currentLang() === 'en' ? 'en-US' : 'zh-CN',
-    { timeZone: 'Asia/Singapore', month: '2-digit', day: '2-digit', weekday: 'short' });
+/** 站点时区的日期文字，跟界面语言走 */
+function fmtDay(ts: number, opts: Intl.DateTimeFormatOptions): string {
+  return new Date(ts).toLocaleDateString(currentLang() === 'en' ? 'en-US' : 'zh-CN', { timeZone: 'Asia/Singapore', ...opts });
 }
 
 /**
@@ -54,6 +58,8 @@ export function EconCalendar() {
   const [week, setWeek] = useState(range.thisWeek);
   const [rows, setRows] = useState<EconCalendarEvent[] | null>(null);
   const [countries, setCountries] = useState<string[]>(() => JSON.parse(localStorage.getItem(COUNTRY_KEY) ?? '[]'));
+  // 日期框里点的那天；翻到别的周就不再显示它
+  const [jumpDay, setJumpDay] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -76,6 +82,16 @@ export function EconCalendar() {
     localStorage.setItem(COUNTRY_KEY, JSON.stringify(picked));
   };
 
+  // 本周每个国家几条事件
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) m.set(r.country, (m.get(r.country) ?? 0) + 1);
+    return m;
+  }, [rows]);
+  // 筛选里列本周有事件的国家，再加上选中了但本周没事件的（显示 0，免得选着的筛选被藏起来）
+  const chipCodes = [...new Set([...COUNTRIES, ...counts.keys(), ...countries])]
+    .filter(c => counts.has(c) || countries.includes(c));
+
   const days = useMemo(() => {
     const byDay = new Map<string, EconCalendarEvent[]>();
     for (const r of rows ?? []) {
@@ -87,60 +103,78 @@ export function EconCalendar() {
   }, [rows, countries]);
   // 闪点只在本周页找
   const nextUs = week === range.thisWeek ? rows?.find(r => r.country === 'US' && r.eventTime > range.now) : undefined;
+  const weekStart = dayBounds(week).from;
+  const today = fmtDate(range.now);
 
   return (
-    <div className="max-w-[980px] mx-auto px-5 pt-11 pb-14">
-      <h1 className="text-[22px] font-extrabold tracking-[-.01em] mb-1.5">{t('title')}</h1>
-      <p className="text-[13px] text-muted-foreground mb-6">{t('note')}</p>
-
-      {/* 周导航：前后一周 + 日期框跳到那天所在的周 + 回本周；日期框只能点可翻范围内的日期 */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <button type="button" className="btn xs disabled:opacity-40" disabled={week <= FIRST_WEEK}
-                onClick={() => shiftWeek(-1)}>{t('prevWeek')}</button>
-        <DatePicker value={week} min={MIN_DAY} max={range.maxDay} onChange={v => changeWeek(mondayOf(v))}
-                    className="input num h-7 px-2 text-[13px]" />
-        <button type="button" className="btn xs disabled:opacity-40" disabled={week >= range.lastWeek}
-                onClick={() => shiftWeek(1)}>{t('nextWeek')}</button>
-        {week !== range.thisWeek && (
-          <button type="button" className="btn xs" onClick={() => changeWeek(range.thisWeek)}>{t('thisWeek')}</button>
-        )}
-        <span className="num ml-auto text-[13px] text-muted-foreground">
-          {week} ~ {fmtDate(dayBounds(week).from + 6 * DAY_MS)}
-        </span>
-      </div>
-
-      {/* 国家筛选：可多选，一个都不选 = 全部 */}
-      <div className="flex flex-wrap gap-1.5 mt-3">
-        <button type="button" className={cn('chip', countries.length ? 'mute text-muted-foreground' : 'fill')}
-                onClick={() => toggleCountry(null)}>{t('allCountries')}</button>
-        {COUNTRIES.map(c => (
-          <button key={c} type="button" className={cn('chip', countries.includes(c) ? 'fill' : 'mute text-muted-foreground')}
-                  onClick={() => toggleCountry(c)}>
-            <CountryFlag code={c} />{t(`country.${c}`)}
-          </button>
-        ))}
-      </div>
-
-      {rows == null ? (
-        <div className="space-y-3 pt-6">
-          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+    <div className="page-shell">
+      <div className="p-ec">
+        <div className="pg-h">
+          <div>
+            <h1>{t('title')}</h1>
+            <p className="sub">{t('note')}</p>
+          </div>
         </div>
-      ) : days.length === 0 ? (
-        <div className="py-10 text-center text-sm text-muted-foreground">{t('emptyWeek')}</div>
-      ) : days.map(list => (
-        <section key={list[0].eventTime} className="mt-6">
-          <div className="microlabel uppercase pb-2 border-b border-foreground">{fmtDayHead(list[0].eventTime)}</div>
-          {list.map(r => (
-            <EconEventRow key={r.sourceId} event={r} showDate={false} next={r === nextUs}>
-              {/* 讲话、会议这类没有数值的不挂图 */}
-              {(r.actual != null || r.forecast != null || r.previous != null) && (
-                <EconSeriesCharts country={r.country} sourceId={r.sourceId} eventTime={r.eventTime}
-                                  titles={findEntry(r.country, r.title)?.titles ?? [r.title]} />
-              )}
-            </EconEventRow>
+
+        {/* 周导航：前后一周 + 回本周 + 日期框跳到那天所在的周；日期框只能点可翻范围内的日期 */}
+        <div className="wk">
+          <button type="button" className="ib" aria-label={t('prevWeek')} title={t('prevWeek')}
+                  disabled={week <= FIRST_WEEK} onClick={() => shiftWeek(-1)}>
+            <ChevronLeft className="ic" />
+          </button>
+          <b className="nf">{fmtDay(weekStart, MONTH_DAY)} – {fmtDay(weekStart + 6 * DAY_MS, MONTH_DAY)}</b>
+          <button type="button" className="ib" aria-label={t('nextWeek')} title={t('nextWeek')}
+                  disabled={week >= range.lastWeek} onClick={() => shiftWeek(1)}>
+            <ChevronRight className="ic" />
+          </button>
+          {week !== range.thisWeek && (
+            <button type="button" className="btn" onClick={() => changeWeek(range.thisWeek)}>{t('thisWeek')}</button>
+          )}
+          <span className="sp" />
+          <DatePicker value={jumpDay && mondayOf(jumpDay) === week ? jumpDay : ''} min={MIN_DAY} max={range.maxDay}
+                      placeholder={t('jumpTo')} onChange={v => { setJumpDay(v); changeWeek(mondayOf(v)); }} />
+        </div>
+
+        {/* 国家筛选：可多选，一个都不选 = 全部 */}
+        <div className="chips">
+          <button type="button" className="chip" aria-pressed={!countries.length} onClick={() => toggleCountry(null)}>
+            {t('allCountries')}
+          </button>
+          {rows && chipCodes.map(c => (
+            <button key={c} type="button" className="chip" aria-pressed={countries.includes(c)} onClick={() => toggleCountry(c)}>
+              <CountryFlag code={c} />{t(`country.${c}`, { defaultValue: c })}<em className="nf">{counts.get(c) ?? 0}</em>
+            </button>
           ))}
-        </section>
-      ))}
+        </div>
+
+        {rows == null ? (
+          <div className="mt-[30px] flex flex-col gap-2">
+            {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-11" />)}
+          </div>
+        ) : days.length === 0 ? (
+          <EmptyState icon={<CalendarDays />} text={t('emptyWeek')} />
+        ) : days.map(list => {
+          const ts = list[0].eventTime;
+          return (
+            <section key={ts}>
+              <div className="day">
+                {fmtDay(ts, { weekday: 'short' })}
+                <small className="nf">{fmtDay(ts, { month: '2-digit', day: '2-digit' })}</small>
+                {fmtDate(ts) === today && <span className="tag sm ink">{t('today')}</span>}
+              </div>
+              {list.map(r => (
+                <EconEventRow key={r.sourceId} event={r} showDate={false} next={r === nextUs}>
+                  {/* 讲话、会议这类没有数值的不挂图 */}
+                  {(r.actual != null || r.forecast != null || r.previous != null) && (
+                    <EconSeriesCharts country={r.country} sourceId={r.sourceId} eventTime={r.eventTime}
+                                      titles={findEntry(r.country, r.title)?.titles ?? [r.title]} />
+                  )}
+                </EconEventRow>
+              ))}
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }

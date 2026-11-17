@@ -1,0 +1,79 @@
+/* 预测：BTC 5 分钟涨跌。左边是这一回合（倒计时、现价对目标价、走势），底下一条多空概率条——它既是盘口也是选边的开关；右边下单 */
+@layer components {
+  .p-pd .sub{margin-top:8px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-pd .lay{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:40px;align-items:start;margin-top:28px}
+  .p-pd .left,.p-pd .side{display:flex;flex-direction:column;gap:28px;min-width:0}
+  /* 回合头：倒计时大数 + 现价 */
+  .p-pd .rh{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 40px}
+  .p-pd .cd .lab{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-pd .cd .big{margin-top:10px;font-size:clamp(64px,8vw,112px);font-variant-numeric:tabular-nums}
+  .p-pd .cd .big i{animation:wiib-blink 1s steps(2) infinite}
+  .p-pd .cd.lock .big{color:var(--color-muted-foreground)}
+  .p-pd .pxr{text-align:right}
+  .p-pd .pxr .lab{font-size:13px;color:var(--color-muted-foreground)}
+  .p-pd .pxr .big{margin-top:10px;font-size:clamp(34px,4vw,54px)}
+  .p-pd .pxr .vs{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:13.5px;font-weight:500}
+  .p-pd .pxr .tg{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:6px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-pd .pxr .tg b{font-weight:500;color:var(--color-foreground)}
+  /* 时间线：这一回合走到哪了 */
+  .p-pd .tline{position:relative;height:3px;border-radius:2px;background:var(--color-fill2);overflow:hidden}
+  .p-pd .tline i{position:absolute;inset:0 auto 0 0;border-radius:2px;background:var(--color-foreground);transition:width var(--slow) linear}
+  /* 走势：最近一分钟，虚线是目标价，线在虚线上面那块泛绿、下面泛红 */
+  .p-pd .cv{position:relative;height:clamp(200px,24vw,300px)}
+  .p-pd .cv svg{display:block;width:100%;height:100%;overflow:visible}
+  .p-pd .cv .ln{fill:none;stroke:var(--color-foreground);stroke-width:1.75;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+  .p-pd .cv .tl{stroke:var(--color-muted-foreground);stroke-width:1;stroke-dasharray:4 4;vector-effect:non-scaling-stroke}
+  .p-pd .cv .tag0{position:absolute;left:0;transform:translateY(-130%);font-size:11.5px;color:var(--color-muted-foreground)}
+  .p-pd .cv .tag0.lo{transform:translateY(30%)}
+  .p-pd .cv .dot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-foreground);box-shadow:0 0 0 4px color-mix(in srgb,var(--color-foreground) 14%,transparent)}
+  /* 多空概率条：两半的宽度就是概率，点哪半选哪边 */
+  .p-pd .odds{display:flex;gap:4px;height:76px}
+  .p-pd .od{position:relative;display:flex;flex-direction:column;justify-content:center;min-width:112px;padding:0 20px;border-radius:18px;text-align:left;transition:flex-grow var(--slow) var(--ease-control),background-color var(--t) var(--ease-control),color var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
+  .p-pd .od:active{transform:scale(.985);transition-duration:0s}
+  .p-pd .od.dn0{align-items:flex-end;text-align:right}
+  .p-pd .od span{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
+  .p-pd .od b{margin-top:2px;font-size:30px;font-weight:300;line-height:1;letter-spacing:-.04em}
+  .p-pd .od b small{margin-left:1px;font-size:.5em;font-weight:400}
+  .p-pd .od.up0{background:var(--color-gain-soft);color:var(--color-gain)}
+  .p-pd .od.dn0{background:var(--color-loss-soft);color:var(--color-loss)}
+  .p-pd .od.up0[aria-pressed="true"]{background:var(--color-gain-solid);color:#fff}
+  .p-pd .od.dn0[aria-pressed="true"]{background:var(--color-loss-solid);color:#fff}
+  /* 最近的回合：一排小点，绿涨红跌 */
+  .p-pd .dots{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-pd .dots i{width:8px;height:8px;border-radius:50%;background:var(--c)}
+  .p-pd .dots i:last-of-type{box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 22%,transparent)}
+  .p-pd .dots span{margin-right:6px}
+  /* 下单 */
+  .p-pd .ord{display:flex;flex-direction:column;gap:16px}
+  .p-pd .ord > .wl{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-pd .ord > .wl b{font-weight:500;color:var(--color-foreground)}
+  .p-pd .ord .kv > div{padding:7px 0;font-size:13.5px}
+  .p-pd .ord .kv > div > span{display:inline-flex;align-items:center;gap:4px}
+  .p-pd .mine{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .p-pd .mine > div{padding:12px 14px;border-radius:14px;background:var(--color-raise)}
+  .p-pd .mine span{display:block;font-size:12px;color:var(--color-muted-foreground)}
+  .p-pd .mine b{display:block;margin-top:3px;font-size:17px;font-weight:500;letter-spacing:-.02em}
+  .p-pd .mine small{display:block;margin-top:1px;font-size:11.5px;color:var(--color-muted-foreground)}
+  /* 实时成交 */
+  .p-pd .fd{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--color-border);font-size:13px}
+  .p-pd .fd .who{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-muted-foreground)}
+  .p-pd .fd .q{margin-left:auto;white-space:nowrap}
+  .p-pd .fd.new{animation:wiib-fd-in 200ms var(--ease-control)}
+  @keyframes wiib-fd-in{from{opacity:0;transform:translateY(-6px)}}
+  /* 我的下注 / 往期回合：一条两行，右边结果占两行高 */
+  .p-pd .bet{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--color-border);font-size:14px}
+  .p-pd .bet > small{grid-column:2;font-size:12px;color:var(--color-muted-foreground)}
+  .p-pd .bet .rs{grid-row:1/3;grid-column:3;text-align:right;font-weight:500}
+  .p-pd .bet .rs small{display:block;font-weight:400}
+  @media (max-width:1180px){.p-pd .lay{grid-template-columns:minmax(0,1fr);gap:28px}}
+  @media (max-width:760px){
+    .p-pd .pxr{text-align:left}
+    .p-pd .pxr .tg{justify-content:flex-start}
+    .p-pd .od{min-width:96px;padding:0 14px}
+    .p-pd .od b{font-size:26px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .p-pd .cd .big i,.p-pd .fd.new{animation:none}
+    .p-pd .tline i,.p-pd .od{transition:none}
+  }
+}

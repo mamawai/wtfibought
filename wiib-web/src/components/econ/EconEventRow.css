@@ -1,0 +1,36 @@
+/* 财经日历的一行：时间 / 国家货币 + 指标名 / 实际·预测·前值 + 预期标签；点开看解读。首页日历块和日历页共用 */
+@layer components {
+  .ev{border-bottom:1px solid var(--color-border)}
+  .ev > button{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;width:100%;padding:11px 0;text-align:left;font-size:14px;transition:opacity var(--fast)}
+  .ev > button:active{opacity:.6;transition-duration:0s}
+  .ev time{font-size:13px;color:var(--color-muted-foreground);white-space:nowrap}
+  .ev .nm{display:flex;align-items:baseline;gap:8px;min-width:0}
+  .ev .cc{flex:none;font-size:12px;font-weight:500;color:var(--color-muted-foreground)}
+  /* 美国的事件：国家代码加深 */
+  .ev.us .cc{color:var(--color-foreground);font-weight:600}
+  .ev .tt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 最近要撞上的那一条 */
+  .ev.first .tt{font-weight:500}
+  .ev .nm .ic{flex:none;align-self:center;width:13px;height:13px}
+  .ev .nm .chv{color:var(--color-faint);transition:transform var(--t) var(--ease-control)}
+  .ev > button[aria-expanded="true"] .chv{transform:rotate(90deg)}
+  /* 下一条美国数据：名字前一颗橙点在闪 */
+  .ev .next{flex:none;align-self:center;width:6px;height:6px;border-radius:50%;background:var(--color-primary);animation:wiib-blink 1.2s ease-in-out infinite}
+  .ev .vals{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:4px 10px;font-size:12px;color:var(--color-muted-foreground);white-space:nowrap}
+  .ev .vals b{font-weight:500;color:var(--color-foreground)}
+  /* 解读：跟指标名左对齐 */
+  .ev .ex{padding:0 0 14px 100px;font-size:13.5px;line-height:1.65;color:var(--color-muted-foreground)}
+  .ev .ex p + p{margin-top:5px}
+  /* 日历页按天分组，行里只有时分，时间列收窄 */
+  .ev.nodate > button{grid-template-columns:44px minmax(0,1fr) auto}
+  .ev.nodate .ex{padding-left:56px}
+
+  @media (max-width:760px){
+    .ev > button{grid-template-columns:44px minmax(0,1fr)}
+    .ev time span{display:block}
+    .ev .tt{white-space:normal}
+    .ev .vals{grid-column:2;justify-content:flex-start}
+    .ev .ex{padding-left:56px}
+  }
+  @media (prefers-reduced-motion:reduce){.ev .next{animation:none}}
+}
