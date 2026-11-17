@@ -1,0 +1,20 @@
+/* 流式正文（聊天回答、交易员的现场思考）：字是攒够一段整段放出来的，这一段一起弹出来；
+   还在跑但一阵没来字，文末一颗小橙点慢慢呼吸 */
+@layer components {
+  /* 刚放出来的一段（Markdown 把它包成了行内元素）：从下面弹上来，略过头再落定，同时淡入。
+     行内元素不吃 transform，位移用相对定位的 top，折行的每一行都跟着动 */
+  .sx .pop{position:relative;top:0;animation:wiib-pop-rise 280ms cubic-bezier(.3,1.9,.5,1) both,wiib-pop-fade 160ms ease-out both}
+  @keyframes wiib-pop-rise{from{top:.55em}}
+  @keyframes wiib-pop-fade{from{opacity:0}}
+
+  /* 呼吸点：缩小了的 Polaris 球，跟在最后一个字后面（末段是列表就跟在最后一条后面），带一圈橙晕一起一明一暗 */
+  .sx.stall > :last-child:not(ul,ol)::after,
+  .sx.stall > :is(ul,ol):last-child > li:last-child::after{content:"";display:inline-block;width:7px;height:7px;margin-left:6px;vertical-align:1px;border-radius:50%;background:var(--color-primary);box-shadow:0 0 7px 1px color-mix(in srgb,var(--color-primary) 55%,transparent);animation:wiib-breathe 1.8s ease-in-out infinite}
+  @keyframes wiib-breathe{0%,100%{opacity:.22;scale:.68}50%{opacity:1;scale:1}}
+
+  @media (prefers-reduced-motion:reduce){
+    .sx .pop,
+    .sx.stall > :last-child:not(ul,ol)::after,
+    .sx.stall > :is(ul,ol):last-child > li:last-child::after{animation:none}
+  }
+}

@@ -91,11 +91,67 @@ const COMPONENTS: Components = {
   },
 };
 
+/** 正文里要单独包起来的一段：[from, to) 是 markdown 源文里的位置，seq 每段一个号 */
+export interface PopChunk { from: number; to: number; seq: number }
+
+/** 这里只用得到的那点 hast 节点形状 */
+interface HastNode {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
+}
+
+/**
+ * 把落在 chunks 里的文字包进行内元素 <wiib-pop-{seq} class="pop">，流式正文靠它让刚放出来的一段弹出来（见 StreamText）。
+ * 标签名带段号：同一段在重渲染之间是同一个元素，动画不会被打断；新的一段是新元素，动画从头播。
+ * 只认带源文位置的文字节点（行内代码里的字没有位置，不包）；转义、实体让长度对不上的，整个节点一起包
+ */
+function rehypePop(chunks: PopChunk[]) {
+  const wrap = (chunk: PopChunk, value: string): HastNode => ({
+    type: 'element', tagName: `wiib-pop-${chunk.seq}`, properties: { className: ['pop'] },
+    children: [{ type: 'text', value }],
+  });
+  const split = (node: HastNode): HastNode[] => {
+    const start = node.position?.start.offset, end = node.position?.end.offset, value = node.value ?? '';
+    if (start == null || end == null) return [node];
+    const hits = chunks.filter(c => c.from < end && c.to > start);
+    if (hits.length === 0) return [node];
+    if (value.length !== end - start) return [wrap(hits[hits.length - 1], value)];
+    const out: HastNode[] = [];
+    let cursor = start;
+    for (const c of hits) {
+      const a = Math.max(c.from, cursor), b = Math.min(c.to, end);
+      if (a > cursor) out.push({ type: 'text', value: value.slice(cursor - start, a - start) });
+      out.push(wrap(c, value.slice(a - start, b - start)));
+      cursor = b;
+    }
+    if (cursor < end) out.push({ type: 'text', value: value.slice(cursor - start) });
+    return out;
+  };
+  const walk = (node: HastNode) => {
+    if (!node.children) return;
+    node.children = node.children.flatMap(child => {
+      if (child.type === 'text') return split(child);
+      walk(child);
+      return [child];
+    });
+  };
+  return () => walk;
+}
+
 /* memo：面板里同屏挂着多条消息，任一条流式刷新都会带动整个列表重渲染，
    content 没变的那几条没必要把 markdown 重新解析一遍 */
-export const Markdown = memo(function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({ content, pop }: {
+  content: string;
+  /** 这几段文字单独包起来（流式正文刚放出来的那几段），不传就是普通渲染 */
+  pop?: PopChunk[];
+}) {
+  const rehypePlugins = pop && pop.length > 0 ? [rehypePop(pop)] as Options['rehypePlugins'] : undefined;
   return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={rehypePlugins} components={COMPONENTS}>
       {content}
     </ReactMarkdown>
   );
