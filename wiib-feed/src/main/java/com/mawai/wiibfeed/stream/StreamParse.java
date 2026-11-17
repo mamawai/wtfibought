@@ -20,6 +20,16 @@ final class StreamParse {
         return vEnd > vStart ? raw.substring(vStart, vEnd) : null;
     }
 
+    /** 从 from 之后找 key（形如 {@code "\"pu\":"}），取紧跟其后的整数；找不到返回 0 */
+    static long longAfter(String raw, String key, int from) {
+        int idx = raw.indexOf(key, from);
+        if (idx < 0) return 0L;
+        int start = idx + key.length();
+        int end = start;
+        while (end < raw.length() && Character.isDigit(raw.charAt(end))) end++;
+        return end > start ? Long.parseLong(raw, start, end, 10) : 0L;
+    }
+
     /** 组合流 {"stream":...,"data":{...}} 取出 data 对象（按括号配平）；单流没有 data 包装，原样返回 */
     static String dataObject(String raw) {
         int dataIdx = raw.indexOf("\"data\":");

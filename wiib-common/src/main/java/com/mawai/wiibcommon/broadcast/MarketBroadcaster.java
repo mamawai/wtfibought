@@ -22,6 +22,8 @@ public class MarketBroadcaster {
     public static final String PREDICTION_CHANNEL = CHANNEL_PREFIX + "prediction";
     public static final String FUTURES_CHANNEL = CHANNEL_PREFIX + "futures";
     public static final String KLINE_CHANNEL = CHANNEL_PREFIX + "kline";
+    // 合约盘口：feed 每半秒把每个币按几档价格单位归并好的买卖盘发一次
+    public static final String DEPTH_CHANNEL = CHANNEL_PREFIX + "depth";
     // feed WS 流健康：连/断/重连状态变化时事件驱动推送（非定时），载荷是全量快照 JSON
     public static final String STREAM_HEALTH_CHANNEL = CHANNEL_PREFIX + "stream-health";
     // 进程 JVM 监控：feed/agent 定时采样发布，sim 中继到 /topic/monitor/{code}（sim 自身直推不走此频道）
@@ -38,6 +40,11 @@ public class MarketBroadcaster {
     /** 实时 K 线（含未收盘的当前根）：o/h/l/c/v/q/i/x，前端蜡烛图 + 成交量柱状图用。 */
     public void broadcastKline(String symbol, String message) {
         publish(KLINE_CHANNEL, symbol, message);
+    }
+
+    /** 合约盘口：几档价格单位各一份归并好的买卖盘，前端交易页的盘口用。 */
+    public void broadcastDepth(String symbol, String message) {
+        publish(DEPTH_CHANNEL, symbol, message);
     }
 
     /** @param topic price/round/activity */
