@@ -68,8 +68,11 @@
   .p-pf .pc polyline{fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
   .p-pf .pc .tot{stroke-width:2}
   .p-pf .pc .cur{position:absolute;top:0;bottom:0;width:1px;background:var(--color-line2);pointer-events:none}
+  /* 只有一天：总收益就一个点，底下的日期跟着居中 */
+  .p-pf .pc .dot{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;pointer-events:none}
   .p-pf .pc .yl{position:absolute;left:calc(100% + 8px);font-size:11px;color:var(--color-faint);transform:translateY(-50%);white-space:nowrap}
   .p-pf .pc-x{display:flex;justify-content:space-between;margin:8px 44px 0 0;font-size:11px;color:var(--color-faint)}
+  .p-pf .pc-x.one{justify-content:center}
   .p-pf .pc-none{display:flex;align-items:center;justify-content:center;height:320px;font-size:14px;color:var(--color-muted-foreground)}
 
   /* 能力：四根轴的雷达，值是胜过多少其他用户 */

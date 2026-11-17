@@ -1,7 +1,6 @@
 /* 留言板：单列。发帖框（留言规范默认收着）→ 两层评论 */
 @layer components {
   .p-bd{max-width:896px;margin:0 auto}
-  .p-bd .sub{margin-top:8px;font-size:14px;color:var(--color-muted-foreground)}
   .p-bd .post{margin-top:24px}
   .p-bd .post .inp.ta textarea{min-height:72px;font-size:15px}
   .p-bd .post .f{display:flex;align-items:center;gap:12px;margin-top:10px}

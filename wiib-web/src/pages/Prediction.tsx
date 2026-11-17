@@ -13,7 +13,7 @@ import { NumInput } from '../components/coin/TradeFields';
 import { HelpTip } from '../components/HelpTip';
 import { WalletTransferModal } from '../components/WalletTransferModal';
 import { PredictionHero } from '../components/PredictionHero';
-import type { PredictionRound, PredictionBet, PageResult } from '../types';
+import type { PredictionRound, PredictionBet } from '../types';
 import './Prediction.css';
 
 /** Polymarket 吃单费：份数 × 0.07 × p × (1 − p)，与后端 PredictionFee 同一公式 */
@@ -54,7 +54,7 @@ export function Prediction() {
 
   const fetchBets = useCallback(async (page = betsPage) => {
     try {
-      const res = await predictionApi.bets(page, 10) as unknown as PageResult<PredictionBet>;
+      const res = await predictionApi.bets(page, 10);
       setBets(res.records);
       setBetsTotalPages(res.pages);
     } catch { /* ignore */ }
@@ -62,7 +62,7 @@ export function Prediction() {
 
   const fetchRounds = useCallback(async (page = roundsPage) => {
     try {
-      const res = await predictionApi.rounds(page, 10) as unknown as PageResult<PredictionRound>;
+      const res = await predictionApi.rounds(page, 10);
       setRounds(res.records);
       setRoundsTotalPages(res.pages);
     } catch { /* ignore */ }
@@ -70,7 +70,7 @@ export function Prediction() {
 
   const fetchRecent = useCallback(async () => {
     try {
-      const res = await predictionApi.rounds(1, RECENT) as unknown as PageResult<PredictionRound>;
+      const res = await predictionApi.rounds(1, RECENT);
       setRecent(res.records.filter(r => r.outcome));
     } catch { /* ignore */ }
   }, []);
@@ -93,6 +93,7 @@ export function Prediction() {
   const sideLabel = sideName(side);
 
   const handleBuy = async () => {
+    if (submitting) return;
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) { toast(t('prediction.toast.enterAmount'), 'error'); return; }
     setSubmitting(true);
@@ -120,11 +121,12 @@ export function Prediction() {
   };
 
   const handleSellSide = async () => {
+    if (submitting) return;
     const target = parseFloat(shares) || 0;
     if (target <= 0) { toast(t('prediction.toast.enterShares'), 'error'); return; }
     const activeBets = bets.filter(b => canSell(b) && b.side === side);
     if (activeBets.length === 0) { toast(t('prediction.toast.noPosition'), 'error'); return; }
-    const available = activeBets.reduce((sum, b) => sum + parseFloat(String(b.contracts ?? 0)), 0);
+    const available = activeBets.reduce((sum, b) => sum + b.contracts, 0);
     if (target > available + 1e-8) {
       toast(t('prediction.toast.maxSellable', { qty: available.toFixed(2) }), 'error');
       return;
@@ -134,8 +136,7 @@ export function Prediction() {
     try {
       for (const bet of activeBets) {
         if (remaining <= 0) break;
-        const betContracts = parseFloat(String(bet.contracts ?? 0));
-        const sellContracts = Math.min(remaining, betContracts);
+        const sellContracts = Math.min(remaining, bet.contracts);
         if (sellContracts <= 0) continue;
         await predictionApi.sell(bet.id, sellContracts);
         remaining -= sellContracts;
@@ -174,7 +175,7 @@ export function Prediction() {
   };
 
   const activeBetsForSide = bets.filter(b => canSell(b) && b.side === side);
-  const totalShares = activeBetsForSide.reduce((sum, b) => sum + parseFloat(String(b.contracts ?? 0)), 0);
+  const totalShares = activeBetsForSide.reduce((sum, b) => sum + b.contracts, 0);
   const bidPrice = side === 'UP' ? upBid : downBid;
   const sellSharesNum = parseFloat(shares) || 0;
   const sellFee = bidPrice && sellSharesNum > 0 ? feeOf(sellSharesNum, bidPrice) : 0;
@@ -235,7 +236,7 @@ export function Prediction() {
               { value: 'rounds', label: t('prediction.tabRounds') },
             ]} onChange={v => {
               setTab(v);
-              if (v === 'bets') { setBetsPage(1); fetchBets(1); } else { setRoundsPage(1); fetchRounds(1); }
+              if (v === 'bets') setBetsPage(1); else { setRoundsPage(1); fetchRounds(1); }
             }} />
 
             {tab === 'bets' && (bets.length === 0 ? <div className="empty"><b>{t('prediction.noBets')}</b></div> : (
@@ -269,7 +270,7 @@ export function Prediction() {
                     </div>
                   );
                 })}
-                <Pager page={betsPage} pages={betsTotalPages} onChange={p => { setBetsPage(p); fetchBets(p); }} />
+                <Pager page={betsPage} pages={betsTotalPages} onChange={setBetsPage} />
               </>
             ))}
 
@@ -353,7 +354,7 @@ export function Prediction() {
             <div className="mine">
               {(['UP', 'DOWN'] as const).map(s => {
                 const held = bets.filter(b => inRound(b) && b.side === s);
-                const qty = held.reduce((sum, b) => sum + parseFloat(String(b.contracts ?? 0)), 0);
+                const qty = held.reduce((sum, b) => sum + b.contracts, 0);
                 const cost = held.reduce((sum, b) => sum + b.cost, 0);
                 const bid = s === 'UP' ? upBid : downBid;
                 return (

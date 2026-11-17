@@ -2,7 +2,7 @@ import { useId, useState, type CSSProperties, type KeyboardEvent, type PointerEv
 import { useTranslation } from 'react-i18next';
 import type { AssetSnapshot } from '../types';
 import { Seg } from './ui/seg';
-import { fmtNum } from '../lib/utils';
+import { cn, fmtSigned } from '../lib/utils';
 
 interface Props {
   data: AssetSnapshot[];
@@ -30,8 +30,6 @@ const DAILY: typeof CUMULATIVE = [
 const VW = 600;
 const VH = 248;
 const PAD = 8;
-
-const signed = (v: number, d = 2) => `${v > 0 ? '+' : ''}${fmtNum(v, d)}`;
 
 /**
  * 持仓页「收益」面板：总收益 + 四类的曲线（样式见 pages/Portfolio.css .pc）。
@@ -85,12 +83,12 @@ export function ProfitChart({ data }: Props) {
   return (
     <>
       <div className="pc-top">
-        <Seg value={mode} onChange={m => { setMode(m); setCur(null); }} options={[
+        <Seg value={mode} onChange={m => { setMode(m); setCur(null); }} label={t('ov.profit')} options={[
           { value: 'cumulative', label: t('chart.cumulative') },
           { value: 'daily', label: t('cat.dailyProfit') },
         ]} />
         {mode === 'daily' && (
-          <Seg value={range} onChange={r => { setRange(r); setCur(null); }}
+          <Seg value={range} onChange={r => { setRange(r); setCur(null); }} label={t('cat.dailyProfit')}
                options={(['7', '14', '30'] as const).map(d => ({ value: d, label: t('chart.range', { days: d }) }))} />
         )}
       </div>
@@ -100,7 +98,7 @@ export function ProfitChart({ data }: Props) {
           const v = val(at, s.key);
           return (
             <span key={s.key}>
-              <i style={{ '--c': s.color } as CSSProperties} />{t(s.nameKey)} <b className={v >= 0 ? 'up' : 'dn'}>{signed(v)}</b>
+              <i style={{ '--c': s.color } as CSSProperties} />{t(s.nameKey)} <b className={v >= 0 ? 'up' : 'dn'}>{fmtSigned(v)}</b>
             </span>
           );
         })}
@@ -115,16 +113,24 @@ export function ProfitChart({ data }: Props) {
             </linearGradient>
           </defs>
           {ticks.map(v => <line key={v} className={v === 0 ? 'gl zl' : 'gl'} x1={0} x2={VW} y1={y(v)} y2={y(v)} />)}
-          {/* 累计模式下总收益底下垫一层渐隐的面 */}
-          {mode === 'cumulative' && <polygon fill={`url(#${gradId})`} points={`${line(series[0].key)} ${VW},${y(0)} 0,${y(0)}`} />}
-          {series.slice(1).map(s => <polyline key={s.key} style={{ stroke: s.color }} points={line(s.key)} />)}
-          <polyline className="tot" style={{ stroke: series[0].color }} points={line(series[0].key)} />
+          {n > 1 && (
+            <>
+              {/* 累计模式下总收益底下垫一层渐隐的面 */}
+              {mode === 'cumulative' && <polygon fill={`url(#${gradId})`} points={`${line(series[0].key)} ${VW},${y(0)} 0,${y(0)}`} />}
+              {series.slice(1).map(s => <polyline key={s.key} style={{ stroke: s.color }} points={line(s.key)} />)}
+              <polyline className="tot" style={{ stroke: series[0].color }} points={line(series[0].key)} />
+            </>
+          )}
         </svg>
+        {/* 只有一天：总收益就一个点。svg 是拉伸的，点用 html 画才是圆的 */}
+        {n < 2 && (
+          <i className="dot" style={{ left: `${x(0) / VW * 100}%`, top: `${y(val(0, series[0].key)) / VH * 100}%`, background: series[0].color }} />
+        )}
         {cur != null && <i className="cur" style={{ left: `${x(cur) / VW * 100}%` }} />}
-        {ticks.map(v => <span key={v} className="yl" style={{ top: `${y(v) / VH * 100}%` }}>{signed(v, 0)}</span>)}
+        {ticks.map(v => <span key={v} className="yl" style={{ top: `${y(v) / VH * 100}%` }}>{v === 0 ? '0' : fmtSigned(v, 0)}</span>)}
       </div>
-      <div className="pc-x">
-        {[0, Math.floor((n - 1) / 2), n - 1].map((i, k) => <span key={k}>{day(i)}</span>)}
+      <div className={cn('pc-x', n < 2 && 'one')}>
+        {[...new Set([0, Math.floor((n - 1) / 2), n - 1])].map(i => <span key={i}>{day(i)}</span>)}
       </div>
     </>
   );

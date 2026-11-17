@@ -224,8 +224,7 @@ export function Comments() {
   // 已展开的根评论 → 子评论加载到第几页。子评论本身只挂在 root.children 上，
   // 只有一处持有数据，赞踩/删除的就地更新才不用同时维护两份
   const [childPage, setChildPage] = useState<Record<number, number>>({});
-  // 正在展开哪几条根评论。早先是单个 number：A 请求飞行中去点 B，A 的按钮就被解禁了，
-  // 再点一次 A 会用同一个页码再拉一遍 → 子评论重复 → rest 变负 → 按钮消失 → 卡死
+  // 正在展开哪几条根评论
   const [expanding, setExpanding] = useState<Set<number>>(new Set());
   // 丢弃过期响应用。focus 参数变化和刷新按钮都会触发 load，慢的那个后返回会覆盖新结果
   const loadSeq = useRef(0);
@@ -233,8 +232,7 @@ export function Comments() {
   const [text, setText] = useState('');
   // 留言规范默认收着
   const [rulesOpen, setRulesOpen] = useState(false);
-  // 发主楼和发回复各一个 in-flight 标志。早先共用一个 posting，再靠 `posting && !replyTo`
-  // 反推是谁在提交——只要回复框开着，主发帖框就永远算不出"正在提交"，双击能发两条
+  // 发主楼、发回复各自的提交中标志
   const [postingRoot, setPostingRoot] = useState(false);
   const [postingReply, setPostingReply] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -344,8 +342,7 @@ export function Comments() {
       return;
     }
 
-    // 到这儿回复已经入库了。刷新那步必须单独 try——早先它跟发布共用一个，
-    // 刷新一失败就在"回复已发布"后面再弹一个"回复失败"，用户以为没发出去会再发一遍
+    // 到这儿回复已经入库了，下面单独重拉这一串
     setReplyText('');
     setReplyTo(null);
     toast(t('comments.toast.replyPosted'), 'success');
@@ -465,7 +462,7 @@ export function Comments() {
         <div className="pg-h">
           <div>
             <h1>{t('comments.title')}</h1>
-            <p className="sub">{t('comments.subtitle')}</p>
+            <p className="d">{t('comments.subtitle')}</p>
           </div>
           <div className="r">
             <button type="button" className="ib" title={t('common:refresh')} aria-label={t('common:refresh')}

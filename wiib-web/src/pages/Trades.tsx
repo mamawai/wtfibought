@@ -7,10 +7,10 @@ import { Select } from '../components/ui/select';
 import { Pager } from '../components/ui/pager';
 import { Skeleton } from '../components/ui/skeleton';
 import { EmptyState } from '../components/EmptyState';
-import { cn, fmtDateTime, fmtNum, spinIcon } from '../lib/utils';
-import { COIN_MAP, formatCoinPrice } from '../lib/coinConfig';
-import { getStockBrand } from '../lib/stockConfig';
-import { orderSideView, tradeHref, tradeSymbolName } from '../lib/orderSide';
+import { SideTag, SymIcon } from '../components/TradeBits';
+import { fmtDateTime, fmtNum, spinIcon } from '../lib/utils';
+import { formatCoinPrice } from '../lib/coinConfig';
+import { tradeHref, tradeSymbolName } from '../lib/orderSide';
 import { Bot, Receipt, RefreshCw } from 'lucide-react';
 import type { PageResult, PublicTrade } from '../types';
 import './records.css';
@@ -22,26 +22,11 @@ type Kind = '' | 'SPOT' | 'FUTURES';
 
 const EMPTY: PageResult<PublicTrade> = { records: [], total: 0, size: PAGE_SIZE, current: 1, pages: 0 };
 
-/** 标的的图标：币种走币种配置，认不出的是代币化美股（NVDABUSDT 这种），走股票品牌 */
-function SymIcon({ symbol }: { symbol: string }) {
-  const cfg = COIN_MAP[symbol];
-  if (cfg) return <cfg.icon className={cn('ci', cfg.colorClass)} />;
-  const Brand = getStockBrand(symbol.replace(/BUSDT$/, '')).icon;
-  return <Brand className="ci" />;
-}
-
 /** 交易者：假名；策略账户是机器人不是人，单独标出来比一串假名有信息量 */
 function Trader({ alias, isAi }: { alias: string; isAi: boolean }) {
   const { t } = useTranslation('portfolio');
   if (isAi) return <span className="tag sm g"><Bot className="ic" />{t('trades.aiTrader')}</span>;
   return <span className="nf">#{alias}</span>;
-}
-
-function SideTag({ orderSide }: { orderSide: string }) {
-  // 方向词表在 labels ns（orderSideView 里查），这里订一份 t 只为切语言时跟着重渲染
-  useTranslation('labels');
-  const { label, tone } = orderSideView(orderSide);
-  return <span className={cn('tag sm', tone === 'buy' ? 'g' : 'r')}>{label}</span>;
 }
 
 /** 全站成交：所有人的现货与合约成交按时间倒序混排，点一行进那个标的的交易页（共用样式见 records.css） */
@@ -82,12 +67,12 @@ export function Trades() {
       </div>
 
       <div className="fbar">
-        <Seg value={kind} onChange={k => { setKind(k); setPage(1); }} options={[
+        <Seg value={kind} onChange={k => { setKind(k); setPage(1); }} label={t('trade:col.type')} options={[
           { value: '', label: t('common:all') },
           { value: 'SPOT', label: t('trades.spot') },
           { value: 'FUTURES', label: t('trades.futures') },
         ]} />
-        <Select value={symbol} onChange={s => { setSymbol(s); setPage(1); }} options={[
+        <Select value={symbol} onChange={s => { setSymbol(s); setPage(1); }} label={t('field.symbol')} options={[
           { value: '', label: t('trades.allSymbols') },
           ...SYMBOLS.map(s => ({ value: s, label: tradeSymbolName(s) })),
         ]} />

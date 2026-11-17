@@ -2,11 +2,11 @@
 @layer components {
   .rec-h .sym .ci{width:20px;height:20px;flex:none}
   .rec-h .tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
-  .rec-h tr[aria-expanded] .chev .ic{transition:transform var(--t) var(--ease-control)}
-  .rec-h tr[aria-expanded="true"] .chev .ic{transform:rotate(180deg)}
-  .rec-h tr[aria-expanded="true"] td{background:var(--color-fill)}
-  .rec-h tr[aria-expanded="true"] td:first-child{border-radius:14px 0 0 0}
-  .rec-h tr[aria-expanded="true"] td:last-child{border-radius:0 14px 0 0}
+  /* 点开的那行：箭头朝上，鼠标指着也不挪 */
+  .rec-h tr.open .chev .ic,.rec-h.hov tr.open:hover .chev .ic{transform:rotate(180deg)}
+  .rec-h tr.open td{background:var(--color-fill)}
+  .rec-h tr.open td:first-child{border-radius:14px 0 0 0}
+  .rec-h tr.open td:last-child{border-radius:0 14px 0 0}
   .rec-h .rec-d td{padding:0 16px 16px;background:var(--color-fill);white-space:normal;cursor:default}
   .rec-h .rec-d td:first-child{border-radius:0 0 14px 14px}
   /* 展开那块跟上一行连着，中间不画分隔线 */
@@ -18,5 +18,4 @@
   .rec-f > div:last-child{border-bottom:0}
   .rec-f b{font-weight:500}
   .rec-f .pn{margin-left:auto;font-weight:500}
-  @media (prefers-reduced-motion:reduce){.rec-h tr[aria-expanded] .chev .ic{transition:none}}
 }

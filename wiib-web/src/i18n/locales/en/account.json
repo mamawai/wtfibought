@@ -120,8 +120,7 @@
     "tabTrades": "Trades",
     "emptyHistory": "This user has no closed futures positions",
     "emptyTrades": "No trades yet",
-    "futuresTag": "Futures",
-    "page": "Page {{page}} of {{pages}}"
+    "futuresTag": "Futures"
   },
   "admin": {
     "alphaLink": "Factor mining",

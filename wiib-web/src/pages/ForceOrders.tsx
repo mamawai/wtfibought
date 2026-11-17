@@ -81,7 +81,7 @@ export function ForceOrders() {
       </div>
 
       <div className="fbar">
-        <Seg value={symbol} onChange={s => { setSymbol(s); setPage(1); }}
+        <Seg value={symbol} onChange={s => { setSymbol(s); setPage(1); }} label={t('field.symbol')}
              options={SYMBOLS.map(s => ({ value: s, label: s.replace('USDT', '') }))} />
         <span className="sp" />
         <button type="button" className="ib" aria-label={t('common:refresh')} title={t('common:refresh')}

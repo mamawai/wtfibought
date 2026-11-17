@@ -16,7 +16,7 @@ import { ProfitChart } from '../components/ProfitChart';
 import { RadarChart } from '../components/RadarChart';
 import { ProfilePublicToggle } from '../components/ProfilePublicToggle';
 import { ResetAccountDialog } from '../components/ResetAccountDialog';
-import { cn, fmtNum, fmtSignedPct, fmtSignedUsd, spinIcon } from '../lib/utils';
+import { cn, fmtNum, fmtSigned, fmtSignedPct, fmtSignedUsd, spinIcon } from '../lib/utils';
 import type { CryptoPosition, FuturesPosition, PredictionPnl, AssetSnapshot, CategoryAverages, BStock } from '../types';
 import { formatCoinPrice, getCoin } from '../lib/coinConfig';
 import './Portfolio.css';
@@ -56,7 +56,6 @@ const ALLOC_COLORS = {
   cash: 'var(--color-line2)',
 };
 
-const signed = (v: number) => `${v >= 0 ? '+' : ''}${fmtNum(v)}`;
 const upDn = (v: number) => v >= 0 ? 'up' : 'dn';
 
 export function Portfolio() {
@@ -80,7 +79,7 @@ export function Portfolio() {
 
   const userId = user?.id;
 
-  // 今日收益那块一进页就要，不再等收益面板打开
+  // 今日收益那块的数，一进页就拉
   useEffect(() => {
     if (userId == null) return;
     userApi.assetRealtime()
@@ -260,7 +259,7 @@ export function Portfolio() {
             <div><span>{t('ov.futuresMargin')}</span><b>{fmtNum(futuresMargin)}</b></div>
             <div>
               <span>{t('ov.futuresUnrealized')}</span>
-              <b className={futuresPositions.length ? upDn(futuresProfit) : 'mute'}>{futuresPositions.length ? signed(futuresProfit) : fmtNum(0)}</b>
+              <b className={futuresPositions.length ? upDn(futuresProfit) : 'mute'}>{futuresPositions.length ? fmtSigned(futuresProfit) : fmtNum(0)}</b>
             </div>
             <div><span>{t('ov.marginLoan')}</span><b className={user.marginLoanPrincipal > 0 ? 'wn' : 'mute'}>{fmtNum(user.marginLoanPrincipal)}</b></div>
             <div><span>{t('ov.interestAccrued')}</span><b className={user.marginInterestAccrued > 0 ? 'dn' : 'mute'}>{fmtNum(user.marginInterestAccrued)}</b></div>
@@ -290,7 +289,7 @@ export function Portfolio() {
                 </div>
                 <div className="cats">
                   {cats.map(c => (
-                    <div key={c.k}><span>{c.k}</span><b className={c.v === 0 ? 'mute' : upDn(c.v)}>{signed(c.v)}</b></div>
+                    <div key={c.k}><span>{c.k}</span><b className={c.v === 0 ? 'mute' : upDn(c.v)}>{fmtSigned(c.v)}</b></div>
                   ))}
                 </div>
                 <div className="al-h">{t('alloc.title')}</div>
@@ -376,7 +375,7 @@ export function Portfolio() {
                             <td className="r">{formatCoinPrice(c.symbol, c.currentPrice)}</td>
                             <td className="r">{fmtNum(c.marketValue)}</td>
                             <td className={cn('r pn', upDn(c.profit))}>
-                              {signed(c.profit)}
+                              {fmtSigned(c.profit)}
                               <span className={cn('sub', upDn(c.profit))}>{fmtSignedPct(c.profitPct)}</span>
                             </td>
                             <td className="chev"><ChevronRight className="ic" /></td>
@@ -419,7 +418,7 @@ export function Portfolio() {
                           <td className="r">{fmtNum(b.currentPrice)}</td>
                           <td className="r">{fmtNum(b.marketValue)}</td>
                           <td className={cn('r pn', upDn(b.profit))}>
-                            {signed(b.profit)}
+                            {fmtSigned(b.profit)}
                             <span className={cn('sub', upDn(b.profit))}>{fmtSignedPct(b.profitPct)}</span>
                           </td>
                           <td className="chev"><ChevronRight className="ic" /></td>

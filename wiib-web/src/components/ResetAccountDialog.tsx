@@ -25,6 +25,7 @@ export function ResetAccountDialog({ open, onClose, onDone }: { open: boolean; o
   };
 
   const submit = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       await userApi.resetAccount(name);
@@ -54,7 +55,7 @@ export function ResetAccountDialog({ open, onClose, onDone }: { open: boolean; o
           </span>
         </label>
         <Input id={nameId} value={name} onChange={e => setName(e.target.value)} placeholder={t('reset.namePlaceholder')} autoComplete="off"
-               onKeyDown={e => { if (e.key === 'Enter' && ok && !busy) void submit(); }} />
+               onKeyDown={e => { if (e.key === 'Enter' && ok) void submit(); }} />
       </div>
       <DialogFooter>
         <button type="button" className="btn" onClick={close}>{t('common:cancel')}</button>

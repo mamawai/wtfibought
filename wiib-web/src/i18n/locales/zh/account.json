@@ -116,8 +116,7 @@
     "tabTrades": "成交明细",
     "emptyHistory": "该用户没有已平仓的合约仓位",
     "emptyTrades": "暂无成交记录",
-    "futuresTag": "合约",
-    "page": "第 {{page}} / {{pages}} 页"
+    "futuresTag": "合约"
   },
   "admin": {
     "alphaLink": "因子挖掘",

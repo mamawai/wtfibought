@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bot, ChevronDown, History } from 'lucide-react';
-import { cn, fmtDateTime, fmtDuration, fmtNum } from '../lib/utils';
+import { cn, fmtDateTime, fmtDuration, fmtNum, fmtSigned, fmtSignedPct } from '../lib/utils';
 import { COIN_MAP, formatCoinPrice } from '../lib/coinConfig';
 import { orderSideView, tradeSymbolName } from '../lib/orderSide';
 import { Skeleton } from './ui/skeleton';
@@ -20,8 +20,6 @@ const FILL_TRIGGER: Record<PositionFill['status'], { key: string; tone: string }
   TAKE_PROFIT: { key: 'history.takeProfit', tone: 'g' },
   LIQUIDATED: { key: 'history.liquidated', tone: 'r' },
 };
-
-const signed = (v: number) => `${v >= 0 ? '+' : ''}${fmtNum(v)}`;
 
 /** 资金费净额：后端 fundingFeeTotal 正=付出、负=收到，显示成对钱包的影响（付出 -、收到 +） */
 const fundingText = (v: number) => `${v > 0 ? '-' : v < 0 ? '+' : ''}${fmtNum(Math.abs(v))}`;
@@ -43,7 +41,7 @@ function FillRow({ fill, symbol }: { fill: PositionFill; symbol: string }) {
         {fill.liquidationFee != null && fill.liquidationFee > 0 && ` · ${t('history.liqFee', { value: fmtNum(fill.liquidationFee) })}`}
       </span>
       {/* 开/加仓单没有已实现盈亏，不填 0 冒充"这笔不赚不亏" */}
-      {fill.realizedPnl != null && <span className={cn('pn', fill.realizedPnl >= 0 ? 'up' : 'dn')}>{signed(fill.realizedPnl)}</span>}
+      {fill.realizedPnl != null && <span className={cn('pn', fill.realizedPnl >= 0 ? 'up' : 'dn')}>{fmtSigned(fill.realizedPnl)}</span>}
     </div>
   );
 }
@@ -56,7 +54,7 @@ function Row({ item }: { item: PositionHistoryItem }) {
 
   return (
     <>
-      <tr aria-expanded={open} onClick={() => setOpen(v => !v)}>
+      <tr className={cn(open && 'open')} onClick={() => setOpen(v => !v)}>
         <td>
           <span className="sym">
             {cfg && <cfg.icon className={cn('ci', cfg.colorClass)} />}
@@ -73,13 +71,19 @@ function Row({ item }: { item: PositionHistoryItem }) {
         <td className="r nf">{formatCoinPrice(item.symbol, item.entryPrice)}</td>
         {/* 破产清零那批仓位一单没平过，给"—"不给 0——0 会被读成"平在 0 块钱" */}
         <td className="r nf">{item.closeAvgPrice == null ? <span className="faint">—</span> : formatCoinPrice(item.symbol, item.closeAvgPrice)}</td>
-        <td className={cn('r nf pn', item.realizedPnl >= 0 ? 'up' : 'dn')}>{signed(item.realizedPnl)}</td>
+        <td className={cn('r nf pn', item.realizedPnl >= 0 ? 'up' : 'dn')}>{fmtSigned(item.realizedPnl)}</td>
         <td className={cn('r nf', item.roiPct == null ? 'faint' : item.roiPct >= 0 ? 'up' : 'dn')}>
-          {item.roiPct == null ? '—' : `${item.roiPct >= 0 ? '+' : ''}${item.roiPct.toFixed(2)}%`}
+          {item.roiPct == null ? '—' : fmtSignedPct(item.roiPct)}
         </td>
         <td className="r nf mute">{fmtDateTime(item.openedAt)}</td>
         <td className="r nf mute">{fmtDuration(item.openedAt, item.closedAt)}</td>
-        <td className="chev"><ChevronDown className="ic" /></td>
+        {/* 键盘用这颗开合；鼠标点整行 */}
+        <td className="chev">
+          <button type="button" className="flex" aria-expanded={open} aria-label={open ? t('common:collapse') : t('common:expand')}
+                  onClick={e => { e.stopPropagation(); setOpen(v => !v); }}>
+            <ChevronDown className="ic" />
+          </button>
+        </td>
       </tr>
       {open && (
         <tr className="rec-d">

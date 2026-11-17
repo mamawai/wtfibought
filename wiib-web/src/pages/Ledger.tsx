@@ -132,10 +132,7 @@ export function Ledger() {
     ledgerApi.bizTypes().then(setBizOptions).catch(() => setBizOptions([]));
   }, []);
 
-  // 换筛选/点刷新都从头拉第一页，游标作废。
-  // 失败走 failed 状态而不是 toast：toast 每次渲染是新引用，进不了依赖数组，
-  // 而挂 eslint-disable 会让整个组件被 react-hooks 规则跳过（v6 是编译器驱动的），
-  // 等于把这个组件将来所有 hooks 问题一起屏蔽掉——为一句错误提示不值当
+  // 换筛选/点刷新都从头拉第一页，游标作废
   useEffect(() => {
     let cancelled = false;
     listKeyRef.current = requestKey;
@@ -221,8 +218,7 @@ export function Ledger() {
         <EmptyState icon={<Wallet />} text={bizType ? t('ledger.emptyFiltered') : t('ledger.empty')} />
       ) : (
         <>
-          {/* 日期分隔头。没做吸顶：顶栏高度是动态的（掉线时多一条横幅、刘海屏还有 safe-area），
-              sticky 得写死偏移量，写多写少都会穿帮。为一个装饰性吸顶去引全局高度变量不划算 */}
+          {/* 日期分隔头 */}
           {dayGroups.map(g => (
             <Fragment key={g.key}>
               <div className="day">{dayLabel(g.key)}<small className="nf">{t('ledger.dayCount', { count: g.rows.length })}</small></div>

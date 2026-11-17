@@ -7,15 +7,15 @@ import { Avatar } from '../components/Avatar';
 import { EmptyState } from '../components/EmptyState';
 import { HelpTip } from '../components/HelpTip';
 import { PositionHistoryList } from '../components/PositionHistoryList';
+import { SideTag, SymIcon } from '../components/TradeBits';
 import { BigNum } from '../components/ui/big-num';
 import { Pager } from '../components/ui/pager';
 import { Skeleton } from '../components/ui/skeleton';
 import { Tabs } from '../components/ui/tabs';
 import { useUserStore } from '../stores/userStore';
-import { cn, fmtDateTime, fmtNum } from '../lib/utils';
-import { COIN_MAP, formatCoinPrice } from '../lib/coinConfig';
-import { getStockBrand } from '../lib/stockConfig';
-import { orderSideView, tradeHref, tradeSymbolName } from '../lib/orderSide';
+import { cn, fmtDateTime, fmtNum, fmtSigned, fmtSignedPct } from '../lib/utils';
+import { formatCoinPrice } from '../lib/coinConfig';
+import { tradeHref, tradeSymbolName } from '../lib/orderSide';
 import type {
   PageResult, PositionHistoryItem, ProfilePosition, PublicTrade, UserProfile as UserProfileData,
 } from '../types';
@@ -31,17 +31,6 @@ const EMPTY_TRADES: PageResult<PublicTrade> = {
 const EMPTY_POSITIONS: PageResult<PositionHistoryItem> = {
   records: [], total: 0, size: TRADE_PAGE_SIZE, current: 1, pages: 0,
 };
-
-/** 带号金额 */
-const signed = (v: number) => `${v >= 0 ? '+' : ''}${fmtNum(v)}`;
-
-/** 币或美股的小图标 */
-function SymIcon({ symbol }: { symbol: string }) {
-  const cfg = COIN_MAP[symbol];
-  if (cfg) return <cfg.icon className={cn('ci', cfg.colorClass)} />;
-  const Brand = getStockBrand(symbol.replace(/BUSDT$/, '')).icon;
-  return <Brand className="ci" />;
-}
 
 /** 一笔持仓：点了去那个标的的交易页 */
 function PositionRow({ p, onOpen }: { p: ProfilePosition; onOpen: () => void }) {
@@ -70,7 +59,7 @@ function PositionRow({ p, onOpen }: { p: ProfilePosition; onOpen: () => void }) 
       <div className="vr num">
         <b>{p.value == null ? '—' : `₮${fmtNum(p.value)}`}</b>
         {/* 缺价时后端给 null，显示 "—"。填 0 会被读成"这仓一分不赚"，那是另一回事 */}
-        {p.profit == null ? <span className="mute">—</span> : <span className={p.profit >= 0 ? 'up' : 'dn'}>{signed(p.profit)}</span>}
+        {p.profit == null ? <span className="mute">—</span> : <span className={p.profit >= 0 ? 'up' : 'dn'}>{fmtSigned(p.profit)}</span>}
       </div>
     </button>
   );
@@ -201,11 +190,11 @@ export function UserProfile() {
         <div><span>{t('profile.totalAssets')}</span><b className="big num"><BigNum value={s.totalAssets} /></b></div>
         <div>
           <span>{t('profile.return')}</span>
-          <b className={cn('big num', s.profitPct >= 0 ? 'up' : 'dn')}>{s.profitPct >= 0 ? '+' : ''}{s.profitPct.toFixed(2)}%</b>
+          <b className={cn('big num', s.profitPct >= 0 ? 'up' : 'dn')}>{fmtSignedPct(s.profitPct)}</b>
         </div>
         <div>
           <span>{t('profile.tradingProfit')}<HelpTip text={t('profile.tradingProfitHint')} /></span>
-          <b className={cn('big num', s.tradingProfit >= 0 ? 'up' : 'dn')}>{signed(s.tradingProfit)}</b>
+          <b className={cn('big num', s.tradingProfit >= 0 ? 'up' : 'dn')}>{fmtSigned(s.tradingProfit)}</b>
         </div>
       </div>
 
@@ -243,7 +232,6 @@ function TradesPanel({ trades, loading, onPage, onOpen }: {
   onPage: (p: number) => void;
   onOpen: (symbol: string) => void;
 }) {
-  // 这里订一份 t 不只为下面几句：orderSideView 的方向标签走 i18n 实例现查，靠本组件重渲染跟上切语言
   const { t } = useTranslation('account');
   if (loading) {
     return <div className="skr">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-11" />)}</div>;
@@ -253,20 +241,17 @@ function TradesPanel({ trades, loading, onPage, onOpen }: {
   }
   return (
     <>
-      {trades.records.map(tr => {
-        const { label, tone } = orderSideView(tr.orderSide);
-        return (
-          <button key={`${tr.kind}-${tr.tradeId}`} type="button" className="tr" onClick={() => onOpen(tr.symbol)}>
-            <span className={cn('tag sm', tone === 'buy' ? 'g' : 'r')}>{label}</span>
-            <b>{tradeSymbolName(tr.symbol)}</b>
-            {tr.kind === 'FUTURES' && <span className="k">{t('profile.futuresTag')}</span>}
-            {tr.isAi && <Bot className="ic" />}
-            <span className="q num">{fmtNum(tr.quantity, 4)} @ {formatCoinPrice(tr.symbol, tr.filledPrice)}</span>
-            <span className="am num">₮{fmtNum(tr.filledAmount)}</span>
-            <span className="tm num">{fmtDateTime(tr.createdAt)}</span>
-          </button>
-        );
-      })}
+      {trades.records.map(tr => (
+        <button key={`${tr.kind}-${tr.tradeId}`} type="button" className="tr" onClick={() => onOpen(tr.symbol)}>
+          <SideTag orderSide={tr.orderSide} />
+          <b>{tradeSymbolName(tr.symbol)}</b>
+          {tr.kind === 'FUTURES' && <span className="k">{t('profile.futuresTag')}</span>}
+          {tr.isAi && <Bot className="ic" />}
+          <span className="q num">{fmtNum(tr.quantity, 4)} @ {formatCoinPrice(tr.symbol, tr.filledPrice)}</span>
+          <span className="am num">₮{fmtNum(tr.filledAmount)}</span>
+          <span className="tm num">{fmtDateTime(tr.createdAt)}</span>
+        </button>
+      ))}
       <Pager page={trades.current} pages={trades.pages} onChange={onPage} />
     </>
   );

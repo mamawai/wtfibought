@@ -21,9 +21,6 @@
   /* 解读：跟指标名左对齐 */
   .ev .ex{padding:0 0 14px 100px;font-size:13.5px;line-height:1.65;color:var(--color-muted-foreground)}
   .ev .ex p + p{margin-top:5px}
-  /* 日历页按天分组，行里只有时分，时间列收窄 */
-  .ev.nodate > button{grid-template-columns:44px minmax(0,1fr) auto}
-  .ev.nodate .ex{padding-left:56px}
 
   @media (max-width:760px){
     .ev > button{grid-template-columns:44px minmax(0,1fr)}

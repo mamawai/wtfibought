@@ -57,7 +57,7 @@ export function PositionHistory() {
         </div>
       </div>
 
-      {/* 「我平了一半怎么这儿没有」是必然会有的疑问，与其等人来问，不如写在页面上 */}
+      {/* 说明：只收全部平掉的仓位，平了一半的还在持仓里 */}
       <div className="note mt-[22px] mb-[18px]">
         <Info className="ic" />
         <div>{t('history.note')}</div>

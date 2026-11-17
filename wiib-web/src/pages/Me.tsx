@@ -8,6 +8,7 @@ import { NotificationList } from '../components/NotificationList';
 import { ProfilePublicToggle } from '../components/ProfilePublicToggle';
 import { LanguageSettingRow } from '../components/LanguageSwitcher';
 import { ResetAccountDialog } from '../components/ResetAccountDialog';
+import { Avatar } from '../components/Avatar';
 import { useNotificationPanel } from '../hooks/useNotificationPanel';
 import {
   Bell, BookOpen, ChevronRight, ExternalLink, FlaskConical, History, Layers, LogOut, MessageCircle, Pickaxe,
@@ -56,7 +57,7 @@ export function Me() {
     <div className="page-shell">
       <div className="p-me">
         <div className="who">
-          <span className="ava">{user.username[0].toUpperCase()}</span>
+          <Avatar name={user.username} src={user.avatar} />
           <div className="min-w-0">
             <b className="truncate">{user.username}</b>
             <span className="nf">ID: {user.id}</span>

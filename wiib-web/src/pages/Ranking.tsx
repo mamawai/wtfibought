@@ -10,7 +10,7 @@ import { Pager } from '../components/ui/pager';
 import { Seg } from '../components/ui/seg';
 import { Skeleton } from '../components/ui/skeleton';
 import { useUserStore } from '../stores/userStore';
-import { cn, fmtNum } from '../lib/utils';
+import { cn, fmtNum, fmtSigned, fmtSignedPct } from '../lib/utils';
 import type { RankingItem, RankingSort } from '../types';
 import './Ranking.css';
 
@@ -24,13 +24,13 @@ const fmt = (v: Numeric, decimals = 2) => fmtNum(num(v), decimals);  // 缺失�
 /** 带号百分比，涨绿跌红 */
 function Pct({ value }: { value: Numeric }) {
   const v = num(value);
-  return <span className={v >= 0 ? 'up' : 'dn'}>{v >= 0 ? '+' : ''}{v.toFixed(2)}%</span>;
+  return <span className={v >= 0 ? 'up' : 'dn'}>{fmtSignedPct(v)}</span>;
 }
 
 /** 带号盈亏，涨绿跌红 */
 function Pnl({ value }: { value: Numeric }) {
   const v = num(value);
-  return <span className={v >= 0 ? 'up' : 'dn'}>{v >= 0 ? '+' : ''}{fmt(v)}</span>;
+  return <span className={v >= 0 ? 'up' : 'dn'}>{fmtSigned(v)}</span>;
 }
 
 /** 名字 + 自己那条的「我」 */
@@ -155,7 +155,7 @@ export function Ranking() {
                   {/* 主数字跟着排序维度走，避免按盈利排榜却突出总资产 */}
                   {assets
                     ? <b className="big num"><BigNum value={num(item.totalAssets)} /></b>
-                    : <b className={cn('big num', up ? 'up' : 'dn')}>{up ? '+' : ''}{fmt(item.tradingProfit)}</b>}
+                    : <b className={cn('big num', up ? 'up' : 'dn')}>{fmtSigned(num(item.tradingProfit))}</b>}
                   <span className="ln num">
                     <span>{t('ranking.metric.return')} <b><Pct value={item.profitPct} /></b></span>
                     {assets
@@ -205,7 +205,12 @@ export function Ranking() {
                         <tr key={item.userId} className={cn(me && 'mine')} title={t('ranking.rowTitle', { name: item.username })}
                             onClick={() => navigate(userPath(item.userId))}>
                           <td className="rkc num">{item.rank}</td>
-                          <td><span className="u"><Who item={item} me={me} small /></span></td>
+                          {/* 键盘从名字进主页；鼠标点整行 */}
+                          <td>
+                            <Link to={userPath(item.userId)} className="u" onClick={e => e.stopPropagation()}>
+                              <Who item={item} me={me} small />
+                            </Link>
+                          </td>
                           <td className={cn('r num', assets && 'b')}>{fmt(item.totalAssets)}</td>
                           <td className="r num"><Pct value={item.profitPct} /></td>
                           <td className={cn('r num', !assets && 'b')}><Pnl value={item.tradingProfit} /></td>
