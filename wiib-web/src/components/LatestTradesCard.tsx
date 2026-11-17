@@ -1,8 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Skeleton } from './ui/skeleton';
-import { FEED_MAX_H } from './NewsFlashCard';
-import { useStagger } from '../hooks/useStagger';
+import { ChevronRight } from 'lucide-react';
 import { fmtNum, fmtTime } from '../lib/utils';
 import { orderSideView } from '../lib/orderSide';
 
@@ -29,45 +27,38 @@ interface Props {
   loading: boolean;
 }
 
+/** 首页最新成交（与快讯并列；样式见 pages/Home.css .tr）：只给最新 20 条，全量分页在 /trades */
 export function LatestTradesCard({ trades, loading }: Props) {
   // 「全部」全站通用，直接复用 common，不在本 ns 再写一份
   const { t } = useTranslation(['home', 'common']);
-  const listRef = useStagger<HTMLDivElement>();
 
   return (
     <>
-      {/* min-h-7 对齐快讯卡头部（那边有 28px 高的日期控件），两卡底边才齐 */}
-      <div className="sec-h min-h-7">
+      <div className="sec-h">
         <h2>{t('trades.title')}</h2>
-        {/* 这里只给最新 20 条，全量分页在 /trades（交易者匿名） */}
-        <Link to="/trades">{t('common:all')}</Link>
+        <Link to="/trades" className="go">{t('common:all')}<ChevronRight className="ic" /></Link>
       </div>
       {loading ? (
-        <div>
-          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[22px] my-[11px]" />)}
+        <div className="feed">
+          {Array.from({ length: 5 }).map((_, i) => <i key={i} className="sk" style={{ height: 22 }} />)}
         </div>
       ) : trades.length === 0 ? (
-        <div className="py-10 text-center text-sm text-muted-foreground">{t('trades.empty')}</div>
+        <div className="empty"><b>{t('trades.empty')}</b></div>
       ) : (
-        <div ref={listRef} className={FEED_MAX_H}>
+        <div className="feed">
           {trades.map(item => {
             // 方向标签渲染期现算：本组件订阅了 useTranslation，切语言会重渲染，这里就跟着重查一遍词表
             const { label, tone } = orderSideView(item.orderSide);
-            const name = item.isFutures ? t('trades.futuresName', { base: item.base }) : item.base;
             return (
-              <div key={item.id} className="num grid grid-cols-[40px_1fr_auto] gap-3 items-baseline py-[11px] border-b border-border text-[15px]">
-                <span className={`text-[13px] font-bold ${tone === 'buy' ? 'up' : 'dn'}`}>{label}</span>
-                <span className="min-w-0 truncate">
-                  <span className="font-semibold">{name}</span>
-                  {item.isAi && (
-                    <span title={t('trades.aiTrader')} className="inline-block text-[10px] font-bold border border-foreground px-1 ml-1.5 align-[1px]">AI</span>
-                  )}
+              <div key={item.id} className="tr">
+                <span className={`sd ${tone === 'buy' ? 'up' : 'dn'}`}>{label}</span>
+                <span className="nm">
+                  {item.isFutures ? t('trades.futuresName', { base: item.base }) : item.base}
+                  {item.isAi && <span className="tag sm" title={t('trades.aiTrader')}>AI</span>}
                 </span>
-                <span className="whitespace-nowrap">
-                  <span className="text-[16px] font-semibold font-stretch-[85%]">
-                    {item.filledAmount == null ? `${item.quantity}${item.base}` : `$${fmtNum(item.filledAmount, 1)}`}
-                  </span>
-                  <span className="text-[12px] text-muted-foreground ml-3">{fmtTime(item.createdAt)}</span>
+                <span className="amt">
+                  {item.filledAmount == null ? `${item.quantity}${item.base}` : `₮${fmtNum(item.filledAmount, 1)}`}
+                  <span>{fmtTime(item.createdAt)}</span>
                 </span>
               </div>
             );

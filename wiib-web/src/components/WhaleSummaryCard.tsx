@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Skeleton } from './ui/skeleton';
+import { ChevronRight } from 'lucide-react';
 import { quantApi, type WhaleCoin, type WhaleLiqBand, type WhaleSide, type WhaleSummary } from '../api';
 import { COIN_MAP, formatCoinPrice, type CoinCfg } from '../lib/coinConfig';
 import { cn, fmtMoney, fmtTime } from '../lib/utils';
@@ -36,7 +36,7 @@ export function WhaleSummaryCard() {
   if (!loading && !coins.length) return null;
 
   return (
-    <section className="sec mt-12">
+    <section className="sec">
       <div className="sec-h">
         <h2>
           {t('whale.title')}
@@ -47,21 +47,20 @@ export function WhaleSummaryCard() {
       </div>
 
       {loading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
-        </div>
+        Array.from({ length: 3 }).map((_, i) => <i key={i} className="sk mb-3" style={{ height: 36 }} />)
       ) : (
-        <div className="overflow-x-auto">
-          <table className="tbl num">
+        // 窄了横向滚，六列都留着
+        <div className="tw">
+          <table className="tbl hov min-w-[560px]">
             <thead>
               <tr>
                 <th>{t('whale.coin')}</th>
                 <th className="r">{t('whale.price')}</th>
                 <th className="r">{t('whale.long')}</th>
                 <th className="r">{t('whale.short')}</th>
-                {/* 手机宽度收掉两列强平 */}
-                <th className="r hidden sm:table-cell">{t('whale.liqAbove')}</th>
-                <th className="r hidden sm:table-cell">{t('whale.liqBelow')}</th>
+                <th className="r">{t('whale.liqAbove')}</th>
+                <th className="r">{t('whale.liqBelow')}</th>
+                <th className="chev" />
               </tr>
             </thead>
             <tbody>
@@ -78,9 +77,9 @@ function Row({ row, onOpen }: { row: WhaleCoin; onOpen: () => void }) {
   // 盯盘币在后端 yml 里配，平台没收录的币只出币码、不硬套别的币图标
   const cfg: CoinCfg | undefined = COIN_MAP[row.symbol];
   return (
-    <tr className="cursor-pointer" onClick={onOpen}>
+    <tr onClick={onOpen}>
       <td>
-        <span className="sym inline-flex items-center gap-2">
+        <span className="sym">
           {cfg && <cfg.icon className={cn('w-[18px] h-[18px] shrink-0', cfg.colorClass)} />}
           {cfg?.name ?? row.coin}
         </span>
@@ -90,6 +89,7 @@ function Row({ row, onOpen }: { row: WhaleCoin; onOpen: () => void }) {
       <SideCell side={row.short} tone="dn" />
       <LiqCell band={row.liqAbove} symbol={row.symbol} />
       <LiqCell band={row.liqBelow} symbol={row.symbol} />
+      <td className="chev"><ChevronRight className="ic" /></td>
     </tr>
   );
 }
@@ -100,7 +100,7 @@ function SideCell({ side, tone }: { side: WhaleSide; tone: 'up' | 'dn' }) {
   if (!side.count) return <td className="r mute">{t('whale.none')}</td>;
   return (
     <td className="r">
-      <span className={cn('font-semibold', tone)}>${fmtMoney(side.notional)}</span>
+      <span className={cn('font-medium', tone)}>${fmtMoney(side.notional)}</span>
       <span className="sub">{t('whale.holders', { count: side.count })}</span>
     </td>
   );
@@ -109,10 +109,10 @@ function SideCell({ side, tone }: { side: WhaleSide; tone: 'up' | 'dn' }) {
 /** 现价上下 5% 内的强平名义合计，小字是名义最大那个桶的价格；5% 内没桶出「无」 */
 function LiqCell({ band, symbol }: { band: WhaleLiqBand | null; symbol: string }) {
   const { t } = useTranslation('home');
-  if (!band) return <td className="r mute hidden sm:table-cell">{t('whale.none')}</td>;
+  if (!band) return <td className="r mute">{t('whale.none')}</td>;
   return (
-    <td className="r hidden sm:table-cell">
-      <span className="font-semibold">${fmtMoney(band.notional)}</span>
+    <td className="r">
+      ${fmtMoney(band.notional)}
       <span className="sub">@ {formatCoinPrice(symbol, band.peakPrice)}</span>
     </td>
   );

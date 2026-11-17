@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { ChevronRight } from 'lucide-react';
 import { futuresApi } from '../api';
 import { parseServerTime } from '../lib/utils';
 
@@ -41,27 +42,37 @@ export function ForceOrdersCard() {
 
   const total = stat.long + stat.short;
   const longPct = total ? (stat.long / total) * 100 : 50;
+  const ref = Math.max(stat.long, stat.short);
 
   return (
     <>
       <div className="sec-h">
         <h2>{t('force.title')}<small>{t('force.window', { count: stat.count })}</small></h2>
-        <Link to="/force-orders">{t('force.viewAll')}</Link>
+        <Link to="/force-orders" className="go">{t('force.viewAll')}<ChevronRight className="ic" /></Link>
       </div>
-      <div className="num flex flex-wrap items-baseline gap-11">
-        <div>
-          <div className="dn cond text-[44px] font-bold leading-none">${compact(stat.long, Math.max(stat.long, stat.short))}</div>
-          <div className="text-[13px] text-muted-foreground mt-1.5">{t('force.longLiq')}</div>
-        </div>
-        <div>
-          <div className="up cond text-[44px] font-bold leading-none">${compact(stat.short, Math.max(stat.long, stat.short))}</div>
-          <div className="text-[13px] text-muted-foreground mt-1.5">{t('force.shortLiq')}</div>
-        </div>
-        <div className="flex flex-1 self-center ml-auto h-1.5 max-w-[360px] bg-border">
-          <i className="block h-full bg-loss" style={{ width: `${longPct}%` }} />
-          <i className="block h-full bg-gain" style={{ width: `${100 - longPct}%` }} />
+      <div className="liq">
+        <div><Amount value={compact(stat.long, ref)} tone="dn" /><span>{t('force.longLiq')}</span></div>
+        <div><Amount value={compact(stat.short, ref)} tone="up" /><span>{t('force.shortLiq')}</span></div>
+        {/* 多空比条：左边红是多单被爆的占比，剩下的是空单 */}
+        <div className="ratio">
+          <div className="rb"><i style={{ width: `${longPct}%` }} /><i /></div>
+          <div className="rl">
+            <span>{t('force.longShare', { pct: longPct.toFixed(1) })}</span>
+            <span>{t('force.shortShare', { pct: (100 - longPct).toFixed(1) })}</span>
+          </div>
         </div>
       </div>
     </>
+  );
+}
+
+/** 一颗细体大数：₮ 压小，小数和单位压成浅灰 */
+function Amount({ value, tone }: { value: string; tone: 'up' | 'dn' }) {
+  const dot = value.indexOf('.');
+  return (
+    <b className={`big nf ${tone}`}>
+      <small>₮</small>
+      {dot < 0 ? value : <>{value.slice(0, dot)}<i>{value.slice(dot)}</i></>}
+    </b>
   );
 }

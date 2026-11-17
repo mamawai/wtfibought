@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Skeleton } from './ui/skeleton';
+import { ChevronRight } from 'lucide-react';
 import { EconEventRow } from './econ/EconEventRow';
 import { quantApi, type EconCalendarEvent, type EconCalendarView } from '../api';
 
@@ -30,7 +30,7 @@ export function EconCalendarCard() {
     <>
       <div className="sec-h">
         <h2>{t('calendar.title')}<small>{t('calendar.note')}</small></h2>
-        <Link to="/calendar">{t('calendar:viewAll')}</Link>
+        <Link to="/calendar" className="go">{t('calendar:viewAll')}<ChevronRight className="ic" /></Link>
       </div>
       <div className="g12">
         <Column title={t('calendar.published')} rows={data?.past} empty={t('calendar.emptyPast')} />
@@ -45,22 +45,20 @@ function Column({ title, rows, empty, upcoming }: {
   /** undefined=还没拉回来 */
   rows?: EconCalendarEvent[];
   empty: string;
-  /** 即将公布栏：头一条是最近要撞上的，加粗；第一条美国的就是下一条美国数据，闪点 */
+  /** 即将公布栏：头一条是最近要撞上的，加深；第一条美国的就是下一条美国数据，闪点 */
   upcoming?: boolean;
 }) {
   const nextUs = upcoming ? rows?.find(r => r.country === 'US') : undefined;
   return (
-    <div className="col-span-12 xl:col-span-6">
-      <div className="microlabel uppercase pb-2 border-b border-foreground">{title}</div>
-      {rows == null ? (
-        <div className="space-y-3 pt-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="py-8 text-center text-sm text-muted-foreground">{empty}</div>
-      ) : rows.map((r, i) => (
-        <EconEventRow key={r.sourceId} event={r} bold={upcoming && i === 0} next={r === nextUs} />
-      ))}
+    <div className="ecol col-span-6 min-w-0">
+      <h3>{title}</h3>
+      {rows == null
+        ? Array.from({ length: 3 }).map((_, i) => <i key={i} className="sk" />)
+        : rows.length === 0
+          ? <div className="empty"><b>{empty}</b></div>
+          : rows.map((r, i) => (
+            <EconEventRow key={r.sourceId} event={r} bold={upcoming && i === 0} next={r === nextUs} />
+          ))}
     </div>
   );
 }

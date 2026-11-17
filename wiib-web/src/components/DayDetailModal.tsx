@@ -1,6 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import { Dialog, DialogContent, DialogHeader } from './ui/dialog';
-import { cn, fmtMoney } from '../lib/utils';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Dialog, DialogHeader } from './ui/dialog';
+import { BigNum } from './ui/big-num';
+import { cn, fmtSignedPct, fmtSignedUsd } from '../lib/utils';
 import type { AssetSnapshot } from '../types';
 
 /** 四分类日差，字段直接来自快照 DTO，不用再算。数组在组件外，标签存词表 key 渲染时再查 */
@@ -16,21 +18,24 @@ interface Props {
   date: string | null;
   /** 当天快照。父组件手上已有整月数据，没必要为了一天再问一次后端 */
   snapshot: AssetSnapshot | null;
+  /** 翻到前 / 后一个有数的日子；到头了就不传，那颗钮置灰 */
+  onPrev?: () => void;
+  onNext?: () => void;
   onClose: () => void;
 }
 
 /**
- * 月度网格点某一天的下钻弹窗：当天赚亏多少，以及这个数由哪几类拼出来的。
+ * 月历点某一天的弹窗：当天赚亏多少，以及这个数由哪几类拼出来的；右上角能直接前后翻。
  * 数据全部来自父组件已有的当月快照，弹窗自己不发请求。
  */
-export function DayDetailModal({ date, snapshot, onClose }: Props) {
+export function DayDetailModal({ date, snapshot, onPrev, onNext, onClose }: Props) {
   // hook 得在提前 return 之前调，否则 date 由 null 变成有值时 hook 调用顺序就变了
   const { t, i18n } = useTranslation('home');
 
   if (!date) return null;
 
   const pnl = snapshot?.dailyProfit ?? 0;
-  const up = pnl >= 0;
+  const tone = pnl >= 0 ? 'up' : 'dn';
   // 月份名/星期名跟着界面语言走，钉死 zh-CN 会在英文界面漏出"8月20日星期三"。
   // 取 resolvedLanguage：language 可能是没落在支持列表里的原始值（与 lib/utils.ts 同口径）
   const title = new Date(`${date}T00:00:00`).toLocaleDateString(i18n.resolvedLanguage ?? i18n.language, {
@@ -38,41 +43,32 @@ export function DayDetailModal({ date, snapshot, onClose }: Props) {
   });
 
   return (
-    <Dialog open onClose={onClose} className="max-w-sm">
-      <DialogHeader className="pb-3 border-b border-border/40">
-        <div className="text-xs text-muted-foreground">{title}</div>
-        <div className="flex items-baseline gap-2 mt-1">
-          <span className={cn('num text-2xl font-black', up ? 'text-gain' : 'text-loss')}>
-            {up ? '+' : ''}{fmtMoney(pnl)}
-          </span>
-          {snapshot?.dailyProfitPct != null && (
-            <span className={cn('num text-xs font-bold', up ? 'text-gain' : 'text-loss')}>
-              {up ? '+' : ''}{snapshot.dailyProfitPct.toFixed(2)}%
-            </span>
-          )}
+    <Dialog open onClose={onClose} className="sm day-dlg">
+      <DialogHeader actions={
+        <>
+          <button type="button" className="xb" disabled={!onPrev} onClick={onPrev} aria-label={t('dayDetail.prevDay')}><ChevronLeft className="ic" /></button>
+          <button type="button" className="xb" disabled={!onNext} onClick={onNext} aria-label={t('dayDetail.nextDay')}><ChevronRight className="ic" /></button>
+        </>
+      }>
+        <div className="dd-date">{title}</div>
+        <div className="dd-pnl">
+          <b className={cn('big nf', tone)}><BigNum value={pnl} signed /></b>
+          {snapshot?.dailyProfitPct != null && <span className={tone}>{fmtSignedPct(snapshot.dailyProfitPct)}</span>}
         </div>
-        <div className="text-[11px] text-muted-foreground mt-0.5">{t('dayDetail.note')}</div>
+        <div className="dd-note">{t('dayDetail.note')}</div>
       </DialogHeader>
 
-      <DialogContent className="pt-3">
-        <div className="space-y-2">
-          {BUCKETS.map(({ key, labelKey }) => {
-            const v = snapshot?.[key] ?? 0;
-            return (
-              <div key={key} className="flex items-baseline justify-between">
-                <span className="text-xs text-muted-foreground">{t(labelKey)}</span>
-                {v === 0 ? (
-                  <span className="num text-sm text-muted-foreground/40">—</span>
-                ) : (
-                  <span className={cn('num text-sm font-bold', v > 0 ? 'text-gain' : 'text-loss')}>
-                    {v > 0 ? '+' : ''}{fmtMoney(v)}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </DialogContent>
+      <div className="kv">
+        {BUCKETS.map(({ key, labelKey }) => {
+          const v = snapshot?.[key] ?? 0;
+          return (
+            <div key={key}>
+              <span>{t(labelKey)}</span>
+              {v === 0 ? <b className="faint">—</b> : <b className={v > 0 ? 'up' : 'dn'}>{fmtSignedUsd(v)}</b>}
+            </div>
+          );
+        })}
+      </div>
     </Dialog>
   );
 }
