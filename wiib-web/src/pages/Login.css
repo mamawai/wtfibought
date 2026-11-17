@@ -1,0 +1,85 @@
+/* 登录：整页没有顶栏，底下铺一张圆点网（components/fx/DotField）：黑白灰的烟慢慢飘，左下一道绿红点的山是这笔钱的走势。
+   左边把站名那句话演出来——「如果那时候买了它，现在是多少」：一句话（时间能换）、一个大数、一行别的标的、一句哪天买的按哪天算；
+   左上角站名，左下角一句写死的英文；右边登录卡 */
+@layer components {
+  .p-lo{position:relative;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:40px 56px;min-height:100vh}
+  .p-lo .lbg{position:fixed;inset:0;z-index:0;width:100%;height:100%;pointer-events:none}
+  .p-lo > :not(.lbg){position:relative;z-index:1}
+  .p-lo .left{display:flex;flex-direction:column;justify-content:space-between;gap:36px;min-width:0;padding:28px 0 30px}
+  /* 站名、那句英文都只占字那么宽：背景按它们的位置给烟让路 */
+  .p-lo .wm{align-self:flex-start;font-size:16px;font-weight:600;letter-spacing:-.01em}
+  .p-lo .wm u{text-decoration:none;color:var(--color-primary)}
+  .p-lo .motto{align-self:flex-start;font-size:14px;font-weight:500;letter-spacing:.01em}
+  /* 下面空出来的地方留给背景里那道山 */
+  .p-lo .hero{width:100%;max-width:600px;margin-bottom:14vh}
+  .p-lo .say{font-size:clamp(17px,1.5vw,21px);font-weight:400;line-height:1.6;color:var(--color-muted-foreground);text-wrap:balance}
+  .p-lo .say b{font-weight:600;color:var(--color-foreground)}
+  /* 句子里的时间：点线底的字，点开一个下拉 */
+  .p-lo .pw{position:relative;display:inline-block}
+  .p-lo .when{padding-bottom:1px;border-bottom:1.5px dotted var(--color-faint);font-weight:600;color:var(--color-foreground);transition:border-color var(--t) var(--ease-control)}
+  .p-lo .pw.open .when{border-bottom-color:var(--color-foreground)}
+  .p-lo .pw .menu{top:calc(100% + 8px);left:-12px;min-width:136px}
+  /* 数太长就按 --k 缩一号，不折行 */
+  .p-lo .big{margin-top:10px;font-size:calc(clamp(60px,7.4vw,112px) * var(--k,1));font-variant-numeric:tabular-nums;white-space:nowrap}
+  .p-lo .res{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:14px;font-size:15px;font-weight:500;font-variant-numeric:tabular-nums}
+  .p-lo .res span + span{font-weight:400}
+  /* 别的标的：一行字，选中的那个加粗带底线 */
+  .p-lo .alts{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:26px;font-size:13.5px;font-variant-numeric:tabular-nums;color:var(--color-muted-foreground)}
+  .p-lo .alts button{display:inline-flex;gap:7px;padding:3px 0;border-bottom:1.5px solid transparent;transition:color var(--t) var(--ease-control)}
+  .p-lo .alts button[aria-pressed="true"]{border-bottom-color:var(--color-foreground);font-weight:600;color:var(--color-foreground)}
+  .p-lo .alts em{font-style:normal;font-weight:400}
+  /* 最底下的小字，一行一句 */
+  .p-lo .cap{margin-top:14px;font-size:12.5px;line-height:1.6;color:var(--color-muted-foreground)}
+  .p-lo .cap span{display:block}
+  @media (hover:hover){
+    .p-lo .when:hover{border-bottom-color:var(--color-foreground)}
+    .p-lo .alts button:hover{color:var(--color-foreground)}
+  }
+  /* 登录卡：一圈细线加一片很散的影子，顶上一个居中的 logo */
+  .p-lo .rightc{display:flex;flex-direction:column;justify-content:center;align-items:center;padding:44px 0 48px}
+  .p-lo .rightc > div{width:100%;max-width:404px}
+  .p-lo .card{--ctl:var(--color-fill);--ctl-h:var(--color-fill2);display:flex;flex-direction:column;gap:13px;padding:30px;border-radius:28px;background:var(--color-background);box-shadow:0 0 0 1px var(--color-border),0 30px 80px -40px rgb(0 0 0 / .35)}
+  .p-lo .card .mark{align-self:center;height:48px;width:auto;margin:4px 0 12px}
+  .p-lo .card .intro{font-size:13px;line-height:1.6;color:var(--color-muted-foreground)}
+  /* 第三方登录按钮：点下去先刷一遍它自己的颜色——Google 四色从左到右依次刷满，LinuxDo 黑白黄三条横带自上而下——刷完才跳授权页 */
+  .p-lo .oa{position:relative;overflow:hidden;height:46px;border-radius:13px;font-size:14.5px}
+  .p-lo .oa .paint{position:absolute;inset:0;display:flex;pointer-events:none}
+  .p-lo .oa .paint.rows{flex-direction:column}
+  .p-lo .oa .paint i{flex:1;transform:scaleX(0);transform-origin:left center}
+  .p-lo .oa.go .paint i{animation:wiib-opaint 200ms cubic-bezier(.2,.8,.2,1) forwards}
+  .p-lo .oa.go .paint i:nth-child(2){animation-delay:90ms}
+  .p-lo .oa.go .paint i:nth-child(3){animation-delay:180ms}
+  .p-lo .oa.go .paint i:nth-child(4){animation-delay:270ms}
+  .p-lo .oa .lab{position:relative;display:inline-flex;align-items:center;gap:10px;transition:opacity var(--t)}
+  .p-lo .oa .lab svg{width:18px;height:18px}
+  .p-lo .oa.go .lab{opacity:0}
+  @keyframes wiib-opaint{to{transform:scaleX(1)}}
+  .p-lo .or{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--color-faint)}
+  .p-lo .or::after{content:"";flex:1;height:1px;background:var(--color-border)}
+  .p-lo .card .fl small{font-size:11.5px;color:var(--color-faint)}
+  /* 密码框里那颗显示/隐藏密码的眼睛 */
+  .p-lo .card .eye{display:grid;place-items:center;width:32px;height:32px;margin-right:-6px;border-radius:9px;color:var(--color-muted-foreground)}
+  .p-lo .card .eye .ic{width:16px;height:16px}
+  .p-lo .card .sw2{align-self:flex-start;font-size:13px}
+  .p-lo .lfoot{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:18px;padding:0 6px;font-size:12px;color:var(--color-muted-foreground)}
+  .p-lo .state{display:flex;align-items:center;gap:10px;padding:18px 0;font-size:14px;font-weight:500}
+  .p-lo .state svg{width:18px;height:18px}
+  /* 右上角：仓库、中英、明暗。平时不带底，碰到才出；右边跟页壳的左右留白对齐 */
+  .p-lo .tr0{position:absolute;right:16px;top:20px;z-index:2;display:flex;gap:4px}
+  .p-lo .tr0 .ib{background:transparent}
+  .p-lo .tr0 .tx{width:auto;padding:0 9px;font-size:12.5px;font-weight:600;letter-spacing:.02em}
+  @media (hover:hover){.p-lo .tr0 .ib:hover{background:var(--ctl)}}
+  @media (min-width:768px){.p-lo .tr0{right:52px}}
+  @media (prefers-reduced-motion:reduce){
+    .p-lo .oa.go .paint i{animation:none;transform:scaleX(1)}
+    .p-lo .when,.p-lo .alts button{transition:none}
+  }
+  /* 窄屏单列：背景不画山，主角下面不用留空，那句英文不出 */
+  @media (max-width:1023px){
+    .p-lo{grid-template-columns:minmax(0,1fr);gap:0}
+    .p-lo .left{padding:26px 0 8px;gap:26px}
+    .p-lo .hero{margin-bottom:0}
+    .p-lo .motto{display:none}
+    .p-lo .rightc{justify-content:flex-start;padding:28px 0 56px}
+  }
+}
