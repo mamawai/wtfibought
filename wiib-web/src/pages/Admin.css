@@ -1,0 +1,84 @@
+/* 管理：只有管理员进得来。最上面一排三个进程的状况；下面左边是行情数据流和平台用的 LLM（配置、哪个功能用哪条），
+   右边是杠杆日利率、邀请码和几样手动任务。窄屏居中一列从上往下排；电脑上下面那部分铺成两栏（见文件末尾） */
+@layer components {
+  .p-adm{max-width:768px;margin:0 auto}
+  .p-adm .intro{max-width:70ch;margin:-4px 0 18px;font-size:13.5px;line-height:1.7;color:var(--color-muted-foreground)}
+  /* 节名后面那句小字：有流出事时是红的 */
+  .p-adm .sec-h h2 small.dn{color:var(--color-loss)}
+
+  /* 进程：一个一块。两个占用率各是一个大数加一根量条，下面几行细项 */
+  .p-adm .jvms{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+  .p-adm .jvm-h{display:flex;align-items:baseline;gap:8px}
+  .p-adm .jvm-h b{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .p-adm .jvm-h > span:not(.tag){font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-adm .jvm-h .tag{align-self:center;margin-left:auto}
+  .p-adm .mts{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px}
+  .p-adm .mt{display:flex;flex-direction:column;gap:7px}
+  .p-adm .mt > span{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-adm .mt > span em{font-style:normal;font-variant-numeric:tabular-nums}
+  .p-adm .mt > b{font-size:30px;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+  .p-adm .mt > i{height:4px;border-radius:2px;background:var(--color-fill2);overflow:hidden}
+  .p-adm .mt > i u{display:block;height:100%;border-radius:2px;background:var(--color-gain);transition:width var(--slow) var(--ease-control)}
+  .p-adm .mt > i.w u{background:var(--color-warning)}
+  .p-adm .mt > i.r u{background:var(--color-loss)}
+  .p-adm .jvm .kv{margin-top:16px}
+  .p-adm .jvm .kv > div{padding:7px 0;font-size:13px}
+  .p-adm .jvm .kv b{font-variant-numeric:tabular-nums}
+  .p-adm .jvm .kv small{margin-left:6px;font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
+  /* 第一帧没到时的占位 */
+  .p-adm .mts .sk{height:60px}
+  .p-adm .skr{display:flex;flex-direction:column;gap:20px;margin-top:26px}
+
+  /* 行情数据流：一条一行，名字、状态、断了多久、行尾一颗重连 */
+  .p-adm .streams{display:grid;grid-template-columns:minmax(0,1fr);column-gap:40px}
+  .p-adm .streams > div{display:flex;align-items:center;gap:10px;min-height:46px;border-bottom:1px solid var(--color-border);font-size:14.5px}
+  .p-adm .streams b{flex:none;width:128px;overflow:hidden;font-weight:500;text-overflow:ellipsis}
+  .p-adm .streams .age{margin-left:auto;font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--color-muted-foreground)}
+  .p-adm .streams .age em{margin-left:8px;font-style:normal;color:var(--color-loss)}
+
+  /* LLM 配置：一条一块，编辑的表单就地展开 */
+  .p-adm .eps{display:flex;flex-direction:column;gap:12px}
+  .p-adm .ep-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+  .p-adm .ep-h b{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .p-adm .ep-h .acts{display:flex;gap:6px;margin-left:auto}
+  .p-adm .ep-l{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:8px;font-size:13.5px;color:var(--color-muted-foreground)}
+  .p-adm .ep-l code{font:500 13px var(--font-mono);color:var(--color-foreground)}
+
+  /* 哪个功能用哪条：左边功能名，右边下拉 */
+  .p-adm .bind{display:flex;flex-direction:column;margin-bottom:18px}
+  .p-adm .bind > div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,320px);gap:8px 24px;align-items:center;padding:14px 0;border-bottom:1px solid var(--color-border)}
+  .p-adm .bind b{font-size:14.5px;font-weight:500}
+
+  /* 一排小输入框加一颗钮，底边对齐 */
+  .p-adm .gen{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+  .p-adm .gen .fld{width:124px}
+  .p-adm .gen .fld.grow{flex:1;width:auto;min-width:180px}
+  .p-adm .gen .btn{height:38px}
+  .p-adm .gen + .fhint{margin-top:10px}
+
+  /* 邀请码：一码一行，点码复制 */
+  .p-adm .invs{display:flex;flex-direction:column;margin-top:14px}
+  .p-adm .invs > div{display:flex;align-items:center;gap:10px;min-height:46px;border-bottom:1px solid var(--color-border);font-size:13.5px}
+  .p-adm .invs > div:last-child{border-bottom:0}
+  .p-adm .invs .code{font:600 14px var(--font-mono);letter-spacing:.1em;transition:color var(--t) var(--ease-control)}
+  .p-adm .invs .use{font-variant-numeric:tabular-nums;color:var(--color-muted-foreground)}
+  .p-adm .invs .day{margin-left:auto;font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--color-muted-foreground)}
+  @media (hover:hover){.p-adm .invs .code:hover{color:var(--color-primary)}}
+
+  /* 手动任务：一组一行小字当组名 */
+  .p-adm .grp + .grp{margin-top:26px}
+  .p-adm .grp > span{display:block;margin-bottom:10px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-adm .grp .acts{display:flex;flex-wrap:wrap;gap:8px}
+
+  @media (min-width:640px){.p-adm .streams{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:640px){.p-adm .bind > div{grid-template-columns:minmax(0,1fr)}}
+  /* 电脑：进程那排通栏，下面两栏 */
+  @media (min-width:1181px){
+    .p-adm{max-width:none}
+    .p-adm .cols{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);column-gap:72px;align-items:start}
+    /* 配置卡够宽就并排两张；正在填表的那张占满一行 */
+    .p-adm .eps{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));align-items:start}
+    .p-adm .eps > .edit,.p-adm .eps > .empty{grid-column:1 / -1}
+  }
+  @media (prefers-reduced-motion:reduce){.p-adm .mt > i u,.p-adm .invs .code{transition:none}}
+}

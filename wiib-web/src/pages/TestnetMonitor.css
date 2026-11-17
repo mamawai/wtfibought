@@ -1,0 +1,58 @@
+/* Testnet 看板：只有管理员进得来。从上往下：四个指标、权益曲线和盈亏月历并排、当前持仓和挂单、fill 对账、近 30 天成交、手动交易自检 */
+@layer components {
+  .p-tn .pg-h + .note{margin-top:24px}
+  .p-tn .note .linkb{white-space:nowrap}
+
+  /* 一排指标：名字、一个大数、一句小字 */
+  .p-tn .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:28px 32px;margin-top:40px}
+  .p-tn .sec .stats{margin-top:0}
+  .p-tn .stats > div{display:flex;flex-direction:column;min-width:0}
+  .p-tn .stats span{font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tn .stats b{margin-top:6px;font-size:30px;line-height:1.1;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+  .p-tn .stats small{margin-top:6px;font-size:12px;line-height:1.5;color:var(--color-muted-foreground)}
+  .p-tn .stats + .note{margin-top:22px}
+
+  /* 权益曲线和月历 */
+  .p-tn .two{display:grid;grid-template-columns:minmax(0,1fr);column-gap:72px}
+  .p-tn .two .month{max-width:420px}
+  .p-tn .two .fhint{margin-top:10px}
+  /* 点开某一天：当天的成交 */
+  .p-tn .day{margin-top:20px}
+  .p-tn .day-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;font-size:14px}
+  .p-tn .day-h b{font-weight:600}
+  .p-tn .day-h .linkb{font-size:13px}
+
+  /* 持仓：一个一块 */
+  .p-tn .poss{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:12px}
+  .p-tn .pos-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+  .p-tn .pos-h b:first-child{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .p-tn .pos-h > span:not(.tag){font-size:13px;font-variant-numeric:tabular-nums;color:var(--color-muted-foreground)}
+  .p-tn .pos-h b:last-child{margin-left:auto;font-size:22px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+  .p-tn .poss .kv{margin-top:12px}
+  .p-tn .poss .kv > div{padding:7px 0;font-size:13.5px}
+  .p-tn .poss .kv b{font-variant-numeric:tabular-nums}
+
+  /* 挂单和成交：一条一行，行尾靠右 */
+  .p-tn .rows{display:flex;flex-direction:column}
+  .p-tn .rows > div{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;min-height:44px;padding:6px 0;border-bottom:1px solid var(--color-border);font-size:13.5px;font-variant-numeric:tabular-nums}
+  .p-tn .rows > div:last-child{border-bottom:0}
+  .p-tn .rows b{font-weight:600}
+  .p-tn .rows .tm{width:92px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tn .rows .px{color:var(--color-muted-foreground)}
+  .p-tn .rows .end{display:inline-flex;align-items:baseline;gap:12px;margin-left:auto;color:var(--color-muted-foreground)}
+  .p-tn .rows .end em{font-style:normal;font-size:12px;color:var(--color-faint)}
+  .p-tn .skr{display:flex;flex-direction:column;gap:10px}
+  .p-tn .skr .sk{height:34px}
+
+  /* 手动交易：节名右边一颗箭头，点开转半圈 */
+  .p-tn .fold .ic{transition:transform var(--slow) var(--ease-control)}
+  .p-tn .fold.on .ic{transform:rotate(180deg)}
+  .p-tn .manual{display:flex;flex-direction:column;gap:16px;max-width:640px;padding-bottom:4px}
+  .p-tn .manual .segs,.p-tn .manual .acts{display:flex;flex-wrap:wrap;gap:8px 12px}
+  .p-tn .gen{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+  .p-tn .gen .fld{width:124px}
+
+  @media (max-width:760px){.p-tn .stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (min-width:1024px){.p-tn .two{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}}
+  @media (prefers-reduced-motion:reduce){.p-tn .fold .ic{transition:none}}
+}

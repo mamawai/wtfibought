@@ -1,18 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Navigate } from 'react-router-dom';
+import { Pencil, Plus, RefreshCw } from 'lucide-react';
 import { useUserStore } from '../stores/userStore';
 import { adminApi } from '../api';
 import type { AiKeyConfig, AiKeyView, AiModelAssignment, InviteCode } from '../types';
-import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Badge } from '../components/ui/badge';
-import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
-import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
-import { MonitorCarousel } from '../components/MonitorCarousel';
+import { Select } from '../components/ui/select';
+import { useSubmitFx } from '../hooks/useSubmitFx';
+import { FeedStreams } from '../components/FeedStreams';
+import { JvmMonitors } from '../components/JvmMonitors';
+import { SureButton } from '../components/SureButton';
 import { DEFAULT_CONTEXT_WINDOW, LlmEndpointForm, type LlmEndpointValue } from '../components/LlmEndpointForm';
-import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Ban } from 'lucide-react';
+import { cn } from '../lib/utils';
+import './Admin.css';
 
 /** 功能位名称的词表 key，顺序即页面上的行序。常量在组件外，存翻译结果会在模块加载那一刻定死，切语言不跟着变 */
 const FUNCTION_LABEL_KEYS: Record<string, string> = {
@@ -25,6 +26,22 @@ const OPTIONAL_FUNCTIONS = new Set(['news-translation-fallback']);
 /** 手动补拉最多补最近几条，与后端 MAX_BACKFILL_COUNT 同步 */
 const MAX_BACKFILL_COUNT = 500;
 
+/** 配置上显示的协议名 */
+const PROTO_NAME: Record<string, string> = { openai: 'ChatCompletions', responses: 'Responses', anthropic: 'Anthropic', gemini: 'Gemini' };
+
+/** 新增时那份空表单 */
+const BLANK_FORM: LlmEndpointValue = {
+  name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: false,
+  antigravity: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
+};
+
+/** 结算与风控那组手动任务：钮的 key、调哪个接口、钮上的字 */
+const SETTLE_TASKS = [
+  { key: 'bankruptcy', run: adminApi.bankruptcyCheck, labelKey: 'admin.manual.bankruptcy' },
+  { key: 'interest', run: adminApi.accrueInterest, labelKey: 'admin.manual.interest' },
+  { key: 'snapshot', run: adminApi.assetSnapshot, labelKey: 'admin.manual.snapshot' },
+];
+
 /** 表单值（与 BYOK 同一份表单）→ 平台配置；平台位没有联网搜索 */
 function toKeyConfig(id: number | undefined, f: LlmEndpointValue): AiKeyConfig {
   return {
@@ -33,111 +50,87 @@ function toKeyConfig(id: number | undefined, f: LlmEndpointValue): AiKeyConfig {
   };
 }
 
+/**
+ * 管理页，只有 1 号用户进得来（样式见 Admin.css）。
+ * 最上面一排三个进程的状况；下面左边是行情数据流和平台用的 LLM（配置、哪个功能用哪条），右边是杠杆日利率、邀请码和几样手动任务。
+ */
 export function Admin() {
   const { t } = useTranslation(['account', 'common']);
   const { user } = useUserStore();
   const { toast } = useToast();
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // 整页的提交钮共用一份转圈 / 打勾 / 晃两下，同一时间只跑一颗
+  const fx = useSubmitFx();
+  // 头一遍拉完没有：没拉完不说"暂无"
+  const [loaded, setLoaded] = useState(false);
   const [interestRateDecimal, setInterestRateDecimal] = useState<number | null>(null);
   const [interestRatePct, setInterestRatePct] = useState('');
-  const [rateLoading, setRateLoading] = useState(false);
-
-  // AI Key管理
   const [aiKeys, setAiKeys] = useState<AiKeyView[]>([]);
-  const [aiKeysLoading, setAiKeysLoading] = useState(false);
-  // null=收起；没 id=新增
+  // null=没在填表；没 id=新增
   const [editingKey, setEditingKey] = useState<{ id?: number; keyTail?: string; form: LlmEndpointValue } | null>(null);
-
-  // 模型分配
-  const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [assignmentsDraft, setAssignmentsDraft] = useState<AiModelAssignment[]>([]);
-
-  // 邀请码管理
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
-  const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMaxUses, setInviteMaxUses] = useState('1');
   const [inviteCount, setInviteCount] = useState('1');
-
   // 快讯补拉：补最近几条
   const [backfillCount, setBackfillCount] = useState('100');
 
   const fetchInterestRate = useCallback(async () => {
-    setRateLoading(true);
-    try {
-      const rate = await adminApi.getDailyInterestRate();
-      setInterestRateDecimal(rate);
-      setInterestRatePct(rate > 0 ? String(rate * 100) : '0');
-    } catch { /* ignore */ }
-    finally { setRateLoading(false); }
+    const rate = await adminApi.getDailyInterestRate();
+    setInterestRateDecimal(rate);
+    setInterestRatePct(rate > 0 ? String(rate * 100) : '0');
   }, []);
 
   const fetchAiKeys = useCallback(async () => {
-    setAiKeysLoading(true);
-    try {
-      const list = await adminApi.listAiKeys();
-      setAiKeys(list);
-    } catch { /* ignore */ }
-    finally { setAiKeysLoading(false); }
+    const list = await adminApi.listAiKeys();
+    setAiKeys(list);
   }, []);
 
   const fetchAssignments = useCallback(async () => {
-    setAssignmentsLoading(true);
-    try {
-      const list = await adminApi.listAssignments();
-      // 每个功能位固定一行：可空位没配时库里没行，也要给个下拉
-      setAssignmentsDraft(Object.keys(FUNCTION_LABEL_KEYS).map(functionName => ({
-        functionName,
-        configId: list.find(a => a.functionName === functionName)?.configId ?? null,
-      })));
-    } catch { /* ignore */ }
-    finally { setAssignmentsLoading(false); }
+    const list = await adminApi.listAssignments();
+    // 每个功能位固定一行：可空位没配时库里没行，也要给个下拉
+    setAssignmentsDraft(Object.keys(FUNCTION_LABEL_KEYS).map(functionName => ({
+      functionName,
+      configId: list.find(a => a.functionName === functionName)?.configId ?? null,
+    })));
   }, []);
 
   const fetchInviteCodes = useCallback(async () => {
-    setInviteLoading(true);
-    try {
-      const list = await adminApi.listInviteCodes();
-      setInviteCodes(list);
-    } catch { /* ignore */ }
-    finally { setInviteLoading(false); }
+    const list = await adminApi.listInviteCodes();
+    setInviteCodes(list);
   }, []);
 
+  // 四样一起拉，哪样没拉到就留着原来的
+  const reload = useCallback(async () => {
+    await Promise.allSettled([fetchInterestRate(), fetchAiKeys(), fetchAssignments(), fetchInviteCodes()]);
+    setLoaded(true);
+  }, [fetchInterestRate, fetchAiKeys, fetchAssignments, fetchInviteCodes]);
+
+  // 进页拉一遍；放进 then 里调，effect 里不直接写状态
   useEffect(() => {
-    if (user?.id === 1) {
-      fetchInterestRate();
-      fetchAiKeys();
-      fetchAssignments();
-      fetchInviteCodes();
-    }
-  }, [user, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchInviteCodes]);
+    if (user?.id === 1) void Promise.resolve().then(reload);
+  }, [user, reload]);
 
   // 外层守卫保证 token 存在，user 为 null 只能是 fetchUser 还没回来 —— 等它。
   // 早先这里 !user 也一起弹，管理员刷新本页会被自己的代码踢回首页（user 没持久化，刷新必为 null）
   if (!user) return null;
   if (user.id !== 1) return <Navigate to="/" replace />;
 
-  const handleAction = async (action: () => Promise<unknown>, name: string) => {
-    setActionLoading(name);
-    try {
-      await action();
-    } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
+  /** 没成时弹后端给的原话，没有就弹 fallback */
+  const fail = (fallback: string) => (e: unknown) => toast((e as Error).message || fallback, 'error');
+  /** 别的钮在转圈或打勾时，这颗先别点 */
+  const off = (key: string) => fx.locked && !fx.cls(key);
 
-  const handleSaveRate = async () => {
+  const handleSaveRate = () => {
     const pct = Number(interestRatePct);
-    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return;
-    setActionLoading('setRate');
-    try {
-      const decimal = pct / 100;
-      const updated = await adminApi.setDailyInterestRate(decimal);
+    if (interestRatePct.trim() === '' || !Number.isFinite(pct) || pct < 0 || pct > 100) return fx.nope('rate');
+    void fx.run('rate', async () => {
+      const updated = await adminApi.setDailyInterestRate(pct / 100);
       setInterestRateDecimal(updated);
       setInterestRatePct(String(updated > 0 ? updated * 100 : 0));
-    } catch { /* ignore */ }
-    finally { setActionLoading(null); }
+    }, fail(t('admin.actionFailed')));
   };
 
-  // ========== AI Key 操作 ==========
+  // ========== LLM 配置 ==========
 
   const handleSaveKey = async () => {
     if (!editingKey) return;
@@ -145,36 +138,28 @@ export function Admin() {
     // 改已有配置 key 可以留空（不换）
     if (!name.trim() || (!editingKey.id && !apiKey.trim()) || !baseUrl.trim() || !model.trim()) {
       toast(t('admin.llm.required'), 'error');
-      return;
+      return fx.nope('saveKey');
     }
-    setActionLoading('saveKey');
-    try {
+    const saved = await fx.run('saveKey', async () => {
       await adminApi.saveAiKey(toKeyConfig(editingKey.id, editingKey.form));
-      setEditingKey(null);
       // 加第一条配置时后端会自动种出必配功能位分配，两块都要重拉
       await Promise.all([fetchAiKeys(), fetchAssignments()]);
+    }, fail(t('admin.llm.saveFailed')));
+    if (saved) {
+      setEditingKey(null);
       toast(t('admin.llm.saved'), 'success');
-    } catch (e) {
-      toast((e as Error).message || t('admin.llm.saveFailed'), 'error');
-    } finally {
-      setActionLoading(null);
     }
   };
 
   const handleDeleteKey = async (id: number) => {
-    setActionLoading('deleteKey');
-    try {
+    const deleted = await fx.run(`key-${id}`, async () => {
       await adminApi.deleteAiKey(id);
       await fetchAiKeys();
-      toast(t('admin.llm.deleted'), 'success');
-    } catch (e) {
-      toast((e as Error).message || t('admin.llm.deleteFailed'), 'error');
-    } finally {
-      setActionLoading(null);
-    }
+    }, fail(t('admin.llm.deleteFailed')));
+    if (deleted) toast(t('admin.llm.deleted'), 'success');
   };
 
-  // ========== 更换 LLM 操作 ==========
+  // ========== 哪个功能用哪条 LLM ==========
 
   /** 功能位显示名：认得的走词表，认不得的原样显示后端给的 functionName */
   const fnLabel = (functionName: string) => {
@@ -189,79 +174,38 @@ export function Admin() {
   };
 
   const handleSaveAssignments = async () => {
-    for (const a of assignmentsDraft) {
-      if (!a.configId && !OPTIONAL_FUNCTIONS.has(a.functionName)) {
-        toast(t('admin.assign.noneSelected', { name: fnLabel(a.functionName) }), 'error');
-        return;
-      }
+    const missing = assignmentsDraft.find(a => !a.configId && !OPTIONAL_FUNCTIONS.has(a.functionName));
+    if (missing) {
+      toast(t('admin.assign.noneSelected', { name: fnLabel(missing.functionName) }), 'error');
+      return fx.nope('assign');
     }
-    setActionLoading('saveAssignments');
-    try {
+    const saved = await fx.run('assign', async () => {
       await adminApi.saveAssignments(assignmentsDraft);
       await fetchAssignments();
-      toast(t('admin.assign.saved'), 'success');
-    } catch (e) {
-      toast((e as Error).message || t('admin.llm.saveFailed'), 'error');
-    } finally {
-      setActionLoading(null);
-    }
+    }, fail(t('admin.llm.saveFailed')));
+    if (saved) toast(t('admin.assign.saved'), 'success');
   };
 
-
-  // ========== 快讯补拉 ==========
-
-  const handleBackfillNews = async () => {
-    const count = Number(backfillCount);
-    if (!Number.isInteger(count) || count < 1 || count > MAX_BACKFILL_COUNT) {
-      toast(t('admin.manual.backfillBad', { max: MAX_BACKFILL_COUNT }), 'error');
-      return;
-    }
-    setActionLoading('backfillNews');
-    try {
-      const r = await adminApi.backfillNews(count);
-      toast(t('admin.manual.backfillDone', { fetched: r.fetched, inserted: r.inserted }), 'success');
-    } catch (e) {
-      toast((e as Error).message || t('admin.actionFailed'), 'error');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  /** 配置行上的协议徽标 */
-  const PROTO_BADGE: Record<string, string> = { openai: 'ChatCompletions', responses: 'Responses', anthropic: 'Anthropic', gemini: 'Gemini' };
-
-  // ========== 邀请码操作 ==========
+  // ========== 邀请码 ==========
 
   const handleGenerateInvites = async () => {
     const maxUses = Number(inviteMaxUses);
     const count = Number(inviteCount);
     if (!Number.isInteger(maxUses) || maxUses < 1 || !Number.isInteger(count) || count < 1) {
       toast(t('admin.invite.badArgs'), 'error');
-      return;
+      return fx.nope('invite');
     }
-    setActionLoading('generateInvites');
-    try {
+    const generated = await fx.run('invite', async () => {
       await adminApi.generateInviteCodes(maxUses, count);
       await fetchInviteCodes();
-      toast(t('admin.invite.generated'), 'success');
-    } catch (e) {
-      toast((e as Error).message || t('admin.invite.generateFailed'), 'error');
-    } finally {
-      setActionLoading(null);
-    }
+    }, fail(t('admin.invite.generateFailed')));
+    if (generated) toast(t('admin.invite.generated'), 'success');
   };
 
-  const handleDisableInvite = async (id: number) => {
-    setActionLoading('disableInvite');
-    try {
-      await adminApi.disableInviteCode(id);
-      await fetchInviteCodes();
-    } catch (e) {
-      toast((e as Error).message || t('admin.invite.revokeFailed'), 'error');
-    } finally {
-      setActionLoading(null);
-    }
-  };
+  const handleDisableInvite = (id: number) => fx.run(`inv-${id}`, async () => {
+    await adminApi.disableInviteCode(id);
+    await fetchInviteCodes();
+  }, fail(t('admin.invite.revokeFailed')));
 
   const copyInviteCode = async (code: string) => {
     try {
@@ -272,249 +216,258 @@ export function Admin() {
     }
   };
 
+  // ========== 快讯补拉 ==========
+
+  const handleBackfillNews = () => {
+    const count = Number(backfillCount);
+    if (!Number.isInteger(count) || count < 1 || count > MAX_BACKFILL_COUNT) {
+      toast(t('admin.manual.backfillBad', { max: MAX_BACKFILL_COUNT }), 'error');
+      return fx.nope('backfill');
+    }
+    void fx.run('backfill', async () => {
+      const r = await adminApi.backfillNews(count);
+      toast(t('admin.manual.backfillDone', { fetched: r.fetched, inserted: r.inserted }), 'success');
+    }, fail(t('admin.actionFailed')));
+  };
+
+  // 没填模型的配置派不了活，下拉里不出
+  const keyOptions = aiKeys.filter(k => k.model)
+    .map(k => ({ value: String(k.id), label: t('admin.assign.option', { name: k.configName, model: k.model }) }));
+
+  // 表单底下那两颗钮，新增和编辑共用
+  const formActions = (
+    <>
+      <button type="button" className="btn" onClick={() => setEditingKey(null)}>{t('common:cancel')}</button>
+      <button type="button" className={cn('btn ink', fx.cls('saveKey'))} disabled={off('saveKey')} onClick={() => void handleSaveKey()}>
+        <span>{t('common:save')}</span>
+      </button>
+    </>
+  );
+  // 与 BYOK 同一份表单；拉模型/测连通用表单里的 key，不用先存，改已有配置时 key 留空就用已存的。
+  // key：换编辑对象就重建，别把上一条检测到的模型清单带过来
+  const keyForm = editingKey && (
+    <LlmEndpointForm
+      key={editingKey.id ?? 'new'}
+      value={editingKey.form}
+      onChange={patch => setEditingKey(prev => prev ? { ...prev, form: { ...prev.form, ...patch } } : prev)}
+      exists={!!editingKey.id}
+      keyTail={editingKey.keyTail}
+      platform
+      onDetect={() => adminApi.listAiKeyModels(toKeyConfig(editingKey.id, editingKey.form))}
+      onTest={() => adminApi.testAiKey(toKeyConfig(editingKey.id, editingKey.form))}
+      actions={formActions}
+    />
+  );
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">{t('admin.title')}</h1>
-        {/* 因子挖掘只有管理员用，入口就放这儿；页面是 wiib-alpha 自己托管的，整页跳过去 */}
-        <a href="/alpha/" className="ml-auto text-xs font-bold text-primary hover:underline">{t('admin.alphaLink')}</a>
+    <div className="page-shell p-adm">
+      <div className="pg-h">
+        <h1>{t('admin.title')}</h1>
+        <div className="r">
+          {/* 因子挖掘只有管理员用，入口就放这儿；页面是 wiib-alpha 自己托管的，整页跳过去 */}
+          <a href="/alpha/" className="linkb">{t('admin.alphaLink')}</a>
+          <button type="button" className={cn('btn', fx.cls('reload'))} disabled={off('reload')}
+                  onClick={() => void fx.run('reload', reload, fail(t('common:loadFailed')))}>
+            <RefreshCw className="ic" /><span>{t('common:refresh')}</span>
+          </button>
+        </div>
       </div>
 
-      {/* feed 数据流健康：独立于任务状态加载，管理员进页即见 */}
-      <FeedStreamHealthCard />
+      {/* 三个进程的状况：订的是实时推送，不跟着上面那颗刷新走 */}
+      <JvmMonitors />
 
-      {/* 上游进程监控（原首页轮播，运维信息归口 admin） */}
-      <MonitorCarousel />
+      <div className="cols">
+        <div>
+          {/* feed 的行情数据流：自己拉自己订，管理员进页即见 */}
+          <FeedStreams />
 
-      {/* 杠杆日利率 */}
-          <Card>
-            <CardHeader><CardTitle className="text-lg">{t('admin.rate.title')}</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="text-sm text-muted-foreground">
-                {t('admin.rate.current', {
-                  value: interestRateDecimal == null
-                    ? '-'
-                    : t('admin.rate.value', { pct: (interestRateDecimal * 100).toFixed(4), decimal: interestRateDecimal }),
-                })}
-              </div>
-              <div className="flex flex-wrap gap-3 items-center">
-                <div className="flex-1 min-w-[10rem]">
-                  <Input
-                    value={interestRatePct}
-                    onChange={e => setInterestRatePct(e.target.value)}
-                    placeholder={t('admin.rate.placeholder')}
-                    disabled={rateLoading || actionLoading !== null}
-                  />
-                </div>
-                <Button variant="outline" onClick={() => void fetchInterestRate()} disabled={rateLoading || actionLoading !== null}>{t('common:refresh')}</Button>
-                <Button onClick={() => void handleSaveRate()} disabled={rateLoading || actionLoading !== null || interestRatePct.trim() === ''}>{t('common:save')}</Button>
-              </div>
-              <div className="text-xs text-muted-foreground">{t('admin.rate.hint')}</div>
-            </CardContent>
-          </Card>
-
-          {/* ========== 邀请码（注册凭证，可配次数/批量生成/作废） ========== */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">{t('admin.invite.title')}</CardTitle>
-                <Button variant="outline" size="sm" onClick={fetchInviteCodes} disabled={inviteLoading}>
-                  <RefreshCw className={`w-3.5 h-3.5 mr-1 ${inviteLoading ? 'animate-spin' : ''}`} /> {t('common:refresh')}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-3 items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">{t('admin.invite.maxUses')}</span>
-                  <Input className="w-20" value={inviteMaxUses} onChange={e => setInviteMaxUses(e.target.value)} disabled={actionLoading !== null} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">{t('admin.invite.count')}</span>
-                  <Input className="w-20" value={inviteCount} onChange={e => setInviteCount(e.target.value)} disabled={actionLoading !== null} />
-                </div>
-                <Button size="sm" onClick={() => void handleGenerateInvites()} disabled={actionLoading !== null}>
-                  <Plus className="w-3.5 h-3.5 mr-1" /> {t('admin.invite.generate')}
-                </Button>
-              </div>
-              {inviteCodes.length === 0 && !inviteLoading && (
-                <div className="text-sm text-muted-foreground text-center py-4">{t('admin.invite.empty')}</div>
+          {/* ===== 配置 LLM（一条 = key + baseUrl + model） ===== */}
+          <section className="sec">
+            <div className="sec-h">
+              <h2>{t('admin.llm.title')}{aiKeys.length > 0 && <small>{aiKeys.length}</small>}</h2>
+              {!(editingKey && editingKey.id == null) && (
+                <button type="button" className="btn ink" onClick={() => setEditingKey({ form: BLANK_FORM })}>
+                  <Plus className="ic" />{t('admin.llm.add')}
+                </button>
               )}
-              {inviteCodes.map(ic => {
-                const usedUp = ic.usedCount >= ic.maxUses;
+            </div>
+            <p className="intro">{t('admin.llm.hint')}</p>
+            <div className="eps">
+              {editingKey && editingKey.id == null && <div className="blk edit">{keyForm}</div>}
+              {loaded && aiKeys.length === 0 && !editingKey && <div className="empty"><span>{t('admin.llm.empty')}</span></div>}
+              {aiKeys.map(key => {
+                const isEditing = editingKey?.id === key.id;
                 return (
-                  <div key={ic.id} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
-                    <button
-                      className="font-mono text-sm font-bold tracking-widest hover:text-primary"
-                      onClick={() => void copyInviteCode(ic.code)}
-                      title={t('admin.invite.copyTitle')}
-                    >
-                      {ic.code}
-                    </button>
-                    <Badge variant="outline" className="text-[10px]">{ic.usedCount}/{ic.maxUses}</Badge>
-                    {!ic.enabled ? (
-                      <Badge variant="secondary" className="text-[10px]">{t('admin.invite.revoked')}</Badge>
-                    ) : usedUp ? (
-                      <Badge variant="secondary" className="text-[10px]">{t('admin.invite.usedUp')}</Badge>
-                    ) : (
-                      <Badge className="text-[10px]">{t('admin.invite.active')}</Badge>
-                    )}
-                    <span className="flex-1" />
-                    <span className="text-xs text-muted-foreground">{ic.createdAt?.slice(0, 10)}</span>
-                    {ic.enabled && !usedUp && (
-                      <Button variant="ghost" size="sm" onClick={() => void handleDisableInvite(ic.id)} disabled={actionLoading !== null} title={t('admin.invite.revoke')}>
-                        <Ban className="w-3.5 h-3.5 text-destructive" />
-                      </Button>
-                    )}
+                  <div key={key.id} className={cn('blk', isEditing && 'edit')}>
+                    <div className="ep-h">
+                      <b>{key.configName}</b>
+                      <span className="acts">
+                        <button type="button" className="btn sm" aria-pressed={isEditing}
+                                onClick={() => setEditingKey(isEditing ? null : { id: key.id, keyTail: key.apiKeyTail, form: {
+                                  ...BLANK_FORM, name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
+                                  model: key.model || '', reasoningEffort: key.reasoningEffort || '',
+                                } })}>
+                          <Pencil className="ic" />{t('common:edit')}
+                        </button>
+                        <SureButton className={cn('btn sm', fx.cls(`key-${key.id}`))} idleClassName="plain" sureLabel={t('admin.llm.removeSure')}
+                                    disabled={off(`key-${key.id}`)} onConfirm={() => void handleDeleteKey(key.id)}>
+                          <span>{t('common:delete')}</span>
+                        </SureButton>
+                      </span>
+                    </div>
+                    <div className="ep-l">
+                      <span className="tag sm">{PROTO_NAME[key.apiProtocol || 'openai'] ?? key.apiProtocol}</span>
+                      {key.model && <code>{key.model}</code>}
+                      <span>{key.baseUrl}</span>
+                    </div>
+                    <div className="ep-l">
+                      <span>****{key.apiKeyTail}</span>
+                      {key.reasoningEffort && <span>{t('admin.llm.effortBadge', { value: key.reasoningEffort })}</span>}
+                    </div>
+                    {isEditing && keyForm}
                   </div>
                 );
               })}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          {/* ========== 配置 LLM（一条=key+baseUrl+model） ========== */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">{t('admin.llm.title')}</CardTitle>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={fetchAiKeys} disabled={aiKeysLoading}>
-                    <RefreshCw className={`w-3.5 h-3.5 mr-1 ${aiKeysLoading ? 'animate-spin' : ''}`} /> {t('common:refresh')}
-                  </Button>
-                  <Button size="sm" onClick={() => setEditingKey({ form: {
-                    name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: false,
-                    antigravity: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
-                  } })}>
-                    <Plus className="w-3.5 h-3.5 mr-1" /> {t('admin.llm.add')}
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="text-xs text-muted-foreground">{t('admin.llm.hint')}</div>
-              {aiKeys.length === 0 && !aiKeysLoading && (
-                <div className="text-sm text-muted-foreground text-center py-4">{t('admin.llm.empty')}</div>
-              )}
-              {aiKeys.map(key => (
-                <div key={key.id} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-bold">{key.configName}</span>
-                      <Badge variant="outline" className="text-[10px]">****{key.apiKeyTail}</Badge>
-                      {key.model && <Badge variant="secondary" className="text-[10px]">{key.model}</Badge>}
-                      <Badge variant="outline" className="text-[10px]">{PROTO_BADGE[key.apiProtocol || 'openai'] ?? key.apiProtocol}</Badge>
-                      {key.reasoningEffort && <Badge variant="secondary" className="text-[10px]">{t('admin.llm.effortBadge', { value: key.reasoningEffort })}</Badge>}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5 truncate">{key.baseUrl}</div>
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => setEditingKey({ id: key.id, keyTail: key.apiKeyTail, form: {
-                    name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
-                    model: key.model || '', reasoningEffort: key.reasoningEffort || '', apiKey: '', webSearch: false,
-                    antigravity: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
-                  } })}>
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => void handleDeleteKey(key.id!)} disabled={actionLoading !== null}>
-                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                  </Button>
-                </div>
-              ))}
-
-              {/* 编辑/新增表单 */}
-              {editingKey && (
-                <div className="p-4 rounded-lg border-2 border-primary/30 bg-primary/5 space-y-3">
-                  <div className="text-sm font-bold">{editingKey.id ? t('admin.llm.editTitle') : t('admin.llm.addTitle')}</div>
-                  {/* 与 BYOK 同一份表单；拉模型/测连通用表单里的 key，不用先存，改已有配置时 key 留空就用已存的 */}
-                  {/* key：换编辑对象就重建，别把上一条检测到的模型清单带过来 */}
-                  <LlmEndpointForm
-                    key={editingKey.id ?? 'new'}
-                    value={editingKey.form}
-                    onChange={patch => setEditingKey(prev => prev ? { ...prev, form: { ...prev.form, ...patch } } : prev)}
-                    exists={!!editingKey.id}
-                    keyTail={editingKey.keyTail}
-                    platform
-                    onDetect={() => adminApi.listAiKeyModels(toKeyConfig(editingKey.id, editingKey.form))}
-                    onTest={() => adminApi.testAiKey(toKeyConfig(editingKey.id, editingKey.form))}
-                  />
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => void handleSaveKey()} disabled={actionLoading === 'saveKey'}>
-                      <Save className="w-3.5 h-3.5 mr-1" /> {t('common:save')}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setEditingKey(null)}>{t('common:cancel')}</Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* ========== 更换 LLM（功能位→配置指针，下拉即换） ========== */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">{t('admin.assign.title')}</CardTitle>
-                <Button variant="outline" size="sm" onClick={fetchAssignments} disabled={assignmentsLoading}>
-                  <RefreshCw className={`w-3.5 h-3.5 mr-1 ${assignmentsLoading ? 'animate-spin' : ''}`} /> {t('common:refresh')}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="text-xs text-muted-foreground">{t('admin.assign.hint')}</div>
+          {/* ===== 更换 LLM（功能位 → 配置，保存才生效） ===== */}
+          <section className="sec">
+            <div className="sec-h"><h2>{t('admin.assign.title')}</h2></div>
+            <p className="intro">{t('admin.assign.hint')}</p>
+            <div className="bind">
               {assignmentsDraft.map(a => (
-                <div key={a.functionName} className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 p-3 rounded-lg border bg-muted/30">
-                  <span className="text-sm font-bold min-w-[6rem]">{fnLabel(a.functionName)}</span>
-                  <select
-                    className="w-full md:flex-1 h-9 rounded-md border bg-background px-3 text-sm"
-                    value={a.configId ?? ''}
-                    onChange={e => updateDraft(a.functionName, e.target.value ? Number(e.target.value) : null)}
-                  >
-                    <option value="">
-                      {OPTIONAL_FUNCTIONS.has(a.functionName) ? t('admin.assign.none') : t('admin.assign.select')}
-                    </option>
-                    {aiKeys.map(k => (
-                      <option key={k.id} value={k.id} disabled={!k.model}>
-                        {t('admin.assign.option', { name: k.configName, model: k.model || t('admin.assign.noModel') })}
-                      </option>
-                    ))}
-                  </select>
+                <div key={a.functionName}>
+                  <b>{fnLabel(a.functionName)}</b>
+                  <Select className="wide" label={fnLabel(a.functionName)} placeholder={t('admin.assign.select')}
+                          value={String(a.configId ?? '')}
+                          onChange={v => updateDraft(a.functionName, v ? Number(v) : null)}
+                          options={OPTIONAL_FUNCTIONS.has(a.functionName)
+                            ? [{ value: '', label: t('admin.assign.none') }, ...keyOptions]
+                            : keyOptions} />
                 </div>
               ))}
-              <Button onClick={() => void handleSaveAssignments()} disabled={actionLoading === 'saveAssignments' || assignmentsDraft.length === 0}>
-                <Save className="w-4 h-4 mr-1" /> {t('admin.assign.save')}
-              </Button>
-            </CardContent>
-          </Card>
+            </div>
+            <button type="button" className={cn('btn ink', fx.cls('assign'))} disabled={off('assign') || assignmentsDraft.length === 0}
+                    onClick={() => void handleSaveAssignments()}>
+              <span>{t('admin.assign.save')}</span>
+            </button>
+          </section>
+        </div>
 
-          {/* 手动触发任务 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Calendar className="w-5 h-5" /> {t('admin.manual.title')}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* 结算与风控 */}
-              <div>
-                <div className="text-xs text-muted-foreground mb-2">{t('admin.manual.settleGroup')}</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.bankruptcyCheck, 'bankruptcyCheck')} disabled={actionLoading !== null}>{t('admin.manual.bankruptcy')}</Button>
-                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.accrueInterest, 'accrueInterest')} disabled={actionLoading !== null}>{t('admin.manual.interest')}</Button>
-                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.assetSnapshot, 'assetSnapshot')} disabled={actionLoading !== null}>{t('admin.manual.snapshot')}</Button>
-                </div>
+        <div>
+          {/* ===== 杠杆日利率 ===== */}
+          <section className="sec">
+            <div className="sec-h">
+              <h2>
+                {t('admin.rate.title')}
+                {interestRateDecimal != null && (
+                  <small>
+                    {t('admin.rate.current', {
+                      value: t('admin.rate.value', { pct: (interestRateDecimal * 100).toFixed(4), decimal: interestRateDecimal }),
+                    })}
+                  </small>
+                )}
+              </h2>
+            </div>
+            <div className="gen">
+              <div className="fld grow">
+                <label className="inp sm">
+                  <input value={interestRatePct} onChange={e => setInterestRatePct(e.target.value)} inputMode="decimal"
+                         placeholder={t('admin.rate.placeholder')} aria-label={t('admin.rate.title')} />
+                  <span className="u">%</span>
+                </label>
               </div>
-              {/* 快讯补拉：断档超出定时拉取窗口时用 */}
-              <div>
-                <div className="text-xs text-muted-foreground mb-2">{t('admin.manual.newsGroup')}</div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">{t('admin.manual.backfillCount')}</span>
-                  <Input className="w-24" value={backfillCount} onChange={e => setBackfillCount(e.target.value)} disabled={actionLoading !== null} />
-                  <Button variant="outline" className="h-9 text-xs" onClick={() => void handleBackfillNews()} disabled={actionLoading !== null}>
-                    {t('admin.manual.backfill')}
-                  </Button>
-                </div>
-                <div className="text-xs text-muted-foreground mt-2">{t('admin.manual.backfillHint', { max: MAX_BACKFILL_COUNT })}</div>
+              <button type="button" className={cn('btn ink', fx.cls('rate'))} disabled={off('rate')} onClick={handleSaveRate}>
+                <span>{t('common:save')}</span>
+              </button>
+            </div>
+            <p className="fhint">{t('admin.rate.hint')}</p>
+          </section>
+
+          {/* ===== 邀请码（注册凭证：可配次数、批量生成、作废） ===== */}
+          <section className="sec">
+            <div className="sec-h">
+              <h2>{t('admin.invite.title')}{inviteCodes.length > 0 && <small>{inviteCodes.length}</small>}</h2>
+            </div>
+            <div className="gen">
+              <div className="fld">
+                <label className="fl" htmlFor="adm-inv-uses"><span>{t('admin.invite.maxUses')}</span></label>
+                <label className="inp sm">
+                  <input id="adm-inv-uses" value={inviteMaxUses} onChange={e => setInviteMaxUses(e.target.value)} inputMode="numeric" />
+                </label>
               </div>
-            </CardContent>
-          </Card>
+              <div className="fld">
+                <label className="fl" htmlFor="adm-inv-count"><span>{t('admin.invite.count')}</span></label>
+                <label className="inp sm">
+                  <input id="adm-inv-count" value={inviteCount} onChange={e => setInviteCount(e.target.value)} inputMode="numeric" />
+                </label>
+              </div>
+              <button type="button" className={cn('btn ink', fx.cls('invite'))} disabled={off('invite')} onClick={() => void handleGenerateInvites()}>
+                <Plus className="ic" /><span>{t('admin.invite.generate')}</span>
+              </button>
+            </div>
+            {loaded && inviteCodes.length === 0 && <div className="empty"><span>{t('admin.invite.empty')}</span></div>}
+            {inviteCodes.length > 0 && (
+              <div className="invs">
+                {inviteCodes.map(ic => {
+                  const usedUp = ic.usedCount >= ic.maxUses;
+                  return (
+                    <div key={ic.id}>
+                      <button type="button" className="code" title={t('admin.invite.copyTitle')} onClick={() => void copyInviteCode(ic.code)}>
+                        {ic.code}
+                      </button>
+                      <span className="use">{ic.usedCount}/{ic.maxUses}</span>
+                      {!ic.enabled ? <span className="tag sm">{t('admin.invite.revoked')}</span>
+                        : usedUp ? <span className="tag sm">{t('admin.invite.usedUp')}</span>
+                        : <span className="tag sm g">{t('admin.invite.active')}</span>}
+                      <span className="day">{ic.createdAt?.slice(0, 10)}</span>
+                      {ic.enabled && !usedUp && (
+                        <SureButton className={cn('btn sm', fx.cls(`inv-${ic.id}`))} idleClassName="plain" sureLabel={t('admin.invite.revokeSure')}
+                                    disabled={off(`inv-${ic.id}`)} onConfirm={() => void handleDisableInvite(ic.id)}>
+                          <span>{t('admin.invite.revoke')}</span>
+                        </SureButton>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* ===== 手动触发 ===== */}
+          <section className="sec">
+            <div className="sec-h"><h2>{t('admin.manual.title')}</h2></div>
+            <div className="grp">
+              <span>{t('admin.manual.settleGroup')}</span>
+              <div className="acts">
+                {SETTLE_TASKS.map(task => (
+                  <button key={task.key} type="button" className={cn('btn', fx.cls(task.key))} disabled={off(task.key)}
+                          onClick={() => void fx.run(task.key, task.run, fail(t('admin.actionFailed')))}>
+                    <span>{t(task.labelKey)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* 快讯补拉：断档超出定时拉取窗口时用 */}
+            <div className="grp">
+              <span>{t('admin.manual.newsGroup')}</span>
+              <div className="gen">
+                <div className="fld">
+                  <label className="fl" htmlFor="adm-backfill"><span>{t('admin.manual.backfillCount')}</span></label>
+                  <label className="inp sm">
+                    <input id="adm-backfill" value={backfillCount} onChange={e => setBackfillCount(e.target.value)} inputMode="numeric" />
+                  </label>
+                </div>
+                <button type="button" className={cn('btn', fx.cls('backfill'))} disabled={off('backfill')} onClick={handleBackfillNews}>
+                  <span>{t('admin.manual.backfill')}</span>
+                </button>
+              </div>
+              <p className="fhint">{t('admin.manual.backfillHint', { max: MAX_BACKFILL_COUNT })}</p>
+            </div>
+          </section>
+        </div>
+      </div>
     </div>
   );
 }
