@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Inbox } from 'lucide-react';
 import { bstockApi } from '../api';
 import { StockMarketRow } from '../components/MarketRow';
-import { MarketTabs } from '../components/MarketTabs';
-import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import type { BStock } from '../types';
 
@@ -24,15 +23,22 @@ export function BStockList() {
   }, [toast, t]);
 
   return (
-    <div className="max-w-[820px] mx-auto px-5 pt-11 pb-14">
-      <MarketTabs sub={stocks != null && stocks.length > 0 ? t('bstockList.subtitle', { count: stocks.length }) : null} />
-      <div className="mkt-list @container border-t border-border">
+    <>
+      <p className="sub">{stocks != null && stocks.length > 0 && t('bstockList.subtitle', { count: stocks.length })}</p>
+      <div className="list">
         {stocks == null
-          ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[60px] @md:h-[66px] mt-px" />)
+          ? Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="skr">
+              <i className="sk rounded-full" style={{ height: 30 }} />
+              <i className="sk t" style={{ width: '38%' }} />
+              <i className="sk t" />
+              <i className="sk" style={{ height: 26 }} />
+            </div>
+          ))
           : stocks.length
             ? stocks.map(s => <StockMarketRow key={s.symbol} stock={s} />)
-            : <p className="py-12 text-center text-[13px] text-muted-foreground">{t('common:noData')}</p>}
+            : <div className="empty"><span className="ib0"><Inbox className="ic" /></span><b>{t('common:noData')}</b></div>}
       </div>
-    </div>
+    </>
   );
 }

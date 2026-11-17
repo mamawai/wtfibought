@@ -1,0 +1,35 @@
+/* TradFi 标的的标的市场时段：页头一颗小胶囊（当前时段 + 倒计时），点开是一周的时段图 */
+@layer components {
+  .sess{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px 0 9px;border-radius:999px;background:var(--color-fill);font-size:12px;font-weight:500;color:var(--color-foreground);transition:background-color var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
+  .sess:active{transform:scale(.96);transition-duration:0s}
+  .sess i{width:6px;height:6px;border-radius:50%;background:var(--c)}
+  .sess span{font-weight:400;color:var(--color-muted-foreground)}
+  .sess .ic{width:12px;height:12px;color:var(--color-muted-foreground)}
+
+  /* 弹窗挂在页头那行小灰字里，字号颜色先拉回正文 */
+  .sess-dlg{font-size:14px;color:var(--color-foreground)}
+  .sess-dlg .sess-t{display:inline-flex;align-items:center;gap:9px}
+  .sess-dlg .sess-t i{width:10px;height:10px;border-radius:50%;background:var(--c)}
+  /* 一周七行：灰槽是不交易，彩条是各时段；今天那行垫浅灰，竖虚线是现在 */
+  .wk{position:relative;margin-top:4px}
+  .wk .tick{position:relative;height:16px;margin-left:44px;font-size:11px;color:var(--color-faint)}
+  .wk .tick span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+  .wk .day{display:flex;align-items:center;height:28px;padding:0 6px;margin:0 -6px;border-radius:8px}
+  .wk .day.td{background:var(--color-fill)}
+  .wk .day > b{width:44px;flex:none;font-size:12px;font-weight:500}
+  .wk .day > div{position:relative;flex:1;height:8px;border-radius:4px;background:var(--color-fill2)}
+  .wk .day > div i{position:absolute;top:0;bottom:0;border-radius:4px;background:var(--c);box-shadow:0 0 0 1.5px var(--color-pop)}
+  .wk .nowl{position:absolute;top:16px;bottom:0;left:44px;right:0;pointer-events:none}
+  .wk .nowl i{position:absolute;top:0;bottom:0;width:0;border-left:1px dashed var(--color-muted-foreground)}
+  .wk .nowl b{position:absolute;top:-18px;transform:translateX(-50%);padding:1px 6px;border-radius:6px;background:var(--color-foreground);color:var(--color-on-ink);font-size:10.5px;font-weight:500;white-space:nowrap}
+  /* 图例：只画这个市场用得上的时段 */
+  .skinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .skinds i{display:block;width:10px;height:10px;border-radius:50%;background:var(--c)}
+  .skinds b{display:block;margin-top:6px;font-size:13.5px;font-weight:500}
+  .skinds span{font-size:12px;color:var(--color-muted-foreground)}
+  @media (hover:hover){.sess:hover{background:var(--color-fill2)}}
+  @media (prefers-reduced-motion:reduce){
+    .sess{transition:none}
+    .sess:active{transform:none}
+  }
+}

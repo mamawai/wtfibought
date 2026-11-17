@@ -40,9 +40,9 @@ export function DrawOverlay({ d }: { d: DrawingsApi }) {
 }
 
 /** 浮条按钮：手机 36px 好点，桌面 28px */
-const BTN = 'w-9 h-9 md:w-7 md:h-7 shrink-0 flex items-center justify-center transition-colors cursor-pointer '
-  + 'text-muted-foreground hover:text-foreground hover:bg-card-2';
-const BTN_ON = 'bg-card-2 text-foreground';
+const BTN = 'w-9 h-9 md:w-7 md:h-7 shrink-0 rounded-lg flex items-center justify-center transition-colors duration-[160ms] cursor-pointer '
+  + 'text-muted-foreground hover:text-foreground hover:bg-pop-h';
+const BTN_ON = 'bg-pop-h text-foreground';
 
 /**
  * 底部居中的浮条。w-max 不能省：left-1/2 的绝对定位元素按"收缩适应"算宽，
@@ -56,13 +56,13 @@ function DrawHint({ d }: { d: DrawingsApi }) {
   const tool = d.tool!;
   const need = PLACE_POINTS[tool];
   return (
-    <div className={cn(BAR, 'flex items-center gap-2.5 pl-3 pr-0.5 py-0.5 border border-foreground bg-background')}>
-      <b className="shrink-0 text-[12px] font-bold whitespace-nowrap">{t(`drawTool.${tool}`)}</b>
+    <div className={cn(BAR, 'flex items-center gap-2.5 pl-3 pr-1 py-1 rounded-xl bg-pop shadow-[var(--sh-pop)]')}>
+      <b className="shrink-0 text-[12px] font-medium whitespace-nowrap">{t(`drawTool.${tool}`)}</b>
       {need > 1 && (
-        // 落点进度：要几个点就几格，已落定的填墨
+        // 落点进度：要几个点就几颗，已落定的填墨
         <span className="shrink-0 flex gap-1">
           {Array.from({ length: need }, (_, i) => (
-            <i key={i} className={cn('w-1.5 h-1.5 border border-foreground', i < d.placed && 'bg-foreground')} />
+            <i key={i} className={cn('w-1.5 h-1.5 rounded-full', i < d.placed ? 'bg-foreground' : 'bg-line2')} />
           ))}
         </span>
       )}
@@ -83,11 +83,11 @@ function LineSample({ width, dash, className = 'w-4' }: { width: number; dash: L
 }
 
 /** 属性条的弹层：统一压在属性条正上方居中。挂在按钮下的话定位基准只有按钮那么宽，色块会挤成一摞 */
-const POP = 'absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 w-max p-2 border border-foreground bg-background';
+const POP = 'absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 w-max p-2 rounded-[14px] bg-pop shadow-[var(--sh-pop)]';
 
 /** 弹层里的一个选项：选中填墨 */
-const opt = (on: boolean) => cn('h-9 md:h-7 w-12 md:w-10 flex items-center justify-center transition-colors cursor-pointer',
-  on ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-card-2 hover:text-foreground');
+const opt = (on: boolean) => cn('h-9 md:h-7 w-12 md:w-10 rounded-lg flex items-center justify-center transition-colors duration-[160ms] cursor-pointer',
+  on ? 'bg-foreground text-on-ink' : 'text-muted-foreground hover:bg-pop-h hover:text-foreground');
 
 /**
  * 选中图形的属性条：颜色 / 线条（线宽+线型）/ 改字 / 复制 / 删除，压在图表底部居中（时间轴上方）。
@@ -111,7 +111,7 @@ function PropsBar({ d }: { d: DrawingsApi }) {
           {DRAW_PALETTE.map(c => (
             <button key={c} type="button" aria-label={c} aria-pressed={c === sel.color}
                     onClick={() => { d.setStyle({ color: c }); setOpen(null); }}
-                    className={cn('w-8 h-8 md:w-6 md:h-6 flex items-center justify-center cursor-pointer',
+                    className={cn('w-8 h-8 md:w-6 md:h-6 rounded-md flex items-center justify-center cursor-pointer',
                       c === sel.color && 'outline-2 outline-offset-2 outline-foreground')}
                     style={{ background: c }}>
               {c === sel.color && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
@@ -143,11 +143,11 @@ function PropsBar({ d }: { d: DrawingsApi }) {
         </div>
       )}
 
-      <div className="flex items-center gap-0.5 p-0.5 border border-foreground bg-background">
+      <div className="flex items-center gap-0.5 p-1 rounded-xl bg-pop shadow-[var(--sh-pop)]">
         {caps.color && (
           <button type="button" title={t('drawProps.color')} onClick={() => toggle('color')}
                   className={cn(BTN, which === 'color' && BTN_ON)}>
-            <span className="w-4 h-4" style={{ background: sel.color }} />
+            <span className="w-4 h-4 rounded" style={{ background: sel.color }} />
           </button>
         )}
         {caps.line && (

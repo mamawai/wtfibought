@@ -1,7 +1,8 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { WhaleBuckets } from '../../api';
+import { Seg } from '../ui/seg';
 import { cn, fmtMoney } from '../../lib/utils';
 import { formatCoinPrice } from '../../lib/coinConfig';
 
@@ -100,11 +101,11 @@ function pickStep(rel: Rel[], price: number, width: number): number {
 }
 
 /**
- * 大户名义额按价位逐行：快照价上下各等高等宽 12 行，纵向间距就是价格距离，空价位也占位。
+ * 大户名义额按价位逐行（样式见 WhaleBlock.css .wrow）：快照价上下各等高等宽 12 行，纵向间距就是价格距离，空价位也占位。
  * 多头柱向左、空头柱向右，两侧共用一个比例，比例只按轴内算。
  * 轴外的名义收进上下两条溢出行，只给数字不画柱子。悬停或点一行，下方读数给这行的区间与两侧名义。
  */
-export function WhaleDistribution({ entry, liq, price, symbol, view, onViewChange, className }: {
+export function WhaleDistribution({ entry, liq, price, symbol, view, onViewChange }: {
   entry: WhaleBuckets;
   liq: WhaleBuckets;
   /** 快照价（Hyperliquid 标记价） */
@@ -112,7 +113,6 @@ export function WhaleDistribution({ entry, liq, price, symbol, view, onViewChang
   symbol: string;
   view: WhaleView;
   onViewChange: (v: WhaleView) => void;
-  className?: string;
 }) {
   const { t } = useTranslation('market');
   // 选中行的行号；换视角清掉
@@ -135,85 +135,66 @@ export function WhaleDistribution({ entry, liq, price, symbol, view, onViewChang
   // 中间两列按最长的字定宽，各行对齐；百分号比数字宽，多给 1ch
   const priceCh = Math.max(px(price).length, ...axis.rows.map(r => px(mid(r)).length));
   const distCh = Math.max(5, ...axis.rows.map(r => dist(mid(r)).length)) + 1;
-  const cols = `1fr ${priceCh}ch ${distCh}ch 1fr`;
+  const cols: CSSProperties = { gridTemplateColumns: `minmax(0,1fr) ${priceCh}ch ${distCh}ch minmax(0,1fr)` };
   const selected = axis.rows.find(r => r.j === active);
 
   const switchView = (v: WhaleView) => {
     setActive(null);
     onViewChange(v);
   };
-  const bar = (v: number) => ({ width: `${(v / max) * 100}%`, minWidth: 2 });
-
-  const divider = (
-    <div className="num flex items-center gap-2 text-[11.5px] mute" style={{ height: DIVIDER_H }}>
-      <i className="flex-1 border-t border-dashed border-muted-foreground" />
-      {t('whale.snapshotPrice')} {px(price)}
-      <i className="flex-1 border-t border-dashed border-muted-foreground" />
-    </div>
-  );
+  const bar = (v: number) => ({ width: `${(v / max) * 100}%` });
 
   /** 溢出行：轴外两侧的名义，没有就不画 */
   const overflow = (s: Sum, edge: number, up: boolean) => (s.long + s.short === 0 ? null : (
-    <div className="num flex items-center gap-1.5 text-[11.5px] mute" style={{ height: ROW_H }}>
-      {up ? <ChevronUp className="w-3 h-3 shrink-0" /> : <ChevronDown className="w-3 h-3 shrink-0" />}
-      <span className="truncate">
-        {t(up ? 'whale.axisOver' : 'whale.axisUnder', { price: px(edge), long: money(s.long), short: money(s.short) })}
-      </span>
+    <div className="wover">
+      {up ? <ChevronUp className="ic" /> : <ChevronDown className="ic" />}
+      <span>{t(up ? 'whale.axisOver' : 'whale.axisUnder', { price: px(edge), long: money(s.long), short: money(s.short) })}</span>
     </div>
   ));
 
   return (
-    <div className={className}>
-      <div className="flex items-center justify-between flex-wrap gap-x-4 gap-y-2 mb-3">
-        <div className="flex items-center gap-4 text-[12px] mute">
-          <span className="inline-flex items-center gap-1.5"><i className="block w-2.5 h-2.5 bg-gain" />{t('whale.legendLong')}</span>
-          <span className="inline-flex items-center gap-1.5"><i className="block w-2.5 h-2.5 bg-loss" />{t('whale.legendShort')}</span>
-        </div>
-        <div className="seg">
-          <button type="button" className={cn(view === 'entry' && 'on')} onClick={() => switchView('entry')}>
-            {t('whale.viewEntry')}
-          </button>
-          <button type="button" className={cn(view === 'liq' && 'on')} onClick={() => switchView('liq')}>
-            {t('whale.viewLiq')}
-          </button>
+    <div>
+      <div className="wd-h">
+        <Seg value={view} onChange={switchView} options={[
+          { value: 'entry', label: t('whale.viewEntry') },
+          { value: 'liq', label: t('whale.viewLiq') },
+        ]} />
+        <div className="lg2">
+          <span><i style={{ '--c': 'var(--color-gain-solid)' } as CSSProperties} />{t('whale.legendLong')}</span>
+          <span><i style={{ '--c': 'var(--color-loss-solid)' } as CSSProperties} />{t('whale.legendShort')}</span>
         </div>
       </div>
 
       {source.buckets.length === 0 ? (
         <div className="flex items-center justify-center text-[13px] mute" style={{ height }}>{t('whale.none')}</div>
       ) : (
-        // key 跟视角：切视角重挂，入场动画再走一遍
-        <div key={view} className="reveal" style={{ minHeight: height }} onMouseLeave={() => setActive(null)}>
+        <div style={{ minHeight: height }} onMouseLeave={() => setActive(null)}>
           {overflow(axis.over, axis.top, true)}
           {axis.rows.map((r, i) => (
             <Fragment key={r.j}>
               {/* 快照价压在 j=0 与 j=-1 的交界，也就是第 HALF_ROWS 行前面 */}
-              {i === HALF_ROWS && divider}
-              <div
-                className="grid items-center gap-x-2 cursor-default"
-                style={{ gridTemplateColumns: cols, height: ROW_H, background: r.j === active ? 'var(--color-card-2)' : undefined }}
-                onMouseEnter={() => setActive(r.j)}
-                onClick={() => setActive(r.j)}
-              >
-                <div className="flex justify-end h-3">{r.long > 0 && <i className="block h-full bg-gain" style={bar(r.long)} />}</div>
-                <span className="num text-[12px] text-right">{px(mid(r))}</span>
-                <span className="num text-[12px] text-right mute">{dist(mid(r))}</span>
-                <div className="flex h-3">{r.short > 0 && <i className="block h-full bg-loss" style={bar(r.short)} />}</div>
-              </div>
+              {i === HALF_ROWS && <div className="wmid">{t('whale.snapshotPrice')} {px(price)}</div>}
+              <button type="button" className={cn('wrow', r.j === active && 'on')} style={cols}
+                      onMouseEnter={() => setActive(r.j)} onFocus={() => setActive(r.j)} onClick={() => setActive(r.j)}>
+                <span className="l">{r.long > 0 && <i style={bar(r.long)} />}</span>
+                <em>{px(mid(r))}</em>
+                <em>{dist(mid(r))}</em>
+                <span className="s">{r.short > 0 && <i style={bar(r.short)} />}</span>
+              </button>
             </Fragment>
           ))}
           {overflow(axis.under, axis.bottom, false)}
         </div>
       )}
 
-      <div className="num mt-2 min-h-[18px] text-[12px] mute">
+      <p className="wread">
         {selected
           ? t('whale.bucketTip', {
             from: px(selected.lo), to: px(selected.hi),
             long: money(selected.long), short: money(selected.short),
           })
           : t('whale.readoutHint')}
-      </div>
+      </p>
     </div>
   );
 }

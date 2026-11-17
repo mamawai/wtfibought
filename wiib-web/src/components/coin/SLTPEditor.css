@@ -1,0 +1,13 @@
+/* 止盈止损编辑器：最多四档，每档一个价、一个量、一排仓位百分比，价齐了下面一行报预计盈亏；最底下是「添加」和已分配了仓位的几成 */
+@layer components {
+  .ed{display:flex;flex-direction:column;gap:12px}
+  .ed .lv{display:flex;flex-direction:column;gap:6px}
+  .ed .lvr{display:flex;align-items:center;gap:6px}
+  .ed .lvr .inp{flex:1;min-width:0}
+  /* 百分比比别处矮一号：一档里已经叠了两个输入框 */
+  .ed .pct{gap:4px}
+  .ed .pct button{height:26px;border-radius:8px;font-size:12px}
+  .ed .est{display:flex;flex-wrap:wrap;gap:1px 10px;font-size:12px;color:var(--color-muted-foreground)}
+  .ed .alloc{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--color-muted-foreground)}
+  .ed .alloc span{text-align:right}
+}

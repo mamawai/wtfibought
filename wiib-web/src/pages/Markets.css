@@ -1,0 +1,12 @@
+/* 四个市场一个模板：窄一点的单列，顶上大字页签（当前这个就是页面标题），一行说明，下面一行一个标的 */
+@layer components {
+  .p-mk{max-width:820px;margin:0 auto;padding-top:36px}
+  .p-mk .sub{min-height:20px;margin:10px 0 14px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-mk .list{border-top:1px solid var(--color-border)}
+  /* 还在拉列表：和一行同高的骨架 */
+  .p-mk .skr{display:grid;grid-template-columns:30px minmax(0,1fr) 90px 160px;gap:22px;align-items:center;height:66px;border-bottom:1px solid var(--color-border)}
+  @media (max-width:640px){
+    .p-mk{padding-top:20px}
+    .p-mk .skr{grid-template-columns:26px minmax(0,1fr) 70px 84px;gap:12px;height:60px}
+  }
+}

@@ -1,11 +1,15 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '../lib/utils';
+import './LeverageSlider.css';
 
 /**
- * 杠杆滑杆：一条墨线轨道 + 方旋钮 + 下面一排可点档位。
+ * 杠杆滑杆：一根细轨 + 圆旋钮 + 下面一排可点档位（样式见 LeverageSlider.css）。
  *
  * 档位在轨道上等距排（1/10/25/50… 挨个占一格），段内线性取整——不然 5x 的旋钮会贴在最左边，
- * 跟它自己的标签对不上。交互层是一个透明的原生 <input type="range">（绝对定位盖住轨道区）跑位置值，
- * 拖拽/点击/键盘/aria 全部由浏览器原生实现——此前两版手写 pointer 事件跟踪都出过"回拖卡住"类 bug。
+ * 跟它自己的标签对不上。交互层是一条透明的原生 <input type="range">（盖住轨道区）跑位置值，
+ * 拖拽/点击/aria 全部由浏览器原生实现——此前两版手写 pointer 事件跟踪都出过"回拖卡住"类 bug。
+ * 旋钮跟手不加缓动，点档位才滑过去；方向键一次挪 1x。
  */
 interface LeverageSliderProps {
   value: number;
@@ -18,8 +22,13 @@ interface LeverageSliderProps {
 /** 原生 range 的位置分辨率：0..1000 映射轨道全长 */
 const RES = 1000;
 
+/** 方向键一次挪几 x */
+const KEY_STEP: Record<string, number> = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
+
 export function LeverageSlider({ value, max, ticks, onChange, min = 1 }: LeverageSliderProps) {
   const { t } = useTranslation('trade');
+  // 点档位时旋钮滑过去，拖的时候跟手
+  const [glide, setGlide] = useState(false);
   const hi = Math.max(max, min);
   const disabled = hi <= min;
   // 轨道上的节点：档位 + 两端（有的币最高杠杆不在常规档位里，补成最后一格）
@@ -43,15 +52,19 @@ export function LeverageSlider({ value, max, ticks, onChange, min = 1 }: Leverag
     return Math.round(nodes[i] + (x - i) * (nodes[i + 1] - nodes[i]));
   };
 
+  const set = (v: number, slide: boolean) => {
+    setGlide(slide);
+    onChange(Math.min(hi, Math.max(min, v)));
+  };
+
   const pct = posOf(value) * 100;
 
   return (
-    <div className={disabled ? 'opacity-45' : ''}>
-      <div className="ui-slider">
-        {/* 原生拇指宽 28px，视觉轨道两端各让 14px，拖动位置才能对齐。 */}
+    <div className={cn('sl', glide && 'glide', disabled && 'off')}>
+      <div className="rail">
         <input
           type="range"
-          className="ui-slider-input absolute inset-0 z-10 w-full h-full m-0 opacity-0 cursor-grab active:cursor-grabbing appearance-none touch-none disabled:cursor-default [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-7 [&::-webkit-slider-thumb]:h-7 [&::-moz-range-thumb]:w-7 [&::-moz-range-thumb]:h-7 [&::-moz-range-thumb]:border-0"
+          className="hit"
           min={0}
           max={RES}
           step={1}
@@ -59,16 +72,18 @@ export function LeverageSlider({ value, max, ticks, onChange, min = 1 }: Leverag
           disabled={disabled}
           aria-label={t('lev.label')}
           aria-valuetext={`${value}x`}
-          onChange={e => onChange(valueAt(Number(e.target.value) / RES))}
+          onChange={e => set(valueAt(Number(e.target.value) / RES), false)}
+          onKeyDown={e => {
+            const d = KEY_STEP[e.key];
+            if (d) { e.preventDefault(); set(value + d, false); }
+            else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); set(e.key === 'Home' ? min : hi, true); }
+          }}
         />
-        <div className="ui-slider-track" aria-hidden="true">
-          <div className="absolute inset-y-0 left-0 bg-foreground" style={{ width: `${pct}%` }} />
-          <div className="ui-slider-thumb" style={{ left: `${pct}%` }} />
-        </div>
+        <i className="fi" style={{ width: `${pct}%` }} />
+        <i className="kn" style={{ left: `${pct}%` }} />
       </div>
-      {/* 档位跟旋钮共用 posOf 定位，各自居中钉在自己那格上；左右让出的 14px 跟轨道对齐。
-          三位数的档位自己撑宽，窄屏挤在一起也只是靠拢，不会把面板撑出横向滚动 */}
-      <div className="num relative mx-[14px] h-7 text-[11px] text-muted-foreground">
+      {/* 档位跟旋钮共用 posOf 定位，各自居中钉在自己那格上 */}
+      <div className="ticks">
         {nodes.map(node => (
           <button
             key={node}
@@ -76,8 +91,7 @@ export function LeverageSlider({ value, max, ticks, onChange, min = 1 }: Leverag
             disabled={disabled}
             aria-pressed={value === node}
             style={{ left: `${posOf(node) * 100}%` }}
-            className={`ui-slider-tick absolute top-0 -translate-x-1/2 inline-flex h-7 min-w-7 items-center justify-center px-1 cursor-pointer disabled:cursor-default ${value === node ? 'bg-foreground text-background font-bold' : ''}`}
-            onClick={() => onChange(node)}
+            onClick={() => set(node, true)}
           >
             {node}
           </button>

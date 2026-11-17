@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
+import { Seg } from '../ui/seg';
 
-/** 合约/现货模式切换（现货/合约两个交易面板头部共用；爆仓入口已移至首页爆仓动态卡） */
+/** 合约/现货模式切换（现货/合约两个下单面板头部共用） */
 export function TradeModeSwitch({ mode, futuresOnly, onModeChange }: {
   mode: 'spot' | 'futures';
   futuresOnly?: boolean;
@@ -8,12 +9,10 @@ export function TradeModeSwitch({ mode, futuresOnly, onModeChange }: {
 }) {
   const { t } = useTranslation('trade');
   return (
-    <div className="seg">
-      <button className={mode === 'futures' ? 'on' : ''} onClick={() => onModeChange('futures')}>{t('mode.futures')}</button>
-      {/* 纯合约标的（黄金/原油）无现货，藏掉现货切换 */}
-      {!futuresOnly && (
-        <button className={mode === 'spot' ? 'on' : ''} onClick={() => onModeChange('spot')}>{t('mode.spot')}</button>
-      )}
-    </div>
+    <Seg value={mode} onChange={onModeChange} options={[
+      { value: 'futures', label: t('mode.futures') },
+      // 纯合约标的（黄金/原油）无现货，藏掉现货切换
+      ...(futuresOnly ? [] : [{ value: 'spot' as const, label: t('mode.spot') }]),
+    ]} />
   );
 }

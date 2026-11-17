@@ -1,0 +1,42 @@
+/* 行情行：图标 名字(后面跟灰字) | 最新价(有现货的币下面再一行现货价) | 涨跌 | 走势线。
+   悬停整行垫一块圆角浅灰（左右各宽出 16px），图标放大一点、走势线加粗 */
+@layer components {
+  .mrow{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto 76px 160px;gap:22px;align-items:center;width:100%;height:66px;border-bottom:1px solid var(--color-border);text-align:left;transition:transform var(--fast) var(--ease-control)}
+  .mrow::before{content:"";position:absolute;inset:0 -16px;border-radius:14px;background:var(--color-fill);opacity:0;transition:opacity var(--t) var(--ease-control)}
+  .mrow > *{position:relative}
+  .mrow:focus-visible::before{opacity:1}
+  .mrow:active{transform:scale(.992);transition-duration:0s}
+  .mrow .nm{display:flex;align-items:center;gap:13px;min-width:0}
+  .mrow .ci{width:30px;height:30px;flex:none;transition:transform var(--t) var(--ease-control)}
+  .mrow .nm b{font-size:16px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+  .mrow .nm span:not(.ci){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--color-muted-foreground)}
+  .mrow .px{text-align:right}
+  .mrow .px b{display:block;font-size:18px;font-weight:500;letter-spacing:-.02em}
+  .mrow .px span{display:block;font-size:12px;color:var(--color-muted-foreground)}
+  .mrow .pc{font-size:13.5px;font-weight:500;text-align:right}
+  .mrow .sp{display:block;height:30px}
+  .mrow .sp svg{display:block;width:100%;height:100%;overflow:visible}
+  .mrow .sp path[stroke]{transition:stroke-width var(--t) var(--ease-control)}
+  @media (hover:hover){
+    .mrow:hover::before{opacity:1}
+    /* 垫了底的这一行，上下两根线都收掉 */
+    .mrow:hover,.mrow:has(+ .mrow:hover){border-color:transparent}
+    .mrow:hover .ci{transform:scale(1.1)}
+    .mrow:hover .sp path[stroke]{stroke-width:2.2}
+  }
+  @media (max-width:640px){
+    .mrow{grid-template-columns:minmax(0,1fr) auto 62px 84px;gap:12px;height:60px}
+    .mrow::before{inset:0 -10px}
+    .mrow .ci{width:26px;height:26px}
+    .mrow .nm{gap:12px}
+    .mrow .nm b{font-size:15px}
+    .mrow .nm span:not(.ci){display:none}
+    .mrow .px b{font-size:16px}
+    .mrow .pc{font-size:12px}
+    .mrow .sp{height:26px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .mrow,.mrow .ci{transition:none}
+    .mrow:active{transform:none}
+  }
+}

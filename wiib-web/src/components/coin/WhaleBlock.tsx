@@ -4,9 +4,10 @@ import type { WhaleCoinDetail, WhaleSide } from '../../api';
 import { WhaleDistribution, type WhaleView } from './WhaleDistribution';
 import { cn, fmtMoney, fmtTime } from '../../lib/utils';
 import { formatCoinPrice } from '../../lib/coinConfig';
+import './WhaleBlock.css';
 
 /**
- * Coin 页「大户持仓」块：Hyperliquid 池内地址在这个币上的名义额、成本与分布。
+ * Coin 页「大户持仓」节（样式见 WhaleBlock.css）：Hyperliquid 池内地址在这个币上的名义额、成本与分布。
  * 只摆数字，不给「支撑/阻力」「套牢/拥挤」这类判断。
  */
 export function WhaleBlock({ data, symbol }: { data: WhaleCoinDetail; symbol: string }) {
@@ -17,23 +18,21 @@ export function WhaleBlock({ data, symbol }: { data: WhaleCoinDetail; symbol: st
   const pct = (v: number | null) => (v == null ? t('whale.none') : `${(v * 100).toFixed(1)}%`);
 
   return (
-    <div className="border-t-2 border-foreground pt-3.5">
+    <section className="whale">
       <div className="sec-h">
-        <h2>{t('whale.title')}</h2>
-        <span>{t('whale.snapshot', { time: fmtTime(data.observedAt) })}</span>
+        <h2>{t('whale.title')}<small>{t('whale.snapshot', { time: fmtTime(data.observedAt) })}</small></h2>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-x-8 gap-y-5">
-        <Side side={data.long} symbol={symbol} label={t('whale.long')} tone="up" />
-        <Side side={data.short} symbol={symbol} label={t('whale.short')} tone="dn" />
-        <div className="sm:text-right">
-          <div className="text-[13px] mute leading-[1.4]">{t('whale.snapshotPrice')}</div>
-          <div className="num cond2 mt-2 text-[26px] font-semibold leading-none">${formatCoinPrice(symbol, data.price)}</div>
+      <div className="wh3">
+        <Side side={data.long} symbol={symbol} label={t('whale.long')} tone="g" />
+        <Side side={data.short} symbol={symbol} label={t('whale.short')} tone="r" />
+        <div>
+          <span className="cap">{t('whale.snapshotPrice')}</span>
+          <b className="nf">${formatCoinPrice(symbol, data.price)}</b>
         </div>
       </div>
 
       <WhaleDistribution
-        className="mt-6"
         entry={data.entryBuckets}
         liq={data.liqBuckets}
         price={data.price}
@@ -42,10 +41,10 @@ export function WhaleBlock({ data, symbol }: { data: WhaleCoinDetail; symbol: st
         onViewChange={setView}
       />
 
-      <div className="mt-5 text-[12px] mute">
+      <p className="wfoot">
         {t('whale.footer', { count: data.poolSize, long: pct(data.coverage.long), short: pct(data.coverage.short) })}
-      </div>
-    </div>
+      </p>
+    </section>
   );
 }
 
@@ -54,25 +53,23 @@ function Side({ side, symbol, label, tone }: {
   side: WhaleSide;
   symbol: string;
   label: string;
-  tone: 'up' | 'dn';
+  tone: 'g' | 'r';
 }) {
   const { t } = useTranslation('market');
   const px = (v: number | null) => (v == null ? t('whale.none') : formatCoinPrice(symbol, v));
 
   return (
     <div>
-      <span className={cn('chip', tone)}>{label}</span>
-      <div className="num cond2 mt-2 text-[26px] font-semibold leading-none">
-        {side.count > 0 ? `$${fmtMoney(side.notional)}` : t('whale.none')}
-      </div>
-      <div className="mt-2 text-[13px] mute">
+      <span className={cn('tag', tone)}>{label}</span>
+      <b className="nf">{side.count > 0 ? `$${fmtMoney(side.notional)}` : t('whale.none')}</b>
+      <p>
         {t('whale.addresses', { count: side.count })}
         {side.count > 0 && ` · ${t('whale.stats', {
           wavg: px(side.wavgEntry),
           median: px(side.medianEntry),
           top1: side.top1Share == null ? t('whale.none') : `${(side.top1Share * 100).toFixed(0)}%`,
         })}`}
-      </div>
+      </p>
     </div>
   );
 }

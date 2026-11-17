@@ -8,7 +8,7 @@ import {
   type DeepPartial, type HandleScrollOptions, type IPriceLine, type SeriesMarker,
 } from 'lightweight-charts';
 import {
-  CalendarClock, ChartCandlestick, ChartLine, ChartNoAxesCombined, ChevronDown, Expand, History, Info, Layers, Shrink,
+  CalendarClock, ChartNoAxesCombined, ChevronDown, Eye, History, Info, Maximize, Minimize,
 } from 'lucide-react';
 import { ApiError, futuresApi, quantApi, type EconCalendarEvent } from '../api';
 import { useKlineStream } from '../hooks/useKlineStream';
@@ -21,6 +21,7 @@ import { cssVar, lwcTheme, rgba } from '../lib/chartTheme';
 import type { ChartCtx } from '../lib/chartDrawings';
 import { useDrawings } from './chart/useDrawings';
 import { DrawToolRail, DrawToolStrip } from './chart/DrawToolPicker';
+import { Seg } from './ui/seg';
 import { DrawOverlay } from './chart/DrawOverlay';
 import { EconMarkersLayer } from './chart/EconMarkersLayer';
 import { attachVolumeProfile, type VpController, type VpPalette } from './chart/VolumeProfileLayer';
@@ -58,7 +59,7 @@ const LG_BASE = 'position:absolute;left:10px;z-index:3;pointer-events:none;white
 const LG_SP = 'display:inline-block;margin-right:9px';
 const LG_LABEL = 'font-style:normal;margin-right:3px';
 /** 三条线的固定配色（同 lwcTheme().col3），走 CSS 变量所以切主题不用重刷读数 */
-const LG_COL3 = ['var(--color-primary)', '#2f8fd6', '#7c5cff'];
+const LG_COL3 = ['var(--color-primary)', 'var(--color-info)', '#7c5cff'];
 
 /** 一格读数：`<i>开</i>63,720.5`，color 缺省则继承外层（整行涨跌色） */
 const cell = (k: string, v: string, color?: string) =>
@@ -692,13 +693,13 @@ export function CandleChart({
       const g = time != null ? marksByTimeRef.current.get(time) : undefined;
       if (!g || !param.point) { tipEl.style.display = 'none'; return; }
       const row = (side: string, cls: string, fills: Fill[]) => fills.map(f =>
-        `<div style="display:flex;gap:10px;align-items:baseline"><span class="${cls}" style="font-weight:700">${side}</span>`
+        `<div style="display:flex;gap:10px;align-items:baseline"><span class="${cls}" style="font-weight:500">${side}</span>`
         + `<span class="mute num" style="margin-left:auto">${fmtFillTime(f.timeMs)}</span>`
         + `<span class="num">${f.quantity}</span>`
-        + `<span class="num" style="font-weight:700">${fmtNum(f.price, decimals)}</span></div>`).join('');
+        + `<span class="num" style="font-weight:500">${fmtNum(f.price, decimals)}</span></div>`).join('');
       // 弹窗每次点击现拼，词表走 i18n 实例（建图 effect 不该因为切语言整个重建）
       tipEl.innerHTML =
-        `<div class="mute" style="font-weight:700;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--color-border)">${i18n.t('market:chart.fillsAt', { time: fmtBarTime(barDate(time as number), interval) })}</div>`
+        `<div class="mute" style="font-weight:500;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--color-border)">${i18n.t('market:chart.fillsAt', { time: fmtBarTime(barDate(time as number), interval) })}</div>`
         + row(i18n.t('market:chart.buy'), 'up', g.b) + row(i18n.t('market:chart.sell'), 'dn', g.s);
       tipEl.style.left = `${Math.min(param.point.x + 12, host.clientWidth - 180)}px`;
       tipEl.style.top = `${Math.min(param.point.y + 12, host.clientHeight - 30 * (g.b.length + g.s.length) - 40)}px`;
@@ -895,8 +896,8 @@ export function CandleChart({
       el.textContent = `${title} ${fmtNum(price, decimals)}`;
       el.className = 'num';
       el.style.cssText = 'position:absolute;display:none;transform:translateY(-50%);z-index:4;pointer-events:none;'
-        + 'padding:0 5px;font-size:11px;font-weight:700;line-height:1.5;white-space:nowrap;'
-        + `background:var(--color-background);border:1px solid currentColor;color:${color}`;
+        + 'padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:1.5;white-space:nowrap;'
+        + `background:var(--color-background);box-shadow:inset 0 0 0 1px currentColor;color:${color}`;
       wrap.appendChild(el);
       labels.push({ el, price });
     };
@@ -987,8 +988,8 @@ export function CandleChart({
       tip.innerHTML = events.map(e => {
         const nums = values(e);
         return '<div style="padding:6px 0;border-bottom:1px solid var(--color-border)">'
-          + `<div class="mute" style="font-weight:700;margin-bottom:2px">${fmtClock(e.eventTime)} · ${flagHtml(e.country)} ${escapeHtml(e.country)} / ${escapeHtml(e.currency)}</div>`
-          + `<div style="font-weight:700;margin-bottom:2px">${escapeHtml(e.title)}</div>`
+          + `<div class="mute" style="font-weight:500;margin-bottom:2px">${fmtClock(e.eventTime)} · ${flagHtml(e.country)} ${escapeHtml(e.country)} / ${escapeHtml(e.currency)}</div>`
+          + `<div style="font-weight:500;margin-bottom:2px">${escapeHtml(e.title)}</div>`
           + (nums ? `<div class="mute num">${nums}</div>` : '')
           + '</div>';
       }).join('');
@@ -1208,94 +1209,85 @@ export function CandleChart({
       {/* 顶栏：周期 / 图型 / 画线（手机）/ 指标入口 —— 撑开 —— 显示开关 / 全屏。
           画线工具桌面收进左侧竖栏；手机上周期和图型占第一行，画线、指标、开关折到第二行，
           画线工具条展开时单独占最后一行、贴着图表 */}
-      <div className="flex items-center gap-2.5 mb-2.5 flex-wrap">
-        <div className="seg num">
-          {(Object.keys(BUCKET_MS) as Interval[]).map(k => (
-            <button key={k} type="button" className={cn(!advMode && interval === k && 'on')}
-                    onClick={() => { setAdvMode(false); onIntervalChange(k); }}>
-              {k}
-            </button>
-          ))}
-          {advanced && (
-            <button type="button" className={cn(advMode && 'on')} onClick={() => setAdvMode(true)}>
-              {t('chart.advanced')}
-            </button>
-          )}
-        </div>
+      <div className="flex items-center gap-2 mb-2.5 flex-wrap">
+        {/* 周期和「高级」（TradingView）在同一排里 */}
+        <Seg<Interval | 'adv'>
+          value={advMode ? 'adv' : interval}
+          onChange={v => {
+            if (v === 'adv') { setAdvMode(true); return; }
+            setAdvMode(false);
+            onIntervalChange(v);
+          }}
+          options={[
+            ...(Object.keys(BUCKET_MS) as Interval[]).map(k => ({ value: k, label: k })),
+            ...(advanced ? [{ value: 'adv' as const, label: t('chart.advanced') }] : []),
+          ]}
+        />
 
-        <div className="seg">
-          <button type="button" className={cn('px-[9px]', chartType === 'candle' && 'on')}
-                  title={t('chart.candle')} onClick={() => pickType('candle')}>
-            <ChartCandlestick className="w-[15px] h-[15px]" />
-          </button>
-          <button type="button" className={cn('px-[9px]', chartType === 'line' && 'on')}
-                  title={t('chart.line')} onClick={() => pickType('line')}>
-            <ChartLine className="w-[15px] h-[15px]" />
-          </button>
-        </div>
+        <Seg value={chartType} onChange={pickType} options={[
+          { value: 'candle', label: t('chart.candle') },
+          { value: 'line', label: t('chart.line') },
+        ]} />
 
         {!advMode && <DrawToolStrip className="md:hidden" d={drawings} />}
 
-        {/* 指标弹层：主图三组、副图两组，chip 填墨=开 */}
+        {/* 指标弹层：主图三组、副图两组，小胶囊填墨=开 */}
         {indicators && (
-          <div ref={indPopRef} className="relative">
-            <button type="button" className="btn xs" onClick={() => setIndOpen(o => !o)}>
+          <div ref={indPopRef} className={cn('relative', indOpen && 'open')}>
+            <button type="button" className="btn sm" aria-expanded={indOpen} onClick={() => setIndOpen(o => !o)}>
               <ChartNoAxesCombined className="ic" />
               {t('chart.indicators')}
-              <ChevronDown className={cn('w-3 h-3 transition-transform', indOpen && 'rotate-180')} />
+              <ChevronDown className={cn('ic transition-transform duration-[160ms]', indOpen && 'rotate-180')} />
             </button>
-            <div className={cn(
-              'absolute left-0 top-[calc(100%+6px)] z-20 min-w-[230px] px-3 py-2 border border-foreground bg-background',
-              'transition-[opacity,transform] duration-150',
-              indOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-1 pointer-events-none',
-            )}>
-              <div className="flex items-center gap-1.5 py-1.5">
-                <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.mainOverlay')}</b>
-                {(['ma', 'ema', 'boll'] as OverlayKey[]).map(k => (
-                  <button key={k} type="button" onClick={() => toggle(k)}
-                          className={cn('chip cursor-pointer', overlays[k] && 'fill')}>
-                    {k.toUpperCase()}
+            <div className="menu top-[calc(100%+6px)] left-0 min-w-[240px] p-3">
+              <div className="flex items-center gap-2 py-1">
+                <b className="w-[34px] shrink-0 text-[12px] font-normal text-muted-foreground">{t('chart.mainOverlay')}</b>
+                <div className="chips">
+                  {(['ma', 'ema', 'boll'] as OverlayKey[]).map(k => (
+                    <button key={k} type="button" className="chip" aria-pressed={overlays[k]} onClick={() => toggle(k)}>
+                      {k.toUpperCase()}
+                    </button>
+                  ))}
+                  {/* VP 要拉历史子 K，游客置灰 */}
+                  <button type="button" className="chip disabled:opacity-50 disabled:cursor-not-allowed" aria-pressed={loadHistory && vpOn}
+                          onClick={toggleVp} disabled={!loadHistory} title={loadHistory ? t('chart.vpTitle') : t('chart.vpLogin')}>
+                    VP
                   </button>
-                ))}
-                {/* VP 要拉历史子 K，游客置灰 */}
-                <button type="button" onClick={toggleVp} disabled={!loadHistory}
-                        title={loadHistory ? t('chart.vpTitle') : t('chart.vpLogin')}
-                        className={cn('chip', loadHistory ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed',
-                          loadHistory && vpOn && 'fill')}>
-                  VP
-                </button>
+                </div>
               </div>
               {loadHistory && vpOn && (
                 <>
-                  <div className="flex items-center gap-1.5 py-1.5">
-                    <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.vpRows')}</b>
-                    {VP_ROWS.map(n => (
-                      <button key={n} type="button" onClick={() => pickVpRows(n)}
-                              className={cn('chip cursor-pointer num', vpRows === n && 'fill')}>
-                        {n}
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-2 py-1">
+                    <b className="w-[34px] shrink-0 text-[12px] font-normal text-muted-foreground">{t('chart.vpRows')}</b>
+                    <div className="chips">
+                      {VP_ROWS.map(n => (
+                        <button key={n} type="button" className="chip" aria-pressed={vpRows === n} onClick={() => pickVpRows(n)}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
                     <span className="ml-auto inline-flex" title={t('chart.vpTitle')}>
                       <Info className="w-3 h-3 text-muted-foreground" />
                     </span>
                   </div>
                   {/* VP 图例：柱子的绿红、深浅、虚线各是什么 */}
-                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 pb-1.5 text-[11px] text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 bg-gain" />{t('chart.vpBuy')}</span>
-                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 bg-loss" />{t('chart.vpSell')}</span>
-                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 bg-foreground/45" />{t('chart.vpValueArea')}</span>
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 pb-1 text-[11px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm bg-gain" />{t('chart.vpBuy')}</span>
+                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm bg-loss" />{t('chart.vpSell')}</span>
+                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm bg-foreground/45" />{t('chart.vpValueArea')}</span>
                     <span className="inline-flex items-center gap-1"><i className="inline-block w-3 border-t border-dashed border-foreground/60" />{t('chart.vpPoc')}</span>
                   </div>
                 </>
               )}
-              <div className="flex items-center gap-1.5 py-1.5">
-                <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.subPane')}</b>
-                {(['macd', 'rsi'] as const).map(k => (
-                  <button key={k} type="button" onClick={() => toggleSub(k)}
-                          className={cn('chip cursor-pointer', subs[k] && 'fill')}>
-                    {k.toUpperCase()}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 py-1">
+                <b className="w-[34px] shrink-0 text-[12px] font-normal text-muted-foreground">{t('chart.subPane')}</b>
+                <div className="chips">
+                  {(['macd', 'rsi'] as const).map(k => (
+                    <button key={k} type="button" className="chip" aria-pressed={subs[k]} onClick={() => toggleSub(k)}>
+                      {k.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -1304,22 +1296,21 @@ export function CandleChart({
         <span className="flex-1" />
 
         {/* 仓位参考线开关：只有页面传了仓位数据才出现（现货/代币化美股页没有）。
-            双开时每个仓位一颗 chip，颜色跟方向走，可单独藏掉某一边 */}
+            双开时每个仓位一枚小标签，颜色跟方向走，点了单独藏掉那一边 */}
         {positionOverlays != null && (
           <>
-            <button type="button" title={t('chart.posLinesTitle')}
-                    className={cn('ibtn', showPosLines && 'on')}
+            <button type="button" className="ib" aria-pressed={showPosLines}
+                    title={t('chart.posLinesTitle')} aria-label={t('chart.posLinesTitle')}
                     onClick={() => {
                       const v = !showPosLines;
                       setShowPosLines(v);
                       localStorage.setItem('wiib-chart-pos-lines', v ? '1' : '0');
                     }}>
-              <Layers className="ic" />
+              <Eye className="ic" />
             </button>
             {showPosLines && positionOverlays.length > 1 && positionOverlays.map(p => (
-              <button key={p.id} type="button"
-                      className={cn('chip cursor-pointer',
-                        hiddenPosIds.has(p.id) ? 'mute' : p.side === 'LONG' ? 'up' : 'dn')}
+              <button key={p.id} type="button" aria-pressed={!hiddenPosIds.has(p.id)}
+                      className={cn('tag', !hiddenPosIds.has(p.id) && (p.side === 'LONG' ? 'g' : 'r'))}
                       onClick={() => setHiddenPosIds(prev => {
                         const next = new Set(prev);
                         if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
@@ -1333,8 +1324,8 @@ export function CandleChart({
 
         {/* 历史成交标记开关：只有页面传了成交数据才出现 */}
         {tradeMarks != null && (
-          <button type="button" title={t('chart.marksTitle')}
-                  className={cn('ibtn', showMarks && 'on')}
+          <button type="button" className="ib" aria-pressed={showMarks}
+                  title={t('chart.marksTitle')} aria-label={t('chart.marksTitle')}
                   onClick={() => {
                     const v = !showMarks;
                     setShowMarks(v);
@@ -1346,8 +1337,8 @@ export function CandleChart({
 
         {/* 财经日历标记开关：只有 BTC 才出现 */}
         {econMarks && (
-          <button type="button" title={t('chart.econTitle')}
-                  className={cn('ibtn', showEcon && 'on')}
+          <button type="button" className="ib" aria-pressed={showEcon}
+                  title={t('chart.econTitle')} aria-label={t('chart.econTitle')}
                   onClick={() => {
                     const v = !showEcon;
                     setShowEcon(v);
@@ -1357,15 +1348,16 @@ export function CandleChart({
           </button>
         )}
 
-        <button type="button" onClick={fs.toggle} className="ibtn"
-                title={fs.active ? t('chart.exitFullscreen') : t('chart.fullscreen')}>
-          {fs.active ? <Shrink className="ic" /> : <Expand className="ic" />}
+        <button type="button" className="ib" onClick={fs.toggle}
+                title={fs.active ? t('chart.exitFullscreen') : t('chart.fullscreen')}
+                aria-label={fs.active ? t('chart.exitFullscreen') : t('chart.fullscreen')}>
+          {fs.active ? <Minimize className="ic" /> : <Maximize className="ic" />}
         </button>
       </div>
 
       {/* 左竖栏 34px + 画布。高级档整块盖住 plot，竖栏也收起来。
           手机竖屏非全屏：高度按副图数定，副图往下加高不挤主图 */}
-      <div className={cn('grid grid-cols-1 border-t border-foreground flex-1 min-h-0',
+      <div className={cn('grid grid-cols-1 flex-1 min-h-0',
         advMode ? 'md:grid-cols-1' : 'md:grid-cols-[34px_1fr]',
         !fs.active && ['phone:flex-none', PHONE_PLOT_H[indicators ? Number(subs.macd) + Number(subs.rsi) : 0]])}>
         {!advMode && <DrawToolRail className="hidden md:flex" d={drawings} />}
@@ -1376,21 +1368,21 @@ export function CandleChart({
           {/* 竖屏全屏的形状提示：Android 会被 orientation.lock 直接转过去（这条最多闪一下），
               iOS 靠它请用户动手。转到横屏 matchMedia 翻面，提示自动消失 */}
           {fs.active && portrait && IS_TOUCH && (
-            <div className="absolute left-1/2 top-2 -translate-x-1/2 z-[5] px-2.5 py-1 bg-foreground text-background text-[11px] font-semibold pointer-events-none whitespace-nowrap">
+            <div className="absolute left-1/2 top-2 -translate-x-1/2 z-[5] px-2.5 py-1 rounded-md bg-foreground text-on-ink text-[11px] font-medium pointer-events-none whitespace-nowrap">
               {t('chart.rotate')}
             </div>
           )}
           {/* 翻历史提示（载入中 / 到底） */}
-          <div ref={hintRef} className="absolute z-[4] pointer-events-none px-2 py-0.5 border border-foreground bg-background text-[12px] font-semibold"
+          <div ref={hintRef} className="absolute z-[4] pointer-events-none px-2 py-0.5 rounded-md bg-pop shadow-[var(--sh-pop)] text-[12px] font-medium"
                style={{ left: 10, top: 6, display: 'none' }} />
           {/* B/S 标记的点击弹窗：逐笔成交价（subscribeClick 填充） */}
-          <div ref={markTipRef} className="absolute z-[6] pointer-events-none px-2.5 py-1.5 border border-foreground bg-background text-[12px] min-w-[130px]"
+          <div ref={markTipRef} className="absolute z-[6] pointer-events-none px-3 py-2 rounded-[10px] bg-pop shadow-[var(--sh-pop)] text-[12px] min-w-[130px]"
                style={{ display: 'none' }} />
           {/* 日历图标的点击弹窗：时间+国旗+标题+实际/预测/前值 */}
-          <div ref={econTipRef} className="absolute z-[6] px-3 py-0.5 border border-foreground bg-background text-[12px] leading-[1.55] w-[280px] max-h-[240px] overflow-y-auto"
+          <div ref={econTipRef} className="absolute z-[6] px-3 py-1 rounded-[10px] bg-pop shadow-[var(--sh-pop)] text-[12px] leading-[1.55] w-[280px] max-h-[240px] overflow-y-auto"
                style={{ display: 'none' }} />
           {/* 「最新价 + 收盘倒计时」墨块：顶替原生最新价轴标签，右缘与价格轴齐平 */}
-          <div ref={cdRef} className="num absolute z-[4] pointer-events-none bg-foreground text-background text-[11px] font-bold leading-[1.35] text-center"
+          <div ref={cdRef} className="num absolute z-[4] pointer-events-none rounded-l-[6px] bg-foreground text-on-ink text-[11px] font-medium leading-[1.35] text-center"
                style={{ display: 'none', right: 0, boxSizing: 'border-box', padding: '2px 0 2px 8px', transform: 'translateY(-50%)' }} />
           {/* 高级档：外部塞进来的 TradingView，盖在图表上（图表实例不卸载） */}
           {advMode && <div className="absolute inset-0 z-10 bg-background">{advanced}</div>}

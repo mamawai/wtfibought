@@ -61,11 +61,11 @@ export interface DrawToolProps {
 /** 删除钮：有选中删选中，没选中清空全部 */
 const trashTitleKey = (d: DrawingsApi) => d.selected ? 'chart.deleteSelected' : 'chart.clearAll';
 
-/** 竖栏按钮：34×32 无边无底，hover 上墨 + 浅底，选中填墨；矮屏（手机横屏）压到 26 高，不然 11 颗按钮比图还高 */
-const RAIL_BTN = 'w-[34px] h-8 [@media(max-height:600px)]:h-[26px] flex items-center justify-center transition-colors cursor-pointer '
-  + 'text-muted-foreground hover:text-foreground hover:bg-card-2 '
+/** 竖栏按钮：34×32 圆角无底，hover 上墨 + 浅底，选中填墨；矮屏（手机横屏）压到 26 高，不然 11 颗按钮比图还高 */
+const RAIL_BTN = 'w-[34px] h-8 [@media(max-height:600px)]:h-[26px] rounded-lg flex items-center justify-center transition-colors duration-[160ms] cursor-pointer '
+  + 'text-muted-foreground hover:text-foreground hover:bg-fill '
   + 'disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted-foreground';
-const RAIL_ON = 'bg-foreground text-background hover:bg-foreground hover:text-background';
+const RAIL_ON = 'bg-foreground text-on-ink hover:bg-foreground hover:text-on-ink';
 
 /** 工具按钮的颜色：选中填墨，多空工具平时带涨跌色 */
 const railTone = (b: ToolDef, on: boolean) =>
@@ -113,7 +113,7 @@ export function DrawToolRail({ d, className }: DrawToolProps) {
   const pickDef = TOOLS[0];
 
   return (
-    <div className={cn('flex flex-col border-r border-border pt-1.5 w-[34px]', className)}>
+    <div className={cn('flex flex-col gap-0.5 pt-1.5 w-[34px]', className)}>
       <button type="button" title={`${t(pickDef.nameKey)}：${t(pickDef.titleKey)}`}
               onClick={() => d.setTool(null)} className={cn(RAIL_BTN, railTone(pickDef, d.tool === null))}>
         {pickDef.icon}
@@ -143,21 +143,21 @@ export function DrawToolRail({ d, className }: DrawToolProps) {
             {multi && (
               <span aria-hidden className={cn('pointer-events-none absolute right-[2px] bottom-[2px] w-0 h-0',
                 'border-l-[4px] border-l-transparent border-b-[4px] border-b-current',
-                inGroup ? 'text-background' : 'text-muted-foreground')} />
+                inGroup ? 'text-on-ink' : 'text-muted-foreground')} />
             )}
             {open && (
               // pl-1 是透明的桥：鼠标从按钮划到弹层，中间那道缝不算移出
               <div className="absolute left-full top-0 z-20 pl-1">
-                <div className="min-w-[148px] py-1 border border-foreground bg-background">
+                <div className="min-w-[160px] p-1.5 rounded-[14px] bg-pop shadow-[var(--sh-pop)]">
                   {g.map(k => {
                     const b = toolDef(k);
                     return (
                       <button key={k} type="button" title={t(b.titleKey)} onClick={() => pickIn(gi, k)}
-                              className={cn('w-full h-8 px-2.5 flex items-center gap-2 text-[12px] font-semibold whitespace-nowrap transition-colors cursor-pointer',
-                                d.tool === k ? 'bg-foreground text-background'
-                                  : b.tone === 'long' ? 'text-gain hover:bg-card-2'
-                                    : b.tone === 'short' ? 'text-loss hover:bg-card-2'
-                                      : 'text-muted-foreground hover:bg-card-2 hover:text-foreground')}>
+                              className={cn('w-full h-8 px-2.5 rounded-[9px] flex items-center gap-2 text-[13px] whitespace-nowrap transition-colors duration-100 cursor-pointer',
+                                d.tool === k ? 'bg-foreground text-on-ink'
+                                  : b.tone === 'long' ? 'text-gain hover:bg-pop-h'
+                                    : b.tone === 'short' ? 'text-loss hover:bg-pop-h'
+                                      : 'text-foreground hover:bg-pop-h')}>
                         <span className="w-[15px] flex justify-center shrink-0">{b.icon}</span>
                         {t(b.nameKey)}
                       </button>
@@ -193,11 +193,11 @@ export function DrawToolRail({ d, className }: DrawToolProps) {
 }
 
 /** 手机工具条的格子：图标在上名字在下，最小 52 宽 50 高好点；名字长的（英文）格子跟着变宽 */
-const STRIP_BTN = 'shrink-0 min-w-[52px] h-[50px] px-2 flex flex-col items-center justify-center gap-1.5 '
-  + 'transition-colors cursor-pointer active:bg-card-2 '
+const STRIP_BTN = 'shrink-0 min-w-[52px] h-[50px] px-2 rounded-[10px] flex flex-col items-center justify-center gap-1.5 '
+  + 'transition-colors cursor-pointer active:bg-fill2 '
   + 'disabled:opacity-30 disabled:cursor-default disabled:active:bg-transparent';
-const STRIP_LABEL = 'text-[10px] font-bold leading-none whitespace-nowrap';
-const STRIP_ON = 'bg-foreground text-background active:bg-foreground';
+const STRIP_LABEL = 'text-[10px] font-medium leading-none whitespace-nowrap';
+const STRIP_ON = 'bg-foreground text-on-ink active:bg-foreground';
 
 /** 组与组之间的竖线 */
 const StripSep = () => <span className="shrink-0 w-px my-2.5 bg-border" />;
@@ -224,13 +224,13 @@ export function DrawToolStrip({ d, className }: DrawToolProps) {
   return (
     <>
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
-              className={cn('ibtn w-auto gap-1 px-2', open && 'on', className)}>
+              className={cn('btn sm', open && 'on', className)}>
         <PencilRuler className="ic" />
-        <span className="text-[11px] font-bold">{t('drawAct.tools')}</span>
-        <ChevronDown className={cn('w-3 h-3 transition-transform', open && 'rotate-180')} />
+        {t('drawAct.tools')}
+        <ChevronDown className={cn('ic transition-transform duration-[160ms]', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className={cn('order-last basis-full flex items-stretch overflow-x-auto border border-foreground', className)}>
+        <div className={cn('order-last basis-full flex items-stretch gap-0.5 p-1 overflow-x-auto rounded-[14px] bg-fill', className)}>
           {toolBtn(TOOLS[0])}
           {GROUPS.map((g, gi) => (
             <div key={gi} className="contents">

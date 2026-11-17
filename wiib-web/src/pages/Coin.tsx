@@ -1,24 +1,27 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, ChevronLeft, Target } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { cryptoApi, cryptoOrderApi, futuresApi, quantApi, type WhaleCoinDetail } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useCryptoStream } from '../hooks/useCryptoStream';
 import { useToast } from '../components/ui/use-toast';
 import { Skeleton } from '../components/ui/skeleton';
+import { BigNum } from '../components/ui/big-num';
 import { CandleChart, type PositionOverlay, type TradeMark } from '../components/CandleChart';
 import TradingViewWidget from '../components/TradingViewWidget';
 import { SpotTradePanel } from '../components/coin/SpotTradePanel';
 import { FuturesOpenPanel } from '../components/coin/FuturesOpenPanel';
 import { FuturesPositionsCard } from '../components/coin/FuturesPositionsCard';
 import { CoinOrdersCard } from '../components/coin/CoinOrdersCard';
+import { OrderBook } from '../components/coin/OrderBook';
 import { MarketSessionBadge } from '../components/coin/MarketSessionBadge';
 import { WhaleBlock } from '../components/coin/WhaleBlock';
 import { LoginPrompt } from '../components/LoginPrompt';
-import { cn, fmtNum, fmtSignedUsd, parseServerTime } from '../lib/utils';
-import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice } from '../lib/coinConfig';
+import { cn, fmtNum, fmtSignedPct, fmtSignedUsd, parseServerTime } from '../lib/utils';
+import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice, getCoinPriceDecimals } from '../lib/coinConfig';
 import type { CryptoPosition, FuturesBracket, FuturesPosition } from '../types';
+import './Coin.css';
 
 /** 图表周期：现货/合约统一 K 线，各拉 500 根（5m≈41h / 15m≈5天 / 1h≈20天 / 4h≈83天 / 1d≈1.4年） */
 const INTERVALS = ['5m', '15m', '1h', '4h', '1d'] as const;
@@ -37,7 +40,6 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   // 返回目标写死对应列表页而不是 navigate(-1)：后者在直接打开深链时会一路退出 App
   const backTo = cfg.category === 'commodity' ? '/commodity' : cfg.category === 'tradfi' ? '/tradfi' : '/coin';
   const fmtPrice = useCallback((n?: number | null) => formatCoinPrice(symbol, n), [symbol]);
-  const navigate = useNavigate();
   const { toast } = useToast();
   const fetchUser = useUserStore(s => s.fetchUser);
   // 游客只看图和行情：持仓/委托/下单面板这些要登录的都不发请求、不渲染
@@ -213,98 +215,82 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     return p != null ? { price: p, ts: tick.ts } : null;
   }, [tick, isFuturesMode]);
 
-  /** 行情灯：本模式的那颗按连线状态亮绿/闪红，另一模式那颗压成灰方块 */
-  const feed = (active: boolean, connected: boolean) => ({
-    dot: `inline-block w-[7px] h-[7px] mr-1.5 align-[1px] ${!active ? 'bg-border' : connected ? 'bg-gain' : 'bg-loss animate-pulse'}`,
-    text: active ? '' : 'mute',
-  });
-  const spotFeed = feed(!isFuturesMode, !!tick?.ws);
-  const futFeed = feed(isFuturesMode, !!tick?.fws);
+  /** 行情灯：在看的那条按连线状态亮绿 / 闪红，另一条灰 */
+  const feedCls = (active: boolean, connected: boolean) => !active ? undefined : connected ? 'live' : 'down';
+
+  // 现货持仓：持有总量 = 可用 + 挂限价卖单冻结的，市值/盈亏按它算（同后端估值）；toFixed 抹掉浮点尾差
+  const heldQty = position ? Number((position.quantity + position.frozenQuantity).toFixed(8)) : 0;
+  const posPnlPct = position && position.avgCost > 0 && currentPrice > 0
+    ? ((currentPrice - position.avgCost) / position.avgCost) * 100 : 0;
+  const posPnl = position && currentPrice > 0 ? (currentPrice - position.avgCost) * heldQty : 0;
 
   return (
-    <div className="wrap">
+    <div className="page-shell p-tr">
       {/* ====== 页头：币对 / 行情灯 / 报价大数 ====== */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-8 items-end pt-8">
+      <div className="ph">
         <div>
           {/* 返回列表：装成 PWA 后 iOS 没有浏览器返回键，桌面也没有底部 Tab，得在页里给个回列表的入口 */}
-          <button
-            type="button"
-            onClick={() => navigate(backTo)}
-            className="inline-flex items-center gap-1 mb-2.5 text-[13px] mute hover:text-foreground transition-colors cursor-pointer"
-          >
-            <ChevronLeft className="w-3.5 h-3.5" />{t('coin.backToList')}
-          </button>
-
-          <div className="flex items-baseline gap-4 flex-wrap">
-            {/* data-reveal-icon：选币页的过渡层等它挂出来再整层淡出（lib/coinReveal） */}
-            <span className="inline-flex items-center gap-3">
-              <cfg.icon data-reveal-icon={symbol} className={cn('w-9 h-9 shrink-0', cfg.colorClass)} />
-              <b className="cond text-[44px] font-bold leading-none">{symbol}</b>
-            </span>
-            <span className="text-[15px] mute">{cfg.pair} · {isFuturesMode ? t('coin.perp') : t('coin.spot')}</span>
-            <span className="inline-flex gap-3.5 self-center text-[12.5px] font-semibold">
-              <span className={spotFeed.text} title={t('coin.spotFeed')}><i className={spotFeed.dot} />{t('coin.spot')}</span>
-              <span className={futFeed.text} title={t('coin.futuresFeed')}><i className={futFeed.dot} />{t('coin.futures')}</span>
+          <Link className="back" to={backTo}><ChevronLeft className="ic" />{t('coin.backToList')}</Link>
+          <div className="sym">
+            <span className="n"><cfg.icon className={cn('ci', cfg.colorClass)} />{symbol}</span>
+            <span className="p">{cfg.pair} · {isFuturesMode ? t('coin.perp') : t('coin.spot')}</span>
+            <span className="feeds">
+              {!cfg.futuresOnly && (
+                <span className={feedCls(!isFuturesMode, !!tick?.ws)} title={t('coin.spotFeed')}><i />{t('coin.spot')}</span>
+              )}
+              <span className={feedCls(isFuturesMode, !!tick?.fws)} title={t('coin.futuresFeed')}><i />{t('coin.futures')}</span>
             </span>
           </div>
-
-          <div className="flex items-center gap-4 flex-wrap mt-2 text-[12px] mute">
+          <div className="meta">
             <span>BINANCE</span>
             {isFuturesMode && tick?.mp != null && (
-              <span>{t('coin.markPrice')} <b className="num font-semibold text-foreground">{fmtPrice(tick.mp)}</b></span>
+              <span>{t('coin.markPrice')} <b>{fmtPrice(tick.mp)}</b></span>
             )}
             {isFuturesMode && fundingRate != null && (
-              <span>
-                {t('coin.fundingRate')}{' '}
-                <b className="num font-semibold text-foreground">
-                  {fundingRate >= 0 ? '+' : ''}{(fundingRate * 100).toFixed(4)}%
-                </b> 8h
-              </span>
+              <span>{t('coin.fundingRate')} <b>{fundingRate >= 0 ? '+' : ''}{(fundingRate * 100).toFixed(4)}%</b> 8h</span>
             )}
             {/* TradFi 标的：合约 7×24，但流动性跟着标的股票市场走，给个当前时段入口 */}
             {cfg.market && <MarketSessionBadge market={cfg.market} />}
             {cfg.unitLabel && (
-              <span className="wn font-semibold">{t('coin.goldUnit', { factor: cfg.unitFactor, unit: cfg.unitLabel })}</span>
+              <span className="wn font-medium">{t('coin.goldUnit', { factor: cfg.unitFactor, unit: cfg.unitLabel })}</span>
             )}
           </div>
         </div>
 
-        <div className="num text-left xl:text-right">
+        <div className="px">
           {currentPrice > 0 ? (
             <>
-              <b className="cond block text-[64px] font-bold leading-none">${fmtPrice(currentPrice)}</b>
-              <div className="flex items-baseline flex-wrap gap-3 mt-2 text-[15px] font-semibold justify-start xl:justify-end">
-                <span className={isUp ? 'up' : 'dn'}>
+              <b className="big nf"><BigNum value={currentPrice} decimals={getCoinPriceDecimals(symbol)} /></b>
+              <div className="sub">
+                <span className={cn('chg', isUp ? 'up' : 'dn')}>
                   {t('coin.change', {
                     change: `${isUp ? '+' : ''}${fmtPrice(change)}`,
                     pct: `${isUp ? '+' : ''}${changePct.toFixed(2)}`,
                   })}
                 </span>
-                <span className="mute font-medium text-[13px]">{t('coin.h24')}</span>
-                <span className="mute font-medium text-[13px]">{t('coin.high')} <b className="text-foreground">{day.high > 0 ? fmtPrice(day.high) : '-'}</b></span>
-                <span className="mute font-medium text-[13px]">{t('coin.low')} <b className="text-foreground">{day.low > 0 ? fmtPrice(day.low) : '-'}</b></span>
+                <span>{t('coin.h24')}</span>
+                <span>{t('coin.high')} <b>{day.high > 0 ? fmtPrice(day.high) : '-'}</b></span>
+                <span>{t('coin.low')} <b>{day.low > 0 ? fmtPrice(day.low) : '-'}</b></span>
                 {cfg.unitLabel && usdCny > 0 && (
-                  <span className="wn font-semibold text-[13px]">
-                    ¥{(currentPrice * usdCny / cfg.unitFactor!).toFixed(2)}/{cfg.unitLabel}
-                  </span>
+                  <span className="wn">¥{(currentPrice * usdCny / cfg.unitFactor!).toFixed(2)}/{cfg.unitLabel}</span>
                 )}
               </div>
             </>
           ) : (
-            <div className="flex flex-col items-start xl:items-end gap-2">
-              <Skeleton className="h-16 w-56" />
-              <Skeleton className="h-5 w-40" />
-            </div>
+            <>
+              <Skeleton />
+              <Skeleton className="t" />
+            </>
           )}
         </div>
       </div>
 
       {/* ====== 图 + 下单面板 ====== */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-7 border-t-2 border-foreground pt-[18px]">
-        <div className="xl:col-span-8 flex flex-col gap-5">
+      <div className="lay">
+        <div className="left">
           {/* 周期/图型/指标/画线全在图表组件里；「高级」档把 plot 区换成 TradingView。
               矮视口(手机横屏)收到 360；手机竖屏高度由图表按副图数自己定 */}
-          <div className="h-[600px] xl:h-[822px] [@media(max-height:600px)]:h-[360px] phone:h-auto">
+          <div className="chart h-[600px] xl:h-[822px] [@media(max-height:600px)]:h-[360px] phone:h-auto">
             <CandleChart
               key={mode}
               symbol={symbol}
@@ -324,62 +310,42 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
             />
           </div>
 
-          {whaleOn && whale && <WhaleBlock data={whale} symbol={symbol} />}
-
-          {/* BTC涨跌预测入口 */}
-          {symbol === 'BTCUSDT' && (
-            <Link to="/prediction" className="hov group flex items-center gap-3 py-3 border-t border-border">
-              <Target className="ic mute group-hover:text-primary transition-colors" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-[15px] font-bold">
-                  {t('coin.predictTitle')}<span className="chip fill orange">NEW</span>
-                </div>
-                <div className="text-[12px] mute">{t('coin.predictDesc')}</div>
-              </div>
-              <ChevronRight className="ic mute" />
-            </Link>
+          {/* 盘口只有合约有，横着放在图下面 */}
+          {isFuturesMode && (
+            <OrderBook symbol={symbol} lastPrice={tick?.fp ?? tick?.price} markPrice={tick?.mp} />
           )}
+
+          {whaleOn && whale && <WhaleBlock data={whale} symbol={symbol} />}
         </div>
 
-        <aside className="xl:col-span-4 flex flex-col gap-[18px]">
-          {/* 现货持仓信息（两种模式都显示） */}
-          {position && (position.quantity > 0 || position.frozenQuantity > 0) && (() => {
-            // 持有总量 = 可用 + 挂限价卖单冻结的，市值/盈亏按它算（同后端估值）；toFixed 抹掉浮点尾差
-            const heldQty = Number((position.quantity + position.frozenQuantity).toFixed(8));
-            const pnlPct = position.avgCost > 0 && currentPrice > 0
-              ? ((currentPrice - position.avgCost) / position.avgCost) * 100 : 0;
-            const pnlAmount = currentPrice > 0
-              ? (currentPrice - position.avgCost) * heldQty : 0;
-            const isPnlUp = pnlPct >= 0;
-            return (
-              <div className="border-t-2 border-foreground pt-3.5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <b className="text-[16px] font-bold">{cfg.name}</b>
-                    <span className="num ml-2 text-[13px] font-semibold mute">{t('coin.units', { qty: heldQty })}</span>
-                    {cfg.unitLabel && (
-                      <span className="ml-1.5 text-[12px] font-semibold wn">{t('coin.approxUnit', { value: (heldQty * cfg.unitFactor!).toFixed(1), unit: cfg.unitLabel })}</span>
-                    )}
-                  </div>
-                  <div className={`num shrink-0 text-right ${isPnlUp ? 'up' : 'dn'}`}>
-                    <div className="text-[16px] font-bold">{isPnlUp ? '+' : ''}{pnlPct.toFixed(2)}%</div>
-                    <div className="text-[12px] font-semibold">{fmtSignedUsd(pnlAmount)}</div>
-                  </div>
+        <aside className="side">
+          {/* 这个币的现货持仓（两种模式都显示） */}
+          {position && heldQty > 0 && (
+            <div className="blk spos">
+              <div className="h">
+                <div>
+                  <b>{cfg.name}</b>
+                  <span>{t('coin.units', { qty: heldQty })}</span>
+                  {cfg.unitLabel && <em>{t('coin.approxUnit', { value: (heldQty * cfg.unitFactor!).toFixed(1), unit: cfg.unitLabel })}</em>}
                 </div>
-                <div className="num mt-3">
-                  <div className="kv"><span className="k">{t('coin.avgCost')}</span><span className="v">${fmtPrice(position.avgCost)}</span></div>
-                  <div className="kv"><span className="k">{t('coin.lastPrice')}</span><span className="v">${fmtPrice(currentPrice)}</span></div>
-                  <div className="kv"><span className="k">{t('coin.marketValue')}</span><span className="v">${fmtNum(currentPrice * heldQty)}</span></div>
-                  {position.frozenQuantity > 0 && (
-                    <div className="kv"><span className="k">{t('coin.frozen')}</span><span className="v wn">{position.frozenQuantity}</span></div>
-                  )}
+                <div className={posPnlPct >= 0 ? 'up' : 'dn'}>
+                  {fmtSignedPct(posPnlPct)}
+                  <small>{fmtSignedUsd(posPnl)}</small>
                 </div>
               </div>
-            );
-          })()}
+              <div className="kv">
+                <div><span>{t('coin.avgCost')}</span><b>₮{fmtPrice(position.avgCost)}</b></div>
+                <div><span>{t('coin.lastPrice')}</span><b>₮{fmtPrice(currentPrice)}</b></div>
+                <div><span>{t('coin.marketValue')}</span><b>₮{fmtNum(currentPrice * heldQty)}</b></div>
+                {position.frozenQuantity > 0 && (
+                  <div><span>{t('coin.frozen')}</span><b className="wn">{position.frozenQuantity}</b></div>
+                )}
+              </div>
+            </div>
+          )}
 
           {!loggedIn ? (
-            <LoginPrompt text={t('coin.loginToTrade')} className="border-t-2 border-foreground pt-3.5" />
+            <LoginPrompt text={t('coin.loginToTrade')} className="blk" />
           ) : isFuturesMode ? (
             <FuturesOpenPanel
               symbol={symbol}
@@ -401,7 +367,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         </aside>
       </div>
 
-      {/* 合约持仓（空仓时自隐藏；卡内自订 WS 流与档位表） */}
+      {/* 合约持仓（卡内自订 WS 流与档位表） */}
       {loggedIn && isFuturesMode && (
         <FuturesPositionsCard
           symbol={symbol}

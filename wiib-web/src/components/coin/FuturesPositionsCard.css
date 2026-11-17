@@ -1,0 +1,35 @@
+/* 合约持仓卡：一仓一块浅灰。从上到下：币对和标签 / 浮盈 / 九项指标 / 操作一排 / 点开的操作面板。交易页和持仓页共用 */
+@layer components {
+  .posg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;align-items:start}
+  .pos{display:flex;flex-direction:column;gap:14px}
+  .pos .h{display:flex;align-items:center;gap:8px}
+  .pos .h b{font-size:20px;font-weight:600;line-height:1;letter-spacing:-.02em}
+  .pos .h .cs{margin-left:auto;display:flex;gap:6px}
+  .pos .pnl{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+  .pos .pnl b{font-size:42px;line-height:1;letter-spacing:-.045em}
+  .pos .pnl span{font-size:14px;font-weight:500}
+  .pos .pnl em{margin-left:auto;font-style:normal;font-size:12.5px;color:var(--color-muted-foreground)}
+  /* 九项指标：三列，小灰字在上 */
+  .pos .m{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding-top:14px;border-top:1px solid var(--color-hair);font-size:14.5px;font-weight:500}
+  .pos .m i{display:block;margin-bottom:3px;font-style:normal;font-size:11.5px;font-weight:400;color:var(--color-muted-foreground)}
+  /* 资金费那格两行：每期 / 累计 */
+  .pos .m em{margin-right:3px;font-style:normal;font-size:11.5px;font-weight:400;color:var(--color-muted-foreground)}
+  .pos .m s{display:block;text-decoration:none;white-space:nowrap}
+  .pos .acts{display:flex;flex-wrap:wrap;gap:8px}
+  .pos .acts .btn{flex:1;padding:0 6px}
+  /* 收起来的折叠层把 flex 的间距也吃掉，跟着行高一起滑 */
+  .pos > .col,.pin > .col{transition:grid-template-rows var(--t) var(--ease-control),margin-top var(--t) var(--ease-control)}
+  .pos > .col:not(.open){margin-top:-14px}
+  /* 点开的操作面板：换一种操作时内容从下面浮上来 */
+  .pin{display:flex;flex-direction:column;gap:14px;padding-top:4px;animation:wiib-rise var(--t) var(--ease-control)}
+  .pin > .col:not(.open){margin-top:-14px}
+  /* 止盈止损底下一排：保存占满，旁边是全部清除 */
+  .sltp-act{display:flex;gap:8px}
+  .sltp-act .btn:first-child{flex:1}
+  @media (max-width:1180px){.posg{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:760px){.posg{grid-template-columns:minmax(0,1fr)}}
+  @media (prefers-reduced-motion:reduce){
+    .pos > .col,.pin > .col{transition:none}
+    .pin{animation:none}
+  }
+}

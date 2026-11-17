@@ -1,0 +1,42 @@
+/* 杠杆：一行「杠杆 20x」，下面一根滑杆；拖了还没应用时数字变黄。下单面板、持仓卡、现货买入共用 */
+@layer components {
+  .lev{display:flex;flex-direction:column;gap:8px}
+  .lev .v{font-size:22px;font-weight:500;letter-spacing:-.03em;color:var(--color-foreground);transition:color var(--t) var(--ease-control)}
+  .lev.pending .v{color:var(--color-warning)}
+  /* 「应用 / 撤回」「保存 / 取消」这类挨着的一对小钮 */
+  .levact{display:flex;gap:6px;padding-top:6px}
+  /* 「应用 / 撤回」那一行收着的时候，把间距也吃掉 */
+  .lev > .col{transition:grid-template-rows var(--t) var(--ease-control),margin-top var(--t) var(--ease-control)}
+  .lev > .col:not(.open){margin-top:-8px}
+
+  /* 滑杆：一根细轨 + 圆旋钮，旋钮跟手不加缓动；点刻度才滑过去（.glide） */
+  .sl{position:relative;padding:0 10px}
+  .sl .rail{position:relative;height:24px}
+  .sl .rail::before{content:"";position:absolute;left:-10px;right:-10px;top:10px;height:4px;border-radius:2px;background:var(--color-line2)}
+  /* 填色从轨道最左头起，右边多出 10px 正好接到旋钮中心 */
+  .sl .fi{position:absolute;left:-10px;top:10px;height:4px;border-radius:2px;background:var(--color-foreground);box-sizing:content-box;padding-right:10px}
+  .sl .kn{position:absolute;top:2px;width:20px;height:20px;margin-left:-10px;border-radius:50%;background:#fff;box-shadow:var(--sh-knob);pointer-events:none;transition:transform var(--fast) var(--ease-control)}
+  /* 真正接手势的是盖在轨道上的一条透明原生滑杆，拇指宽 20px，中心的行程正好是轨道两头 */
+  .sl .hit{position:absolute;z-index:1;top:-4px;left:-10px;width:calc(100% + 20px);height:32px;margin:0;opacity:0;cursor:grab;-webkit-appearance:none;appearance:none;background:none;touch-action:none}
+  .sl .hit::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:32px}
+  .sl .hit::-moz-range-thumb{width:20px;height:32px;border:0}
+  .sl .hit:active{cursor:grabbing}
+  .sl .hit:disabled{cursor:not-allowed}
+  .sl .hit:focus-visible ~ .kn{outline:2px solid var(--color-ring);outline-offset:2px}
+  .sl .hit:active:not(:disabled) ~ .kn{transform:scale(1.2)}
+  .sl.glide .kn{transition:left var(--t) var(--ease-control),transform var(--fast) var(--ease-control)}
+  .sl.glide .fi{transition:width var(--t) var(--ease-control)}
+  .sl .ticks{position:relative;height:22px;font-size:11px;color:var(--color-faint)}
+  .sl .ticks button{position:absolute;top:0;transform:translateX(-50%);min-width:24px;height:22px;border-radius:6px;transition:color var(--t) var(--ease-control)}
+  .sl .ticks button[aria-pressed="true"]{color:var(--color-foreground);font-weight:600}
+  .sl .ticks button:disabled{cursor:not-allowed}
+  /* 只有一档可选（逐仓已经拉满）：整条压淡 */
+  .sl.off{opacity:.45}
+  @media (hover:hover){
+    .sl:not(.off):hover .kn{transform:scale(1.1)}
+    .sl .ticks button:hover:not(:disabled){color:var(--color-foreground)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .lev .v,.lev > .col,.sl .kn,.sl.glide .kn,.sl.glide .fi,.sl .ticks button{transition:none}
+  }
+}

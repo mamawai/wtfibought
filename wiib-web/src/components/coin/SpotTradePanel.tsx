@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cryptoOrderApi } from '../../api';
 import { useUserStore } from '../../stores/userStore';
 import { useCrossAccount } from '../../hooks/useCrossAccount';
+import { useSubmitFx } from '../../hooks/useSubmitFx';
 import { useToast } from '../ui/use-toast';
+import { Seg } from '../ui/seg';
 import { FuturesActionButton } from '../FuturesActionButton';
 import { LeverageSlider } from '../LeverageSlider';
 import { cn, fmtNum } from '../../lib/utils';
@@ -12,13 +14,12 @@ import { useTradeFilter } from '../../lib/tradeFilters';
 import type { CryptoPosition } from '../../types';
 import { TradeModeSwitch } from './TradeModeSwitch';
 import { NumInput, PctRow } from './TradeFields';
-import { useQuantityAnimation } from './useQuantityAnimation';
 import { COMMISSION_RATE, POSITION_PCTS, SPOT_LEVERAGE_OPTIONS, calcMaxSpotBuyQty, calcSpotOrderEstimate, floorToStep, getStepPrecision } from './futuresMath';
 
 const SPOT_MAX_LEVERAGE = SPOT_LEVERAGE_OPTIONS[SPOT_LEVERAGE_OPTIONS.length - 1];
 
 /**
- * 现货交易面板：买卖方向、市价/限价、数量/仓位、现货杠杆、预估与提交。
+ * 现货交易面板（浅灰块，样式见 pages/Coin.css .ord）：买卖方向、市价/限价、数量/仓位、现货杠杆、预估与提交。
  * 状态全部内聚；成交后调 onTraded 让父级刷新持仓/用户/订单表。
  */
 export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, onTraded }: {
@@ -38,6 +39,9 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   const user = useUserStore(s => s.user);
   // 买入能花的钱 = min(全仓可用, 余额)：后端买入先过全仓可用这道闸再扣余额
   const { spendable } = useCrossAccount();
+  const limitId = useId();
+  const qtyId = useId();
+  const limitRef = useRef<HTMLInputElement>(null);
 
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
@@ -46,19 +50,12 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   const qtyKey = `${side}_${orderType}`;
   const quantity = qtyMap[qtyKey] ?? '';
   const setQuantity = useCallback((v: string) => setQtyMap(m => ({ ...m, [qtyKey]: v })), [qtyKey]);
-  const animateQuantity = useQuantityAnimation(quantity, setQuantity);
   const [limitPrice, setLimitPrice] = useState('');
   const [leverage, setLeverage] = useState(1);
   // 买入输入单位：币数量 / USDT 预算。USDT 指"含手续费的总现金占用"，与仓位 % 按钮同一口径
   const [buyUnit, setBuyUnit] = useState<'COIN' | 'USDT'>('COIN');
-  const [submitting, setSubmitting] = useState(false);
-  const [actionSuccess, setActionSuccess] = useState(false);
-
-  useEffect(() => {
-    if (!actionSuccess) return;
-    const timer = window.setTimeout(() => setActionSuccess(false), 800);
-    return () => window.clearTimeout(timer);
-  }, [actionSuccess]);
+  // 下单大按钮的转圈 / 打勾 / 晃一下
+  const fx = useSubmitFx<'order'>();
 
   const isUsdtInput = side === 'BUY' && buyUnit === 'USDT';
   const isBuyMarket = side === 'BUY' && orderType === 'MARKET';
@@ -84,29 +81,30 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
     setBuyUnit(u);
   };
 
+  /** 没过本地校验：说原因，按钮晃一下 */
+  const reject = (msg: string) => { toast(msg, 'error'); fx.nope('order'); };
+
   const handleSubmit = async () => {
     if (orderType === 'LIMIT') {
       const lp = parseFloat(limitPrice);
-      if (!lp || lp <= 0) { toast(t('toast.invalidLimit'), 'error'); return; }
+      if (!lp || lp <= 0) return reject(t('toast.invalidLimit'));
     }
     // USDT 模式：输入是总花费预算（含手续费），先按当前价换算成数量，再走原有校验与提交。
     // 市价单实际按服务端提交时刻的价成交，与页面价的抖动差和仓位 % 按钮同级，模拟盘可接受
     const input = parseFloat(quantity);
     const qty = isUsdtInput ? usdtToQty(input || 0) : input;
     if (!qty || qty < MIN_QTY) {
-      toast(isUsdtInput
+      return reject(isUsdtInput
         ? t('toast.amountTooSmall', { qty: MIN_QTY, unit: cfg.name })
-        : t('toast.minQtySpot', { qty: MIN_QTY }), 'error');
-      return;
+        : t('toast.minQtySpot', { qty: MIN_QTY }));
     }
     const price = orderType === 'LIMIT' ? parseFloat(limitPrice) : currentPrice;
     const actualQty = toOrderQty(qty);
     // 买入需过最小名义额（对齐Binance；卖出为减持豁免）
     if (side === 'BUY' && price > 0 && actualQty * price < filter.minNotional) {
-      toast(t('toast.minNotional', { amount: filter.minNotional }), 'error'); return;
+      return reject(t('toast.minNotional', { amount: filter.minNotional }));
     }
-    setSubmitting(true);
-    try {
+    await fx.run('order', async () => {
       const req = {
         symbol: symbol,
         quantity: actualQty,
@@ -121,15 +119,12 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
         await cryptoOrderApi.sell(req);
         toast(t('toast.sellOk'), 'success');
       }
-      setActionSuccess(true);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       setQuantity(isUsdtInput ? '' : String(MIN_QTY));
       setLimitPrice('');
       setLeverage(1);
       onTraded();
-    } catch (e: unknown) {
-      toast((e as Error).message || t('toast.orderFailed'), 'error');
-    } finally { setSubmitting(false); }
+    }, e => toast((e as Error).message || t('toast.orderFailed'), 'error'));
   };
 
   // 预估按实际提交的下单量算（已乘杠杆、按步长取整），取整同后端。USDT 模式先把预算换算回数量（合计不超过输入的预算）
@@ -138,6 +133,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   const orderQty = toOrderQty(qtyNum);
   const priceForCalc = unitPrice;
   const est = calcSpotOrderEstimate(orderQty, priceForCalc, effLeverage);
+  const hasEst = orderQty > 0 && priceForCalc > 0;
 
   /** 仓位 % 按钮的目标值：买入吃可用（spendable）、卖出吃持仓；口径与提交一致 */
   const pctTarget = (pct: number) => {
@@ -158,65 +154,58 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
     : null;
   const handlePct = (pct: number) => {
     const target = pctTarget(pct);
-    if (!(target > 0)) return;
-    // 卖出全量直接落精确值，别让缓动把尾数抹了
-    if (side === 'SELL' && pct >= 1) { setQuantity(String(target)); return; }
-    animateQuantity(target, isUsdtInput ? 0.01 : MIN_QTY);
+    if (target > 0) setQuantity(String(target));
   };
 
   return (
-    <>
+    <div className="ord blk" aria-label={t('mode.spot')}>
       {/* 合约/现货 + 可用 */}
-      <div className="flex justify-between items-center">
+      <div className="rowb">
         <TradeModeSwitch mode="spot" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />
         {user && (
-          <span className="text-[12.5px] text-muted-foreground">
-            {t('open.availLabel')}{' '}
-            <b className="num text-foreground font-semibold">{side === 'BUY' ? fmtNum(spendable) : (position?.quantity ?? 0)}</b>{' '}
-            {side === 'BUY' ? 'USDT' : cfg.name}
+          <span className="avail">
+            {t('open.availLabel')} <b>{side === 'BUY' ? fmtNum(spendable) : (position?.quantity ?? 0)}</b> {side === 'BUY' ? 'USDT' : cfg.name}
           </span>
         )}
       </div>
 
-      {/* 买入 / 卖出 */}
-      <div className="grid grid-cols-2 border-[1.5px] border-foreground">
-        <button
-          onClick={() => setSide('BUY')}
-          className={cn('h-12 text-[17px] font-extrabold cursor-pointer transition-colors', side === 'BUY' ? 'bg-gain text-white' : 'text-muted-foreground hover:text-foreground')}
-        >{t('side.buy')}</button>
-        <button
-          onClick={() => setSide('SELL')}
-          className={cn('h-12 text-[17px] font-extrabold cursor-pointer transition-colors', side === 'SELL' ? 'bg-loss text-white' : 'text-muted-foreground hover:text-foreground')}
-        >{t('side.sell')}</button>
+      <Seg className="k-side" value={side} onChange={setSide} options={[
+        { value: 'BUY', label: t('side.buy') },
+        { value: 'SELL', label: t('side.sell') },
+      ]} />
+
+      <div className="fld">
+        <div className="fl">{t('orderType.label')}</div>
+        <Seg className="full" value={orderType} label={t('orderType.label')}
+             onChange={o => {
+               setOrderType(o);
+               // 切到限价：等折叠层展开那一帧再把光标放进限价框
+               if (o === 'LIMIT') requestAnimationFrame(() => limitRef.current?.focus({ preventScroll: true }));
+             }}
+             options={[
+               { value: 'MARKET', label: t('orderType.market') },
+               { value: 'LIMIT', label: t('orderType.limit') },
+             ]} />
       </div>
 
-      {/* 委托类型 + 限价 */}
-      <div className="grid grid-cols-2 gap-3.5">
-        <div className="field">
-          <label>{t('orderType.label')}</label>
-          <div className="seg flex">
-            {(['MARKET', 'LIMIT'] as const).map(o => (
-              <button key={o} className={cn('flex-1', orderType === o && 'on')} onClick={() => setOrderType(o)}>
-                {t(o === 'MARKET' ? 'orderType.market' : 'orderType.limit')}
-              </button>
-            ))}
+      <div className={cn('col', orderType === 'LIMIT' && 'open')}>
+        <div>
+          <div className="fld gapb">
+            <label className="fl" htmlFor={limitId}>{t('open.limitLabel')}</label>
+            <NumInput id={limitId} ref={limitRef} value={limitPrice} onChange={setLimitPrice} placeholder={t('open.limitPlaceholder')}
+                      step={PRICE_STEP_TEXT} min="0" unit="USDT" />
           </div>
         </div>
-        {orderType === 'LIMIT' && (
-          <div className="field">
-            <label>{t('open.limitLabel')}</label>
-            <NumInput value={limitPrice} onChange={setLimitPrice} placeholder={t('open.limitPlaceholder')} step={PRICE_STEP_TEXT} min="0" unit="USDT" />
-          </div>
-        )}
       </div>
 
       {/* 数量：买入时右侧单位可点，币 ↔ USDT 换算 */}
-      <div className="field">
-        <label>
+      <div className="fld">
+        <label className="fl" htmlFor={qtyId}>
           <span>{isUsdtInput ? t('spot.amount') : t('spot.quantity')}</span>
           <span>{t('open.minOrder', { step: MIN_QTY, unit: cfg.name })}</span>
         </label>
         <NumInput
+          id={qtyId}
           value={quantity}
           onChange={setQuantity}
           placeholder={isUsdtInput ? t('spot.spendPlaceholder') : String(MIN_QTY)}
@@ -224,64 +213,56 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
           min={isUsdtInput ? 0 : MIN_QTY}
           unit={isUsdtInput ? 'USDT' : cfg.name}
           unitTitle={side === 'BUY' ? t('open.switchUnit') : undefined}
+          unitFlip={isUsdtInput}
           onUnitClick={side === 'BUY' ? () => switchUnit(buyUnit === 'USDT' ? 'COIN' : 'USDT') : undefined}
         />
         {currentPrice > 0 && <PctRow active={activePct} onPick={handlePct} />}
       </div>
 
-      {/* 现货杠杆借款：仅市价买入 */}
-      {isBuyMarket && (
-        <div className="flex flex-col gap-2">
-          <div className="flex justify-between items-baseline text-[12.5px] font-semibold text-muted-foreground">
-            <span>{t('lev.label')}</span>
-            <b className="num text-[20px] font-bold text-foreground">{leverage}x</b>
+      {/* 现货杠杆借款：只有市价买入有 */}
+      <div className={cn('col', isBuyMarket && 'open')}>
+        <div>
+          <div className="lev gapb">
+            <div className="fl">{t('lev.label')}<b className="v">{leverage}x</b></div>
+            <LeverageSlider value={leverage} max={SPOT_MAX_LEVERAGE} ticks={SPOT_LEVERAGE_OPTIONS} onChange={setLeverage} />
           </div>
-          <LeverageSlider value={leverage} max={SPOT_MAX_LEVERAGE} ticks={SPOT_LEVERAGE_OPTIONS} onChange={setLeverage} />
         </div>
-      )}
+      </div>
 
-      {/* 预估 */}
-      {orderQty > 0 && priceForCalc > 0 && (
-        <div className="num border-t border-foreground pt-1">
-          {isUsdtInput && (
-            <div className="kv py-[7px]">
-              <span className="k">{t('spot.estGet')}{effLeverage > 1 ? ` ${t('spot.totalPosLev', { lev: effLeverage })}` : ''}</span>
-              <span className="v">≈ {fmtNum(orderQty, getStepPrecision(filter.stepSize))} {cfg.name}</span>
+      {/* 预估：填了数量才展开 */}
+      <div className={cn('col', hasEst && 'open')}>
+        <div>
+          {hasEst && (
+            <div className="kv sum">
+              {isUsdtInput && (
+                <div>
+                  <span>{t('spot.estGet')}{effLeverage > 1 ? ` ${t('spot.totalPosLev', { lev: effLeverage })}` : ''}</span>
+                  <b>≈ {fmtNum(orderQty, getStepPrecision(filter.stepSize))} {cfg.name}</b>
+                </div>
+              )}
+              {effLeverage > 1 && (
+                <div><span>{t('spot.totalPos', { lev: effLeverage })}</span><b>{fmtNum(est.amount)}</b></div>
+              )}
+              {side === 'BUY' && (
+                <div><span>{effLeverage > 1 ? t('spot.margin') : t('spot.estCost')}</span><b>{fmtNum(est.margin)}</b></div>
+              )}
+              <div><span>{t('spot.fee')}</span><b>{fmtNum(est.commission)}</b></div>
+              <div>
+                <span>{side === 'BUY' ? t('spot.total') : t('spot.estProceeds')}</span>
+                <b className="tot">{fmtNum(side === 'BUY' ? est.margin + est.commission : est.amount - est.commission)}<small>USDT</small></b>
+              </div>
             </div>
           )}
-          {effLeverage > 1 && (
-            <div className="kv py-[7px]">
-              <span className="k">{t('spot.totalPos', { lev: effLeverage })}</span>
-              <span className="v">{fmtNum(est.amount)}</span>
-            </div>
-          )}
-          {side === 'BUY' && (
-            <div className="kv py-[7px]">
-              <span className="k">{effLeverage > 1 ? t('spot.margin') : t('spot.estCost')}</span>
-              <span className="v">{fmtNum(est.margin)}</span>
-            </div>
-          )}
-          <div className="kv py-[7px]">
-            <span className="k">{t('spot.fee')}</span>
-            <span className="v">{fmtNum(est.commission)}</span>
-          </div>
-          <div className="kv py-[7px] border-b-0 text-[16px]">
-            <span className="k">{side === 'BUY' ? t('spot.total') : t('spot.estProceeds')}</span>
-            <span className="v text-[20px] font-bold [font-stretch:85%]">
-              {fmtNum(side === 'BUY' ? est.margin + est.commission : est.amount - est.commission)} USDT
-            </span>
-          </div>
         </div>
-      )}
+      </div>
 
       <FuturesActionButton
         onClick={handleSubmit}
-        disabled={submitting || currentPrice <= 0}
-        loading={submitting}
-        success={actionSuccess}
+        disabled={currentPrice <= 0}
+        fx={fx.cls('order')}
         side={side}
         label={cfg.name}
       />
-    </>
+    </div>
   );
 }

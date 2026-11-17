@@ -1,0 +1,88 @@
+/* 交易页（币对交易页、股票详情页共用这一个模板）：页头（名字 / 行情灯 / 报价大数）→ 图（合约的图下面是盘口）+ 下单面板 → 合约持仓 → 订单 */
+@layer components {
+  .p-tr .ph{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 32px;padding-top:28px}
+  .p-tr .back{display:inline-flex;align-items:center;gap:3px;margin-bottom:12px;font-size:13px;color:var(--color-muted-foreground);transition:color var(--t) var(--ease-control)}
+  .p-tr .back .ic{width:14px;height:14px}
+  .p-tr .sym{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px}
+  .p-tr .sym .n{display:inline-flex;align-items:center;gap:12px;font-size:40px;font-weight:600;line-height:1;letter-spacing:-.035em}
+  .p-tr .sym .n .ci{width:34px;height:34px;flex:none}
+  .p-tr .sym .p{font-size:15px;color:var(--color-muted-foreground)}
+  /* 行情灯：在看的那条连着是绿点，断了红点在闪；另一条灰 */
+  .p-tr .feeds{display:inline-flex;gap:14px;align-self:center;font-size:12.5px;font-weight:500}
+  .p-tr .feeds span{display:inline-flex;align-items:center;gap:6px;color:var(--color-muted-foreground)}
+  .p-tr .feeds i{width:6px;height:6px;border-radius:50%;background:var(--color-line2)}
+  .p-tr .feeds .live,.p-tr .feeds .down{color:var(--color-foreground)}
+  .p-tr .feeds .live i{background:var(--color-gain)}
+  .p-tr .feeds .down i{background:var(--color-loss);animation:wiib-blink 1.2s ease-in-out infinite}
+  .p-tr .meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 18px;margin-top:12px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tr .meta span > b{font-weight:500;color:var(--color-foreground)}
+  .p-tr .px{text-align:right}
+  .p-tr .px .big{font-size:clamp(44px,5.3vw,76px)}
+  .p-tr .px .sub{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:4px 14px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tr .px .sub .chg{font-size:15px;font-weight:500}
+  .p-tr .px .sub b{font-weight:500;color:var(--color-foreground)}
+  /* 报价还没到：和大数一样大的两块骨架 */
+  .p-tr .px .sk{width:240px;height:64px;margin-left:auto}
+  .p-tr .px .sk.t{width:180px;height:12px;margin-top:12px}
+
+  /* 左边图和图下面的几块，右边下单 */
+  .p-tr .lay{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:32px;align-items:start;margin-top:28px}
+  .p-tr .left,.p-tr .side{display:flex;flex-direction:column;gap:20px;min-width:0}
+
+  /* 下单面板：浅灰块里一竖排，间距 18；收着的折叠层把间距也吃掉 */
+  .p-tr .ord{display:flex;flex-direction:column;gap:18px}
+  .p-tr .ord > .col{transition:grid-template-rows var(--t) var(--ease-control),margin-top var(--t) var(--ease-control)}
+  .p-tr .ord > .col:not(.open){margin-top:-18px}
+  .p-tr .rowb{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .p-tr .avail{font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-tr .avail b{font-weight:500;color:var(--color-foreground)}
+  .p-tr .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .p-tr .gapb{padding-bottom:18px}
+  .p-tr .hint{font-size:12px;line-height:1.6;color:var(--color-muted-foreground)}
+  .p-tr .warn{font-size:12px;color:var(--color-warning)}
+  /* 手机上止盈止损收成一行：点开才出编辑器，右边是已填的摘要 */
+  .p-tr .sltp-tg{display:flex;align-items:center;gap:6px;height:36px;font-size:13px;font-weight:500;text-align:left}
+  .p-tr .sltp-tg .ic{width:14px;height:14px;color:var(--color-muted-foreground);transition:transform var(--t) var(--ease-control)}
+  .p-tr .sltp-tg[aria-expanded="true"] .ic{transform:rotate(90deg)}
+  .p-tr .sltp-tg span{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400;color:var(--color-muted-foreground)}
+  /* 这个币的现货持仓：两种模式都在下单面板上面 */
+  .p-tr .spos .h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .p-tr .spos .h b{font-size:16px;font-weight:600}
+  .p-tr .spos .h span{margin-left:8px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-tr .spos .h em{margin-left:6px;font-style:normal;font-size:12px;color:var(--color-warning)}
+  .p-tr .spos .h > div:last-child{text-align:right;font-weight:500}
+  .p-tr .spos .h > div:last-child small{display:block;font-size:12px}
+  .p-tr .spos .kv{margin-top:8px}
+
+  /* 公司信息：两列键值，下面一段简介 */
+  .p-tr .co-kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 40px}
+  .p-tr .co-kv > div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:14px}
+  .p-tr .co-kv span{color:var(--color-muted-foreground)}
+  .p-tr .co-kv b{font-weight:500;text-align:right}
+  .p-tr .co-desc{max-width:72ch;margin-top:16px;font-size:14px;line-height:1.7;color:var(--color-muted-foreground)}
+
+  @media (hover:hover){
+    .p-tr .back:hover{color:var(--color-foreground)}
+  }
+  /* 单列时盘口、下单面板紧跟在图后面，大户持仓、公司信息这些往后排 */
+  @media (max-width:1180px){
+    .p-tr .lay{grid-template-columns:minmax(0,1fr);gap:28px}
+    .p-tr .left{display:contents}
+    .p-tr .chart,.p-tr .ob{order:1}
+    .p-tr .side{order:2}
+    .p-tr .whale,.p-tr .co{order:3}
+  }
+  @media (max-width:760px){
+    .p-tr .ph{padding-top:18px}
+    .p-tr .sym .n{font-size:32px}
+    .p-tr .px{text-align:left}
+    .p-tr .px .sub{justify-content:flex-start}
+    .p-tr .px .sk{margin-left:0}
+  }
+  @media (max-width:640px){.p-tr .co-kv{grid-template-columns:minmax(0,1fr)}}
+  @media (max-width:440px){.p-tr .two.sltp{grid-template-columns:minmax(0,1fr)}}
+  @media (prefers-reduced-motion:reduce){
+    .p-tr .back,.p-tr .ord > .col,.p-tr .sltp-tg .ic{transition:none}
+    .p-tr .feeds .down i{animation:none}
+  }
+}

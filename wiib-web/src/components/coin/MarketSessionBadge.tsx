@@ -1,46 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Moon, Sunrise, Sunset } from 'lucide-react';
-import { Dialog } from '../ui/dialog';
+import { ChevronDown } from 'lucide-react';
+import { Dialog, DialogHeader } from '../ui/dialog';
 import {
   SESSION_META, fmtDuration, fmtHm, fmtMinOfDay, getSessionState, getWeekView,
   localTzLabel, sessionKindsOf, type MarketId, type SessionKind,
 } from '../../lib/marketSession';
+import './MarketSessionBadge.css';
 
-/** 彩条配色，对齐 Binance 标的市场时段图 */
-const BAR_COLOR: Record<SessionKind, string> = {
-  pre: 'bg-amber-500',
-  open: 'bg-emerald-500',
-  post: 'bg-violet-500',
-  overnight: 'bg-blue-500',
-  closed: '',
-};
-const ICON_COLOR: Record<SessionKind, string> = {
-  pre: 'text-amber-500',
-  open: 'text-emerald-500',
-  post: 'text-violet-500',
-  overnight: 'text-blue-500',
-  closed: 'text-muted-foreground',
+/** 各时段的颜色：盘前黄、开盘绿、盘后蓝、夜盘淡灰、不交易更淡 */
+const KIND_COLOR: Record<SessionKind, string> = {
+  pre: 'var(--color-warning)',
+  open: 'var(--color-gain)',
+  post: 'var(--color-info)',
+  overnight: 'var(--color-faint)',
+  closed: 'var(--color-line2)',
 };
 
 /** 周一起排，存词表 key（数组是模块常量，拿不到 t，渲染时再查） */
 const DAY_KEYS = ['week.mon', 'week.tue', 'week.wed', 'week.thu', 'week.fri', 'week.sat', 'week.sun'];
-/** 行标列宽 3rem；刻度/气泡/竖线都得同宽缩进才能和彩条对齐（写死字面量，Tailwind 才扫得到） */
-const LABEL_W = 'w-12';
-const LABEL_INSET = 'left-12';
-const LABEL_ML = 'ml-12';
 
-function KindIcon({ kind, box }: { kind: SessionKind; box: string }) {
-  const Ico = kind === 'pre' ? Sunrise : kind === 'post' ? Sunset : Moon;
-  return (
-    <span className={`${box} inline-flex items-center justify-center shrink-0`}>
-      {kind === 'open'
-        ? <span className="w-[45%] h-[45%] rounded-full bg-emerald-500" />
-        : <Ico className={`w-full h-full ${ICON_COLOR[kind]}`} />}
-    </span>
-  );
-}
+const dot = (kind: SessionKind) => ({ '--c': KIND_COLOR[kind] }) as CSSProperties;
 
+/** TradFi 标的页头的时段小胶囊：当前时段 + 倒计时，点开看一周的时段图（样式见 MarketSessionBadge.css） */
 export function MarketSessionBadge({ market }: { market: MarketId }) {
   const { t } = useTranslation('trade');
   const [open, setOpen] = useState(false);
@@ -59,97 +41,57 @@ export function MarketSessionBadge({ market }: { market: MarketId }) {
   const nowD = new Date(now);
   const nowPct = ((nowD.getHours() * 60 + nowD.getMinutes()) / 1440) * 100;
   const todayIdx = (nowD.getDay() + 6) % 7;
+  const pct = (min: number) => `${(min / 1440) * 100}%`;
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-border bg-card text-[10px] font-semibold hover:bg-surface-hover transition-colors cursor-pointer"
-        title={t('session.badgeTitle')}
-      >
-        <KindIcon kind={st.kind} box="w-3 h-3" />
-        <span>{SESSION_META[st.kind].label}</span>
-        <span className="hidden sm:inline font-normal text-muted-foreground">· {countdown}</span>
-        <ChevronDown className="w-3 h-3 text-muted-foreground" />
+      <button type="button" className="sess" onClick={() => setOpen(true)} title={t('session.badgeTitle')}>
+        <i style={dot(st.kind)} />
+        {SESSION_META[st.kind].label}
+        <span>· {countdown}</span>
+        <ChevronDown className="ic" />
       </button>
 
-      <Dialog open={open} onClose={() => setOpen(false)} className="max-w-xl">
-        <div className="p-5 pr-12 space-y-5 overflow-y-auto max-h-[80vh]">
-          {/* 标题：当前时段 + 本段起止 + 倒计时 */}
-          <div>
-            <div className="flex items-center gap-2">
-              <KindIcon kind={st.kind} box="w-6 h-6" />
-              <span className="text-xl font-extrabold tracking-tight">{SESSION_META[st.kind].label}</span>
-            </div>
-            <div className="num text-sm font-bold mt-1.5">
-              {fmtHm(st.start)} - {fmtHm(st.end)}, {localTzLabel()}
-            </div>
-            <div className="text-xs text-muted-foreground mt-0.5">{t('session.marketWill', { countdown })}</div>
-          </div>
+      <Dialog open={open} onClose={() => setOpen(false)} className="lg sess-dlg">
+        {/* 标题：当前时段 + 本段起止 + 倒计时 */}
+        <DialogHeader>
+          <h3><span className="sess-t"><i style={dot(st.kind)} />{SESSION_META[st.kind].label}</span></h3>
+          <p>{fmtHm(st.start)} - {fmtHm(st.end)}, {localTzLabel()} · {t('session.marketWill', { countdown })}</p>
+        </DialogHeader>
 
-          {week && (
-            <div className="relative">
-              {/* 覆盖层：当前时刻竖虚线，贯穿 7 行；left 与行标列同宽保证对齐 */}
-              <div className={`absolute top-6 bottom-0 ${LABEL_INSET} right-0 pointer-events-none`}>
-                <div className="absolute top-0 bottom-0 border-l border-dashed border-muted-foreground/50" style={{ left: `${nowPct}%` }} />
-              </div>
-
-              {/* 当前时刻气泡 */}
-              <div className={`relative h-6 ${LABEL_ML}`}>
-                <div
-                  className="num absolute -translate-x-1/2 px-1.5 py-0.5 rounded-md bg-foreground text-background text-[10px] font-bold whitespace-nowrap"
-                  style={{ left: `${nowPct}%` }}
-                >
-                  {fmtHm(now)}
+        {week && (
+          <div className="wk">
+            {/* 时间轴刻度：各时段边界在本地时区的时刻 */}
+            <div className="tick">
+              {week.ticks.map(m => <span key={m} style={{ left: pct(m) }}>{fmtMinOfDay(m)}</span>)}
+            </div>
+            {week.rows.map((row, i) => (
+              <div key={row.dayStart} className={i === todayIdx ? 'day td' : 'day'}>
+                <b>{t(DAY_KEYS[i])}</b>
+                <div>
+                  {row.bars.map((b, j) => <i key={j} style={{ ...dot(b.kind), left: pct(b.from), width: pct(b.to - b.from) }} />)}
                 </div>
-              </div>
-
-              {/* 时间轴刻度：各时段边界在本地时区的时刻 */}
-              <div className={`relative h-4 mb-1 ${LABEL_ML}`}>
-                {week.ticks.map(t => (
-                  <span
-                    key={t}
-                    className="num absolute -translate-x-1/2 text-[11px] text-muted-foreground whitespace-nowrap"
-                    style={{ left: `${(t / 1440) * 100}%` }}
-                  >
-                    {fmtMinOfDay(t)}
-                  </span>
-                ))}
-              </div>
-
-              {/* 7 行周视图：灰底槽 = 非交易时段，彩条叠在上面 */}
-              {week.rows.map((row, i) => (
-                <div key={row.dayStart} className={`flex items-center py-2 rounded-md ${i === todayIdx ? 'bg-surface-hover' : ''}`}>
-                  <div className={`${LABEL_W} shrink-0 text-xs font-bold`}>{t(DAY_KEYS[i])}</div>
-                  <div className="relative flex-1 h-2">
-                    <div className="absolute inset-0 rounded-full bg-muted-foreground/15" />
-                    {row.bars.map((b, j) => (
-                      <div key={j} className="absolute inset-y-0" style={{ left: `${(b.from / 1440) * 100}%`, width: `${((b.to - b.from) / 1440) * 100}%` }}>
-                        {/* 左右各缩 1.5px，相邻不同色之间留出细缝 */}
-                        <div className={`absolute inset-y-0 left-[1.5px] right-[1.5px] rounded-full ${BAR_COLOR[b.kind]}`} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* 图例：只画该市场用得上的时段 */}
-          <div className="grid grid-cols-3 gap-y-4 gap-x-2 pt-1">
-            {sessionKindsOf(market).map(k => (
-              <div key={k}>
-                <KindIcon kind={k} box="w-5 h-5" />
-                <div className="text-sm font-bold mt-1">{SESSION_META[k].label}</div>
-                <div className="text-xs text-muted-foreground">{SESSION_META[k].liquidity}</div>
               </div>
             ))}
+            {/* 现在：贯穿七行的竖虚线，顶上一枚时刻 */}
+            <div className="nowl">
+              <i style={{ left: `${nowPct}%` }} />
+              <b style={{ left: `${nowPct}%` }}>{fmtHm(now)}</b>
+            </div>
           </div>
+        )}
 
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            {t('session.note')}
-          </p>
+        <div className="skinds">
+          {sessionKindsOf(market).map(k => (
+            <div key={k}>
+              <i style={dot(k)} />
+              <b>{SESSION_META[k].label}</b>
+              <span>{SESSION_META[k].liquidity}</span>
+            </div>
+          ))}
         </div>
+
+        <p className="txt">{t('session.note')}</p>
       </Dialog>
     </>
   );
