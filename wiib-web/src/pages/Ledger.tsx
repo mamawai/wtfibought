@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { ledgerApi } from '../api';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Button } from '../components/ui/button';
 import { Select } from '../components/ui/select';
 import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import { EmptyState } from '../components/EmptyState';
-import { cn, fmtNum, fmtTime, parseServerTime } from '../lib/utils';
-import { Receipt, RefreshCw, Loader2, TriangleAlert } from 'lucide-react';
+import { cn, fmtNum, fmtTime, parseServerTime, spinIcon } from '../lib/utils';
+import { ChevronLeft, CloudOff, RefreshCw, Wallet } from 'lucide-react';
 import type { LedgerEntry, LedgerBizTypeOption, LedgerWallet } from '../types';
+import './records.css';
+import './Ledger.css';
 
 /** 后端默认 30、封顶 100。取默认值即可，一屏够看还省流量 */
 const PAGE_SIZE = 30;
@@ -43,14 +44,15 @@ function bizGroupKey(bizName: string): string {
 
 /**
  * 借款本金/应计利息这两个钱包，数字变大 = 欠得更多。
- * 一律按"正绿负红"上色会把"又借了 5000"画成好事，所以这两个钱包的配色反过来。
+ * 一律按"正数标绿"会把"又借了 5000"画成好事，所以这两个钱包反过来：减少才标绿。
  */
 const DEBT_WALLETS: LedgerWallet[] = ['LOAN_PRINCIPAL', 'LOAN_INTEREST'];
 
-function deltaTone(entry: LedgerEntry): string {
-  if (entry.delta === 0) return 'text-muted-foreground';
+/** 变动额颜色：进账标绿，花出去的保持正文色不标红 */
+function deltaTone(entry: LedgerEntry): string | undefined {
+  if (entry.delta === 0) return 'mute';
   const good = DEBT_WALLETS.includes(entry.wallet) ? entry.delta < 0 : entry.delta > 0;
-  return good ? 'text-gain' : 'text-loss';
+  return good ? 'up' : undefined;
 }
 
 /** 分组日期键。必须跟 fmtTime 同一时区（新加坡），否则跨零点的行会被分进错误的日期组 */
@@ -81,46 +83,24 @@ function groupByDay(entries: LedgerEntry[]): { key: string; rows: LedgerEntry[] 
   return groups;
 }
 
+/** 一条流水：时刻 | 类型 + 钱包 + 币 + 手续费/备注 | 变动额和变动后余额 */
 function EntryRow({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation('portfolio');
-  const up = entry.delta > 0;
   return (
-    <div className="flex items-center gap-3 px-4 py-3 border-b border-border/25 last:border-b-0 hover:bg-accent/25 transition-colors">
-      <span className="num text-[11px] text-muted-foreground w-11 shrink-0 tabular-nums">
-        {fmtTime(entry.createdAt)}
+    <div className="le2">
+      <span className="tm nf">{fmtTime(entry.createdAt)}</span>
+      <span className="nm">
+        {/* 类型文案走前端词表，认不出的新枚举兜底显示后端下发的 label */}
+        {t('biz.' + entry.bizType, { defaultValue: entry.bizTypeLabel })}
+        <span className="tag sm">{t(WALLET_LABEL[entry.wallet])}</span>
+        {entry.symbol && <span className="tag sm">{entry.symbol.replace('USDT', '')}</span>}
+        {entry.fee != null && <small className="nf">{t('ledger.fee', { value: fmtNum(entry.fee) })}</small>}
+        {entry.remark && <small>{entry.remark}</small>}
       </span>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-          {/* 类型文案走前端词表，认不出的新枚举兜底显示后端下发的 label */}
-          <span className="text-[13px] font-semibold truncate">
-            {t('biz.' + entry.bizType, { defaultValue: entry.bizTypeLabel })}
-          </span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground shrink-0">
-            {t(WALLET_LABEL[entry.wallet])}
-          </span>
-          {entry.symbol && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium shrink-0">
-              {entry.symbol.replace('USDT', '')}
-            </span>
-          )}
-        </div>
-        {(entry.remark || entry.fee != null) && (
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-muted-foreground">
-            {entry.remark && <span className="truncate">{entry.remark}</span>}
-            {entry.fee != null && <span className="num shrink-0">{t('ledger.fee', { value: fmtNum(entry.fee) })}</span>}
-          </div>
-        )}
-      </div>
-
-      <div className="text-right shrink-0">
-        <div className={cn('num text-[13px] font-bold tabular-nums', deltaTone(entry))}>
-          {up ? '+' : ''}{fmtNum(entry.delta)}
-        </div>
-        <div className="num text-[10px] text-muted-foreground tabular-nums">
-          {t('ledger.balanceAfter', { value: fmtNum(entry.balanceAfter) })}
-        </div>
-      </div>
+      <span className="am nf">
+        <b className={deltaTone(entry)}>{entry.delta > 0 ? '+' : ''}{fmtNum(entry.delta)}</b>
+        <span>{t('ledger.balanceAfter', { value: fmtNum(entry.balanceAfter) })}</span>
+      </span>
     </div>
   );
 }
@@ -201,96 +181,59 @@ export function Ledger() {
     }
     return groups;
   }, [bizOptions]);
+  const selectOptions = [
+    { value: '', label: t('ledger.allTypes') },
+    ...optionGroups.flatMap(g => g.options.map(o => ({
+      value: o.name,
+      label: t('biz.' + o.name, { defaultValue: o.label }),
+      group: t('bizGroup.' + bizGroupKey(g.options[0].name)),
+    }))),
+  ];
 
   const dayGroups = useMemo(() => groupByDay(entries), [entries]);
 
   return (
-    <div className="page-shell p-4 md:p-6 space-y-4">
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-1.5">
-              <CardTitle className="flex items-center gap-2.5 text-lg font-black tracking-tight">
-                <span className="p-1.5 rounded-xl bg-primary/10 text-primary">
-                  <Receipt className="w-4 h-4" />
-                </span>
-                {t('ledger.title')}
-              </CardTitle>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                {t('ledger.desc')}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Select
-                className="h-9 w-44 text-xs"
-                value={bizType}
-                onChange={e => setBizType(e.target.value)}
-                aria-label={t('ledger.filterLabel')}
-              >
-                <option value="">{t('ledger.allTypes')}</option>
-                {optionGroups.map(g => (
-                  <optgroup key={g.name} label={t('bizGroup.' + bizGroupKey(g.options[0].name))}>
-                    {g.options.map(o => (
-                      <option key={o.name} value={o.name}>{t('biz.' + o.name, { defaultValue: o.label })}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </Select>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 gap-2"
-                onClick={() => setRefreshNonce(n => n + 1)}
-              >
-                <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
-                {t('common:refresh')}
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-      </Card>
+    <div className="page-shell rec p-lg">
+      <div className="pg-h">
+        <div>
+          <Link className="back" to="/portfolio"><ChevronLeft className="ic" />{t('history.back')}</Link>
+          <h1>{t('ledger.title')}</h1>
+          <p className="lead">{t('ledger.desc')}</p>
+        </div>
+      </div>
 
-      <Card className="overflow-hidden">
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="p-4 space-y-3">
-              {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}
-            </div>
-          ) : failed ? (
-            <EmptyState icon={<TriangleAlert />} text={t('ledger.loadFailed')} />
-          ) : entries.length === 0 ? (
-            <EmptyState
-              icon={<Receipt />}
-              text={bizType ? t('ledger.emptyFiltered') : t('ledger.empty')}
-            />
-          ) : (
-            <>
-              {dayGroups.map(g => (
-                <div key={g.key}>
-                  {/* 日期分隔头。没做吸顶：顶栏高度是动态的（桌面多一条26px行情副条、
-                      刘海屏还有 safe-area、掉线时多一条横幅），sticky 得写死偏移量，
-                      写多写少都会穿帮。为一个装饰性吸顶去引全局高度变量不划算 */}
-                  <div className="px-4 py-1.5 bg-card-2 border-y border-border/30">
-                    <span className="microlabel font-bold">{dayLabel(g.key)}</span>
-                    <span className="ml-2 text-[10px] text-muted-foreground">{t('ledger.dayCount', { count: g.rows.length })}</span>
-                  </div>
-                  {g.rows.map(e => <EntryRow key={e.id} entry={e} />)}
-                </div>
-              ))}
+      <div className="fbar">
+        <Select value={bizType} onChange={setBizType} options={selectOptions} label={t('ledger.filterLabel')} />
+        <span className="sp" />
+        <button type="button" className="ib" aria-label={t('common:refresh')} title={t('common:refresh')}
+                onClick={e => { spinIcon(e); setRefreshNonce(n => n + 1); }}>
+          <RefreshCw className="ic" />
+        </button>
+      </div>
 
-              <div className="p-4 flex justify-center border-t border-border/30">
-                {done ? (
-                  <span className="text-xs text-muted-foreground">{t('ledger.noMore')}</span>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
-                    {loadingMore ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t('ledger.loadMore')}
-                  </Button>
-                )}
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+      {loading ? (
+        <div className="flex flex-col gap-2">
+          {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-12" />)}
+        </div>
+      ) : failed ? (
+        <EmptyState icon={<CloudOff />} text={t('ledger.loadFailed')} />
+      ) : entries.length === 0 ? (
+        <EmptyState icon={<Wallet />} text={bizType ? t('ledger.emptyFiltered') : t('ledger.empty')} />
+      ) : (
+        <>
+          {/* 日期分隔头。没做吸顶：顶栏高度是动态的（掉线时多一条横幅、刘海屏还有 safe-area），
+              sticky 得写死偏移量，写多写少都会穿帮。为一个装饰性吸顶去引全局高度变量不划算 */}
+          {dayGroups.map(g => (
+            <Fragment key={g.key}>
+              <div className="day">{dayLabel(g.key)}<small className="nf">{t('ledger.dayCount', { count: g.rows.length })}</small></div>
+              {g.rows.map(e => <EntryRow key={e.id} entry={e} />)}
+            </Fragment>
+          ))}
+          {done
+            ? <div className="end">{t('ledger.noMore')}</div>
+            : <button type="button" className={cn('btn wide mt-4', loadingMore && 'busy')} onClick={loadMore}>{t('ledger.loadMore')}</button>}
+        </>
+      )}
     </div>
   );
 }

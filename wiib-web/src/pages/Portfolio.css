@@ -1,0 +1,130 @@
+/* 持仓页。上半：左边总资产和钱包明细，右边一个能切的面板（今日 / 分布 / 收益 / 能力）；
+   往下是合约持仓（卡片见 FuturesPositionsCard.css）、现货持仓、预测、公开开关、重置账户 */
+@layer components {
+  .p-pf .ov{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:32px;margin-top:26px}
+  .p-pf .ov-l{grid-column:span 5;min-width:0}
+  .p-pf .ov-r{grid-column:7 / span 6;min-width:0}
+  .p-pf .cap{font-size:13px;color:var(--color-muted-foreground)}
+  .p-pf .total{margin-top:6px;font-size:clamp(56px,6.6vw,104px)}
+  /* 总资产底下：盈亏一行、钱包明细两列、划转钮 */
+  .p-pf .ov-l .pnl{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin-top:16px;font-size:20px;font-weight:500;letter-spacing:-.02em}
+  .p-pf .ov-l .pnl small{font-size:13px;font-weight:400;letter-spacing:0;color:var(--color-muted-foreground)}
+  .p-pf .ov-l .wal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 40px;margin-top:26px}
+  .p-pf .ov-l .wal > div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:14px}
+  .p-pf .ov-l .wal span{color:var(--color-muted-foreground)}
+  .p-pf .ov-l .wal b{font-size:16px;font-weight:500}
+  .p-pf .ov-l .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+
+  /* 右边面板：头上标题 + 段选；四个面板一样高，切换不跳 */
+  .p-pf .ov-h{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px}
+  .p-pf .ov-h b{font-size:15px;font-weight:600}
+  .p-pf .pv{min-height:372px}
+  .p-pf .pv .sk{height:320px}
+  /* 今日：大数 + 四类拆解 + 资产分布条 */
+  .p-pf .day{font-size:52px;letter-spacing:-.045em}
+  .p-pf .dayrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px}
+  .p-pf .dayrow span{font-size:15px;font-weight:500}
+  .p-pf .cats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:20px;padding-top:16px;border-top:1px solid var(--color-border)}
+  .p-pf .cats span{display:block;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-pf .cats b{display:block;margin-top:3px;font-size:18px;font-weight:500;letter-spacing:-.02em}
+  .p-pf .al-h{margin:34px 0 12px;font-size:15px;font-weight:600}
+  .p-pf .al-bar{display:flex;gap:3px;height:10px}
+  .p-pf .al-bar i{height:100%;min-width:3px;border-radius:5px;background:var(--c)}
+  .p-pf .al-leg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:14px}
+  .p-pf .al-leg span{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-pf .al-leg span::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:var(--c)}
+  .p-pf .al-leg b{display:block;margin-top:3px;font-size:16px;font-weight:500}
+  .p-pf .al-leg b small{margin-left:6px;font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
+
+  /* 分布：圆环 + 右边一列明细；指着哪行，环上那一段亮、别的退后，环心报它的数 */
+  .p-pf .dist{display:grid;grid-template-columns:220px minmax(0,1fr);gap:36px;align-items:center}
+  .p-pf .donut{position:relative;width:220px;height:220px}
+  .p-pf .donut svg{width:100%;height:100%;transform:rotate(-90deg)}
+  .p-pf .donut circle{fill:none;stroke-width:20;transition:opacity var(--t) var(--ease-control)}
+  .p-pf .donut.dim circle:not(.on){opacity:.18}
+  .p-pf .donut .mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .p-pf .donut .mid span{font-size:12px;color:var(--color-muted-foreground)}
+  .p-pf .donut .mid b{margin-top:2px;font-size:22px;font-weight:400;letter-spacing:-.03em}
+  .p-pf .donut .mid em{min-height:18px;margin-top:1px;font-style:normal;font-size:12px;color:var(--color-muted-foreground)}
+  .p-pf .dl button{display:grid;grid-template-columns:8px minmax(0,1fr) auto 52px;gap:10px;align-items:center;width:calc(100% + 20px);margin:0 -10px;padding:8px 10px;border-radius:10px;font-size:14px;text-align:left;transition:background-color var(--fast)}
+  .p-pf .dl button:focus-visible{background:var(--color-fill)}
+  .p-pf .dl i{width:8px;height:8px;border-radius:50%;background:var(--c)}
+  .p-pf .dl b{font-weight:500}
+  .p-pf .dl em{font-style:normal;font-size:12.5px;color:var(--color-muted-foreground);text-align:right}
+  .p-pf .pv-note{margin-top:14px;font-size:12px;color:var(--color-muted-foreground)}
+
+  /* 收益：一行读数跟着光标走，不弹浮层 */
+  .p-pf .pc-top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .p-pf .pc-rd{display:flex;flex-wrap:wrap;gap:3px 14px;min-height:38px;align-content:flex-start;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-pf .pc-rd b{font-weight:500}
+  .p-pf .pc-rd > b{color:var(--color-foreground)}
+  .p-pf .pc-rd span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .p-pf .pc-rd span i{width:8px;height:2px;border-radius:1px;background:var(--c)}
+  .p-pf .pc{position:relative;height:248px;margin-right:44px;outline-offset:6px;border-radius:6px;cursor:crosshair;touch-action:pan-y}
+  .p-pf .pc svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  .p-pf .pc .gl{stroke:var(--color-grid);stroke-width:1;vector-effect:non-scaling-stroke}
+  /* 零线虚着 */
+  .p-pf .pc .zl{stroke:var(--color-line2);stroke-dasharray:2 4}
+  .p-pf .pc polyline{fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+  .p-pf .pc .tot{stroke-width:2}
+  .p-pf .pc .cur{position:absolute;top:0;bottom:0;width:1px;background:var(--color-line2);pointer-events:none}
+  .p-pf .pc .yl{position:absolute;left:calc(100% + 8px);font-size:11px;color:var(--color-faint);transform:translateY(-50%);white-space:nowrap}
+  .p-pf .pc-x{display:flex;justify-content:space-between;margin:8px 44px 0 0;font-size:11px;color:var(--color-faint)}
+  .p-pf .pc-none{display:flex;align-items:center;justify-content:center;height:320px;font-size:14px;color:var(--color-muted-foreground)}
+
+  /* 能力：四根轴的雷达，值是胜过多少其他用户 */
+  .p-pf .rad{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,200px);gap:24px;align-items:center}
+  .p-pf .rad svg{display:block;width:100%;max-width:340px;height:auto;margin:0 auto;overflow:visible}
+  /* 一圈白一圈浅灰 */
+  .p-pf .rad .rg{fill:var(--color-background);stroke:var(--color-border);stroke-width:1}
+  .p-pf .rad .rg.a{fill:var(--color-fill)}
+  .p-pf .rad .ax{stroke:var(--color-border);stroke-width:1}
+  .p-pf .rad .shape{fill:color-mix(in srgb,var(--color-primary) 18%,transparent);stroke:var(--color-primary);stroke-width:1.75;stroke-linejoin:round}
+  .p-pf .rad .pt{fill:var(--color-background);stroke:var(--color-primary);stroke-width:1.75}
+  .p-pf .rad text{font-size:11.5px;fill:var(--color-muted-foreground)}
+  .p-pf .rad .kv b small{margin-left:2px;font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
+  .p-pf .rad .sum{margin-bottom:10px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-pf .rad .sum b{display:block;font-size:40px;font-weight:300;line-height:1.1;letter-spacing:-.04em;color:var(--color-foreground)}
+
+  /* 现货持仓：左币种右股票 */
+  .p-pf .spot{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:48px}
+  .p-pf .spot > div{min-width:0}
+  .p-pf .spot-sk .sk{height:46px}
+  .p-pf .spot-sk .sk + .sk{margin-top:10px}
+  /* 预测：整条能点，去预测页 */
+  .p-pf .pred{position:relative;display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) 20px;gap:16px;align-items:center}
+  .p-pf .pred::before{content:"";position:absolute;inset:-14px -16px;border-radius:16px;background:var(--color-fill);opacity:0;transition:opacity var(--t) var(--ease-control)}
+  .p-pf .pred > *{position:relative}
+  .p-pf .pred span{display:block;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-pf .pred b{display:block;margin-top:4px;font-size:22px;font-weight:500;letter-spacing:-.02em}
+  .p-pf .pred b small{margin-left:8px;font-size:12.5px;font-weight:400;letter-spacing:0;color:var(--color-muted-foreground)}
+  .p-pf .pred .ic{color:var(--color-faint);transition:transform var(--t) var(--ease-control),color var(--t) var(--ease-control)}
+  /* 公开开关、重置账户：一段说明 + 右边一个控件 */
+  .p-pf .line{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px 32px;max-width:920px}
+  .p-pf .line p{max-width:70ch;font-size:14px;line-height:1.65;color:var(--color-muted-foreground)}
+
+  @media (hover:hover){
+    .p-pf .dl button:hover{background:var(--color-fill)}
+    .p-pf .pred:hover::before{opacity:1}
+    .p-pf .pred:hover .ic{transform:translateX(2px);color:var(--color-foreground)}
+  }
+  @media (max-width:1180px){
+    .p-pf .ov-l,.p-pf .ov-r{grid-column:1/-1}
+    .p-pf .spot{grid-template-columns:minmax(0,1fr);gap:44px}
+  }
+  @media (max-width:760px){
+    .p-pf .ov-l .wal{grid-template-columns:minmax(0,1fr)}
+    .p-pf .cats,.p-pf .al-leg{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .p-pf .dist{grid-template-columns:minmax(0,1fr);justify-items:center;gap:22px}
+    .p-pf .dist .dl{width:100%}
+    .p-pf .rad{grid-template-columns:minmax(0,1fr)}
+    .p-pf .pred{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .p-pf .pred .ic{display:none}
+    .p-pf .day{font-size:44px}
+    .p-pf .ov-h .seg{width:100%;display:flex}
+    .p-pf .ov-h .seg button{flex:1;padding:0 6px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .p-pf .donut circle,.p-pf .dl button,.p-pf .pred::before,.p-pf .pred .ic{transition:none}
+  }
+}

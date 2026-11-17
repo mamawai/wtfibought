@@ -1,0 +1,14 @@
+/* 钱包划转：两个钱包并排，中间一颗换向钮，点一下箭头转半圈；底下金额框和预检 */
+@layer components {
+  .xfer{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:8px}
+  .xfer .wal{padding:14px;border-radius:16px;background:var(--color-fill)}
+  .xfer .wl{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .xfer .wal b{display:block;margin-top:8px;font-size:21px;font-weight:400;letter-spacing:-.03em}
+  .xfer .ib{border-radius:50%}
+  .xfer .ib .ic{transition:transform var(--slow) var(--ease-control)}
+  .xfer.rev .ib .ic{transform:rotate(180deg)}
+  /* 预检那块收着的时候，把面板的间距也吃掉 */
+  .xfer-dlg > .col{transition:grid-template-rows var(--t) var(--ease-control),margin-top var(--t) var(--ease-control)}
+  .xfer-dlg > .col:not(.open){margin-top:-18px}
+  @media (prefers-reduced-motion:reduce){.xfer .ib .ic,.xfer-dlg > .col{transition:none}}
+}

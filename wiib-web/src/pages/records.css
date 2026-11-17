@@ -1,0 +1,24 @@
+/* 记录类页面共用（合约仓位历史 / 资金账单 / 全站成交 / 爆仓记录）：返回链接、页头下那段说明、筛选一排、手机上换成一列的列表 */
+@layer components {
+  .rec .back{display:inline-flex;align-items:center;gap:3px;margin-bottom:10px;font-size:13px;color:var(--color-muted-foreground);transition:color var(--t) var(--ease-control)}
+  .rec .back .ic{width:14px;height:14px}
+  .rec .pg-h h1 small{margin-left:10px;font-size:13px;font-weight:400;letter-spacing:0;color:var(--color-muted-foreground)}
+  .rec .lead{max-width:76ch;margin-top:10px;font-size:13.5px;line-height:1.7;color:var(--color-muted-foreground)}
+  .rec .fbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:24px 0 14px}
+  .rec .fbar .sp{flex:1}
+  .rec .tbl .sym .ci{width:20px;height:20px;flex:none}
+  /* 标的名后面的小灰字（合约） */
+  .rec .tbl .sym small{font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
+  /* 手机上把表换成一列列表 */
+  .rec .rl{display:none}
+  .rec .rl > div,.rec .rl > button{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;width:100%;padding:13px 0;border-bottom:1px solid var(--color-border);font-size:13.5px;text-align:left}
+  .rec .rl b{font-weight:500}
+  .rec .rl .rr{margin-left:auto;text-align:right}
+  .rec .rl small{flex-basis:100%;font-size:12px;color:var(--color-muted-foreground)}
+  @media (hover:hover){.rec .back:hover{color:var(--color-foreground)}}
+  @media (max-width:760px){
+    .rec .tw.swap{display:none}
+    .rec .rl{display:block}
+  }
+  @media (prefers-reduced-motion:reduce){.rec .back{transition:none}}
+}

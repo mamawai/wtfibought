@@ -1,0 +1,22 @@
+/* 合约仓位历史表：一行一笔仓位，点开连同下面那行垫成一块浅灰，里面是投入、费用和每一次成交 */
+@layer components {
+  .rec-h .sym .ci{width:20px;height:20px;flex:none}
+  .rec-h .tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+  .rec-h tr[aria-expanded] .chev .ic{transition:transform var(--t) var(--ease-control)}
+  .rec-h tr[aria-expanded="true"] .chev .ic{transform:rotate(180deg)}
+  .rec-h tr[aria-expanded="true"] td{background:var(--color-fill)}
+  .rec-h tr[aria-expanded="true"] td:first-child{border-radius:14px 0 0 0}
+  .rec-h tr[aria-expanded="true"] td:last-child{border-radius:0 14px 0 0}
+  .rec-h .rec-d td{padding:0 16px 16px;background:var(--color-fill);white-space:normal;cursor:default}
+  .rec-h .rec-d td:first-child{border-radius:0 0 14px 14px}
+  /* 展开那块跟上一行连着，中间不画分隔线 */
+  .rec-h .rec-d td::before{display:none}
+  .rec-kv{display:flex;flex-wrap:wrap;gap:4px 24px;padding:4px 0 12px;font-size:13px;color:var(--color-muted-foreground)}
+  .rec-kv b{margin-left:4px;font-weight:500;color:var(--color-foreground)}
+  .rec-f{display:flex;flex-direction:column;border-top:1px solid var(--color-border)}
+  .rec-f > div{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;padding:9px 0;border-bottom:1px solid var(--color-border);font-size:13px}
+  .rec-f > div:last-child{border-bottom:0}
+  .rec-f b{font-weight:500}
+  .rec-f .pn{margin-left:auto;font-weight:500}
+  @media (prefers-reduced-motion:reduce){.rec-h tr[aria-expanded] .chev .ic{transition:none}}
+}

@@ -1,23 +1,25 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Trans, useTranslation } from 'react-i18next';
-import { RefreshCw } from 'lucide-react';
+import { useEffect, useState, useCallback, type CSSProperties } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { ArrowLeftRight, ChevronRight, Inbox, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useUserStore } from '../stores/userStore';
 import { userApi, cryptoOrderApi, cryptoApi, futuresApi, predictionApi, bstockApi } from '../api';
-import { Dialog, DialogHeader, DialogContent, DialogFooter } from '../components/ui/dialog';
 import { Skeleton } from '../components/ui/skeleton';
+import { Seg } from '../components/ui/seg';
+import { BigNum } from '../components/ui/big-num';
 import { useToast } from '../components/ui/use-toast';
+import { EmptyState } from '../components/EmptyState';
 import { PortfolioChart } from '../components/PortfolioChart';
 import { WalletTransferModal } from '../components/WalletTransferModal';
 import { FuturesPositionsCard } from '../components/coin/FuturesPositionsCard';
 import { ProfitChart } from '../components/ProfitChart';
 import { RadarChart } from '../components/RadarChart';
 import { ProfilePublicToggle } from '../components/ProfilePublicToggle';
-import { useCountUp } from '../hooks/useCountUp';
-import { useStagger } from '../hooks/useStagger';
-import { cn, fmtNum, fmtSignedPct, fmtSignedUsd } from '../lib/utils';
+import { ResetAccountDialog } from '../components/ResetAccountDialog';
+import { cn, fmtNum, fmtSignedPct, fmtSignedUsd, spinIcon } from '../lib/utils';
 import type { CryptoPosition, FuturesPosition, PredictionPnl, AssetSnapshot, CategoryAverages, BStock } from '../types';
 import { formatCoinPrice, getCoin } from '../lib/coinConfig';
+import './Portfolio.css';
 
 interface CryptoRow extends CryptoPosition {
   /** 持有总量 = 可用 + 挂限价卖单冻结的 */
@@ -43,19 +45,19 @@ interface BStockRow extends CryptoRow {
   ticker: string;
 }
 
-/** 右栏三个可切换面板；null = 默认的今日收益 + 资产分布 */
-type Panel = 'dist' | 'profit' | 'ability';
+/** 右边那块的四个面板 */
+type Panel = 'day' | 'dist' | 'profit' | 'ability';
 
 /** 分布条四段的颜色，条和图例共用一份 */
 const ALLOC_COLORS = {
   crypto: 'var(--color-foreground)',
-  bstock: 'color-mix(in oklab, var(--color-foreground) 60%, var(--color-card-2))',
+  bstock: 'color-mix(in srgb,var(--color-foreground) 40%,var(--color-background))',
   futures: 'var(--color-primary)',
-  cash: 'var(--color-border)',
+  cash: 'var(--color-line2)',
 };
 
-/** 负数项（全仓浮亏）在分布条上的红斜纹，盖在条右端 */
-const ALLOC_LOSS_BG = 'repeating-linear-gradient(-45deg, var(--color-loss) 0 3px, transparent 3px 6px)';
+const signed = (v: number) => `${v >= 0 ? '+' : ''}${fmtNum(v)}`;
+const upDn = (v: number) => v >= 0 ? 'up' : 'dn';
 
 export function Portfolio() {
   const navigate = useNavigate();
@@ -68,18 +70,13 @@ export function Portfolio() {
   const [predictionPnl, setPredictionPnl] = useState<PredictionPnl | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [panel, setPanel] = useState<Panel | null>(null);
+  const [panel, setPanel] = useState<Panel>('day');
   const [profitData, setProfitData] = useState<AssetSnapshot[]>([]);
   const [profitLoaded, setProfitLoaded] = useState(false);
   const [realtimeSnapshot, setRealtimeSnapshot] = useState<AssetSnapshot | null>(null);
   const [categoryAverages, setCategoryAverages] = useState<CategoryAverages | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
-  const [confirmName, setConfirmName] = useState('');
-  const [resetting, setResetting] = useState(false);
-
-  const cryptoBodyRef = useStagger<HTMLTableSectionElement>();
-  const bstockBodyRef = useStagger<HTMLTableSectionElement>();
 
   const userId = user?.id;
 
@@ -175,42 +172,14 @@ export function Portfolio() {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- requestKey 已编码 user/refresh 全部刷新条件；effect 内会回写 user store，加 user 依赖会自触发死循环
     }, [requestKey]);
 
-  // 大数滚动：hook 不能挂在 user 判空之后，值先兜 0
-  const totalRef = useCountUp<HTMLSpanElement>(user?.totalAssets ?? 0, v => fmtNum(v));
-  const pnlRef = useCountUp<HTMLSpanElement>(user?.profit ?? 0, fmtSignedUsd);
-  const dailyRef = useCountUp<HTMLSpanElement>(realtimeSnapshot?.dailyProfit ?? 0, fmtSignedUsd);
-
-  const closeReset = () => {
-    setResetOpen(false);
-    setConfirmName('');
-  };
-
   const refresh = () => {
     setRefreshNonce(n => n + 1);
     setProfitLoaded(false);
     toast(t('toast.refreshed'), 'info');
   };
 
-  // 重置后整页重拉：refreshNonce 一变就重走 portfolio（顺带回写 user store）+ 持仓，
-  // 收益面板的缓存也一并作废，否则图上还挂着重置前的曲线
-  const handleReset = async () => {
-    setResetting(true);
-    try {
-      await userApi.resetAccount(confirmName);
-      closeReset();
-      setRefreshNonce(n => n + 1);
-      setProfitLoaded(false);
-      toast(t('toast.resetDone'), 'success');
-    } catch (e) {
-      toast((e as Error).message || t('toast.resetFailed'), 'error');
-    } finally {
-      setResetting(false);
-    }
-  };
-
   if (!user) return null;
 
-  const isProfit = user.profit >= 0;
   const startCapital = user.totalAssets - user.profit;
   const cryptoTotal = cryptoRows.reduce((s, c) => s + c.marketValue, 0);
   const bstockTotal = bstockRows.reduce((s, b) => s + b.marketValue, 0);
@@ -229,7 +198,6 @@ export function Portfolio() {
   const hasPrediction = predictionPnl != null && predictionPnl.totalBets > 0;
   const hasCrypto = cryptoRows.length > 0;
   const hasBstock = bstockRows.length > 0;
-  const hasFutures = futuresPositions.length > 0;
 
   const rt = realtimeSnapshot;
   const dailyProfit = rt?.dailyProfit ?? 0;
@@ -241,7 +209,7 @@ export function Portfolio() {
     { k: t('cat.prediction'), v: rt?.dailyPredictionProfit ?? 0 },
   ];
 
-  // 余额钱包 = 余额 + 冻结（限价买单、逐仓限价开仓冻着的钱），同后端总资产口径；钱包明细、分布条、饼图都用它
+  // 余额钱包 = 余额 + 冻结（限价买单、逐仓限价开仓冻着的钱），同后端总资产口径；钱包明细、分布条、圆环都用它
   const walletBalance = user.balance + user.frozenBalance;
   const allocRaw = [
     { k: t('alloc.crypto'), v: cryptoTotal, c: ALLOC_COLORS.crypto },
@@ -249,171 +217,137 @@ export function Portfolio() {
     { k: t('alloc.futures'), v: futuresTotal, c: ALLOC_COLORS.futures },
     { k: t('alloc.cash'), v: walletBalance, c: ALLOC_COLORS.cash },
   ];
-  // 占比按正数合计算；全仓浮亏会让合约那格成负数，照实记负占比，条上从右端用红斜纹盖掉这么一截
+  // 占比按正数合计算；全仓浮亏会让合约那格成负数：不进条，图例里点和数字标红
   const allocTotal = allocRaw.reduce((s, a) => s + Math.max(0, a.v), 0);
   const alloc = allocRaw.map(a => ({ ...a, pct: allocTotal > 0 ? (a.v / allocTotal) * 100 : 0 }));
-  const allocLossPct = Math.min(100, -alloc.reduce((s, a) => s + Math.min(0, a.pct), 0));
 
-  const togglePanel = (p: Panel) => setPanel(cur => cur === p ? null : p);
-  const panelBtn = (p: Panel, label: string) => (
-    <button type="button" className={cn('btn sm', panel === p && 'fill')} onClick={() => togglePanel(p)}>{label}</button>
-  );
-
-  // 钱包明细一行：金额 17px 窄体，颜色由调用方给
-  const walletRow = (label: string, value: string, cls?: string) => (
-    <div className="kv text-[15px]">
-      <span className="k">{label}</span>
-      <span className={cn('v text-[17px] [font-stretch:85%]', cls)}>{value}</span>
-    </div>
-  );
-
-  const signed = (v: number) => `${v >= 0 ? '+' : ''}${fmtNum(v)}`;
+  const panelTitle = { day: t('daily.title'), dist: t('alloc.title'), profit: t('ov.profit'), ability: t('ov.ability') }[panel];
 
   return (
-    <div className="wrap">
-      <div className="page-h flex-wrap">
-        <h1>{t('page.title')}</h1>
+    <div className="page-shell p-pf">
+      <div className="pg-h">
+        <div><h1>{t('page.title')}</h1></div>
         <div className="r">
-          <button type="button" className="btn sm" onClick={() => navigate('/ledger')}>{t('page.ledger')}</button>
-          <button type="button" className="btn sm" onClick={() => navigate('/portfolio/history')}>{t('page.history')}</button>
-          <button type="button" className="btn sm" onClick={refresh}><RefreshCw className="ic" />{t('common:refresh')}</button>
+          <Link className="btn" to="/ledger">{t('page.ledger')}</Link>
+          <Link className="btn" to="/portfolio/history">{t('page.history')}</Link>
+          <button type="button" className="btn" onClick={e => { spinIcon(e); refresh(); }}><RefreshCw className="ic" />{t('common:refresh')}</button>
         </div>
       </div>
 
       {user.bankrupt && (
-        <div className="mt-3.5 border-l-4 border-loss pl-3 py-1 text-[13px]">
-          <div className="font-bold text-loss">{t('bankrupt.title')}</div>
-          <div className="mute">
-            {t('bankrupt.detail', {
-              times: user.bankruptCount,
-              date: user.bankruptResetDate ?? t('bankrupt.nextDay'),
-            })}
+        <div className="note r mt-[18px]">
+          <TriangleAlert className="ic" />
+          <div>
+            <b>{t('bankrupt.title')}</b><br />
+            {t('bankrupt.detail', { times: user.bankruptCount, date: user.bankruptResetDate ?? t('bankrupt.nextDay') })}
           </div>
         </div>
       )}
 
-      {/* ====== 总资产 / 钱包明细 ｜ 今日收益 + 资产分布（或三个面板之一） ====== */}
-      <section className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-7 border-t-2 border-foreground pt-[22px]">
-        <div className="xl:col-span-5">
-          <div className="mute text-[13px]">{t('ov.totalAssets')}</div>
-          <div className="num cond mt-1.5 text-[clamp(64px,6.4vw,120px)] font-bold leading-[0.96]">
-            <small className="text-[0.36em] font-medium mute align-[1em] mr-[0.06em] [font-stretch:90%] tracking-normal">$</small>
-            <span ref={totalRef} />
-          </div>
-
-          <div className={cn('num flex items-baseline flex-wrap gap-3.5 mt-3.5 text-[22px] font-semibold [font-stretch:80%]', isProfit ? 'up' : 'dn')}>
-            <span ref={pnlRef} />
+      {/* ====== 总资产 / 钱包明细 ｜ 今日、分布、收益、能力 ====== */}
+      <section className="ov">
+        <div className="ov-l">
+          <div className="cap">{t('ov.totalAssets')}</div>
+          <b className="big total nf"><BigNum value={user.totalAssets} /></b>
+          <div className={cn('pnl', upDn(user.profit))}>
+            <span>{fmtSignedUsd(user.profit)}</span>
             <span>{fmtSignedPct(user.profitPct)}</span>
-            <span className="text-[13px] font-medium mute [font-stretch:100%]">{t('ov.since', { amount: `$${fmtNum(startCapital)}` })}</span>
+            <small>{t('ov.since', { amount: `₮${fmtNum(startCapital)}` })}</small>
           </div>
-
-          <div className="num mt-[26px] grid grid-cols-2 gap-x-10">
-            {walletRow(t('ov.balanceWallet'), fmtNum(walletBalance))}
-            {walletRow(t('ov.gameWallet'), fmtNum(user.gameBalance))}
-            {walletRow(t('ov.futuresMargin'), fmtNum(futuresMargin))}
-            {walletRow(t('ov.futuresUnrealized'), signed(futuresProfit), futuresProfit >= 0 ? 'up' : 'dn')}
-            {walletRow(t('ov.marginLoan'), fmtNum(user.marginLoanPrincipal), user.marginLoanPrincipal > 0 ? 'wn' : 'mute')}
-            {walletRow(t('ov.interestAccrued'), fmtNum(user.marginInterestAccrued), user.marginInterestAccrued > 0 ? 'dn' : 'mute')}
+          <div className="wal">
+            <div><span>{t('ov.balanceWallet')}</span><b>{fmtNum(walletBalance)}</b></div>
+            <div><span>{t('ov.gameWallet')}</span><b>{fmtNum(user.gameBalance)}</b></div>
+            <div><span>{t('ov.futuresMargin')}</span><b>{fmtNum(futuresMargin)}</b></div>
+            <div>
+              <span>{t('ov.futuresUnrealized')}</span>
+              <b className={futuresPositions.length ? upDn(futuresProfit) : 'mute'}>{futuresPositions.length ? signed(futuresProfit) : fmtNum(0)}</b>
+            </div>
+            <div><span>{t('ov.marginLoan')}</span><b className={user.marginLoanPrincipal > 0 ? 'wn' : 'mute'}>{fmtNum(user.marginLoanPrincipal)}</b></div>
+            <div><span>{t('ov.interestAccrued')}</span><b className={user.marginInterestAccrued > 0 ? 'dn' : 'mute'}>{fmtNum(user.marginInterestAccrued)}</b></div>
           </div>
-
-          <div className="flex flex-wrap gap-2.5 mt-[22px]">
-            <button type="button" className="btn sm fill" onClick={() => setTransferOpen(true)}>{t('ov.transfer')}</button>
-            {panelBtn('dist', t('ov.dist'))}
-            {panelBtn('profit', t('ov.profit'))}
-            {panelBtn('ability', t('ov.ability'))}
+          <div className="acts">
+            <button type="button" className="btn ink" onClick={() => setTransferOpen(true)}><ArrowLeftRight className="ic" />{t('ov.transfer')}</button>
           </div>
         </div>
 
-        <div className="xl:col-span-6 xl:col-start-7">
-          {panel ? (
-            <>
-              <div className="flex items-baseline justify-between mb-3">
-                <b className="text-[15px] font-extrabold">{t(`ov.${panel}`)}</b>
-              </div>
-              {panel === 'dist' && (
-                <div className="h-[320px]">
-                  <PortfolioChart
-                    cryptoPositions={cryptoRows}
-                    bstockRows={bstockRows}
-                    futuresRows={futuresChartRows}
-                    balance={walletBalance}
-                    gameBalance={user.gameBalance}
-                  />
-                </div>
-              )}
-              {panel === 'profit' && (profitLoaded ? <ProfitChart data={profitData} /> : <Skeleton className="w-full h-[320px]" />)}
-              {panel === 'ability' && (categoryAverages ? <RadarChart userData={categoryAverages} /> : <Skeleton className="w-full h-[320px]" />)}
-            </>
-          ) : (
-            <>
-              <div>
-                <div className="flex items-baseline justify-between">
-                  <b className="text-[15px] font-extrabold">{t('daily.title')}</b>
-                </div>
-                <div className={cn('num cond mt-2.5 text-[44px] font-bold leading-none', rt == null ? 'mute' : dailyProfit >= 0 ? 'up' : 'dn')}>
-                  <span ref={dailyRef} />
-                  <small className="ml-2.5 text-[16px] font-semibold">{fmtSignedPct(rt?.dailyProfitPct ?? 0)}</small>
-                </div>
-                <div className="num grid grid-cols-2 xl:grid-cols-5 gap-3.5 mt-[18px] pt-4 border-t border-border">
-                  {cats.map(c => (
-                    <div key={c.k}>
-                      <div className="text-[12.5px] mute">{c.k}</div>
-                      <div className={cn('mt-0.5 text-[19px] font-semibold [font-stretch:85%]', c.v === 0 ? 'mute' : c.v > 0 ? 'up' : 'dn')}>{signed(c.v)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+        <div className="ov-r">
+          <div className="ov-h">
+            <b>{panelTitle}</b>
+            <Seg value={panel} onChange={setPanel} label={panelTitle} options={[
+              { value: 'day', label: t('ov.today') },
+              { value: 'dist', label: t('ov.dist') },
+              { value: 'profit', label: t('ov.profit') },
+              { value: 'ability', label: t('ov.ability') },
+            ]} />
+          </div>
 
-              <div className="mt-[30px]">
-                <div className="flex items-baseline justify-between mb-3">
-                  <b className="text-[15px] font-extrabold">{t('alloc.title')}</b>
+          <div className="pv">
+            {panel === 'day' && (
+              <>
+                <div className="dayrow">
+                  <b className={cn('big day nf', rt == null ? 'mute' : upDn(dailyProfit))}><BigNum value={dailyProfit} signed /></b>
+                  <span className={rt == null ? 'mute' : upDn(dailyProfit)}>{fmtSignedPct(rt?.dailyProfitPct ?? 0)}</span>
                 </div>
-                <div className="relative flex h-[22px] gap-0.5">
-                  {alloc.map(a => <i key={a.k} className="block h-full" style={{ width: `${Math.max(0, a.pct)}%`, background: a.c }} />)}
-                  {allocLossPct > 0 && <i className="absolute inset-y-0 right-0" style={{ width: `${allocLossPct}%`, background: ALLOC_LOSS_BG }} />}
+                <div className="cats">
+                  {cats.map(c => (
+                    <div key={c.k}><span>{c.k}</span><b className={c.v === 0 ? 'mute' : upDn(c.v)}>{signed(c.v)}</b></div>
+                  ))}
                 </div>
-                <div className="num grid grid-cols-2 xl:grid-cols-4 gap-3.5 mt-3.5">
+                <div className="al-h">{t('alloc.title')}</div>
+                <div className="al-bar">
+                  {alloc.filter(a => a.v > 0).map(a => <i key={a.k} style={{ '--c': a.c, width: `${a.pct}%` } as CSSProperties} />)}
+                </div>
+                <div className="al-leg">
                   {alloc.map(a => (
-                    <div key={a.k} className="flex flex-col gap-0.5 pl-3 border-l-4" style={{ borderColor: a.v < 0 ? 'var(--color-loss)' : a.c }}>
-                      <span className="text-[12.5px] mute">{a.k}</span>
-                      <span className={cn('text-[17px] font-semibold [font-stretch:85%]', a.v < 0 && 'dn')}>
-                        {fmtNum(a.v)}<small className="ml-1.5 text-[12px] font-medium mute">{a.pct.toFixed(1)}%</small>
-                      </span>
+                    <div key={a.k}>
+                      <span style={{ '--c': a.v < 0 ? 'var(--color-loss)' : a.c } as CSSProperties}>{a.k}</span>
+                      <b className={cn(a.v < 0 && 'dn')}>{fmtNum(a.v)}<small>{a.pct.toFixed(1)}%</small></b>
                     </div>
                   ))}
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+            {panel === 'dist' && (
+              <PortfolioChart
+                cryptoPositions={cryptoRows}
+                bstockRows={bstockRows}
+                futuresRows={futuresChartRows}
+                balance={walletBalance}
+                gameBalance={user.gameBalance}
+              />
+            )}
+            {panel === 'profit' && (profitLoaded ? <ProfitChart data={profitData} /> : <Skeleton />)}
+            {panel === 'ability' && (categoryAverages ? <RadarChart userData={categoryAverages} /> : <Skeleton />)}
+          </div>
         </div>
       </section>
 
-      {/* 合约持仓整节由卡片自己渲染（空仓时 return null） */}
-      {hasFutures && (
-        <FuturesPositionsCard
-          refreshKey={refreshNonce}
-          showCloseAll
-          onOrdersChanged={() => setRefreshNonce(n => n + 1)}
-        />
-      )}
+      {/* ====== 合约持仓：和交易页同一张卡 ====== */}
+      <FuturesPositionsCard
+        refreshKey={refreshNonce}
+        showCloseAll
+        onOrdersChanged={() => setRefreshNonce(n => n + 1)}
+      />
 
       {/* ====== 现货持仓：左币种右股票 ====== */}
       <section className="sec">
         {loading ? (
-          <div className="flex flex-col gap-3">
-            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+          <div className="spot-sk">
+            {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} />)}
           </div>
         ) : !hasCrypto && !hasBstock ? (
-          <div className="py-10 text-center text-[14px] mute">{t('holdings.empty')}</div>
+          <EmptyState icon={<Inbox />} text={t('holdings.empty')}>
+            <Link className="btn" to="/coin">{t('holdings.goMarkets')}</Link>
+          </EmptyState>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
+          <div className="spot">
             {hasCrypto && (
               <div>
                 <div className="sec-h">
                   <h2>{t('spot.cryptoTitle')}<small>{t('spot.cryptoCount', { count: cryptoRows.length })}</small></h2>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="tbl num min-w-[560px]">
+                <div className="tw">
+                  <table className="tbl hov min-w-[540px]">
                     <thead>
                       <tr>
                         <th>{t('spot.colCoin')}</th>
@@ -422,14 +356,14 @@ export function Portfolio() {
                         <th className="r">{t('spot.colLast')}</th>
                         <th className="r">{t('spot.colValue')}</th>
                         <th className="r">{t('spot.colPnl')}</th>
+                        <th className="chev" />
                       </tr>
                     </thead>
-                    <tbody ref={cryptoBodyRef}>
+                    <tbody>
                       {cryptoRows.map(c => {
                         const coin = getCoin(c.symbol);
-                        const up = c.profit >= 0;
                         return (
-                          <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/coin/${c.symbol}`)}>
+                          <tr key={c.id} onClick={() => navigate(`/coin/${c.symbol}`)}>
                             <td>
                               <span className="sym">{coin.name}</span>
                               <span className="sub">
@@ -441,10 +375,11 @@ export function Portfolio() {
                             <td className="r">{formatCoinPrice(c.symbol, c.avgCost)}</td>
                             <td className="r">{formatCoinPrice(c.symbol, c.currentPrice)}</td>
                             <td className="r">{fmtNum(c.marketValue)}</td>
-                            <td className={cn('r font-bold', up ? 'up' : 'dn')}>
+                            <td className={cn('r pn', upDn(c.profit))}>
                               {signed(c.profit)}
-                              <span className={cn('sub', up ? 'text-gain' : 'text-loss')}>{fmtSignedPct(c.profitPct)}</span>
+                              <span className={cn('sub', upDn(c.profit))}>{fmtSignedPct(c.profitPct)}</span>
                             </td>
+                            <td className="chev"><ChevronRight className="ic" /></td>
                           </tr>
                         );
                       })}
@@ -459,8 +394,8 @@ export function Portfolio() {
                 <div className="sec-h">
                   <h2>{t('spot.bstockTitle')}<small>{t('spot.bstockCount', { count: bstockRows.length })}</small></h2>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="tbl num min-w-[560px]">
+                <div className="tw">
+                  <table className="tbl hov min-w-[540px]">
                     <thead>
                       <tr>
                         <th>{t('spot.colStock')}</th>
@@ -469,28 +404,27 @@ export function Portfolio() {
                         <th className="r">{t('spot.colLast')}</th>
                         <th className="r">{t('spot.colValue')}</th>
                         <th className="r">{t('spot.colPnl')}</th>
+                        <th className="chev" />
                       </tr>
                     </thead>
-                    <tbody ref={bstockBodyRef}>
-                      {bstockRows.map(b => {
-                        const up = b.profit >= 0;
-                        return (
-                          <tr key={b.id} className="cursor-pointer" onClick={() => navigate(`/bstock/${b.symbol}`)}>
-                            <td>
-                              <span className="sym">{b.ticker}</span>
-                              <span className="sub">{b.name}</span>
-                            </td>
-                            <td className="r">{b.heldQty}</td>
-                            <td className="r">{fmtNum(b.avgCost)}</td>
-                            <td className="r">{fmtNum(b.currentPrice)}</td>
-                            <td className="r">{fmtNum(b.marketValue)}</td>
-                            <td className={cn('r font-bold', up ? 'up' : 'dn')}>
-                              {signed(b.profit)}
-                              <span className={cn('sub', up ? 'text-gain' : 'text-loss')}>{fmtSignedPct(b.profitPct)}</span>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                    <tbody>
+                      {bstockRows.map(b => (
+                        <tr key={b.id} onClick={() => navigate(`/bstock/${b.symbol}`)}>
+                          <td>
+                            <span className="sym">{b.ticker}</span>
+                            <span className="sub">{b.name}</span>
+                          </td>
+                          <td className="r">{b.heldQty}</td>
+                          <td className="r">{fmtNum(b.avgCost)}</td>
+                          <td className="r">{fmtNum(b.currentPrice)}</td>
+                          <td className="r">{fmtNum(b.marketValue)}</td>
+                          <td className={cn('r pn', upDn(b.profit))}>
+                            {signed(b.profit)}
+                            <span className={cn('sub', upDn(b.profit))}>{fmtSignedPct(b.profitPct)}</span>
+                          </td>
+                          <td className="chev"><ChevronRight className="ic" /></td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -500,36 +434,28 @@ export function Portfolio() {
         )}
       </section>
 
-      {/* ====== BTC 涨跌预测 ====== */}
+      {/* ====== BTC 涨跌预测：整条能点 ====== */}
       {hasPrediction && predictionPnl && (
         <section className="sec">
           <div className="sec-h">
             <h2>{t('prediction.title')}<small>{t('prediction.wallet')}</small></h2>
           </div>
-          <div className="strip num grid-cols-2 md:grid-cols-4 cursor-pointer" onClick={() => navigate('/prediction')}>
+          <Link className="pred" to="/prediction">
+            <div><span>{t('prediction.realized')}</span><b className={upDn(predictionPnl.realizedPnl)}>{fmtSignedUsd(predictionPnl.realizedPnl)}</b></div>
+            <div><span>{t('prediction.totalBets')}</span><b>{t('prediction.bets', { count: predictionPnl.totalBets })}</b></div>
             <div>
-              <div className="k">{t('prediction.realized')}</div>
-              <div className={cn('v', predictionPnl.realizedPnl >= 0 ? 'up' : 'dn')}>{fmtSignedUsd(predictionPnl.realizedPnl)}</div>
+              <span>{t('prediction.winRate')}</span>
+              <b>{Math.round(predictionPnl.winRate)}%<small>{t('prediction.record', { won: predictionPnl.wonBets, lost: predictionPnl.lostBets })}</small></b>
             </div>
             <div>
-              <div className="k">{t('prediction.totalBets')}</div>
-              <div className="v">{t('prediction.bets', { count: predictionPnl.totalBets })}</div>
-            </div>
-            <div>
-              <div className="k">{t('prediction.winRate')}</div>
-              <div className="v">
-                {Math.round(predictionPnl.winRate)}%
-                <small>{t('prediction.record', { won: predictionPnl.wonBets, lost: predictionPnl.lostBets })}</small>
-              </div>
-            </div>
-            <div>
-              <div className="k">{t('prediction.active')}</div>
-              <div className="v">
+              <span>{t('prediction.active')}</span>
+              <b>
                 {t('prediction.bets', { count: predictionPnl.activeBets })}
                 <small>{t('prediction.activeHint', { cost: fmtNum(predictionPnl.activeCost), value: fmtNum(predictionPnl.activeValue) })}</small>
-              </div>
+              </b>
             </div>
-          </div>
+            <ChevronRight className="ic" />
+          </Link>
         </section>
       )}
 
@@ -537,57 +463,20 @@ export function Portfolio() {
 
       {/* ====== 重置账户 ====== */}
       <section className="sec">
-        <div className="sec-h">
-          <h2>{t('reset.title')}</h2>
-        </div>
-        <div className="flex items-center flex-wrap gap-8">
-          <p className="m-0 text-[14px] mute max-w-[70ch] leading-[1.6]">{t('reset.desc')}</p>
-          <button type="button" className="btn ml-auto border-loss text-loss" onClick={() => setResetOpen(true)}>{t('reset.action')}</button>
+        <div className="sec-h"><h2>{t('reset.title')}</h2></div>
+        <div className="line">
+          <p>{t('reset.desc')}</p>
+          <button type="button" className="btn risk" onClick={() => setResetOpen(true)}>{t('reset.action')}</button>
         </div>
       </section>
 
-      {/* 二次确认：必须逐字输入用户名，防误点 */}
-      <Dialog open={resetOpen} onClose={closeReset} className="bg-background border-foreground shadow-none">
-        <DialogHeader>
-          <h2 className="text-[17px] font-extrabold text-loss">{t('reset.dialogTitle')}</h2>
-        </DialogHeader>
-        <DialogContent>
-          <div className="flex flex-col gap-3">
-            <p className="text-[13px] mute leading-relaxed">{t('reset.warnClears')}</p>
-            <p className="text-[13px] wn leading-relaxed">{t('reset.warnCost')}</p>
-            <p className="text-[13px]">
-              {/* 用户名夹在句子中间，中英语序不同，整句交给 Trans 摆位 */}
-              <Trans
-                ns="portfolio"
-                i18nKey="reset.confirmName"
-                values={{ name: user.username }}
-                components={[<strong key="name" className="text-foreground" />]}
-              />
-            </p>
-            <div className="input">
-              <input
-                className="flex-1 min-w-0 bg-transparent border-0 outline-none [font:inherit]"
-                value={confirmName}
-                onChange={e => setConfirmName(e.target.value)}
-                placeholder={t('reset.namePlaceholder')}
-                autoComplete="off"
-              />
-            </div>
-          </div>
-        </DialogContent>
-        <DialogFooter>
-          <button type="button" className="btn sm" onClick={closeReset}>{t('common:cancel')}</button>
-          <button
-            type="button"
-            className="btn sm loss disabled:opacity-40 disabled:cursor-default"
-            disabled={confirmName !== user.username || resetting}
-            onClick={handleReset}
-          >
-            {resetting ? t('reset.submitting') : t('reset.submit')}
-          </button>
-        </DialogFooter>
-      </Dialog>
-
+      {/* 重置后整页重拉：refreshNonce 一变就重走 portfolio（顺带回写 user store）+ 持仓，
+          收益面板的缓存也一并作废，否则图上还挂着重置前的曲线 */}
+      <ResetAccountDialog
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        onDone={() => { setRefreshNonce(n => n + 1); setProfitLoaded(false); }}
+      />
       <WalletTransferModal open={transferOpen} onClose={() => setTransferOpen(false)} />
     </div>
   );
