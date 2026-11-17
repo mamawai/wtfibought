@@ -43,7 +43,7 @@ export function EquityChart({ points, height = 220, className }: Props) {
           const p = params[0];
           const v = p.value[1] as number;
           const sign = v >= 0 ? '+' : '';
-          return `${fmtDateTime(p.value[0])}<br/><b>${t('chart.cumPnl', { value: `${sign}$${v.toFixed(2)}` })}</b>`;
+          return `${fmtDateTime(p.value[0])}<br/><b>${t('chart.cumPnl', { value: `${sign}₮${v.toFixed(2)}` })}</b>`;
         },
       },
       xAxis: {
@@ -54,7 +54,7 @@ export function EquityChart({ points, height = 220, className }: Props) {
       },
       yAxis: {
         type: 'value',
-        axisLabel: { fontSize: 10, color: ui.axisLabel, formatter: (v: number) => `$${v.toFixed(0)}` },
+        axisLabel: { fontSize: 10, color: ui.axisLabel, formatter: (v: number) => `₮${v.toFixed(0)}` },
         splitLine: { lineStyle: { color: ui.gridLine, opacity: 0.6 } },
       },
       series: [

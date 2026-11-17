@@ -1,5 +1,5 @@
 /**
- * 量化策略的展示口径：名字、说明、点缀色。
+ * 量化策略的展示口径：名字、说明。
  * <p>
  * 后端只认 id（回测提交、策略账户、信号快照都按它走），给人看的字一律在这儿按词表现查——
  * 策略账户页与回测配置台共用同一份，同一个策略不会在两处叫两个名字。
@@ -10,8 +10,6 @@
 export interface StrategyDisplay {
   /** 与 TradingStrategySpi.id() 同值 */
   id: string;
-  /** 图标底色/识别用，不入图表 */
-  accent: string;
   nameKey: string;
   /** 一句话说明（策略账户页） */
   descKey: string;
@@ -21,22 +19,10 @@ export interface StrategyDisplay {
 
 /** 数组顺序即回测配置台的排布顺序 */
 export const STRATEGIES: StrategyDisplay[] = [
-  {
-    id: 'FIBO', accent: '#F97316',
-    nameKey: 'strategies.name.fibo', descKey: 'strategies.desc.fibo', mechKey: 'backtest.strategy.fibo',
-  },
-  {
-    id: 'TURTLE', accent: '#10b981',
-    nameKey: 'strategies.name.turtle', descKey: 'strategies.desc.turtle', mechKey: 'backtest.strategy.turtle',
-  },
-  {
-    id: 'SQZMOM', accent: '#a855f7',
-    nameKey: 'strategies.name.sqzmom', descKey: 'strategies.desc.sqzmom', mechKey: 'backtest.strategy.sqzmom',
-  },
+  { id: 'FIBO', nameKey: 'strategies.name.fibo', descKey: 'strategies.desc.fibo', mechKey: 'backtest.strategy.fibo' },
+  { id: 'TURTLE', nameKey: 'strategies.name.turtle', descKey: 'strategies.desc.turtle', mechKey: 'backtest.strategy.turtle' },
+  { id: 'SQZMOM', nameKey: 'strategies.name.sqzmom', descKey: 'strategies.desc.sqzmom', mechKey: 'backtest.strategy.sqzmom' },
 ];
-
-/** 后端冒出没登记的策略 id 时的兜底色，与 FIBO 同色 */
-export const DEFAULT_ACCENT = '#F97316';
 
 const BY_ID: Record<string, StrategyDisplay> =
   Object.fromEntries(STRATEGIES.map(s => [s.id, s]));

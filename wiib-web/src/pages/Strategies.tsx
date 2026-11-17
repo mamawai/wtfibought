@@ -1,34 +1,57 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  Activity, ArrowDownRight, ArrowUpRight, Bot, ChevronLeft, ChevronRight, Crosshair,
-  History, Loader2, PowerOff, Radar, RefreshCcw, TrendingUp, Wallet, X,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CloudOff, RefreshCw } from 'lucide-react';
 import { strategyAccountApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
-import { EquityChart } from '../components/EquityChart';
-import { cn, fmtDateTime, fmtNum, parseServerTime } from '../lib/utils';
+import { Seg } from '../components/ui/seg';
+import { SureButton } from '../components/SureButton';
+import { cn, fmtDateTime, fmtNum, spinIcon } from '../lib/utils';
+import { COIN_MAP } from '../lib/coinConfig';
+import { tradeSymbolName } from '../lib/orderSide';
 import type { FuturesPosition, StrategyAccountView, StrategyClosedPosition, StrategySignalState } from '../types';
-import type { TnEquityPoint } from '../types/testnet';
-import { DEFAULT_ACCENT, strategyDisplay } from '../lib/strategyCatalog';
+import { strategyDisplay } from '../lib/strategyCatalog';
+import './Strategies.css';
 
 const ADMIN_USER_ID = 1;
 const REFRESH_MS = 60_000;
+const TRADE_PAGE_SIZE = 8;
 
+/** 带号盈亏，涨绿跌红；没有值给横杠 */
+function Pnl({ value }: { value: number | null | undefined }) {
+  if (value == null) return <>—</>;
+  return <span className={value >= 0 ? 'up' : 'dn'}>{value >= 0 ? '+' : ''}{fmtNum(value)}</span>;
+}
 
-function PnlText({ value, className }: { value: number | null | undefined; className?: string }) {
-  if (value == null) return <span className={className}>-</span>;
+/** 认不出的策略 id 直接把 id 当名字显示（后端新增策略时不至于空白） */
+function useStrategyName() {
+  const { t } = useTranslation('strategy');
+  return (id: string) => {
+    const meta = strategyDisplay(id);
+    return { name: meta ? t(meta.nameKey) : id, desc: meta ? t(meta.descKey) : '' };
+  };
+}
+
+/** 收益曲线：累计已实现盈亏从 0 起，一根线 + 0 轴虚线；收着盈利绿、亏损红 */
+function Curve({ points }: { points: number[] }) {
+  const mn = Math.min(0, ...points);
+  const mx = Math.max(0, ...points);
+  const y = (v: number) => (92 - (v - mn) / ((mx - mn) || 1) * 88).toFixed(1);
+  const x = (i: number) => (i / Math.max(1, points.length - 1) * 300).toFixed(1);
+  const up = points[points.length - 1] >= 0;
   return (
-    <span className={cn(value >= 0 ? 'text-gain' : 'text-loss', className)}>
-      {value >= 0 ? '+' : ''}{fmtNum(value)}
-    </span>
+    <div className="cv">
+      <svg viewBox="0 0 300 96" preserveAspectRatio="none" aria-hidden>
+        <line className="bl" x1="0" x2="300" y1={y(0)} y2={y(0)} />
+        <polyline className="ln" style={{ stroke: up ? 'var(--color-gain)' : 'var(--color-loss)' }}
+                  points={points.map((v, i) => `${x(i)},${y(v)}`).join(' ')} />
+      </svg>
+    </div>
   );
 }
 
-/** 持仓卡：策略当前敞口 + SL/TP + 浮盈；管理员额外渲染平仓按钮（点击即市价平，无二次确认）。 */
-function PositionCard({ pos, canClose, closing, onClose }: {
+/** 持仓块：策略当前敞口 + SL/TP + 浮盈；管理员多一颗平仓钮（再点一次才市价平） */
+function PositionBlock({ pos, canClose, closing, onClose }: {
   pos: FuturesPosition;
   canClose: boolean;
   closing: boolean;
@@ -38,255 +61,158 @@ function PositionCard({ pos, canClose, closing, onClose }: {
   const isLong = pos.side === 'LONG';
   const sl = pos.stopLosses?.[0]?.price;
   const tp = pos.takeProfits?.[0]?.price;
+  const coin = COIN_MAP[pos.symbol];
   return (
-    <div className="rounded-md border border-border bg-card p-3 space-y-2">
-      <div className="flex items-center gap-2">
-        {isLong
-          ? <ArrowUpRight className="w-3.5 h-3.5 text-gain shrink-0" />
-          : <ArrowDownRight className="w-3.5 h-3.5 text-loss shrink-0" />}
-        <span className="text-xs font-black">{pos.symbol}</span>
-        <span className={cn('text-[10px] font-bold px-1.5 py-0.5 rounded', isLong ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss')}>
-          {isLong ? t('side.long') : t('side.short')} {pos.leverage}x
-        </span>
-        <span className="ml-auto text-[10px] text-muted-foreground">{fmtDateTime(pos.createdAt)}</span>
-      </div>
-      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
-        <span className="text-muted-foreground">{t('strategies.pos.qty')} <span className="font-bold text-foreground tabular-nums">{pos.quantity}</span></span>
-        <span className="text-muted-foreground">{t('strategies.pos.entry')} <span className="font-bold text-foreground tabular-nums">{fmtNum(pos.entryPrice)}</span></span>
-        <span className="text-muted-foreground">{t('strategies.pos.mark')} <span className="font-bold text-foreground tabular-nums">{fmtNum(pos.markPrice)}</span></span>
-        <span className="text-muted-foreground">{t('strategies.pos.margin')} <span className="font-bold text-foreground tabular-nums">{fmtNum(pos.margin)}</span></span>
-        {sl != null && <span className="text-muted-foreground">SL <span className="font-bold text-loss tabular-nums">{fmtNum(sl)}</span></span>}
-        {tp != null && <span className="text-muted-foreground">TP <span className="font-bold text-gain tabular-nums">{fmtNum(tp)}</span></span>}
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-xs">
-          {t('strategies.pos.unrealized')} <PnlText value={pos.unrealizedPnl} className="font-black tabular-nums" />
+    <div className="blk ps">
+      <div className="h">
+        {coin && <coin.icon className={cn('ci', coin.colorClass)} />}
+        {tradeSymbolName(pos.symbol)}
+        <span className={cn('tag sm', isLong ? 'g' : 'r')}>{isLong ? t('side.long') : t('side.short')} {pos.leverage}x</span>
+        <span className="pn num">
+          <Pnl value={pos.unrealizedPnl} />
           {pos.unrealizedPnlPct != null && (
-            <span className={cn('text-[10px] ml-1', pos.unrealizedPnl >= 0 ? 'text-gain' : 'text-loss')}>
-              ({pos.unrealizedPnl >= 0 ? '+' : ''}{pos.unrealizedPnlPct.toFixed(1)}%)
-            </span>
+            <small className={pos.unrealizedPnl >= 0 ? 'up' : 'dn'}>({pos.unrealizedPnl >= 0 ? '+' : ''}{pos.unrealizedPnlPct.toFixed(1)}%)</small>
           )}
         </span>
-        {canClose && (
-          <button
-            disabled={closing}
-            onClick={() => onClose(pos)}
-            className="border border-border hover:bg-surface-hover px-2.5 py-1 rounded-lg text-[11px] font-bold text-loss flex items-center gap-1 disabled:opacity-50"
-          >
-            {closing ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />} {t('strategies.pos.close')}
-          </button>
-        )}
       </div>
+      <div className="gm num">
+        <span>{t('strategies.pos.qty')}<b>{pos.quantity}</b></span>
+        <span>{t('strategies.pos.entry')}<b>{fmtNum(pos.entryPrice)}</b></span>
+        <span>{t('strategies.pos.mark')}<b>{fmtNum(pos.markPrice)}</b></span>
+        <span>{t('strategies.pos.margin')}<b>{fmtNum(pos.margin)}</b></span>
+        {sl != null && <span>SL<b className="dn">{fmtNum(sl)}</b></span>}
+        {tp != null && <span>TP<b className="up">{fmtNum(tp)}</b></span>}
+      </div>
+      <small className="num">{fmtDateTime(pos.createdAt)}</small>
+      {canClose && (
+        <SureButton className={cn('btn sm', closing && 'busy')} disabled={closing} sureLabel={t('strategies.pos.closeSure')}
+                    onConfirm={() => onClose(pos)}>
+          {t('strategies.pos.close')}
+        </SureButton>
+      )}
     </div>
   );
 }
 
-/** 单币信号状态行：一句话状态 + 指标 chips，让人看见"策略活着、离触发差多少"。 */
-function SignalStateRow({ sig }: { sig: StrategySignalState }) {
+function TradeRow({ t: tr }: { t: StrategyClosedPosition }) {
   const { t } = useTranslation('strategy');
+  const isLong = tr.side === 'LONG';
   return (
-    <div className="rounded-md border border-border bg-card p-2.5 space-y-1.5">
-      <div className="flex items-start gap-2">
-        <span className="text-xs font-black shrink-0">{sig.symbol.replace('USDT', '')}</span>
-        <span className="ml-auto text-right text-[10px] font-bold text-primary/90 leading-tight">
-          {t(`strategies.signals.state.${sig.state.key}`, sig.state.vars)}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1">
-        {sig.metrics.map(m => (
-          <span key={m.key} className="text-[10px] text-muted-foreground whitespace-nowrap">
-            {t(`strategies.signals.metric.${m.key}.label`, m.vars)}{' '}
-            <span className="font-bold text-foreground tabular-nums">{t(`strategies.signals.metric.${m.key}.value`, m.vars)}</span>
-          </span>
-        ))}
-      </div>
+    <div className="tr num">
+      <span className={cn('tag sm', isLong ? 'g' : 'r')}>{isLong ? t('side.long') : t('side.short')}</span>
+      <span className="p">{tr.symbol.replace('USDT', '')} · {fmtNum(tr.entryPrice)} → {fmtNum(tr.closedPrice)}</span>
+      <span className="pn"><Pnl value={tr.closedPnl} /></span>
+      <small>{fmtDateTime(tr.updatedAt)}{tr.status === 'LIQUIDATED' && ` · ${t('strategies.trades.liquidated')}`}</small>
     </div>
   );
 }
 
-/** 拟物空态：内凹面板 + 浮起图标圆盘，替代光秃秃一行灰字。 */
-function EmptyState({ icon: Icon, title, hint, className }: {
-  icon: LucideIcon; title: string; hint?: string; className?: string;
-}) {
-  return (
-    <div className={cn('rounded-lg border border-border bg-card-2 flex flex-col items-center justify-center text-center gap-2.5 px-4', className || 'py-10')}>
-      <div className="w-11 h-11 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
-        <Icon className="w-5 h-5" />
-      </div>
-      <div className="text-xs font-bold text-muted-foreground">{title}</div>
-      {hint && <div className="text-[10px] text-muted-foreground/70 leading-relaxed max-w-[230px] -mt-1">{hint}</div>}
-    </div>
-  );
-}
-
-function TradeRow({ t }: { t: StrategyClosedPosition }) {
-  const { t: tr } = useTranslation('strategy');
-  const isLong = t.side === 'LONG';
-  return (
-    <div className="flex items-center gap-2.5 py-2 px-2 -mx-2 rounded-lg text-[11px] border-b border-border/40 last:border-0 hover:bg-surface-hover/50 transition-colors">
-      <span className={cn('w-1 self-stretch rounded-full shrink-0', isLong ? 'bg-gain' : 'bg-loss')} />
-      <div className="min-w-0 shrink-0">
-        <div className="font-bold leading-tight">
-          {t.symbol.replace('USDT', '')}
-          <span className={cn('ml-1 text-[9px] font-black', isLong ? 'text-gain' : 'text-loss')}>{isLong ? tr('side.long') : tr('side.short')}</span>
-          {t.status === 'LIQUIDATED' && <span className="ml-1 text-[9px] font-bold px-1 py-px rounded bg-loss/15 text-loss">{tr('strategies.trades.liquidated')}</span>}
-        </div>
-        <div className="text-[10px] text-muted-foreground tabular-nums leading-tight mt-0.5">
-          {fmtNum(t.entryPrice)} → {fmtNum(t.closedPrice)}
-        </div>
-      </div>
-      <div className="ml-auto text-right shrink-0">
-        <PnlText value={t.closedPnl} className="font-black tabular-nums block leading-tight" />
-        <div className="text-[9px] text-muted-foreground/70 leading-tight mt-0.5">{fmtDateTime(t.updatedAt)}</div>
-      </div>
-    </div>
-  );
-}
-
-/** 单策略账户栏：stat 行 → 实时信号 → 收益曲线 → 持仓 → 交易记录（分页）。 */
-function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
+/** 单策略账户栏：名字 → 四个数 → 实时信号 → 收益曲线 → 持仓 → 交易记录（分页）。on=窄屏下当前选中的那套 */
+function StrategyColumn({ view, signals, on, canClose, closingId, onClose }: {
   view: StrategyAccountView;
   signals: StrategySignalState[];
+  on: boolean;
   canClose: boolean;
   closingId: number | null;
   onClose: (strategyId: string, pos: FuturesPosition) => void;
 }) {
   const { t } = useTranslation('strategy');
-  const meta = strategyDisplay(view.strategyId);
-  // 认不出的策略 id 直接把 id 当名字显示（后端新增策略时不至于空白）
-  const metaName = meta ? t(meta.nameKey) : view.strategyId;
-  const metaDesc = meta ? t(meta.descKey) : '';
-  const accent = meta?.accent ?? DEFAULT_ACCENT;
+  const { name, desc } = useStrategyName()(view.strategyId);
   const [tradePage, setTradePage] = useState(0);
 
   // 收益曲线：已平仓 closedPnl 按平仓时间升序累加（testnet 页同口径，从 0 起）
-  const equityPoints = useMemo<TnEquityPoint[]>(() => {
-    const asc = [...view.closedPositions].reverse();
-    // 前缀和写法：闭包内累加变量违反 react-hooks/immutability（条数少，O(n²) 无所谓）
-    const pnls = asc.map(p => p.closedPnl ?? 0);
-    return asc.map((p, i) => ({
-      time: parseServerTime(p.updatedAt).getTime(),
-      cumPnl: pnls.slice(0, i + 1).reduce((a, b) => a + b, 0),
-    }));
-  }, [view.closedPositions]);
+  const curve = useMemo(() => [...view.closedPositions].reverse()
+    .reduce<number[]>((acc, p) => [...acc, acc[acc.length - 1] + (p.closedPnl ?? 0)], [0]), [view.closedPositions]);
 
   // 前端分页：overview 一次带全（≤200笔），翻页纯内存；60s 刷新后条数变化时钳住页码
-  const TRADE_PAGE_SIZE = 8;
   const pageCount = Math.max(1, Math.ceil(view.closedPositions.length / TRADE_PAGE_SIZE));
   const page = Math.min(tradePage, pageCount - 1);
   const trades = view.closedPositions.slice(page * TRADE_PAGE_SIZE, (page + 1) * TRADE_PAGE_SIZE);
 
   return (
-    <div className="rounded-lg pt-card p-5 space-y-4 min-w-0">
-      {/* 头：策略专属点缀色只用在图标底，识别度够又不破坏拟物基调 */}
-      <div className="flex items-center gap-3">
-        <div
-          className="w-10 h-10 rounded-lg border border-border bg-card flex items-center justify-center shrink-0"
-          style={{ background: `${accent}1f`, color: accent }}
-        >
-          <Bot className="w-5 h-5" />
-        </div>
-        <div className="min-w-0">
-          <div className="text-sm font-black truncate">{metaName}</div>
-          <div className="text-[10px] text-muted-foreground truncate">{metaDesc} · quant-{view.strategyId}</div>
-        </div>
-        {!view.available && (
-          <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">{t('strategies.offline')}</span>
-        )}
+    <div className={cn('colx', on && 'on')}>
+      <div className="nmh">
+        <b><i className={cn(!view.available && 'off')} />{name}{!view.available && <span className="tag sm">{t('strategies.offline')}</span>}</b>
+        <span>{desc} · quant-{view.strategyId}</span>
       </div>
 
       {!view.available ? (
-        <EmptyState icon={PowerOff} title={t('strategies.unavailable.title')} hint={t('strategies.unavailable.hint')} />
+        <div className="empty left">
+          <span className="ib0"><CloudOff className="ic" /></span>
+          <b>{t('strategies.unavailable.title')}</b>
+          <span>{t('strategies.unavailable.hint')}</span>
+        </div>
       ) : (
         <>
-          {/* Stats：内凹"仪表窗"，主数字加大一档，标签退后 */}
-          <div className="grid grid-cols-2 gap-2.5">
-            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-              <div className="text-lg font-black tabular-nums truncate leading-tight">${fmtNum(view.equity)}</div>
-              <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-1">
-                <Wallet className="w-3 h-3" /> {t('strategies.stats.equity', { available: fmtNum(view.balance, 0) })}
-              </div>
+          <div className="st4 num">
+            <div className="eq">
+              <b>{view.equity == null ? '—' : `₮${fmtNum(view.equity)}`}</b>
+              <span>{t('strategies.stats.equity', { available: fmtNum(view.balance, 0) })}</span>
             </div>
-            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-              <div className="text-lg font-black tabular-nums truncate leading-tight"><PnlText value={view.cumPnl} /></div>
-              <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-1">
-                <TrendingUp className="w-3 h-3" /> {t('strategies.stats.realized', { count: view.tradeCount })}
-              </div>
+            <div><b><Pnl value={view.cumPnl} /></b><span>{t('strategies.stats.realized', { count: view.tradeCount })}</span></div>
+            <div>
+              <b>{view.tradeCount > 0 ? `${(view.winRate * 100).toFixed(1)}%` : '—'}</b>
+              <span>{t('strategies.stats.winRate', { wins: view.winCount, total: view.tradeCount })}</span>
             </div>
-            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-              <div className={cn('text-lg font-black tabular-nums leading-tight', view.tradeCount > 0 && view.winRate >= 0.5 ? 'text-gain' : view.tradeCount > 0 ? 'text-loss' : '')}>
-                {view.tradeCount > 0 ? `${(view.winRate * 100).toFixed(1)}%` : '—'}
-              </div>
-              <div className="text-[10px] text-muted-foreground mt-1">{t('strategies.stats.winRate', { wins: view.winCount, total: view.tradeCount })}</div>
-            </div>
-            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-              <div className="text-lg font-black tabular-nums truncate leading-tight"><PnlText value={view.unrealizedPnl} /></div>
-              <div className="text-[10px] text-muted-foreground mt-1">{t('strategies.stats.unrealized', { count: view.positions.length })}</div>
+            <div>
+              <b>{view.positions.length > 0 ? <Pnl value={view.unrealizedPnl} /> : '—'}</b>
+              <span>{t('strategies.stats.unrealized', { count: view.positions.length })}</span>
             </div>
           </div>
 
           {/* 实时信号状态：每根5m收盘随策略评估更新，证明策略在跑 */}
-          <div className="space-y-2 pt-1 border-t border-border/40">
-            <div className="text-[11px] font-black text-muted-foreground tracking-wide pt-1.5 flex items-center gap-1">
-              <Radar className="w-3 h-3" /> {t('strategies.signals.title')}
-            </div>
+          <div>
+            <h3>{t('strategies.signals.title')}</h3>
             {signals.length === 0 ? (
-              <EmptyState icon={Radar} title={t('strategies.signals.empty')} hint={t('strategies.signals.emptyHint')} className="py-6" />
-            ) : (
-              signals.map(s => <SignalStateRow key={s.symbol} sig={s} />)
-            )}
+              <p className="none">{t('strategies.signals.empty')} · {t('strategies.signals.emptyHint')}</p>
+            ) : signals.map(sig => (
+              <div key={sig.symbol} className="blk sig">
+                {/* 同一套策略盯着好几个币时，前面标上是哪个 */}
+                <b>{signals.length > 1 && `${sig.symbol.replace('USDT', '')} · `}{t(`strategies.signals.state.${sig.state.key}`, sig.state.vars)}</b>
+                <div className="kv num">
+                  {sig.metrics.map(m => (
+                    <div key={m.key}>
+                      <span>{t(`strategies.signals.metric.${m.key}.label`, m.vars)}</span>
+                      <b>{t(`strategies.signals.metric.${m.key}.value`, m.vars)}</b>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
-          {/* 收益曲线 */}
-          {equityPoints.length > 0 ? (
-            <div className="rounded-lg border border-border bg-card-2 px-1 py-2">
-              <EquityChart points={equityPoints} />
-            </div>
-          ) : (
-            <EmptyState icon={TrendingUp} title={t('strategies.equity.empty')} hint={t('strategies.equity.emptyHint')} className="py-8" />
-          )}
+          <div>
+            <h3>{t('strategies.equity.title')}<small>{t('strategies.equity.sub')}</small></h3>
+            {view.closedPositions.length > 0
+              ? <Curve points={curve} />
+              : <p className="none">{t('strategies.equity.empty')} · {t('strategies.equity.emptyHint')}</p>}
+          </div>
 
-          {/* 持仓 */}
-          <div className="space-y-2 pt-1 border-t border-border/40">
-            <div className="text-[11px] font-black text-muted-foreground tracking-wide pt-1.5">{t('strategies.positions.title')}</div>
+          <div>
+            <h3>{t('strategies.positions.title')}</h3>
             {view.positions.length === 0 ? (
-              <EmptyState icon={Crosshair} title={t('strategies.positions.empty')} className="py-6" />
-            ) : (
-              view.positions.map(p => (
-                <PositionCard key={p.id} pos={p} canClose={canClose} closing={closingId === p.id}
-                  onClose={pos => onClose(view.strategyId, pos)} />
-              ))
-            )}
+              <p className="none">{t('strategies.positions.empty')}</p>
+            ) : view.positions.map(p => (
+              <PositionBlock key={p.id} pos={p} canClose={canClose} closing={closingId === p.id}
+                             onClose={pos => onClose(view.strategyId, pos)} />
+            ))}
           </div>
 
-          {/* 交易记录 */}
-          <div className="space-y-1 pt-1 border-t border-border/40">
-            <div className="text-[11px] font-black text-muted-foreground tracking-wide pt-1.5">{t('strategies.trades.title')}</div>
+          <div>
+            <h3>{t('strategies.trades.title')}</h3>
             {view.closedPositions.length === 0 ? (
-              <EmptyState icon={History} title={t('strategies.trades.empty')} className="py-6" />
+              <p className="none">{t('strategies.trades.empty')}</p>
             ) : (
               <>
-                {trades.map(t => <TradeRow key={t.id} t={t} />)}
+                {trades.map(tr => <TradeRow key={tr.id} t={tr} />)}
                 {pageCount > 1 && (
-                  <div className="flex items-center justify-center gap-3 pt-1.5">
-                    <button
-                      disabled={page === 0}
-                      onClick={() => setTradePage(page - 1)}
-                      className="border border-border hover:bg-surface-hover w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
-                      aria-label={t('pager.prev')}
-                    >
-                      <ChevronLeft className="w-3.5 h-3.5" />
+                  <div className="pgn">
+                    <button type="button" className="ib sm" disabled={page === 0} onClick={() => setTradePage(page - 1)} aria-label={t('pager.prev')}>
+                      <ChevronLeft className="ic" />
                     </button>
-                    <span className="text-[11px] font-bold text-muted-foreground tabular-nums">
-                      {t('strategies.trades.pageInfo', { page: page + 1, pages: pageCount, total: view.closedPositions.length })}
-                    </span>
-                    <button
-                      disabled={page >= pageCount - 1}
-                      onClick={() => setTradePage(page + 1)}
-                      className="border border-border hover:bg-surface-hover w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
-                      aria-label={t('pager.next')}
-                    >
-                      <ChevronRight className="w-3.5 h-3.5" />
+                    <span className="num">{t('strategies.trades.pageInfo', { page: page + 1, pages: pageCount, total: view.closedPositions.length })}</span>
+                    <button type="button" className="ib sm" disabled={page >= pageCount - 1} onClick={() => setTradePage(page + 1)} aria-label={t('pager.next')}>
+                      <ChevronRight className="ic" />
                     </button>
                   </div>
                 )}
@@ -300,19 +226,23 @@ function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
 }
 
 /**
- * 多策略账户监控：FIBO / SQZMOM / TURTLE 各绑独立模拟盘账户（盈亏归因互不污染）。
- * PC 2×2 田字格对比，移动端竖排。平仓按钮仅 userId=1 渲染，后端二次校验才是真正的门。
+ * 多策略账户监控：FIBO / TURTLE / SQZMOM 各绑独立模拟盘账户（盈亏归因互不污染）。
+ * 宽屏几套并排对比，窄屏段选一次看一套。平仓按钮仅 userId=1 渲染，后端二次校验才是真正的门。
  */
 export function Strategies() {
   const { t } = useTranslation(['strategy', 'common']);
   const { toast } = useToast();
   const user = useUserStore(s => s.user);
   const isAdmin = user?.id === ADMIN_USER_ID;
+  const strategyName = useStrategyName();
 
   const [views, setViews] = useState<StrategyAccountView[]>([]);
   const [signals, setSignals] = useState<StrategySignalState[]>([]);
   const [loading, setLoading] = useState(false);
   const [closingId, setClosingId] = useState<number | null>(null);
+  // 窄屏当前看哪套；没选过就是第一套
+  const [picked, setPicked] = useState<string | null>(null);
+  const cur = picked ?? views[0]?.strategyId;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -337,7 +267,7 @@ export function Strategies() {
     return () => clearInterval(timer);
   }, [load]);
 
-  // 点击即市价整仓平（服务端实时取仓位数量+userId==1 校验），无二次确认
+  // 确认后市价整仓平（服务端实时取仓位数量+userId==1 校验）
   const handleClose = useCallback(async (strategyId: string, pos: FuturesPosition) => {
     if (closingId != null) return;
     setClosingId(pos.id);
@@ -353,45 +283,43 @@ export function Strategies() {
   }, [closingId, load, toast, t]);
 
   return (
-    <div className="page-shell p-4 md:p-6 space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-lg pt-card flex items-center justify-center bg-primary/10">
-            <Activity className="w-5.5 h-5.5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight">{t('strategies.title')}</h1>
-            <p className="text-[11px] text-muted-foreground">{t('strategies.subtitle')}</p>
-          </div>
+    <div className="page-shell p-sg">
+      <div className="pg-h">
+        <div>
+          <h1>{t('strategies.title')}</h1>
+          <p className="sub">{t('strategies.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => { void load(); }}
-            className="border border-border hover:bg-surface-hover w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary" aria-label={t('common:refresh')}>
-            <RefreshCcw className={cn('w-4 h-4', loading && 'animate-spin')} />
+        <div className="r">
+          <button type="button" className="ib" title={t('common:refresh')} aria-label={t('common:refresh')}
+                  onClick={e => { spinIcon(e); void load(); }}>
+            <RefreshCw className="ic" />
           </button>
         </div>
       </div>
 
       {loading && views.length === 0 ? (
-        <div className="flex items-center justify-center py-20 gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" /> {t('strategies.loading')}
-        </div>
+        <div className="empty">{t('strategies.loading')}</div>
       ) : (
-        <div className="grid gap-5 md:grid-cols-2">
-          {views.map(v => (
-            <StrategyColumn
-              key={v.strategyId}
-              view={v}
-              signals={signals.filter(s => s.strategyId === v.strategyId)}
-              canClose={isAdmin}
-              closingId={closingId}
-              onClose={handleClose}
-            />
-          ))}
-        </div>
+        <>
+          {cur && (
+            <Seg className="pick" value={cur} onChange={setPicked} label={t('strategies.title')}
+                 options={views.map(v => ({ value: v.strategyId, label: strategyName(v.strategyId).name }))} />
+          )}
+          <div className="cols">
+            {views.map(v => (
+              <StrategyColumn
+                key={v.strategyId}
+                view={v}
+                signals={signals.filter(s => s.strategyId === v.strategyId)}
+                on={v.strategyId === cur}
+                canClose={isAdmin}
+                closingId={closingId}
+                onClose={handleClose}
+              />
+            ))}
+          </div>
+        </>
       )}
-
     </div>
   );
 }

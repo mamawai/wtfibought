@@ -1,0 +1,86 @@
+/* 回测：两种玩法。策略回测——让一套策略在历史上跑一遍，右边按时间记着它每一步；手动复盘——历史行情一根根揭开，自己按收盘价开平仓 */
+@layer components {
+  .p-bt .sub{margin-top:8px;font-size:13.5px;color:var(--color-muted-foreground)}
+  /* 配置台：一排字段，按钮靠右，底下一行说明 */
+  .p-bt .cfg{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px 16px;margin-top:24px;padding:20px 22px}
+  .p-bt .cfg .fld{min-width:120px}
+  .p-bt .cfg .fld.bal{max-width:150px}
+  .p-bt .cfg .fld.w{flex:1 1 220px}
+  .p-bt .cfg .inp{height:38px;border-radius:10px}
+  .p-bt .cfg .inp input{font-size:14px}
+  /* 这一排的控件都是 38 高，底边才齐 */
+  .p-bt .cfg .dp > button{height:38px;border-radius:10px;font-size:14px}
+  .p-bt .cfg .seg button{height:32px}
+  .p-bt .cfg .go3{margin-left:auto}
+  .p-bt .cfg .desc{flex-basis:100%;font-size:13px;line-height:1.6;color:var(--color-muted-foreground)}
+  /* 排队、进度：一句话 + 一根细进度条 */
+  .p-bt .prog{display:flex;align-items:center;gap:14px;margin-top:16px;font-size:13px;color:var(--color-muted-foreground)}
+  .p-bt .prog b{font-weight:500;color:var(--color-foreground)}
+  .p-bt .prog i{flex:1;height:3px;border-radius:2px;background:var(--color-fill2);overflow:hidden}
+  .p-bt .prog i b{display:block;height:100%;background:var(--color-foreground);transition:width var(--t) var(--ease-control)}
+  .p-bt .empty.idle{margin-top:40px}
+  /* 汇总：一排八格，竖线隔开 */
+  .p-bt .st8{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));margin-top:28px}
+  .p-bt .st8 > div{padding:2px 0 2px 18px;border-left:1px solid var(--color-border)}
+  .p-bt .st8 > div:first-child{padding-left:0;border-left:0}
+  .p-bt .st8 > div > span{display:block;font-size:12px;color:var(--color-muted-foreground)}
+  .p-bt .st8 b{display:block;margin-top:5px;font-size:19px;font-weight:400;letter-spacing:-.02em;white-space:nowrap}
+  .p-bt .st8 small{display:block;margin-top:2px;font-size:11.5px;color:var(--color-faint)}
+  /* 主区：左图右记录 */
+  .p-bt .grid{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:40px;align-items:start;margin-top:28px}
+  .p-bt .grid > div{min-width:0}
+  .p-bt .cvh{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:10px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .p-bt .cvh .sp,.p-bt .player .sp{flex:1}
+  .p-bt .player{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px}
+  .p-bt .player input[type=range]{flex:1;min-width:140px;accent-color:var(--color-foreground)}
+  .p-bt .player .sm{font-size:12px}
+  .p-bt .tbl td.pn small{margin-left:4px;font-size:11.5px;color:var(--color-muted-foreground)}
+  /* 工作记录 / 本局交易：一根细线串起来的点 */
+  .p-bt .tl{max-height:560px;overflow-y:auto;padding-right:4px}
+  .p-bt .tl > .mute{font-size:13.5px}
+  .p-bt .te{position:relative;display:block;width:100%;padding:0 0 14px 20px;font-size:13px;line-height:1.55;text-align:left}
+  .p-bt .te::before{content:"";position:absolute;left:3px;top:6px;bottom:-6px;width:1px;background:var(--color-border)}
+  .p-bt .te:last-child::before{display:none}
+  .p-bt .te::after{content:"";position:absolute;left:0;top:5px;width:7px;height:7px;border-radius:50%;background:var(--c,var(--color-line2));box-shadow:0 0 0 3px var(--color-background)}
+  .p-bt .te b{font-weight:500}
+  .p-bt .te > span{color:var(--color-muted-foreground)}
+  .p-bt .te time{display:block;font-size:11.5px;color:var(--color-faint)}
+  /* 手动复盘：权益读数 + 下单台 */
+  .p-bt .acct{display:flex;flex-wrap:wrap;gap:8px 32px}
+  .p-bt .acct span{display:block;font-size:12px;color:var(--color-muted-foreground)}
+  .p-bt .acct b{display:block;margin-top:4px;font-size:26px;font-weight:300;letter-spacing:-.03em}
+  .p-bt .ctl{display:flex;flex-direction:column;gap:16px}
+  .p-bt .blk.ctl{padding:18px}
+  .p-bt .ctl .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .p-bt .ctl .cta{height:46px;font-size:15px}
+  .p-bt .ctl .warn{font-size:12.5px;line-height:1.6;color:var(--color-warning)}
+  .p-bt .rp{padding:14px 16px;border-radius:14px;background:var(--color-raise)}
+  .p-bt .rp .h{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:500}
+  .p-bt .rp .h .pn{margin-left:auto}
+  .p-bt .rp small{display:block;margin-top:3px;font-size:12px;color:var(--color-muted-foreground)}
+  .p-bt .rp .f{display:flex;gap:6px;margin-top:10px}
+  /* AI 提示 / 评估：一块浅灰，标题行小脸在想时眼睛转 */
+  .p-bt .aip{margin-top:14px;padding:16px 18px;border-radius:16px;background:var(--color-fill);font-size:13.5px;line-height:1.7}
+  .p-bt .aip.raise{background:var(--color-raise)}
+  .p-bt .aip > b{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px;font-weight:600}
+  .p-bt .aip > b small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
+  .p-bt .aip > b .xb{margin-left:auto}
+  .p-bt .aip .err{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12.5px;color:var(--color-warning)}
+  /* 一局结算 */
+  .p-bt .done{margin-top:20px;padding:24px}
+  .p-bt .done h3{font-size:22px;font-weight:600;letter-spacing:-.02em}
+  .p-bt .done > p{margin-top:6px;font-size:13.5px;color:var(--color-muted-foreground)}
+  .p-bt .done .st8{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:20px}
+  .p-bt .done .f{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  @media (max-width:1180px){
+    .p-bt .grid{grid-template-columns:minmax(0,1fr);gap:28px}
+    .p-bt .st8{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:16px}
+    .p-bt .st8 > div:nth-child(5){padding-left:0;border-left:0}
+  }
+  @media (max-width:760px){
+    .p-bt .st8,.p-bt .done .st8{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .p-bt .st8 > div:nth-child(odd){padding-left:0;border-left:0}
+    .p-bt .cfg .go3{width:100%;margin-left:0}
+  }
+  @media (prefers-reduced-motion:reduce){.p-bt .prog i b{transition:none}}
+}

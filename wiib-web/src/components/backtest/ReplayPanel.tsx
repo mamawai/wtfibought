@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import {
-  ArrowDownRight, ArrowUpRight, CalendarDays, ChevronRight, Dices, Flag, Gauge,
-  History, KeyRound, Loader2, Pause, Play, RotateCcw, Skull, Sparkles, Wallet, X, Zap,
-} from 'lucide-react';
+import { Play, RotateCcw, SkipForward, Sparkles, X } from 'lucide-react';
 import { ApiError, backtestApi, llmEndpointApi } from '../../api';
 import { BacktestChart, type ChartTradeMark } from './BacktestChart';
 import { EquityChart } from '../EquityChart';
@@ -12,6 +9,7 @@ import { LlmEndpointSelect } from '../LlmEndpointSelect';
 import { Markdown } from '../Markdown';
 import { useToast } from '../ui/use-toast';
 import { DatePicker } from '../ui/date-picker';
+import { Seg } from '../ui/seg';
 import { getCoinPriceDecimals } from '../../lib/coinConfig';
 import { aggregateBars, barIndexAt, IV_OPTIONS, ivLabel } from '../../lib/klineAgg';
 import { cn, fmtDateTime, fmtNum } from '../../lib/utils';
@@ -78,25 +76,32 @@ interface AiRun {
   at?: string;
 }
 
-/** AI 输出区：流式正文 + 错误行（配置类错误带去配置入口） */
-function AiBody({ run, onGoConfig }: { run: AiRun; onGoConfig: () => void }) {
-  const { t } = useTranslation('strategy');
+/** AI 输出块（样式见 Backtest.css .aip）：标题行小脸在想时眼睛转，流式正文 + 错误行（配置类错误带去配置入口）；onClose 给了才有关闭钮 */
+function AiBox({ run, title, extra, onGoConfig, onClose, raise }: {
+  run: AiRun;
+  title: string;
+  /** 标题后面的小字：模型名、盘面时刻 */
+  extra?: string;
+  onGoConfig: () => void;
+  onClose?: () => void;
+  /** 放在浅灰块里时换白底 */
+  raise?: boolean;
+}) {
+  const { t } = useTranslation(['strategy', 'common']);
   return (
-    <div className="space-y-1.5">
-      {run.busy && !run.text && (
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('replay.aiThinking')}
-        </div>
-      )}
-      {run.text && <div className="text-xs leading-relaxed"><Markdown content={run.text} /></div>}
+    <div className={cn('aip', raise && 'raise')}>
+      <b>
+        <span className={cn('cface', run.busy && 'think')} aria-hidden />{title}
+        {extra && <small>{extra}</small>}
+        {onClose && <button type="button" className="xb" aria-label={t('common:close')} onClick={onClose}><X className="ic" /></button>}
+      </b>
+      {run.busy && !run.text && <p className="mute">{t('replay.aiThinking')}</p>}
+      {run.text && <div className="md"><Markdown content={run.text} /></div>}
       {run.error && (
-        <div className="rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-[11px] flex items-center gap-2">
-          <KeyRound className="w-3.5 h-3.5 text-warning shrink-0" />
-          <span className="flex-1">{run.error}</span>
-          {run.needsConfig && (
-            <button type="button" onClick={onGoConfig} className="font-bold text-primary hover:underline shrink-0">{t('replay.goConfig')}</button>
-          )}
-        </div>
+        <p className="err">
+          {run.error}
+          {run.needsConfig && <button type="button" className="linkb" onClick={onGoConfig}>{t('replay.goConfig')}</button>}
+        </p>
       )}
     </div>
   );
@@ -484,407 +489,224 @@ export function ReplayPanel() {
   // ==================== 配置台 ====================
   if (!session) {
     return (
-      <div className="rounded-lg pt-card p-4 md:p-5 space-y-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <div className="microlabel uppercase mb-1">{t('replay.form.symbol')}</div>
-            <div className="flex rounded-md border border-border overflow-hidden">
-              {['BTCUSDT', 'ETHUSDT'].map(sym => (
-                <button key={sym} type="button"
-                  onClick={() => setSymbol(sym)}
-                  className={cn('px-3 h-9 text-xs font-bold transition-colors',
-                    symbol === sym ? 'bg-primary text-primary-foreground' : 'bg-card-2 text-muted-foreground hover:bg-surface-hover')}>
-                  {sym.replace('USDT', '')}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div className="microlabel uppercase mb-1">{t('replay.form.mode')}</div>
-            <div className="flex rounded-md border border-border overflow-hidden">
-              <button type="button" onClick={() => setBlind(true)}
-                className={cn('px-3 h-9 text-xs font-bold flex items-center gap-1.5 transition-colors',
-                  blind ? 'bg-primary text-primary-foreground' : 'bg-card-2 text-muted-foreground hover:bg-surface-hover')}>
-                <Dices className="w-3.5 h-3.5" /> {t('replay.form.blind')}
-              </button>
-              <button type="button" onClick={() => setBlind(false)}
-                className={cn('px-3 h-9 text-xs font-bold flex items-center gap-1.5 transition-colors',
-                  !blind ? 'bg-primary text-primary-foreground' : 'bg-card-2 text-muted-foreground hover:bg-surface-hover')}>
-                <CalendarDays className="w-3.5 h-3.5" /> {t('replay.form.custom')}
-              </button>
-            </div>
-          </div>
-          {!blind && (
-            <div>
-              <div className="microlabel uppercase mb-1">{t('replay.form.startDate')}</div>
-              <DatePicker value={customDate} onChange={setCustomDate}
-                className="h-9 px-2.5 rounded-md border border-border bg-input text-xs num" />
-            </div>
-          )}
-          <div>
-            <div className="microlabel uppercase mb-1">{t('replay.form.duration')}</div>
-            <div className="flex rounded-md border border-border overflow-hidden">
-              {DURATIONS.map(d => (
-                <button key={d} type="button" onClick={() => setDays(d)}
-                  className={cn('px-3 h-9 text-xs font-bold transition-colors num',
-                    days === d ? 'bg-primary text-primary-foreground' : 'bg-card-2 text-muted-foreground hover:bg-surface-hover')}>
-                  {t('replay.days', { count: d })}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div className="microlabel uppercase mb-1">{t('replay.form.balance')}</div>
-            <input type="number" min={1} value={balance}
-              onChange={e => setBalance(e.target.value)}
-              className="h-9 w-28 px-2.5 rounded-md border border-border bg-input text-xs num" />
-          </div>
-          {/* AI 教练：从 AI 页「模型配置」的端点库里选一条（提示可能每几根点一次，评估一局一次；挑贵的慢的自己掂量） */}
-          <div>
-            <div className="microlabel uppercase mb-1">{t('replay.form.coach')}</div>
-            {/* 原生 select 的自然宽度由最长 option 撑，只给 max-w 压不住，窄屏会顶出横向滚动 */}
-            <LlmEndpointSelect endpoints={endpoints} value={aiEndpointId} onChange={setAiEndpointId} className="w-full max-w-[300px]" />
-          </div>
+      <div className="blk cfg">
+        <div className="fld">
+          <div className="fl">{t('replay.form.symbol')}</div>
+          <Seg value={symbol} onChange={setSymbol} label={t('replay.form.symbol')}
+               options={['BTCUSDT', 'ETHUSDT'].map(sym => ({ value: sym, label: sym.replace('USDT', '') }))} />
         </div>
-        {/* flex-wrap + shrink-0：右边那段说明是纯中文长文本，min-content 只有一个字宽，
-            不拦着就会把按钮一路压窄；shrink-0 保住按钮整宽，同行放不下时整体换行 */}
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void handleStart()}
-            disabled={loading || !cov}
-            className={cn(
-              'h-10 px-5 rounded-lg font-black text-sm flex items-center gap-2 shrink-0 whitespace-nowrap transition-all machined',
-              'bg-primary text-primary-foreground hover:brightness-105 active:scale-[.98]',
-              'disabled:opacity-50 disabled:cursor-not-allowed',
-            )}
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {t('replay.start')}
-          </button>
-          <span className="text-[10px] text-muted-foreground leading-snug">
-            {cov
-              ? t('replay.coverage', { from: toDateInput(cov.earliestMs), to: toDateInput(cov.latestMs) })
-              : t('replay.coverageLoading')}
-            <br />{t('replay.hintLine')}
-          </span>
+        <div className="fld">
+          <div className="fl">{t('replay.form.mode')}</div>
+          <Seg value={blind ? 'blind' : 'custom'} onChange={v => setBlind(v === 'blind')} label={t('replay.form.mode')} options={[
+            { value: 'blind', label: t('replay.form.blind') },
+            { value: 'custom', label: t('replay.form.custom') },
+          ]} />
         </div>
+        {!blind && (
+          <div className="fld">
+            <div className="fl">{t('replay.form.startDate')}</div>
+            <DatePicker value={customDate} onChange={setCustomDate} />
+          </div>
+        )}
+        <div className="fld">
+          <div className="fl">{t('replay.form.duration')}</div>
+          <Seg value={String(days)} onChange={v => setDays(Number(v))} label={t('replay.form.duration')}
+               options={DURATIONS.map(d => ({ value: String(d), label: t('replay.days', { count: d }) }))} />
+        </div>
+        <div className="fld bal">
+          <label className="fl" htmlFor="rp-bal">{t('replay.form.balance')}</label>
+          <label className="inp">
+            <input id="rp-bal" inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} />
+            <span className="u">U</span>
+          </label>
+        </div>
+        {/* AI 教练：从 AI 页「模型配置」的端点库里选一条（提示可能每几根点一次，评估一局一次；挑贵的慢的自己掂量） */}
+        <div className="fld w">
+          <div className="fl">{t('replay.form.coach')}</div>
+          <LlmEndpointSelect endpoints={endpoints} value={aiEndpointId} onChange={setAiEndpointId} />
+        </div>
+        <button type="button" className={cn('btn ink lg go3', loading && 'busy')} onClick={() => void handleStart()} disabled={loading || !cov}>
+          <Play className="ic" /><span>{t('replay.start')}</span>
+        </button>
+        <p className="desc">
+          {cov
+            ? t('replay.coverage', { from: toDateInput(cov.earliestMs), to: toDateInput(cov.latestMs) })
+            : t('replay.coverageLoading')}
+          <br />{t('replay.hintLine')}
+        </p>
       </div>
     );
   }
 
   // ==================== 对局中 / 结算 ====================
+  const blindNow = session.blind && !finished;
   return (
-    <div className="space-y-5">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_330px]">
-        {/* 左：图表 + 播放 + 交易操作 */}
-        <div className="space-y-5 min-w-0">
-          <div className="rounded-lg pt-card p-3 md:p-4 space-y-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="microlabel uppercase">
-                {session.symbol} · {ivLabel(ivMin)} · {session.blind && !finished ? t('replay.blind') : t('replay.review')}
-              </span>
-              <div className="flex rounded border border-border overflow-hidden">
-                {IV_OPTIONS.map(o => (
-                  <button key={o.min} type="button" onClick={() => switchIv(o.min)}
-                    className={cn('px-1.5 h-6 text-[10px] font-bold transition-colors num',
-                      ivMin === o.min ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground')}>
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              {curBar && (
-                <span className="text-[10px] num text-primary font-bold">{fmtReplayTime(curBar[0])}</span>
-              )}
-              <span className="ml-auto text-[10px] text-muted-foreground num">
-                {t('replay.barsProgress', { played, total: playable })}
-              </span>
+    <>
+      {/* 结算：成绩 + 权益曲线 + AI 评估 + 再来一局 */}
+      {finished && st && (
+        <div className="blk done">
+          <h3 className={cn(finished === 'LIQUIDATION' && 'dn')}>{finished === 'LIQUIDATION' ? t('replay.liquidatedOut') : t('replay.settled')}</h3>
+          {/* 盲测揭晓真实区间 */}
+          <p className="num">{session.symbol.replace('USDT', '')} · {fmtDateTime(session.startMs)} ~ {fmtDateTime(endedMs)}</p>
+          <div className="st8">
+            <div>
+              <span>{t('replay.stat.netProfit', { pct: (st.returnPct * 100).toFixed(1) })}</span>
+              <b className={cn('num', st.netProfit >= 0 ? 'up' : 'dn')}>{st.netProfit >= 0 ? '+' : ''}{fmtNum(st.netProfit)}</b>
             </div>
+            <div>
+              <span>{t('replay.stat.winRate', { wins: st.wins, losses: st.losses })}</span>
+              <b className="num">{st.totalTrades > 0 ? `${(st.winRate * 100).toFixed(0)}%` : '—'}</b>
+            </div>
+            <div><span>{t('replay.stat.maxDd')}</span><b className="num dn">-{(st.maxDrawdownPct * 100).toFixed(1)}%</b></div>
+            <div><span>{t('replay.stat.finalEquity', { fees: fmtNum(st.totalFees, 0) })}</span><b className="num">{fmtNum(st.finalEquity, 0)}</b></div>
+          </div>
+          {eqPointsRef.current.length > 1 && <EquityChart points={eqPointsRef.current} />}
+          {/* AI 评估：一点就评——AI 对照整局 K 线（此时日期已揭晓）与全部成交，逐笔评操作与行为模式，不需要用户先写什么 */}
+          <div className="f">
+            <button type="button" className={cn('btn', review?.busy && 'busy')} onClick={askReview} disabled={!!review?.busy}
+                    title={t('replay.aiReviewHint', { model: aiLabel })}>
+              <Sparkles className="ic" /><span>{t('replay.aiReview')}</span>
+            </button>
+            <button type="button" className="btn ink" onClick={() => { aiAbortRef.current?.abort(); setSession(null); }}>
+              <RotateCcw className="ic" />{t('replay.playAgain')}
+            </button>
+          </div>
+          {review && <AiBox run={review} title={t('replay.aiReview')} extra={aiLabel} onGoConfig={goConfig} raise />}
+        </div>
+      )}
 
-            <BacktestChart
+      <div className="grid">
+        {/* 左：图表 + 播放 + AI 提示 */}
+        <div>
+          <div className="cvh">
+            <span className={cn('tag sm', blindNow && 'ink')}>{blindNow ? t('replay.blind') : t('replay.review')}</span>
+            <span className="num">{session.symbol.replace('USDT', '')} · {ivLabel(ivMin)}</span>
+            <Seg value={String(ivMin)} onChange={v => switchIv(Number(v))} label={ivLabel(ivMin)}
+                 options={IV_OPTIONS.map(o => ({ value: String(o.min), label: o.label }))} />
+            {curBar && <span className="num">{fmtReplayTime(curBar[0])}</span>}
+            <span className="sp" />
+            <span className="num">{t('replay.barsProgress', { played, total: playable })}</span>
+          </div>
+
+          <BacktestChart
               bars={aggBars}
               marks={marks}
               cursor={ctxCount + played}
               symbol={session.symbol}
               decimals={decimals}
-              blindBaseMs={session.blind && !finished ? session.startMs : null}
-              bucketSec={ivMin * 60}
-            />
+            blindBaseMs={blindNow ? session.startMs : null}
+            bucketSec={ivMin * 60}
+          />
 
-            {/* 播放控制 */}
-            <div className="flex items-center gap-2.5 flex-wrap pt-1 border-t border-border/40">
-              <button
-                type="button"
-                onClick={doNext}
-                disabled={!!finished}
-                className={cn(
-                  'h-10 px-4 rounded-lg font-black text-sm flex items-center gap-1.5 transition-all machined',
-                  'bg-primary text-primary-foreground hover:brightness-105 active:scale-[.98]',
-                  'disabled:opacity-40 disabled:cursor-not-allowed',
-                )}
-              >
-                {t('replay.next')} <ChevronRight className="w-4 h-4" />
+          {/* 播放控制：下一根、自动档、AI 提示、结束本局 */}
+          {!finished && (
+            <div className="player">
+              <button type="button" className="btn ink" onClick={doNext}><SkipForward className="ic" />{t('replay.next')}</button>
+              <Seg value={String(auto)} onChange={v => setAuto(Number(v))} label={t('replay.manual')} options={[
+                { value: '0', label: t('replay.manual') },
+                ...AUTO_SPEEDS.map(sp => ({ value: String(sp), label: t('replay.speed', { n: sp }) })),
+              ]} />
+              <span className="mute sm">{t('replay.spaceHint')}</span>
+              <span className="sp" />
+              {/* AI 提示：只送已揭示的 K 线（盲测下只有相对时间），不泄露未来 */}
+              <button type="button" className={cn('btn', hint?.busy && 'busy')} onClick={askHint} disabled={!!hint?.busy}
+                      title={t('replay.aiHintTip', { model: aiLabel })}>
+                <Sparkles className="ic" /><span>{t('replay.aiHint')}</span>
               </button>
-              <div className="flex items-center gap-1">
-                <Gauge className="w-3.5 h-3.5 text-muted-foreground" />
-                {AUTO_SPEEDS.map(sp => (
-                  <button key={sp} type="button" disabled={!!finished}
-                    onClick={() => setAuto(a => (a === sp ? 0 : sp))}
-                    className={cn('px-2 h-7 rounded text-[10px] font-bold transition-colors num disabled:opacity-40',
-                      auto === sp ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground')}>
-                    {t('replay.speed', { n: sp })}
-                  </button>
-                ))}
-                {auto > 0 && (
-                  <button type="button" onClick={() => setAuto(0)}
-                    className="w-7 h-7 rounded flex items-center justify-center text-primary" aria-label={t('player.pause')}>
-                    <Pause className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-              <span className="hidden md:inline text-[10px] text-muted-foreground">{t('replay.spaceHint')}</span>
-              {!finished && (
-                <div className="ml-auto flex items-center gap-2">
-                  {/* AI 提示：只送已揭示的 K 线（盲测下只有相对时间），不泄露未来 */}
-                  <button type="button" onClick={askHint} disabled={!!hint?.busy}
-                    title={t('replay.aiHintTip', { model: aiLabel })}
-                    className="h-8 px-3 rounded-lg border border-primary/40 text-primary hover:bg-primary/10 text-[11px] font-bold flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
-                    {hint?.busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {t('replay.aiHint')}
-                  </button>
-                  <button type="button" disabled={rewound} onClick={handleEnd}
-                    className="h-8 px-3 rounded-lg border border-border hover:bg-surface-hover text-[11px] font-bold text-muted-foreground hover:text-foreground flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <Flag className="w-3.5 h-3.5" /> {t('replay.endGame')}
-                  </button>
-                </div>
-              )}
+              <button type="button" className="btn plain" disabled={rewound} onClick={handleEnd}>{t('replay.endGame')}</button>
             </div>
-
-            {/* 交易操作条：大触区，移动端优先。开仓行常驻（有仓时变加仓）；每个已持方向一行平仓 */}
-            {!finished && (
-              <div className="space-y-2 pt-1 border-t border-border/40">
-                {rewound && (
-                  <div className="rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-[11px] flex items-center gap-2">
-                    <History className="w-3.5 h-3.5 text-warning shrink-0" />
-                    <span>{t('replay.rewound')}</span>
-                  </div>
-                )}
-                <div className="flex items-stretch gap-2 flex-wrap">
-                  {/* 杠杆：只作用于接下来的开/加仓；已有仓位的杠杆不变（加仓换档后按保证金加权成有效杠杆） */}
-                  <div className="flex items-center gap-1" title={t('replay.levTip')}>
-                    <Zap className="w-3.5 h-3.5 text-muted-foreground" />
-                    {LEVERAGE_OPTIONS.map(l => (
-                      <button key={l} type="button" onClick={() => setLeverage(l)}
-                        className={cn('px-1.5 h-9 rounded text-[10px] font-bold transition-colors num',
-                          leverage === l ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground')}>
-                        {l}x
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1" title={t('replay.openPctTip')}>
-                    <Wallet className="w-3.5 h-3.5 text-muted-foreground" />
-                    {PCT_OPTIONS.map(p => (
-                      <button key={p} type="button" onClick={() => setOpenPct(p)}
-                        className={cn('px-2 h-9 rounded text-[10px] font-bold transition-colors num',
-                          openPct === p ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground')}>
-                        {p}%
-                      </button>
-                    ))}
-                  </div>
-                  {/* 开多/开空成对：外层 flex-wrap 会把这两颗拆开塞进各自的空档，
-                      套一层 w-full 强制它俩自成一行左右平分；md:contents 让这层≥768px 不生成盒子，
-                      两颗按钮仍是外层 flex 的直接子项，宽屏布局不受影响 */}
-                  <div className="w-full flex items-stretch gap-2 md:contents">
-                    <button type="button" onClick={() => handleOpen('LONG')} disabled={rewound}
-                      className="flex-1 min-w-[110px] h-11 rounded-lg bg-gain text-white font-black text-[13px] md:text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined disabled:opacity-40 disabled:cursor-not-allowed">
-                      <ArrowUpRight className="w-4 h-4" /> {state.positions.LONG ? t('replay.addLong') : t('replay.openLong')} {leverage}x @ {fmtNum(curPrice, decimals)}
-                    </button>
-                    <button type="button" onClick={() => handleOpen('SHORT')} disabled={rewound}
-                      className="flex-1 min-w-[110px] h-11 rounded-lg bg-loss text-white font-black text-[13px] md:text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined disabled:opacity-40 disabled:cursor-not-allowed">
-                      <ArrowDownRight className="w-4 h-4" /> {state.positions.SHORT ? t('replay.addShort') : t('replay.openShort')} {leverage}x @ {fmtNum(curPrice, decimals)}
-                    </button>
-                  </div>
-                </div>
-                {held.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-1" title={t('replay.closePctTip')}>
-                      <X className="w-3.5 h-3.5 text-muted-foreground" />
-                      {PCT_OPTIONS.map(p => (
-                        <button key={p} type="button" onClick={() => setClosePct(p)}
-                          className={cn('px-2 h-8 rounded text-[10px] font-bold transition-colors num',
-                            closePct === p ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground')}>
-                          {p}%
-                        </button>
-                      ))}
-                    </div>
-                    {held.map(p => {
-                      const upnl = unrealized(p, curPrice);
-                      const isLong = p.side === 'LONG';
-                      return (
-                        <div key={p.side} className="flex items-stretch gap-2 flex-wrap">
-                          <div className="flex-1 min-w-[200px] rounded-lg border border-border bg-card-2 px-3 py-1.5 text-[11px] flex items-center gap-2.5">
-                            <span className={cn('font-black shrink-0', isLong ? 'text-gain' : 'text-loss')}>
-                              {t(SIDE_LABEL[p.side])} {fmtLev(p.leverage)}
-                            </span>
-                            <span className="num text-muted-foreground truncate">
-                              {t('replay.avgEntry', { price: fmtNum(p.entryPrice, decimals), qty: fmtNum(p.qty, 4) })}
-                            </span>
-                            <span className={cn('num font-black ml-auto shrink-0', upnl >= 0 ? 'text-gain' : 'text-loss')}>
-                              {upnl >= 0 ? '+' : ''}{fmtNum(upnl)}
-                            </span>
-                          </div>
-                          <button type="button" onClick={() => handleClose(p.side)} disabled={rewound}
-                            className="min-w-[130px] h-10 px-3 rounded-lg bg-primary text-primary-foreground font-black text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined disabled:opacity-40 disabled:cursor-not-allowed">
-                            {t(closePct >= 100 ? 'replay.closeAction' : 'replay.reduceAction',
-                              { side: t(SIDE_LABEL[p.side]), pct: closePct, price: fmtNum(curPrice, decimals) })}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          )}
 
           {/* AI 盘面提示：流式输出，关掉即掐断请求 */}
           {hint && (
-            <div className="rounded-lg pt-card p-3 md:p-4 space-y-2">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span className="text-[11px] font-black">{t('replay.aiPanelTitle')}</span>
-                {hint.at && <span className="text-[10px] text-muted-foreground num">· {hint.at}</span>}
-                <span className="ml-auto text-[10px] text-muted-foreground truncate max-w-[160px]">{aiLabel}</span>
-                {/* p-2 -m-2：图标只有 14px，手指点不中——内边距把命中区撑到 30px，负外边距抵掉占位 */}
-                <button type="button" aria-label={t('common:close')}
-                  onClick={() => { if (hint.busy) aiAbortRef.current?.abort(); setHint(null); }}
-                  className="p-2 -m-2 text-muted-foreground/60 hover:text-foreground">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <AiBody run={hint} onGoConfig={goConfig} />
-            </div>
+            <AiBox run={hint} title={t('replay.aiPanelTitle')} extra={[hint.at, aiLabel].filter(Boolean).join(' · ')} onGoConfig={goConfig}
+                   onClose={() => { if (hint.busy) aiAbortRef.current?.abort(); setHint(null); }} />
           )}
 
-          {/* 结算面板 */}
-          {finished && st && (
-            <div className="rounded-lg pt-card p-4 md:p-5 space-y-4">
-              <div className="flex items-center gap-2">
-                {finished === 'LIQUIDATION'
-                  ? <><Skull className="w-4 h-4 text-loss" /><span className="text-sm font-black text-loss">{t('replay.liquidatedOut')}</span></>
-                  : <><Flag className="w-4 h-4 text-primary" /><span className="text-sm font-black">{t('replay.settled')}</span></>}
-                <span className="ml-auto text-[10px] text-muted-foreground num">
-                  {/* 盲测揭晓真实区间 */}
-                  {fmtDateTime(session.startMs)} ~ {fmtDateTime(endedMs)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-                  <div className={cn('text-lg font-black num', st.netProfit >= 0 ? 'text-gain' : 'text-loss')}>
-                    {st.netProfit >= 0 ? '+' : ''}{fmtNum(st.netProfit)}
-                  </div>
-                  <div className="microlabel uppercase mt-1">{t('replay.stat.netProfit', { pct: (st.returnPct * 100).toFixed(1) })}</div>
-                </div>
-                <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-                  <div className="text-lg font-black num">
-                    {st.totalTrades > 0 ? `${(st.winRate * 100).toFixed(0)}%` : '—'}
-                  </div>
-                  <div className="microlabel uppercase mt-1">{t('replay.stat.winRate', { wins: st.wins, losses: st.losses })}</div>
-                </div>
-                <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-                  <div className="text-lg font-black num text-loss">{(st.maxDrawdownPct * 100).toFixed(1)}%</div>
-                  <div className="microlabel uppercase mt-1">{t('replay.stat.maxDd')}</div>
-                </div>
-                <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-                  <div className="text-lg font-black num">{fmtNum(st.finalEquity, 0)}</div>
-                  <div className="microlabel uppercase mt-1">{t('replay.stat.finalEquity', { fees: fmtNum(st.totalFees, 0) })}</div>
-                </div>
-              </div>
-              {eqPointsRef.current.length > 1 && <EquityChart points={eqPointsRef.current} />}
-
-              {/* AI 评估：一点就评——AI 对照整局 K 线（此时日期已揭晓）与全部成交，逐笔评操作与行为模式，不需要用户先写什么 */}
-              <div className="space-y-2 pt-3 border-t border-border/40">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button type="button" onClick={askReview} disabled={!!review?.busy}
-                    className="h-9 px-4 rounded-lg bg-primary text-primary-foreground font-black text-xs flex items-center gap-1.5 hover:brightness-105 active:scale-[.98] machined disabled:opacity-50 disabled:cursor-wait">
-                    {review?.busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {t('replay.aiReview')}
-                  </button>
-                  <span className="text-[10px] text-muted-foreground">
-                    {t('replay.aiReviewHint', { model: aiLabel })}
-                  </span>
-                </div>
-                {review && <AiBody run={review} onGoConfig={goConfig} />}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => { aiAbortRef.current?.abort(); setSession(null); }}
-                className="h-10 px-5 rounded-lg font-black text-sm flex items-center gap-2 bg-primary text-primary-foreground hover:brightness-105 active:scale-[.98] machined"
-              >
-                <RotateCcw className="w-4 h-4" /> {t('replay.playAgain')}
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* 右：权益读数 + 本局交易记录 */}
-        <div className="space-y-5 min-w-0">
-          <div className="rounded-lg pt-card p-3 grid grid-cols-2 gap-2">
-            <div className="rounded-md border border-border bg-card-2 px-3 py-2">
-              <div className={cn('text-base font-black num', curEquity >= session.balance ? 'text-gain' : 'text-loss')}>
-                {fmtNum(curEquity, 0)}
-              </div>
-              <div className="microlabel uppercase mt-0.5">{t('replay.equity')}</div>
-            </div>
-            <div className="rounded-md border border-border bg-card-2 px-3 py-2">
-              <div className="text-base font-black num">{fmtNum(state.cash, 0)}</div>
-              <div className="microlabel uppercase mt-0.5">{t('replay.cash')}</div>
-            </div>
+        {/* 右：权益读数 + 下单台 + 本局交易记录 */}
+        <aside className="ctl">
+          <div className="acct num">
+            <div><span>{t('replay.equity')}</span><b className={curEquity >= session.balance ? 'up' : 'dn'}>{fmtNum(curEquity, 0)}</b></div>
+            <div><span>{t('replay.cash')}</span><b>{fmtNum(state.cash, 0)}</b></div>
           </div>
 
-          <div className="rounded-lg pt-card p-3 flex flex-col min-w-0 lg:max-h-[560px] max-h-[360px]">
-            <div className="flex items-center gap-1.5 pb-2 border-b border-border/40 shrink-0">
-              <History className="w-3.5 h-3.5 text-primary" />
-              <span className="text-[11px] font-black">{t('replay.tradesTitle')}</span>
-              <span className="ml-auto text-[10px] text-muted-foreground num">{t('replay.tradesCount', { count: state.trades.length })}</span>
+          {/* 下单台：开仓两颗常驻（有仓时变加仓）；每个已持方向一块，块里是平 / 减仓 */}
+          {!finished && (
+            <div className="blk ctl">
+              {rewound && <p className="warn">{t('replay.rewound')}</p>}
+              {/* 杠杆：只作用于接下来的开/加仓；已有仓位的杠杆不变（加仓换档后按保证金加权成有效杠杆） */}
+              <div className="fld" title={t('replay.levTip')}>
+                <div className="fl"><span>{t('replay.levLabel')}</span><span>{t('replay.levHint')}</span></div>
+                <Seg className="full" value={String(leverage)} onChange={v => setLeverage(Number(v))} label={t('replay.levLabel')}
+                     options={LEVERAGE_OPTIONS.map(l => ({ value: String(l), label: `${l}x` }))} />
+              </div>
+              <div className="fld" title={t('replay.openPctTip')}>
+                <div className="fl"><span>{t('replay.openLabel')}</span><span>{t('replay.openHint')}</span></div>
+                <Seg className="full" value={String(openPct)} onChange={v => setOpenPct(Number(v))} label={t('replay.openLabel')}
+                     options={PCT_OPTIONS.map(p => ({ value: String(p), label: `${p}%` }))} />
+              </div>
+              <div className="two">
+                <button type="button" className="cta" onClick={() => handleOpen('LONG')} disabled={rewound}>
+                  {state.positions.LONG ? t('replay.addLong') : t('replay.openLong')} {leverage}x
+                </button>
+                <button type="button" className="cta short" onClick={() => handleOpen('SHORT')} disabled={rewound}>
+                  {state.positions.SHORT ? t('replay.addShort') : t('replay.openShort')} {leverage}x
+                </button>
+              </div>
+              {held.length > 0 && (
+                <div className="fld" title={t('replay.closePctTip')}>
+                  <div className="fl"><span>{t('replay.closeLabel')}</span><span>{t('replay.closeHint')}</span></div>
+                  <Seg className="full" value={String(closePct)} onChange={v => setClosePct(Number(v))} label={t('replay.closeLabel')}
+                       options={PCT_OPTIONS.map(p => ({ value: String(p), label: `${p}%` }))} />
+                </div>
+              )}
+              {held.map(p => {
+                const upnl = unrealized(p, curPrice);
+                return (
+                  <div key={p.side} className="rp">
+                    <div className="h">
+                      <span className={cn('tag sm', p.side === 'LONG' ? 'g' : 'r')}>{t(SIDE_LABEL[p.side])} {fmtLev(p.leverage)}</span>
+                      <span className={cn('pn num', upnl >= 0 ? 'up' : 'dn')}>{upnl >= 0 ? '+' : ''}{fmtNum(upnl)}</span>
+                    </div>
+                    <small className="num">{t('replay.avgEntry', { price: fmtNum(p.entryPrice, decimals), qty: fmtNum(p.qty, 4) })}</small>
+                    <div className="f">
+                      <button type="button" className="btn sm" onClick={() => handleClose(p.side)} disabled={rewound}>
+                        {t(closePct >= 100 ? 'replay.closeAction' : 'replay.reduceAction',
+                          { side: t(SIDE_LABEL[p.side]), pct: closePct, price: fmtNum(curPrice, decimals) })}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex-1 overflow-y-auto py-1 space-y-0.5 overscroll-contain">
+          )}
+
+          <div>
+            <div className="sec-h"><h2>{t('replay.tradesTitle')}<small>{t('replay.tradesCount', { count: state.trades.length })}</small></h2></div>
+            <div className="tl">
               {state.trades.length === 0 ? (
-                <div className="py-10 text-center text-[11px] text-muted-foreground">{t('replay.noTrades')}</div>
+                <p className="mute">{t('replay.noTrades')}</p>
               ) : (
                 /* 循环变量避开 t：与 i18n 的 t 同名会遮蔽 */
-                [...state.trades].reverse().map((tr, i) => {
-                  const isLong = tr.side === 'LONG';
-                  const win = tr.pnl >= 0;
-                  return (
-                    <div key={state.trades.length - i}
-                      className="flex items-center gap-2.5 py-1.5 px-2 rounded-md text-[11px] border-b border-border/40 last:border-0">
-                      <span className={cn('w-1 self-stretch rounded-full shrink-0', isLong ? 'bg-gain' : 'bg-loss')} />
-                      <div className="min-w-0">
-                        <div className="font-bold leading-tight">
-                          <span className={cn('text-[10px] font-black', isLong ? 'text-gain' : 'text-loss')}>{isLong ? t('side.long') : t('side.short')}</span>
-                          <span className="ml-1 text-[10px] text-muted-foreground">{fmtLev(tr.leverage)}</span>
-                          <span className="ml-1.5 text-[9px] font-bold px-1 py-px rounded bg-muted text-muted-foreground">
-                            {tr.partial && tr.reason === 'MANUAL' ? t('replay.reason.reduce') : t(REASON_LABEL[tr.reason])}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-muted-foreground num leading-tight mt-0.5">
-                          {fmtNum(tr.entryPrice, decimals)} → {fmtNum(tr.exitPrice, decimals)} · {fmtNum(tr.qty, 4)}
-                        </div>
-                        <div className="text-[9px] text-muted-foreground/60 num leading-tight">
-                          {fmtReplayTime(tr.openTime)} ~ {fmtReplayTime(tr.closeTime)}
-                        </div>
-                      </div>
-                      <span className={cn('ml-auto font-black num shrink-0', win ? 'text-gain' : 'text-loss')}>
-                        {win ? '+' : ''}{fmtNum(tr.pnl)}
-                      </span>
-                    </div>
-                  );
-                })
+                [...state.trades].reverse().map((tr, i) => (
+                  <div key={state.trades.length - i} className="te"
+                       style={{ '--c': tr.side === 'LONG' ? 'var(--color-gain)' : 'var(--color-loss)' } as CSSProperties}>
+                    <b>
+                      {t(SIDE_LABEL[tr.side])} {fmtLev(tr.leverage)} · {tr.partial && tr.reason === 'MANUAL' ? t('replay.reason.reduce') : t(REASON_LABEL[tr.reason])}
+                    </b>{' '}
+                    <span className="num">
+                      {fmtNum(tr.entryPrice, decimals)} → {fmtNum(tr.exitPrice, decimals)} · {fmtNum(tr.qty, 4)} · <span className={tr.pnl >= 0 ? 'up' : 'dn'}>{tr.pnl >= 0 ? '+' : ''}{fmtNum(tr.pnl)}</span>
+                    </span>
+                    <time className="num">{fmtReplayTime(tr.openTime)} ~ {fmtReplayTime(tr.closeTime)}</time>
+                  </div>
+                ))
               )}
             </div>
           </div>
-        </div>
+        </aside>
       </div>
-    </div>
+    </>
   );
 }
