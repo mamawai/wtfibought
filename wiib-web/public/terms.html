@@ -25,28 +25,28 @@
   }
 </script>
 <style>
-  :root { --bg: #fafaf7; --ink: #121316; --soft: #5b5c60; --line: #e7e7e2; --orange: #f25f0a; color-scheme: light; }
-  html.dark { --bg: #0f1012; --ink: #f1f1ec; --soft: #a9aaa6; --line: #26282d; --orange: #f97316; color-scheme: dark; }
+  :root { --bg: #ffffff; --ink: #0b0b0c; --soft: #6e6e73; --line: #ebebed; --line2: #d9d9de; --fill: #f5f5f7; --orange: #f25f0a; color-scheme: light; }
+  html.dark { --bg: #0c0c0d; --ink: #f4f4f6; --soft: #9a9aa1; --line: #1f1f23; --line2: #34343a; --fill: #161618; --orange: #f97316; color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font-family: "Archivo Variable", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: "Geist Variable", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
     line-height: 1.75; -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 720px; margin: 0 auto; padding: 28px 20px 64px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .logo { font-size: 18px; font-weight: 800; letter-spacing: .02em; color: var(--ink); text-decoration: none; }
+  .logo { font-size: 18px; font-weight: 700; letter-spacing: .02em; color: var(--ink); text-decoration: none; }
   .logo i { font-style: normal; color: var(--orange); }
   .lang {
-    background: none; border: 1px solid var(--ink); border-radius: 0; color: var(--ink);
-    font: inherit; font-size: 13px; font-weight: 600; line-height: 1; padding: 8px 12px; cursor: pointer;
+    background: var(--fill); border: 0; border-radius: 10px; color: var(--ink);
+    font: inherit; font-size: 13px; font-weight: 500; line-height: 1; height: 34px; padding: 0 12px; cursor: pointer;
   }
-  h1 { margin: 48px 0 6px; font-size: 34px; line-height: 1.2; font-weight: 800; letter-spacing: -.02em; }
+  h1 { margin: 48px 0 6px; font-size: 34px; line-height: 1.2; font-weight: 600; letter-spacing: -.025em; }
   .date { margin: 0; font-size: 13px; color: var(--soft); }
-  /* 墨线 + 左端橙方块，同登录卡 */
-  .rule { position: relative; height: 2px; background: var(--ink); margin: 24px 0 8px; }
-  .rule::after { content: ""; position: absolute; left: 0; top: -3px; width: 8px; height: 8px; background: var(--orange); }
-  h2 { margin: 32px 0 8px; font-size: 17px; line-height: 1.4; font-weight: 800; }
+  /* 细线 + 左端橙圆点，同登录卡 */
+  .rule { position: relative; height: 1px; background: var(--line2); margin: 24px 0 8px; }
+  .rule::after { content: ""; position: absolute; left: 0; top: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
+  h2 { margin: 32px 0 8px; font-size: 17px; line-height: 1.4; font-weight: 600; }
   p, li { font-size: 15px; }
   p { margin: 8px 0; }
   ul { margin: 8px 0; padding-left: 1.25em; }

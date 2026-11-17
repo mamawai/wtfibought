@@ -23,7 +23,7 @@ export default defineConfig({
         display: 'standalone',
         // 不锁竖屏：K 线横屏看是真实需求，且横屏宽度(如 852px)已过 md 断点，自动切桌面版布局
         orientation: 'any',
-        background_color: '#fafaf7',  // 启动闪屏底色，对齐亮色主题 --color-background
+        background_color: '#ffffff',  // 启动闪屏底色，对齐亮色主题 --color-background
         theme_color: '#F97316',
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },

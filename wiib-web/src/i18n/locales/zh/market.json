@@ -81,8 +81,6 @@
     "h24": "24h",
     "high": "高",
     "low": "低",
-    "predictTitle": "BTC 5分钟涨跌预测",
-    "predictDesc": "基于 Polymarket 实时概率，预测BTC短期走势",
     "long": "多",
     "short": "空",
     "units": "{{qty}} 个",
@@ -221,5 +219,15 @@
     "axisOver": "高于 {{price}} · 多头 {{long}} · 空头 {{short}}",
     "axisUnder": "低于 {{price}} · 多头 {{long}} · 空头 {{short}}",
     "readoutHint": "悬停或点一行，看这个价位的多空名义"
+  },
+  "book": {
+    "title": "盘口",
+    "price": "价格 (USDT)",
+    "amount": "数量 (USDT)",
+    "step": "价格合并单位",
+    "mark": "标记",
+    "markHelp": "标记价格用于计算未实现盈亏和强制平仓。\n它由多个交易平台的价格指数加权算出，不跟着单个平台的成交价跳。",
+    "waiting": "等待盘口数据…",
+    "offline": "盘口已断开"
   }
 }

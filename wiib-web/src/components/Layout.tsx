@@ -1,4 +1,4 @@
-import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
@@ -16,7 +16,7 @@ import { MARKET_PATHS, lastMarket, marketOf, rememberMarket } from '../lib/marke
 import {
   Home, Briefcase, Sun, Moon,
   BarChart3, User, ChevronDown, List, DollarSign,
-  Settings2, Gem, Globe,
+  Settings2, Gem, Globe, Ellipsis,
   ExternalLink, LogOut,
   ChartCandlestick, Swords, Trophy, Route, History, MessageSquare, BookOpen, Pickaxe,
 } from 'lucide-react';
@@ -29,19 +29,58 @@ const INTRO_URL = 'https://intro.wtfibought.com';
 /** 因子挖掘是同域下 wiib-alpha 托管的页面，不是本应用的路由，整页跳过去 */
 const ALPHA_URL = '/alpha/';
 
-/** 桌面 logo 展开态是整词，往下滚折叠成 WIIB.：留 W(hat) I(f) I B(ought)，其余字母挂 go 淡掉 */
+/** 桌面 logo 展开态是整词，往下滚收拢成 WIIB.：留 W(hat) I(f) I B(ought)，其余字母挂 fd 淡掉 */
 const WORDMARK = 'WHATIFIBOUGHT';
 const WORDMARK_KEEP = new Set([0, 4, 6, 7]);
 
-/** 往下滚过这么多 px 顶栏就折叠，回到这以内展开；不是距离进度，只是防顶部回弹抖动的阈值 */
+/** 往下滚过这么多 px 顶栏就收拢、底边出细线，回到这以内展开；不是距离进度，只是防顶部回弹抖动的阈值 */
 const COLLAPSE_AT = 8;
 
-/** 下拉里的图标一律 15px：外面 .nav .ic 是 13px 的，面板里那个尺寸太小 */
-const MENU_IC = 'size-[15px]';
+/** 当前项前面那颗橙点连同间距占的宽，算导航放不放得下时要加上 */
+const NAV_DOT_W = 12;
 
-/** 当前路由是否落在这组前缀里——下拉自身要跟着亮激活态，不然进了子页顶栏就没了着落 */
+/** 当前路由是否落在这组前缀里 */
 const matchPaths = (pathname: string, paths: string[]) =>
   paths.some(p => pathname === p || pathname.startsWith(p + '/'));
+
+/** 顶栏导航的一项。to 是站内路由；href 是不归本应用管的整页跳转（blank = 开新标签，文字后面带个小箭头）；menu 有值就是下拉 */
+interface NavEntry {
+  key: string;
+  labelKey: string;
+  icon: React.ReactNode;
+  to?: string;
+  href?: string;
+  blank?: boolean;
+  menu?: { to: string; icon: React.ReactNode; labelKey: string }[];
+  active: (pathname: string) => boolean;
+}
+
+const under = (to: string) => (p: string) => matchPaths(p, [to]);
+const never = () => false;
+
+/** 顺序就是优先级：一行放不下时从后往前收进「更多」。
+    竞技场紧跟持仓（自己的仓位和 AI 的仓位挨着看），配置紧跟竞技场（trader 全靠它的模型端点） */
+const NAV: NavEntry[] = [
+  { key: 'home', labelKey: 'nav.home', icon: <Home className="ic" />, to: '/', active: p => p === '/' },
+  {
+    key: 'markets', labelKey: 'nav.markets', icon: <ChartCandlestick className="ic" />, active: p => marketOf(p) !== null,
+    menu: [
+      { to: '/bstock', icon: <List className="ic" />, labelKey: 'marketMenu.stocks' },
+      { to: '/coin', icon: <DollarSign className="ic" />, labelKey: 'marketMenu.crypto' },
+      { to: '/commodity', icon: <Gem className="ic" />, labelKey: 'marketMenu.commodity' },
+      { to: '/tradfi', icon: <Globe className="ic" />, labelKey: 'marketMenu.tradfi' },
+    ],
+  },
+  { key: 'portfolio', labelKey: 'nav.portfolio', icon: <Briefcase className="ic" />, to: '/portfolio', active: under('/portfolio') },
+  { key: 'arena', labelKey: 'nav.arena', icon: <Swords className="ic" />, to: '/arena', active: under('/arena') },
+  { key: 'config', labelKey: 'nav.config', icon: <Settings2 className="ic" />, to: '/ai', active: under('/ai') },
+  { key: 'ranking', labelKey: 'nav.ranking', icon: <Trophy className="ic" />, to: '/ranking', active: under('/ranking') },
+  { key: 'strategies', labelKey: 'nav.strategies', icon: <Route className="ic" />, to: '/strategies', active: under('/strategies') },
+  { key: 'backtest', labelKey: 'nav.backtest', icon: <History className="ic" />, to: '/backtest', active: under('/backtest') },
+  { key: 'alpha', labelKey: 'nav.alpha', icon: <Pickaxe className="ic" />, href: ALPHA_URL, active: never },
+  { key: 'comments', labelKey: 'nav.comments', icon: <MessageSquare className="ic" />, to: '/comments', active: under('/comments') },
+  { key: 'intro', labelKey: 'nav.intro', icon: <BookOpen className="ic" />, href: INTRO_URL, blank: true, active: never },
+];
 
 /**
  * 手机底部 Tab 的五格；match 判断当前页落在哪一格（市场那格认四个市场，含详情页）。
@@ -104,22 +143,99 @@ const LED_LABEL_KEY: Record<HealthLevel, string> = {
   ok: 'led.ok', warn: 'led.warn', down: 'led.down', unknown: 'led.unknown',
 };
 
-/** 三服务状态灯组：feed(行情上游) / agent(AI 与策略) / sim(交易主进程)，悬停看明细 */
+/** 状态灯变了要稳住这么久才报 */
+const LED_SETTLE_MS = 6000;
+/** 报的时候胶囊自己拉开这么久再缩回去 */
+const LED_SAY_MS = 2400;
+
+/**
+ * 三服务状态灯：feed(行情上游) / agent(AI 与策略) / sim(交易主进程)。
+ * 平时只有三颗点；鼠标一碰或键盘走到，往左拉开露出名字和状态（样式见 index.css .leds）。
+ */
 function SystemLeds() {
   const { feed, agent, sim } = useSystemHealth();
-  const { t } = useTranslation('layout');
-  const cls = (l: HealthLevel) =>
-    l === 'ok' ? 'led' : l === 'warn' ? 'led led-warn' : l === 'down' ? 'led led-down' : 'led led-off';
+  const { t, i18n } = useTranslation('layout');
+  const capRef = useRef<HTMLDivElement>(null);
+  // 上一次稳住时三盏灯的状态；null = 打开页面后还没稳住过
+  const settledRef = useRef<string | null>(null);
+  const sayTimerRef = useRef(0);
+
+  // 每项文字拉开后的宽度：量它的自然宽写进 --w（状态文案长短不一，换语言也跟着变）
+  useLayoutEffect(() => {
+    capRef.current?.querySelectorAll<HTMLElement>('.lamp').forEach(b =>
+      b.style.setProperty('--w', `${b.querySelector('.in')!.scrollWidth}px`));
+  }, [feed, agent, sim, i18n.language]);
+
+  // 状态稳住 LED_SETTLE_MS 以后，跟上一次稳住时不一样才拉开报一下：
+  // 刚打开页面三盏灯陆续亮起来那一轮只记不报，重连那种一闪而过的也不报
+  useEffect(() => {
+    const now = `${feed},${agent},${sim}`;
+    const timer = window.setTimeout(() => {
+      const prev = settledRef.current, cap = capRef.current;
+      settledRef.current = now;
+      if (prev == null || prev === now || !cap) return;
+      cap.classList.add('say');
+      window.clearTimeout(sayTimerRef.current);
+      sayTimerRef.current = window.setTimeout(() => cap.classList.remove('say'), LED_SAY_MS);
+    }, LED_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [feed, agent, sim]);
+  useEffect(() => () => window.clearTimeout(sayTimerRef.current), []);
+
+  // feed / agent / sim 是服务名，不翻
+  const lamp = (name: string, lv: HealthLevel) => (
+    <button type="button" className="lamp" data-lv={lv} aria-label={`${name} ${t(LED_LABEL_KEY[lv])}`}>
+      <i />
+      <span className="in"><b>{name}</b><em>{t(LED_LABEL_KEY[lv])}</em></span>
+    </button>
+  );
   return (
-    <span
-      className="leds"
-      // feed / agent / sim 是服务名，不翻
-      title={`feed ${t(LED_LABEL_KEY[feed])} · agent ${t(LED_LABEL_KEY[agent])} · sim ${t(LED_LABEL_KEY[sim])}`}
-    >
-      <i className={cls(feed)} />
-      <i className={cls(agent)} />
-      <i className={cls(sim)} />
+    <div className="leds" role="group">
+      <div ref={capRef} className="led-cap">
+        {lamp('feed', feed)}
+        {lamp('agent', agent)}
+        {lamp('sim', sim)}
+      </div>
+    </div>
+  );
+}
+
+/** 导航项里面那两层：图标钉在左边（收拢后才显出来），文字在流里撑宽度 */
+function NavInner({ icon, label, tail }: { icon: React.ReactNode; label: string; tail?: React.ReactNode }) {
+  return (
+    <span className="it">
+      <span className="ico">{icon}</span>
+      <span className="lab">{label}{tail}</span>
     </span>
+  );
+}
+
+/** 顶栏里带下拉面板的一项：「市场」，和放不下时的「更多」。off = 这一项自己被收走了 / 用不着 */
+function NavMenu({ label, icon, on, off, more, children }: {
+  label: string;
+  icon: React.ReactNode;
+  on: boolean;
+  off: boolean;
+  more?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useClickOutside(ref, () => setOpen(false), open);
+
+  return (
+    <div ref={ref} data-nav={more ? undefined : ''} data-more={more ? '' : undefined}
+         className={cn('dd', open && 'open', off && 'off')}
+         onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }}>
+      <button type="button" data-label={label} aria-haspopup="true" aria-expanded={open}
+              className={cn(on && 'on')} onClick={() => setOpen(v => !v)}>
+        <NavInner icon={icon} label={label} tail={<ChevronDown className="ic car" />} />
+      </button>
+      {/* 点了面板里哪一项都收起 */}
+      <div className={cn('menu', more && 'rt')} role="menu" onClick={() => setOpen(false)}>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -131,7 +247,7 @@ export function Layout({ children }: Props) {
   const { t, i18n } = useTranslation('layout');
   const { toggle: toggleLang } = useLangToggle();
 
-  const isMarketActive = marketOf(location.pathname) !== null;
+  const { pathname } = location;
 
   const handleLogout = async () => {
     await logout();
@@ -139,89 +255,74 @@ export function Layout({ children }: Props) {
   };
 
   const hdrRef = useRef<HTMLElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
-  const dotRef = useRef<HTMLSpanElement>(null);
-  // 路由/语言变了要重新量宽、重新对位，但监听不想重挂，把当前的归位函数留一份在这
-  const homeRef = useRef<(() => void) | null>(null);
+  // 排在前面的这么多项留在栏上，其余收进「更多」
+  const [keep, setKeep] = useState(NAV.length);
+  // 路由/语言/登录态变了要重新排一次，但监听不想重挂，把排的函数留一份在这
+  const fitRef = useRef<(() => void) | null>(null);
 
-  // 顶栏折叠 + 橙方块，一个 effect 管，全部直接操作 DOM，滚动不走 React 状态：
-  // 折叠：滚过阈值给 header 挂 collapsed，回顶摘掉，动画本身是 CSS transition（见 index.css .hdr）
-  // 橙方块：停在激活项左侧 13px；悬停到别的项就滑过去，移开滑回；折叠动画期间每帧跟着激活项走
-  // useLayoutEffect：导航项的折叠宽度靠量出来的 --w，得在首帧画出来之前量好
+  // 顶栏的收拢、底边细线、导航收纳，一个 effect 管：都是量 DOM、改类名，滚动不走 React 状态。
+  // useLayoutEffect：收拢后的宽度靠量出来的 --w，放不放得下也得在首帧画出来之前算好
   useLayoutEffect(() => {
-    const hdr = hdrRef.current, nav = navRef.current, dot = dotRef.current;
-    if (!hdr || !nav || !dot) return;
+    const hdr = hdrRef.current, top = topRef.current, nav = navRef.current;
+    if (!hdr || !top || !nav) return;
 
-    // 折叠动画要知道各处的自然宽：字母写在自己身上，导航项量文案层写在项上
-    const measure = () => {
-      hdr.querySelectorAll<HTMLElement>('.logo .go').forEach(el =>
+    const fit = () => {
+      // 手机上这一行是藏着的，量不出东西
+      if (!top.offsetParent) return;
+      // 收拢动画要知道各处的自然宽：字母写在自己身上，导航项量文字层写在外面那层上
+      top.querySelectorAll<HTMLElement>('.logo .fd').forEach(el =>
         el.style.setProperty('--w', `${el.getBoundingClientRect().width}px`));
-      nav.querySelectorAll<HTMLElement>('.item').forEach(el => {
-        const lab = el.querySelector('.lab');
-        if (lab) el.style.setProperty('--w', `${lab.getBoundingClientRect().width}px`);
-      });
-    };
+      const labW = (el: Element) => el.querySelector('.lab')!.getBoundingClientRect().width;
+      nav.querySelectorAll<HTMLElement>('.it').forEach(el => el.style.setProperty('--w', `${labW(el)}px`));
 
-    let hover: HTMLElement | null = null;
-    // 用 rect 差而不是 offsetLeft：下拉那一项外面套了个 relative 壳，offsetLeft 会算成 0
-    const place = (animate: boolean) => {
-      const el = hover ?? nav.querySelector<HTMLElement>('[data-nav-item].on');
-      // 当前页不在导航里（/me、/login 这些）就把方块收掉
-      if (!el) { dot.style.opacity = '0'; return; }
-      dot.style.transition = animate ? '' : 'none';
-      dot.style.left = `${el.getBoundingClientRect().left - nav.getBoundingClientRect().left - 13}px`;
-      dot.style.opacity = '1';
+      // 每项一律按展开时的宽度算（收拢着量到的是图标宽，不能用）：左右内边距 + 文字宽，当前项再加那颗橙点
+      const full = (el: HTMLElement) => {
+        const b = el.matches('.dd') ? el.querySelector<HTMLElement>(':scope > button')! : el;
+        const cs = getComputedStyle(b);
+        return parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + labW(b) + (b.classList.contains('on') ? NAV_DOT_W : 0);
+      };
+      // 能用的宽度 = 这一行的宽 − 整词 logo − 状态灯 − 右边工具 − 三道间距
+      const logoW = [...top.querySelector('.logo')!.children].reduce((a, c) => a + c.getBoundingClientRect().width, 0);
+      const gap = parseFloat(getComputedStyle(top).columnGap) || 0;
+      const avail = top.clientWidth - logoW - top.querySelector<HTMLElement>('.leds')!.offsetWidth
+        - top.querySelector<HTMLElement>('.tools')!.offsetWidth - gap * 3;
+      const ws = [...nav.querySelectorAll<HTMLElement>(':scope > [data-nav]')].map(full);
+      if (ws.reduce((a, w) => a + w, 0) <= avail) { setKeep(ws.length); return; }
+      const moreW = full(nav.querySelector<HTMLElement>(':scope > [data-more]')!);
+      let used = 0, n = 0;
+      while (n < ws.length && used + ws[n] + moreW <= avail) used += ws[n++];
+      setKeep(n);
     };
+    fitRef.current = fit;
 
-    // 折叠过渡期间每帧读一次两条进度，把方块摆到激活项当前位置，都到位就停
-    let raf = 0;
-    const track = () => {
-      const cs = getComputedStyle(hdr);
-      const ps = parseFloat(cs.getPropertyValue('--ps')), pf = parseFloat(cs.getPropertyValue('--pf'));
-      place(false);
-      const want = hdr.classList.contains('collapsed') ? 1 : 0;
-      raf = Math.abs(ps - want) > .001 || Math.abs(pf - want) > .001 ? requestAnimationFrame(track) : 0;
-    };
     const onScroll = () => {
       const want = window.scrollY > COLLAPSE_AT;
-      if (want === hdr.classList.contains('collapsed')) return;
+      hdr.classList.toggle('stuck', want);
       hdr.classList.toggle('collapsed', want);
-      if (!raf) raf = requestAnimationFrame(track);
     };
 
-    // 委托到 nav 上：下拉面板里的项不带 data-nav-item，扫过去不会把方块带跑
-    const over = (e: MouseEvent) => {
-      const item = (e.target as HTMLElement).closest<HTMLElement>('[data-nav-item]');
-      if (item && item !== hover) { hover = item; place(true); }
-    };
-    const leave = () => { hover = null; place(true); };
-    const relayout = () => { measure(); place(false); };
-    homeRef.current = () => { measure(); place(true); };
-
-    measure();
+    fit();
     // 刷新时页面可能已在半路：先按位摆好，下一帧再挂 ready 开过渡，不然会从头播一遍
-    hdr.classList.toggle('collapsed', window.scrollY > COLLAPSE_AT);
-    place(false);
+    onScroll();
     const readyRaf = requestAnimationFrame(() => hdr.classList.add('ready'));
 
-    nav.addEventListener('mouseover', over);
-    nav.addEventListener('mouseleave', leave);
-    window.addEventListener('resize', relayout);
+    window.addEventListener('resize', fit);
     window.addEventListener('scroll', onScroll, { passive: true });
-    // 字体换成 Archivo 后每处宽度都会变，等字体就位再量一次
-    void document.fonts.ready.then(relayout);
+    // 字体到位后每处宽度都会变，再排一次
+    void document.fonts.ready.then(fit);
     return () => {
-      nav.removeEventListener('mouseover', over);
-      nav.removeEventListener('mouseleave', leave);
-      window.removeEventListener('resize', relayout);
+      window.removeEventListener('resize', fit);
       window.removeEventListener('scroll', onScroll);
-      cancelAnimationFrame(raf);
       cancelAnimationFrame(readyRaf);
     };
   }, []);
 
-  // 切路由激活项换了（加粗后宽度也变），切语言文案换了，都要重量并让方块滑过去
-  useEffect(() => { homeRef.current?.(); }, [location.pathname, i18n.language]);
+  // 切路由当前项换了（多一颗橙点）、切语言文字换了、登录态变了右边工具宽度变了，都要重排
+  useLayoutEffect(() => { fitRef.current?.(); }, [pathname, i18n.language, user, token]);
+
+  const rest = NAV.slice(keep);
 
   // 语言/主题两颗，桌面和手机顶栏共用
   const langButton = (
@@ -237,59 +338,51 @@ export function Layout({ children }: Props) {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* ===== 顶栏（sticky，往下滚折叠成 WIIB. + 图标）+ 行情副条 ===== */}
+      {/* ===== 顶栏（sticky，往下滚收拢成 WIIB. + 图标）+ 行情副条 ===== */}
       {/* 安全区：装成 PWA 后页面顶到屏幕边缘，顶栏自己让开刘海和横屏圆角 */}
       <header ref={hdrRef} className="hdr pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
-        <div className="wrap">
-          {/* 桌面：logo + 文字导航 + 右侧工具 */}
-          <div className="top hidden lg:flex">
-            {/* 一个字母一个 span，折叠时要去的字母原地淡出，留下的滑拢成 WIIB. */}
+        <div className="page-shell">
+          {/* 桌面：logo + 文字导航 + 状态灯 + 右侧工具 */}
+          <div ref={topRef} className="top hidden lg:flex">
+            {/* 一个字母一个 span，收拢时要去的字母原地淡出，留下的滑拢成 WIIB. */}
             <Link to="/" className="logo" aria-label={t('header.logoHome')}>
-              {[...WORDMARK].map((c, i) => <span key={i} className={WORDMARK_KEEP.has(i) ? undefined : 'go'}>{c}</span>)}
+              {[...WORDMARK].map((c, i) => <span key={i} className={WORDMARK_KEEP.has(i) ? undefined : 'fd'}>{c}</span>)}
               <i>.</i>
             </Link>
 
-            <nav ref={navRef} className="nav">
-              <span ref={dotRef} className="nav-dot" style={{ opacity: 0 }} />
-              <HeaderNavItem to="/" icon={<Home />} label={t('nav.home')} />
-              <NavDropdown
-                icon={<ChartCandlestick />}
-                label={t('nav.markets')}
-                isActive={isMarketActive}
-                items={[
-                  { to: '/bstock', icon: <List className={MENU_IC} />, label: t('marketMenu.stocks') },
-                  { to: '/coin', icon: <DollarSign className={MENU_IC} />, label: t('marketMenu.crypto') },
-                  { to: '/commodity', icon: <Gem className={MENU_IC} />, label: t('marketMenu.commodity') },
-                  { to: '/tradfi', icon: <Globe className={MENU_IC} />, label: t('marketMenu.tradfi') },
-                ]}
-              />
-              <HeaderNavItem to="/portfolio" icon={<Briefcase />} label={t('nav.portfolio')} />
-              {/* 竞技场紧跟持仓：自己的仓位与 AI 的仓位是同一件事的两面，挨着看 */}
-              <HeaderNavItem to="/arena" icon={<Swords />} label={t('nav.arena')} />
-              {/* 配置＝BYOK 模型端点，竞技场里的 trader 全靠它，所以紧跟竞技场 */}
-              <HeaderNavItem to="/ai" icon={<Settings2 />} label={t('nav.config')} />
-              <HeaderNavItem to="/ranking" icon={<Trophy />} label={t('nav.ranking')} />
-              <HeaderNavItem to="/strategies" icon={<Route />} label={t('nav.strategies')} />
-              <HeaderNavItem to="/backtest" icon={<History />} label={t('nav.backtest')} />
-              {/* 因子挖掘：结构样式和普通项一样，永远不带 on；同域，不加外链小箭头 */}
-              <a href={ALPHA_URL} data-nav-item data-label={t('nav.alpha')} className="item">
-                <span className="ico"><Pickaxe /></span>
-                <span className="lab">{t('nav.alpha')}</span>
-              </a>
-              <HeaderNavItem to="/comments" icon={<MessageSquare />} label={t('nav.comments')} />
-              {/* 外链：结构样式和普通项一样，但永远不带 on；data-nav-item 是给橙方块的抓手 */}
-              <a href={INTRO_URL} target="_blank" rel="noopener noreferrer" data-nav-item data-label={t('nav.intro')} className="item">
-                <span className="ico"><BookOpen /></span>
-                <span className="lab">
-                  {t('nav.intro')}
-                  {/* 尾巴上的小箭头告诉用户这一下会跳出站 */}
-                  <ExternalLink className="ic" />
-                </span>
-              </a>
-            </nav>
+            <div className="navwrap">
+              <nav ref={navRef} className="nav">
+                {NAV.map((n, i) => {
+                  const label = t(n.labelKey), on = n.active(pathname), off = i >= keep;
+                  if (n.menu) return (
+                    <NavMenu key={n.key} label={label} icon={n.icon} on={on} off={off}>
+                      {n.menu.map(m => <Link key={m.to} to={m.to} role="menuitem">{m.icon}{t(m.labelKey)}</Link>)}
+                    </NavMenu>
+                  );
+                  // data-label 是收拢后悬停时底下那枚小标签；外链尾巴上的小箭头告诉用户这一下会跳出站
+                  const inner = <NavInner icon={n.icon} label={label} tail={n.blank && <ExternalLink className="ic" />} />;
+                  return n.to
+                    ? <Link key={n.key} to={n.to} data-nav="" data-label={label} aria-current={on ? 'page' : undefined}
+                            className={cn(on && 'on', off && 'off')}>{inner}</Link>
+                    : <a key={n.key} href={n.href} data-nav="" data-label={label} className={cn(off && 'off')}
+                         {...(n.blank && { target: '_blank', rel: 'noopener noreferrer' })}>{inner}</a>;
+                })}
+                {/* 一行放不下时，排在后面的项收进这里；面板里只列文字，当前页前面带橙点 */}
+                <NavMenu more label={t('nav.more')} icon={<Ellipsis className="ic" />} on={rest.some(n => n.active(pathname))} off={rest.length === 0}>
+                  {rest.flatMap(n => n.menu
+                    ? n.menu.map(m => <Link key={m.to} to={m.to} role="menuitem">{t(m.labelKey)}</Link>)
+                    : [n.to
+                      ? <Link key={n.key} to={n.to} role="menuitem" className={cn(n.active(pathname) && 'on')}>{t(n.labelKey)}</Link>
+                      : <a key={n.key} href={n.href} role="menuitem" {...(n.blank && { target: '_blank', rel: 'noopener noreferrer' })}>
+                          {t(n.labelKey)}{n.blank && <ExternalLink className="ic" />}
+                        </a>])}
+                </NavMenu>
+              </nav>
+            </div>
+
+            <SystemLeds />
 
             <div className="tools">
-              <SystemLeds />
               {langButton}
               {themeButton}
               {user && <NotificationBell />}
@@ -299,19 +392,22 @@ export function Layout({ children }: Props) {
               {user ? (
                 <>
                   {/* 用户名只作标识不可点，退出就摆在旁边（「我的」页是手机端入口） */}
-                  <span>{user.username}</span>
+                  <b>{user.username}</b>
                   <button type="button" onClick={handleLogout} title={t('header.logout')} aria-label={t('header.logout')}>
                     <LogOut className="ic" />
                   </button>
                 </>
               ) : !token && (
-                <Link to="/login" className="btn sm">{t('header.login')}</Link>
+                <Link to="/login" className="btn sm ink">{t('header.login')}</Link>
               )}
             </div>
+
+            {/* 图形 logo：往下滚、导航收拢后在栏正中浮出来，回到顶上先淡掉。纯装饰，回首页点左边的字标 */}
+            <img className="hmark" src="/logo.png" alt="" aria-hidden="true" />
           </div>
 
           {/* 手机：logo + 语言 + 主题 + 仓库，其余入口在底部 Tab 和「我的」页 */}
-          <div className="flex lg:hidden items-center h-14">
+          <div className="mtop lg:hidden">
             <Link to="/" className="logo" aria-label={t('header.logoHome')}>WIIB<i>.</i></Link>
             <div className="tools">
               {langButton}
@@ -320,93 +416,26 @@ export function Layout({ children }: Props) {
             </div>
           </div>
         </div>
-
-        <div className="rule" />
       </header>
-      {/* 副条和离线横幅不钉住，跟页面一起滚走 */}
+      {/* 副条和断网条不钉住，跟页面一起滚走 */}
       <TickerStrip />
       <OfflineBanner />
 
-      {/* 底部留白给悬浮 Tab 让位（再多留 1rem 呼吸），桌面端不留内边距，页内自己定 */}
-      <main className="flex-1 pb-[calc(var(--tabbar-space)+1rem)] lg:pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+      {/* 底部留白：手机给悬浮 Tab 让位，桌面留 72px 再接页脚 */}
+      <main className="flex-1 pb-[calc(var(--tabbar-space)+28px)] lg:pb-[72px] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         {children}
       </main>
 
-      {/* w-full 不能省：外层是 flex-col，.wrap 的 margin:auto 会让它缩成内容宽 */}
-      <div className="wrap w-full hidden lg:block">
-        <footer className="pt">
-          <span>{t('footer.brand')}</span>
-          <span>{t('footer.disclaimer')}</span>
-        </footer>
-      </div>
+      <footer className="page-shell foot hidden lg:flex">
+        <span>{t('footer.brand')}</span>
+        <span>{t('footer.disclaimer')}</span>
+      </footer>
 
       {/* ===== 手机端底部 Tab：iOS 液态玻璃悬浮胶囊 ===== */}
       <GlassTabBar />
 
       {/* 全站悬浮研判对话（BYOK）：对话要登录，游客不给气泡 */}
       {user && <ChatDock />}
-    </div>
-  );
-}
-
-/** 顶栏导航项：图标 + 文案两层，样式全在 .nav .item 里；激活挂 on，data-nav-item 给橙方块抓手，data-label 给折叠后的悬停标签 */
-function HeaderNavItem({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
-  return (
-    <NavLink to={to} data-nav-item data-label={label} className={({ isActive }) => cn('item', isActive && 'on')}>
-      <span className="ico">{icon}</span>
-      <span className="lab">{label}</span>
-    </NavLink>
-  );
-}
-
-interface NavDropdownItem { to: string; icon: React.ReactNode; label: string }
-
-/** 顶栏下拉壳子：目前只有「市场」在用，四个子市场收在面板里 */
-function NavDropdown({ icon, label, isActive, items }:
-  { icon: React.ReactNode; label: string; isActive: boolean; items: NavDropdownItem[] }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useClickOutside(ref, () => setOpen(false));
-
-  return (
-    <div ref={ref} className="relative flex items-center">
-      {/* 按钮和普通项同一套 .nav .item 结构样式，小箭头放文案层里跟着一起淡 */}
-      <button
-        type="button"
-        data-nav-item
-        data-label={label}
-        onClick={() => setOpen(v => !v)}
-        className={cn('item', isActive && 'on')}
-      >
-        <span className="ico">{icon}</span>
-        <span className="lab">
-          {label}
-          <ChevronDown className={cn('ic transition-transform', open && 'rotate-180')} />
-        </span>
-      </button>
-
-      {open && (
-        // z-50 不能省：NumberFlow 的 transform 会创建层叠上下文，副条数字会盖到面板上
-        <div className="absolute top-full left-0 mt-1.5 min-w-44 border border-foreground bg-background py-2 z-50 animate-in fade-in slide-in-from-top-2">
-          {items.map(({ to, icon, label: itemLabel }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={() => setOpen(false)}
-              className={({ isActive: a }) =>
-                cn(
-                  'flex items-center gap-2.5 px-3.5 py-2 text-sm transition-colors',
-                  a ? 'text-foreground font-bold' : 'text-muted-foreground font-medium hover:text-foreground',
-                )
-              }
-            >
-              {icon}
-              {itemLabel}
-            </NavLink>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

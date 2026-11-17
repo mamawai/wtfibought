@@ -5,6 +5,8 @@
   "prevWeek": "Previous week",
   "nextWeek": "Next week",
   "thisWeek": "Back to this week",
+  "jumpTo": "Jump to a date",
+  "today": "Today",
   "allCountries": "All countries",
   "nextUs": "Next US release",
   "country": {

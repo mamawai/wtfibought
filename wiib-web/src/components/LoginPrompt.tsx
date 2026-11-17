@@ -9,7 +9,7 @@ export function LoginPrompt({ text, className }: { text: string; className?: str
   return (
     <div className={cn('flex flex-col items-start gap-3', className)}>
       <p className="text-[13px] text-muted-foreground">{text}</p>
-      <Link to="/login" className="btn sm fill"><LogIn className="ic" />{t('header.login')}</Link>
+      <Link to="/login" className="btn sm ink"><LogIn className="ic" />{t('header.login')}</Link>
     </div>
   );
 }

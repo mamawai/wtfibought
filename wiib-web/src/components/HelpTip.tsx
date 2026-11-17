@@ -1,31 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import { HelpCircle } from 'lucide-react';
-import { cn } from '../lib/utils';
-import { useAnchoredPosition, type Placement } from '../hooks/useAnchoredPosition';
+import { useAnchoredPosition } from '../hooks/useAnchoredPosition';
+import './HelpTip.css';
 
 /**
- * 小问号点击弹说明气泡。
+ * 说明小问号：鼠标停上去 80ms 后出墨色气泡、移开就收；触屏和键盘点一下开、点外面收（样式见 HelpTip.css）。
  *
- * 气泡走 portal 挂到 body + position:fixed：旧版是 absolute 定位在图标里，
+ * 气泡走 portal 挂到 body + position:fixed：absolute 定位在图标里的话，
  * 图标一靠近屏幕边缘气泡就溢出屏幕（手机上几乎必现），外层只要有 overflow:hidden 还会被整块裁掉。
- * 现在由 useAnchoredPosition 按实测位置钳进视口，两个毛病一起消失。
- *
- * side 从"硬指定"降级为偏好：那一侧放不下会自动翻面，老调用点传的 side 照常生效。
+ * 现在由 useAnchoredPosition 按实测位置钳进视口。气泡默认在上方，放不下会自动翻面。
  */
-export function HelpTip({ text, side = 'bottom', iconClassName }: {
-  text: string;
-  side?: Placement;
-  iconClassName?: string;
-}) {
+export function HelpTip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   // 锚点也用回调 ref 存进 state：render 期间读 ref.current 在并发渲染下不安全
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const [bubble, setBubble] = useState<HTMLSpanElement | null>(null);
-  const pos = useAnchoredPosition(anchor, bubble, open, side);
+  const pos = useAnchoredPosition(anchor, bubble, open, 'top');
   // 只翻壳子上的图标可读名，气泡正文 text 由调用方翻好了传进来
   const { t } = useTranslation('layout');
+  const hoverTimer = useRef(0);
+  // 这一下点击是不是鼠标点的：鼠标靠悬停开合，点击就不再来回切
+  const byMouse = useRef(false);
+
+  useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
 
   // 点击外部 / Esc 关闭。气泡在 body 上，不能靠祖先节点判断"外部"，改用两个 ref 各判一次
   useEffect(() => {
@@ -58,23 +57,34 @@ export function HelpTip({ text, side = 'bottom', iconClassName }: {
       <button
         ref={setAnchor}
         type="button"
+        className="tip"
         aria-label={t('helpTip')}
-        onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
-        className="inline-flex text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+        aria-expanded={open}
+        onPointerEnter={e => {
+          if (e.pointerType !== 'mouse') return;
+          hoverTimer.current = window.setTimeout(() => setOpen(true), 80);
+        }}
+        onPointerLeave={e => {
+          if (e.pointerType !== 'mouse') return;
+          window.clearTimeout(hoverTimer.current);
+          setOpen(false);
+        }}
+        onPointerDown={e => { byMouse.current = e.pointerType === 'mouse'; }}
+        onClick={e => {
+          e.stopPropagation();
+          if (byMouse.current) { byMouse.current = false; return; }
+          setOpen(v => !v);
+        }}
       >
-        <HelpCircle className={cn('w-3.5 h-3.5', iconClassName)} />
+        <HelpCircle className="ic" />
       </button>
       {open && createPortal(
         <span
           ref={setBubble}
           role="tooltip"
-          style={{ top: pos?.top ?? 0, left: pos?.left ?? 0 }}
-          className={cn(
-            'fixed z-[60] w-52 max-w-[calc(100vw-16px)] p-2.5 rounded-lg border bg-card text-xs',
-            'text-muted-foreground shadow-lg leading-relaxed whitespace-pre-line',
-            // 首帧还没量出位置，先隐形，免得在左上角闪一下
-            pos ? 'opacity-100' : 'opacity-0',
-          )}
+          className="tb2"
+          // 首帧还没量出位置，先藏着，免得在左上角闪一下
+          style={{ top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden' }}
         >
           {text}
         </span>,

@@ -2,15 +2,11 @@ import { createContext, useContext } from 'react'
 
 export type ToastType = 'success' | 'error' | 'info'
 
-export interface ToastAction {
-  label: string
-  onClick: () => void
-}
-
 export interface ToastOptions {
+  /** 多带的一行小字 */
   description?: string
+  /** 停多久（毫秒）；不给就按有没有说明取 2.4 / 4.2 秒 */
   duration?: number
-  action?: ToastAction
 }
 
 export interface ToastContextType {

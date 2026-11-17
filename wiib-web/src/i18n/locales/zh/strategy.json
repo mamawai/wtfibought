@@ -16,7 +16,6 @@
   "strategies": {
     "title": "策略账户",
     "subtitle": "四策略独立账户 · 本平台模拟盘执行 · 决策价与撮合价同源",
-    "testnetLink": "Testnet 监测",
     "loading": "加载策略账户...",
     "offline": "离线",
     "name": {
@@ -34,7 +33,7 @@
       "hint": "sim 未启动或尚未开仓过，启动后自动恢复"
     },
     "stats": {
-      "equity": "权益 · 可用 ${{available}}",
+      "equity": "权益 · 可用 ₮{{available}}",
       "realized_other": "累计已实现 · {{count}} 笔",
       "winRate": "胜率 · {{wins}}/{{total}}",
       "unrealized_other": "持仓浮盈 · {{count}} 仓"
@@ -137,6 +136,8 @@
       }
     },
     "equity": {
+      "title": "收益曲线",
+      "sub": "累计已实现盈亏",
       "empty": "暂无收益曲线",
       "emptyHint": "首笔平仓后自动出现"
     },
@@ -156,7 +157,8 @@
       "mark": "标记",
       "margin": "保证金",
       "unrealized": "浮动盈亏",
-      "close": "平仓"
+      "close": "平仓",
+      "closeSure": "确认平仓"
     },
     "toast": {
       "loadFailed": "加载策略账户失败",
@@ -199,12 +201,17 @@
       "forceClose": "收尾强平",
       "liquidation": "强平"
     },
+    "idleTitle": "选好策略和区间，点「跑回测」",
+    "idleHint": "跑的时候 K 线会一段段揭开，右边同步记下策略的每一步",
     "form": {
+      "strategy": "策略",
       "symbol": "币种",
       "from": "开始日期",
       "to": "结束日期",
       "balance": "初始资金",
-      "leverage": "杠杆"
+      "leverage": "杠杆",
+      "less": "减一",
+      "more": "加一"
     },
     "run": {
       "queued": "排队中…",
@@ -249,7 +256,16 @@
     "trades": {
       "title": "成交明细",
       "count_other": "{{count}} 笔",
-      "jumpTip": "点击定位到图表"
+      "jumpTip": "点击定位到图表",
+      "col": {
+        "open": "进场",
+        "side": "方向",
+        "entry": "进场价",
+        "exit": "出场价",
+        "reason": "出场",
+        "hold": "持仓",
+        "pnl": "盈亏"
+      }
     },
     "toast": {
       "badRange": "时间范围无效",
@@ -293,6 +309,13 @@
     "next": "下一根",
     "speed": "{{n}}根/秒",
     "spaceHint": "空格 = 下一根 · 不可回退",
+    "manual": "手动",
+    "levLabel": "杠杆",
+    "levHint": "下一次开 / 加仓用",
+    "openLabel": "开 / 加仓",
+    "openHint": "占可用现金的比例",
+    "closeLabel": "平 / 减仓",
+    "closeHint": "占该侧仓位数量的比例",
     "rewound": "切到大周期后进度退回了已经看过的位置，走到新的 K 线之前暂停交易",
     "aiHint": "AI 提示",
     "aiHintTip": "让 AI（{{model}}）读一下当前盘面：结构 / 关键位 / 量能 / 持仓风险",
@@ -352,7 +375,7 @@
     },
     "stat": {
       "equity": "当前权益",
-      "available": "可用 ${{value}}",
+      "available": "可用 ₮{{value}}",
       "cumPnl": "累计盈亏",
       "cumPnlSub": "含手续费 · 实时直拉",
       "fillRate": "进场成交率",
@@ -379,8 +402,7 @@
     },
     "pos": {
       "mark": "标记价",
-      "liq": "强平价",
-      "entry": "开仓价"
+      "liq": "强平价"
     },
     "order": {
       "entry": "进场",
@@ -416,11 +438,8 @@
       "pricePh": "挂单价",
       "leverage": "杠杆",
       "submit": "下单",
-      "submitting": "提交中…",
       "closeMarket": "市价平仓",
-      "closing": "平仓中…",
       "cancelAll": "撤挂单",
-      "cancelling": "撤单中…",
       "qtyPositive": "数量必须 > 0",
       "priceRequired": "LIMIT 需填价格",
       "opFailed": "操作失败",
@@ -431,6 +450,7 @@
     }
   },
   "monitor": {
+    "title": "进程",
     "live": "实时",
     "heap": "堆内存",
     "nonHeap": "堆外",

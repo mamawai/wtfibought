@@ -16,12 +16,7 @@ function fractionDigits(price: number): number {
 function TickerCell({ q, onGo }: { q: Quote; onGo: (to: string) => void }) {
   const up = (q.pct ?? 0) >= 0;
   return (
-    <button
-      type="button"
-      tabIndex={-1}
-      onClick={() => onGo(q.to)}
-      className="bg-transparent border-0 p-0 [font:inherit] text-inherit cursor-pointer"
-    >
+    <button type="button" tabIndex={-1} onClick={() => onGo(q.to)}>
       <b>{q.name}</b>
       {q.price == null
         ? <span className="text-muted-foreground">—</span>
@@ -71,9 +66,8 @@ export function TickerStrip() {
   const cells = (prefix: string) => quotes.map(q => <TickerCell key={`${prefix}-${q.key}`} q={q} onGo={navigate} />);
 
   return (
-    // w-full 同页脚：外层 flex-col，不写会按 max-content 撑到 1800，窄屏出横向滚动条
-    <div className="wrap w-full hidden md:block">
-      <div className="ticker num">
+    <div className="page-shell hidden lg:block">
+      <div className="ticker">
         <div className="track">
           <span className="set">{cells('a')}</span>
           <span className="set" aria-hidden>{cells('b')}</span>

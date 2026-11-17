@@ -1,0 +1,34 @@
+/* 选择框：样子同输入框，点开是下拉面板（面板是 index.css 那套 .menu）。.sm 小号，.wide 铺满 */
+@layer components {
+  .sel{position:relative;display:inline-flex}
+  .sel > button{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;min-width:132px;height:38px;padding:0 10px 0 14px;border-radius:10px;background:var(--ctl);font-size:14px;font-weight:500;white-space:nowrap;box-shadow:inset 0 0 0 1.5px transparent;transition:box-shadow var(--t) var(--ease-control)}
+  .sel.sm > button{height:28px;min-width:0;padding:0 7px 0 11px;border-radius:8px;font-size:12.5px}
+  .sel.wide,.sel.wide > button{width:100%;min-width:0}
+  /* 选中的字放不下就省略，右边的箭头一直在 */
+  .sel > button > span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .sel > button .ic{width:14px;height:14px;color:var(--color-muted-foreground);transition:transform var(--t) var(--ease-control)}
+  /* 还没选：占位字是灰的 */
+  .sel > button .ph{font-weight:400;color:var(--color-muted-foreground)}
+  .sel.open > button{box-shadow:inset 0 0 0 1.5px var(--color-foreground)}
+  .sel.open > button .ic{transform:rotate(180deg)}
+
+  .sel .menu{top:calc(100% + 6px);left:0;min-width:100%;max-height:288px;overflow-y:auto}
+  .sel .menu.rt{left:auto;right:0}
+  .sel .menu [role="option"]{display:flex;align-items:center;gap:10px;width:100%;height:36px;padding:0 12px;border-radius:9px;font-size:14px;color:var(--color-foreground);white-space:nowrap;text-align:left;transition:background-color var(--fast)}
+  .sel .menu [role="option"]:focus-visible{outline:0;background:var(--color-pop-h)}
+  /* 选中的那项：字重一点，右边一个勾 */
+  .sel .menu [role="option"] .ic{margin-left:auto;color:var(--color-foreground);opacity:0}
+  .sel .menu [aria-selected="true"]{font-weight:500}
+  .sel .menu [aria-selected="true"] .ic{opacity:1}
+  /* 分组名 */
+  .sel .menu .grp{padding:8px 12px 4px;font-size:11.5px;color:var(--color-muted-foreground)}
+
+  @media (hover:hover){
+    .sel > button:hover{box-shadow:inset 0 0 0 1.5px var(--color-line2)}
+    .sel.open > button:hover{box-shadow:inset 0 0 0 1.5px var(--color-foreground)}
+    .sel .menu [role="option"]:hover{background:var(--color-pop-h)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .sel > button,.sel > button .ic,.sel .menu [role="option"]{transition:none}
+  }
+}

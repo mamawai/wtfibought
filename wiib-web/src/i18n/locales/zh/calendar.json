@@ -5,6 +5,8 @@
   "prevWeek": "上一周",
   "nextWeek": "下一周",
   "thisWeek": "回到本周",
+  "jumpTo": "跳到某一天",
+  "today": "今天",
   "allCountries": "全部国家",
   "nextUs": "下一条美国数据",
   "country": {

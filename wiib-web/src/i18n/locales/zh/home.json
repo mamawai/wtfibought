@@ -9,7 +9,7 @@
   },
   "hero": {
     "howToPlay": "玩法说明",
-    "totalAssets": "总资产 USD",
+    "totalAssets": "总资产 USDT",
     "profitPct": "累计收益率",
     "balance": "可用余额",
     "totalPnl": "总盈亏",
@@ -82,6 +82,8 @@
     "longLiq": "多单被爆",
     "shortLiq": "空单被爆",
     "window": "过去 1 小时 {{count}} 笔",
+    "longShare": "多 {{pct}}%",
+    "shortShare": "空 {{pct}}%",
     "viewAll": "查看全部"
   },
   "calendar": {
@@ -119,11 +121,12 @@
     "fri": "五",
     "sat": "六",
     "sun": "日",
-    "today": "今",
-    "trades_other": "{{count}}笔"
+    "monthTotal": "本月合计"
   },
   "dayDetail": {
     "note": "当日盈亏 · 全账户 · 快照口径仅供参考",
+    "prevDay": "前一天",
+    "nextDay": "后一天",
     "stocks": "股票",
     "crypto": "币",
     "commodity": "大宗",

@@ -1,0 +1,28 @@
+/* 提示条：右下角一条墨色的，160ms 从下面滑上来；前面一颗点说成没成（绿成、红没成、灰只是告诉一声） */
+@layer components {
+  /* 要高过弹窗（.dlg 200）：弹窗里操作的反馈不能被遮罩压着。--dy 是滑进来的方向 */
+  .toasts{--dy:6px;position:fixed;z-index:300;right:max(16px,env(safe-area-inset-right,0px));bottom:24px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none}
+  /* 右下角有 Polaris 球时排在球的左边，不压着它 */
+  :root:has(.polaris-ball) .toasts{right:calc(max(16px,env(safe-area-inset-right,0px)) + 60px)}
+  .toast{display:flex;gap:10px;max-width:min(360px,calc(100vw - 32px));padding:11px 14px;border-radius:13px;background:var(--color-foreground);color:var(--color-on-ink);font-size:13px;line-height:1.45;box-shadow:0 10px 30px -10px rgb(0 0 0 / .35);pointer-events:auto;animation:wiib-toast-in var(--t) var(--ease-control)}
+  @keyframes wiib-toast-in{from{opacity:0;transform:translateY(var(--dy))}}
+  /* 要走了：原路淡出 */
+  .toast.out{opacity:0;transform:translateY(var(--dy));transition:opacity var(--t) var(--ease-control),transform var(--t) var(--ease-control)}
+  .toast i{flex:none;width:7px;height:7px;margin-top:6px;border-radius:50%;background:#3ecf8e}
+  .toast.err i{background:#ff6b6b}
+  .toast.info i{background:var(--color-faint)}
+  .toast > div{min-width:0}
+  .toast b{display:block;font-weight:500;overflow-wrap:anywhere}
+  .toast span{display:block;margin-top:2px;font-size:12.5px;color:color-mix(in srgb,var(--color-on-ink) 66%,transparent);overflow-wrap:anywhere}
+  /* 有底部悬浮 Tab 的宽度：抬到 Tab 上面，和球同一排 */
+  @media (max-width:1023px){.toasts{bottom:calc(var(--tabbar-space) + 8px)}}
+  /* 手机：顶上通栏一条，从上面滑下来。放底下会被键盘挡住 */
+  @media (max-width:560px){
+    .toasts,:root:has(.polaris-ball) .toasts{--dy:-6px;top:calc(14px + env(safe-area-inset-top,0px));bottom:auto;left:16px;right:16px;align-items:stretch}
+    .toast{max-width:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .toast{animation:none}
+    .toast.out{transition:none}
+  }
+}

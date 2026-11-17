@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@number-flow/react": "^0.6.2",
     "@stomp/stompjs": "^7.2.1",

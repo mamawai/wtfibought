@@ -40,9 +40,9 @@ export function fmtNum(n: number | string | null | undefined, decimals = 2): str
   return v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-/** 带正负号的美元金额：+$1,284.30 / -$460.00。别拿 '$'+fmtNum 拼，负号会跑到 $ 后面。 */
+/** 带正负号的金额，前面是 Tether 符号（全站都以 USDT 计价）：+₮1,284.30 / -₮460.00。别拿 '₮'+fmtNum 拼，负号会跑到 ₮ 后面。 */
 export function fmtSignedUsd(n: number, decimals = 2): string {
-  return `${n < 0 ? '-$' : '+$'}${fmtNum(Math.abs(n), decimals)}`;
+  return `${n < 0 ? '-₮' : '+₮'}${fmtNum(Math.abs(n), decimals)}`;
 }
 
 /** 预测盘份额价换成美分数，最多一位小数：0.54 → 54，0.001 → 0.1，和 Polymarket 官网一样。 */
@@ -156,5 +156,13 @@ export function fmtMoney(n: number | null | undefined): string {
   if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
   if (abs >= 1e3) return (n / 1e3).toFixed(2) + 'K';
   return n.toFixed(2);
+}
+
+/** 刷新钮点下去：钮里的图标转一圈 */
+export function spinIcon(e: { currentTarget: Element }) {
+  e.currentTarget.querySelector('.ic')?.animate(
+    [{ transform: 'rotate(0)' }, { transform: 'rotate(360deg)' }],
+    { duration: 500, easing: 'cubic-bezier(.2,.8,.2,1)' },
+  );
 }
 

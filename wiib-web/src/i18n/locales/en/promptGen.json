@@ -50,6 +50,7 @@
   "keepHint": "Only the latest 3 are kept",
   "continueFrom": "Continue from this version",
   "rollbackConfirm": "Replace the current conversation with the one from v{{no}} and continue from there?",
+  "rollbackSure": "Replaces the current chat, click again",
   "body": "Instruction body",
   "writingNow": "Writing a new version",
   "orbHint": "Working it out, text is on its way",

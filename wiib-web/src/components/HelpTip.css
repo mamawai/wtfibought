@@ -1,0 +1,8 @@
+/* 说明小问号：鼠标停上去 80ms 后出一块墨色气泡，触屏点一下开关；气泡挂在 body 上，位置脚本算 */
+@layer components {
+  .tip{display:inline-flex;color:var(--color-faint);cursor:help;border-radius:50%}
+  .tip .ic{width:13px;height:13px}
+  .tb2{position:fixed;z-index:60;width:232px;max-width:calc(100vw - 16px);padding:9px 11px;border-radius:10px;background:var(--color-foreground);color:var(--color-on-ink);font-size:12px;font-weight:400;line-height:1.5;text-align:left;white-space:pre-line;pointer-events:none;animation:wiib-tip-in 120ms var(--ease-control)}
+  @keyframes wiib-tip-in{from{opacity:0;transform:translateY(3px)}}
+  @media (prefers-reduced-motion:reduce){.tb2{animation:none}}
+}

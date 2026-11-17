@@ -82,8 +82,6 @@
     "h24": "24h",
     "high": "High",
     "low": "Low",
-    "predictTitle": "BTC 5-minute prediction",
-    "predictDesc": "Live Polymarket odds on BTC short-term direction.",
     "long": "Long",
     "short": "Short",
     "units": "{{qty}} units",
@@ -225,5 +223,15 @@
     "axisOver": "Above {{price}} · long {{long}} · short {{short}}",
     "axisUnder": "Below {{price}} · long {{long}} · short {{short}}",
     "readoutHint": "Hover or tap a row to see long and short notional at that level"
+  },
+  "book": {
+    "title": "Order book",
+    "price": "Price (USDT)",
+    "amount": "Amount (USDT)",
+    "step": "Price grouping",
+    "mark": "Mark",
+    "markHelp": "The mark price is used for unrealized PnL and liquidation.\nIt is derived from a weighted price index across several exchanges, so it does not jump with a single venue's trades.",
+    "waiting": "Waiting for order book…",
+    "offline": "Order book disconnected"
   }
 }

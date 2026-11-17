@@ -5,8 +5,8 @@ import { currentLang } from '../../i18n';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn, fmtDate } from '../../lib/utils';
 
-/** 弹层宽：7 格 × 32 + 内边距 + 边框 */
-const POP_W = 242;
+/** 弹层宽，同 index.css 的 .dp .menu */
+const POP_W = 260;
 
 /** 拼 yyyy-MM-dd，m 从 0 起 */
 const ymd = (y: number, m: number, d: number) =>
@@ -19,15 +19,17 @@ interface DatePickerProps {
   min?: string;
   max?: string;
   disabled?: boolean;
-  /** 触发钮样式 */
+  /** 没选时钮上的字，不传用通用的「选择日期」 */
+  placeholder?: string;
+  /** 加在触发钮上 */
   className?: string;
 }
 
 /**
- * 日期选择：点开一张月历，月份和星期名跟站内语言走。
+ * 日期选择：一颗小钮点开一张月历，月份和星期名跟站内语言走（样式见 index.css .dp）。
  * 值一律 yyyy-MM-dd 字符串，范围直接按字典序比。
  */
-export function DatePicker({ value, onChange, min, max, disabled, className }: DatePickerProps) {
+export function DatePicker({ value, onChange, min, max, disabled, placeholder, className }: DatePickerProps) {
   const { t } = useTranslation('common');
   // 月历翻到哪个月 [年, 月(0 起)]；null = 收起
   const [view, setView] = useState<[number, number] | null>(null);
@@ -60,18 +62,17 @@ export function DatePicker({ value, onChange, min, max, disabled, className }: D
   };
 
   return (
-    <div ref={wrapRef} className="relative"
+    <div ref={wrapRef} className={cn('dp', view && 'open')}
          onKeyDown={e => { if (e.key === 'Escape' && view) { close(); btnRef.current?.focus(); } }}>
       <button ref={btnRef} type="button" disabled={disabled} onClick={toggle}
               aria-haspopup="dialog" aria-expanded={view != null}
-              className={cn('inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed', className)}>
-        <span className={value ? 'text-foreground' : 'text-muted-foreground'}>{value || t('datePicker.placeholder')}</span>
-        <CalendarDays className="w-3 h-3 text-muted-foreground" />
+              className={cn(!value && 'ph', className)}>
+        <CalendarDays className="ic" />
+        <span>{value || placeholder || t('datePicker.placeholder')}</span>
       </button>
+      {/* 开着才挂：收着的时候它也占位置，贴右边的日期钮会把页面撑出横向滚动 */}
       {view && (
-        <div role="dialog" style={{ width: POP_W }}
-             className={cn('absolute top-[calc(100%+6px)] z-50 p-2 border border-foreground bg-background',
-               alignRight ? 'right-0' : 'left-0')}>
+        <div role="dialog" className={cn('menu', alignRight && 'rt')}>
           <MonthGrid y={view[0]} m={view[1]} value={value} min={min} max={max} onMonth={goMonth} onPick={pick} />
         </div>
       )}
@@ -103,31 +104,26 @@ function MonthGrid({ y, m, value, min, max, onMonth, onPick }: {
 
   return (
     <>
-      <div className="flex items-center justify-between mb-1">
-        <button type="button" className="ibtn w-7 h-7" aria-label={t('datePicker.prevMonth')}
+      <div className="mh">
+        <button type="button" className="xb" aria-label={t('datePicker.prevMonth')}
                 disabled={!!min && ym <= min.slice(0, 7)} onClick={() => onMonth(y, m - 1)}>
-          <ChevronLeft className="w-3.5 h-3.5" />
+          <ChevronLeft className="ic" />
         </button>
-        <span className="text-[13px] font-bold text-foreground">{title}</span>
-        <button type="button" className="ibtn w-7 h-7" aria-label={t('datePicker.nextMonth')}
+        <b>{title}</b>
+        <button type="button" className="xb" aria-label={t('datePicker.nextMonth')}
                 disabled={!!max && ym >= max.slice(0, 7)} onClick={() => onMonth(y, m + 1)}>
-          <ChevronRight className="w-3.5 h-3.5" />
+          <ChevronRight className="ic" />
         </button>
       </div>
-      <div className="grid grid-cols-7">
-        {weekdays.map((w, i) => (
-          <span key={i} className="h-7 flex items-center justify-center text-[11px] text-muted-foreground">{w}</span>
-        ))}
+      <div className="dg">
+        {weekdays.map((w, i) => <u key={i}>{w}</u>)}
         {Array.from({ length: lead }, (_, i) => <span key={`pad${i}`} />)}
         {Array.from({ length: days }, (_, i) => {
           const d = ymd(y, m, i + 1);
           const off = (!!min && d < min) || (!!max && d > max);
           return (
             <button key={d} type="button" disabled={off} aria-pressed={d === value} onClick={() => onPick(d)}
-                    className={cn('num h-8 text-[12px] transition-colors',
-                      d === value ? 'bg-foreground text-background'
-                        : off ? 'text-muted-foreground/40 cursor-not-allowed'
-                          : cn('hover:bg-card-2', d === today && 'text-primary font-bold'))}>
+                    className={cn(d === today && 'td')}>
               {i + 1}
             </button>
           );

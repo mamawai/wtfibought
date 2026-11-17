@@ -19,14 +19,14 @@
          取值须同 index.css（改主题色记得同步这里） -->
     <style>
       /* 连第一帧都不能白：html 背景先于 splash 元素解析 */
-      html { background: #fafaf7 }
-      html.dark { background: #0f1012 }
+      html { background: #ffffff }
+      html.dark { background: #0c0c0d }
 
       #splash {
         position: fixed; inset: 0; z-index: 9999;
-        --bg: #fafaf7; --fg: #121316; --pri: #f25f0a;
+        --bg: #ffffff; --fg: #0b0b0c; --pri: #f25f0a;
       }
-      html.dark #splash { --bg: #0f1012; --fg: #f1f1ec; --pri: #f97316 }
+      html.dark #splash { --bg: #0c0c0d; --fg: #f4f4f6; --pri: #f97316 }
       #splash.out { pointer-events: none }
 
       /* 上下两块底色，接缝在 56% 处，那根线就画在接缝上 */
@@ -73,7 +73,7 @@
         // 放这儿是因为晚到 React 挂载会先闪一下旧色。取值须同 index.css 的 --color-card
         if (pwa) {
           document.querySelector('meta[name="theme-color"]')
-            .setAttribute('content', dark ? '#0f1012' : '#fafaf7');
+            .setAttribute('content', dark ? '#0c0c0d' : '#ffffff');
         }
       })();
     </script>

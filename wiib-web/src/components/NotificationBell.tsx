@@ -6,10 +6,11 @@ import { useUserStore } from '../stores/userStore';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { useNotificationPanel } from '../hooks/useNotificationPanel';
 import { NotificationList } from './NotificationList';
+import { cn } from '../lib/utils';
 
 /**
- * 顶栏信封：未读角标 + 下拉面板。点开即全部标已读，面板仍列最近 50 条历史。
- * 按钮壳跟着 .tools button / .tools .ic 走（无底色无边框，图标 15px 灰）。
+ * 顶栏铃铛：未读角标 + 下拉面板。点开即全部标已读，面板仍列最近 50 条历史。
+ * 样式是顶栏那套 .dd / .bell / .menu（见 index.css）。
  * 只在 PC 显示（顶栏工具区整体 hidden lg:flex），手机端的通知入口在「我的」页。
  */
 export function NotificationBell() {
@@ -27,33 +28,25 @@ export function NotificationBell() {
   if (userId == null) return null;
 
   return (
-    // flex 不能省：块级 div 会按行高撑出行盒，按钮贴着基线，图标比邻居高一截
-    <div ref={ref} className="relative flex">
-      <button
-        type="button"
-        onClick={() => void toggle()}
-        className="relative inline-flex cursor-pointer"
-        aria-label={t('notif.title')}
-      >
+    <div ref={ref} className={cn('dd', open && 'open')}
+         onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }}>
+      <button type="button" className="bell" onClick={() => void toggle()}
+              aria-label={t('notif.title')} aria-haspopup="dialog" aria-expanded={open}>
         <Bell className="ic" />
-        {unread > 0 && (
-          <span className="absolute -top-2 -right-2 min-w-4 h-4 px-1 bg-primary text-white text-[9px] font-black tabular-nums flex items-center justify-center">
-            {unread > 99 ? '99+' : unread}
-          </span>
-        )}
+        {/* 一直在，有未读才显出来：数字是长出来、缩回去的 */}
+        <em className={cn(unread > 0 && 'on')}>{unread > 99 ? '99+' : unread}</em>
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-80 border border-foreground bg-background overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
-          <div className="px-4 py-2.5 text-[13px] font-semibold text-muted-foreground border-b border-border">{t('notif.title')}</div>
-          <NotificationList
-            items={items}
-            loading={loading}
-            onSelect={commentId => { setOpen(false); navigate(`/comments?focus=${commentId}`); }}
-            className="max-h-96"
-          />
-        </div>
-      )}
+      {/* 面板一直挂着，开合靠 .dd.open 的过渡 */}
+      <div className="menu rt notif" role="dialog" aria-label={t('notif.title')}>
+        <h3>{t('notif.title')}</h3>
+        <NotificationList
+          items={items}
+          loading={loading}
+          onSelect={commentId => { setOpen(false); navigate(`/comments?focus=${commentId}`); }}
+          className="max-h-[392px]"
+        />
+      </div>
     </div>
   );
 }

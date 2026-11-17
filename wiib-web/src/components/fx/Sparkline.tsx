@@ -20,7 +20,7 @@ export function Sparkline({ data, stroke, area = true, dot = true, baseline, bas
   dot?: boolean;
   /** 分色基准线的值，会一起参与 min/max，保证这条线一定落在图内 */
   baseline?: number;
-  /** 挂在基线右端上方的小字，只在传了 baseline 时有意义 */
+  /** 挂在基线左端上方的小字，只在传了 baseline 时有意义；给了它线尾还会多一颗空心点 */
   baselineLabel?: string;
   className?: string;
 }) {
@@ -45,7 +45,7 @@ export function Sparkline({ data, stroke, area = true, dot = true, baseline, bas
   const yB = split ? y(baseline) : H;
   const areaD = `${line} L${W} ${yB.toFixed(2)} L0 ${yB.toFixed(2)} Z`;
   const lineProps = {
-    fill: 'none', strokeWidth: '1.5', strokeLinecap: 'round' as const,
+    fill: 'none', strokeWidth: split ? '1.75' : '1.5', strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const, vectorEffect: 'non-scaling-stroke' as const,
   };
 
@@ -76,8 +76,8 @@ export function Sparkline({ data, stroke, area = true, dot = true, baseline, bas
             </>
           )}
           <line
-            x1="0" x2={W} y1={yB} y2={yB} stroke="var(--color-muted-foreground)"
-            strokeDasharray="2 5" vectorEffect="non-scaling-stroke"
+            x1="0" x2={W} y1={yB} y2={yB} stroke="var(--color-faint)"
+            strokeDasharray="2 4" vectorEffect="non-scaling-stroke"
           />
           <path d={line} clipPath={`url(#${id}a)`} stroke="var(--color-gain)" {...lineProps} />
           <path d={line} clipPath={`url(#${id}b)`} stroke="var(--color-loss)" {...lineProps} />
@@ -103,13 +103,18 @@ export function Sparkline({ data, stroke, area = true, dot = true, baseline, bas
   );
 
   if (!split || !baselineLabel) return svg;
-  // 标签挂基线右端上方：svg 被 preserveAspectRatio=none 拉满容器，所以 y 按百分比换算就对得上
+  // 标签挂基线左端上方，线尾一颗空心点：svg 被 preserveAspectRatio=none 拉满容器，所以 y 按百分比换算就对得上
+  const tail = data[data.length - 1] >= baseline ? 'var(--color-gain)' : 'var(--color-loss)';
   return (
     <div className="relative h-full">
       {svg}
+      <i
+        className="reveal-late absolute -right-1 w-[9px] h-[9px] -mt-[4.5px] rounded-full bg-background"
+        style={{ top: `${(ly / H) * 100}%`, boxShadow: `inset 0 0 0 2px ${tail}` }}
+      />
       <span
-        className="reveal-late absolute right-0 text-[11.5px] text-muted-foreground whitespace-nowrap"
-        style={{ top: `${(yB / H) * 100}%`, transform: 'translateY(calc(-100% - 4px))' }}
+        className="reveal-late absolute left-0 text-[11.5px] text-muted-foreground whitespace-nowrap"
+        style={{ top: `${(yB / H) * 100}%`, transform: 'translateY(calc(-100% - 5px))' }}
       >
         {baselineLabel}
       </span>

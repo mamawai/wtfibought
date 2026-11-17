@@ -14,9 +14,9 @@ export function cssVar(name: string, fallback: string): string {
 export interface ChartUi {
   /** 轴刻度文字 */
   axisLabel: string;
-  /** 网格线/轴线（用全站边框色，保持 recessive） */
+  /** 网格线/轴线（用图表网格色，保持 recessive） */
   gridLine: string;
-  /** 卡片面色（tooltip 底） */
+  /** 页面底色：数据点外圈描一圈它，跟线分开 */
   card: string;
   /** 正文色 */
   fg: string;
@@ -32,24 +32,23 @@ export interface ChartUi {
 }
 
 export function chartUi(isDark: boolean): ChartUi {
-  const axisLabel = cssVar('--color-muted-foreground', isDark ? '#8b8e97' : '#7a7e88');
-  const gridLine = cssVar('--color-border', isDark ? '#26282d' : '#e7e7e2');
-  const card = cssVar('--color-card', isDark ? '#0f1012' : '#fafaf7');
-  const fg = cssVar('--color-foreground', isDark ? '#f1f1ec' : '#121316');
+  const axisLabel = cssVar('--color-muted-foreground', isDark ? '#9a9aa1' : '#6e6e73');
+  const gridLine = cssVar('--color-grid', isDark ? '#1a1a1d' : '#f0f0f2');
+  const card = cssVar('--color-background', isDark ? '#0c0c0d' : '#ffffff');
+  const fg = cssVar('--color-foreground', isDark ? '#f4f4f6' : '#0b0b0c');
   return {
     axisLabel,
     gridLine,
     card,
     fg,
     tooltip: {
-      backgroundColor: card,
-      borderColor: gridLine,
-      borderWidth: 1,
+      backgroundColor: cssVar('--color-pop', isDark ? '#1b1b1e' : '#ffffff'),
+      borderColor: 'transparent',
+      borderWidth: 0,
       padding: [8, 12],
       textStyle: { color: fg, fontSize: 11, fontFamily: cssVar('--font-sans', 'ui-sans-serif, sans-serif') },
-      extraCssText: isDark
-        ? 'box-shadow: 0 6px 16px rgba(0,0,0,.45); border-radius: 0;'
-        : 'box-shadow: 0 4px 12px rgba(0,0,0,.10); border-radius: 0;',
+      // 同全站浮层：圆角 10、一圈发丝线 + 投影
+      extraCssText: `border-radius:10px;box-shadow:${cssVar('--sh-pop', '0 12px 32px -8px rgba(0,0,0,.18)')};`,
     },
   };
 }
@@ -60,7 +59,6 @@ export interface LwcTheme {
   bg: string;
   mute: string;
   border: string;
-  card2: string;
   gain: string;
   loss: string;
   warning: string;
@@ -78,21 +76,23 @@ export interface LwcTheme {
 }
 
 export function lwcTheme(): LwcTheme {
-  const fg = cssVar('--color-foreground', '#121316');
-  const bg = cssVar('--color-background', '#fafaf7');
-  const mute = cssVar('--color-muted-foreground', '#7a7e88');
-  const border = cssVar('--color-border', '#e7e7e2');
-  const card2 = cssVar('--color-card-2', '#f0f0ec');
+  const fg = cssVar('--color-foreground', '#0b0b0c');
+  const bg = cssVar('--color-background', '#ffffff');
+  const mute = cssVar('--color-muted-foreground', '#6e6e73');
+  const border = cssVar('--color-border', '#ebebed');
+  const grid = cssVar('--color-grid', '#f0f0f2');
+  const line2 = cssVar('--color-line2', '#d9d9de');
   const gain = cssVar('--color-gain', '#0b8a5c');
   const loss = cssVar('--color-loss', '#d63b2f');
-  const warning = cssVar('--color-warning', '#c98a00');
+  const warning = cssVar('--color-warning', '#a8700a');
   const primary = cssVar('--color-primary', '#f25f0a');
+  const info = cssVar('--color-info', '#2563eb');
   const font = cssVar('--font-sans', 'ui-sans-serif, system-ui, sans-serif');
-  // 十字线两条墨色虚线 + 墨底标签；落在副图上时标签自动显示那个 pane 的值
-  const cross = { color: fg, width: 1 as const, style: LineStyle.Dashed, labelBackgroundColor: fg };
+  // 十字线：两条浅灰线，轴上的标签是墨底；落在副图上时标签自动显示那个 pane 的值
+  const cross = { color: line2, width: 1 as const, style: LineStyle.Solid, labelBackgroundColor: fg };
   return {
-    fg, bg, mute, border, card2, gain, loss, warning, primary,
-    col3: [primary, '#2f8fd6', '#7c5cff'],
+    fg, bg, mute, border, gain, loss, warning, primary,
+    col3: [primary, info, '#7c5cff'],
     options: {
       layout: {
         background: { color: 'transparent' }, textColor: mute, fontSize: 11, fontFamily: font,
@@ -100,7 +100,7 @@ export function lwcTheme(): LwcTheme {
         attributionLogo: false,
         panes: { separatorColor: border, separatorHoverColor: mute, enableResize: true },
       },
-      grid: { vertLines: { color: border }, horzLines: { color: border } },
+      grid: { vertLines: { color: grid }, horzLines: { color: grid } },
       crosshair: { mode: CrosshairMode.Normal, vertLine: cross, horzLine: cross },
       rightPriceScale: { borderColor: border },
       timeScale: { borderColor: border },

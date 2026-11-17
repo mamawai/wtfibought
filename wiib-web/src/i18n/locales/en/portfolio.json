@@ -19,6 +19,7 @@
     "marginLoan": "Margin loan",
     "interestAccrued": "Accrued interest",
     "transfer": "Transfer",
+    "today": "Today",
     "dist": "Allocation",
     "profit": "PnL",
     "ability": "Skills"
@@ -50,7 +51,12 @@
     "prediction": "Prediction"
   },
   "holdings": {
-    "empty": "No holdings"
+    "empty": "No holdings",
+    "goMarkets": "Browse markets"
+  },
+  "dist": {
+    "total": "Total",
+    "futures": "{{name}} perp"
   },
   "spot": {
     "cryptoTitle": "Crypto holdings",
@@ -90,7 +96,6 @@
     "warnCost": "One reset per calendar week, refreshed on Monday. An automatic bankruptcy recovery counts toward the same quota.",
     "confirmName": "Type your username <0>{{name}}</0> to confirm:",
     "namePlaceholder": "Enter username",
-    "submitting": "Resetting…",
     "submit": "Confirm reset"
   },
   "wallet": {
@@ -119,9 +124,6 @@
     "roi": "Return",
     "openedAt": "Opened",
     "duration": "Holding time"
-  },
-  "pager": {
-    "page": "Page {{page}} / {{pages}}"
   },
   "history": {
     "back": "Back to portfolio",
@@ -161,7 +163,6 @@
   "force": {
     "title": "Liquidations",
     "desc": "Recent liquidations on the Binance futures market. SELL = longs liquidated, BUY = shorts liquidated. Large back-to-back liquidations usually mean short-term volatility and amplified sentiment, but they are not a standalone signal.",
-    "descShort": "Binance futures liquidations. SELL = longs liquidated, BUY = shorts liquidated.",
     "longLiquidated": "Longs liquidated",
     "shortLiquidated": "Shorts liquidated",
     "statLong": "Longs liquidated on this page",
@@ -194,11 +195,10 @@
     "balanceAfter": "Bal. {{value}}"
   },
   "chart": {
-    "assetAllocation": "Asset allocation",
-    "gameWalletNote": "Transfer to the balance wallet before trading",
+    "gameWalletNote": "The game wallet can't trade directly — transfer to the balance wallet first.",
     "futuresLoss": "Futures unrealized loss",
-    "futuresLossNote": "Futures unrealized loss of {{value}} not yet deducted; it comes out of this wallet on close",
     "noHistory": "No history yet — a snapshot is taken every day at midnight",
+    "profitAria": "PnL chart — use the left and right arrow keys to step through days",
     "cumulative": "Cum.",
     "range": "{{days}}d",
     "cumPnl": "Cum. PnL {{value}}"

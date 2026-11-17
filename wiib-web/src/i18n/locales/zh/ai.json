@@ -25,7 +25,6 @@
   },
   "behavior": {
     "title": "用户行为分析",
-    "detail": "明细",
     "overview": "资产概览",
     "totalAssets": "总资产",
     "totalReturn": "总收益率",
@@ -66,18 +65,17 @@
     "model": "模型",
     "tempo": "节奏",
     "return": "收益率",
-    "round": "局",
     "status": "状态",
     "runningShort": "在跑",
     "pausedShort": "停着",
     "liqShort": "清零",
     "initial": "初始 10,000",
     "noTraderTitle": "还没有你的 Trader？",
-    "step1Title": "1. 配一个模型端点",
+    "step1Title": "配一个模型端点",
     "step1": "在「配置」里填 API key。Claude、GPT、Gemini 都行，key 只存尾四位回显，每次唤醒直接打你的端点，站里不留副本。",
-    "step2Title": "2. 选币种和节奏",
+    "step2Title": "选币种和节奏",
     "step2": "从 8 个币里挑一到三个，心跳周期 15m 到 4h。可以限定唤醒时段，比如只在 08:00 到 23:00 醒。",
-    "step3Title": "3. 启动，进竞技场",
+    "step3Title": "启动，进竞技场",
     "step3": "各带 10,000U 虚拟合约账户。每根 K 线醒一次，每天复盘一次。爆仓了下一局重新注资。"
   },
   "status": {
@@ -117,7 +115,9 @@
     "winRate": "胜率",
     "maxDd": "最大回撤",
     "tokensOf": "{{scope}} TOKEN",
-    "lookedAt": "看了"
+    "lookedAt": "看了",
+    "curveAria": "净值曲线，左右方向键逐点查看",
+    "configure": "配置"
   },
   "tool": {
     "openPosition": "开仓",
@@ -283,7 +283,7 @@
     "customPromptPh": "例：目标是净盈亏最大化；单笔最多亏权益的 2%，合计不超过 6%；只做多；偏好拿 4 到 24 小时的波段。",
     "genPrompt": "提示词生成",
     "resetDefaultPrompt": "重置为平台默认",
-    "resetDefaultPromptConfirm": "当前指令会被平台默认指令整段替换，继续？",
+    "resetSure": "会整段替换，再点一次",
     "save": "保存配置",
     "create": "创建 Trader"
   },
@@ -314,8 +314,8 @@
       "EXECUTION": "执行上的纪律"
     },
     "evidenceOf": "证据：{{v}}",
-    "counts": "对了 {{s}} · 错了 {{o}} · 没碰上 {{u}}",
-    "countsGap": "做到 {{s}} · 没做到 {{o}} · 没碰上 {{u}}",
+    "counts": "对了 <b>{{s}}</b> · 错了 <b>{{o}}</b> · 没碰上 <b>{{u}}</b>",
+    "countsGap": "做到 <b>{{s}}</b> · 没做到 <b>{{o}}</b> · 没碰上 <b>{{u}}</b>",
     "cited": "它用过：开仓时 {{open}} 次 · 观望时 {{hold}} 次",
     "state": { "inj": "它每次醒来都会看", "hyp": "待验证 · 再对 {{n}} 次转正", "hypReady": "待验证 · 下次复盘转正", "me": "只给你看", "off": "已停用 · 它看不到" },
     "flagged": "待复查",
@@ -329,6 +329,7 @@
     "retiredReasonOf": "停用原因：{{v}}",
     "revive": "恢复",
     "delete": "删除",
+    "deleteSure": "确定删除",
     "deleteConfirm": "删除后这条和它的对错记录一起消失，复盘以后可能又把它提出来。确定删除？",
     "help": {
       "useTitle": "有什么用",
@@ -345,11 +346,7 @@
       "step3Sub": "对了 / 错了 / 没碰上",
       "step4": "对了 3 次、错得不多，转正成「规律」",
       "step4Sub": "以后每次醒来都会看",
-      "recheckLead": "每条经验也会被复查：",
-      "recheck1": "最近老是错，或连着 6 次没碰上",
-      "recheck2": "自动标上「待复查」",
-      "recheck3": "复盘时重审一遍",
-      "recheck3Sub": "留着 · 改写 · 拆成两条 · 停用",
+      "recheck": "每条经验也会被复查：最近老是错，或连着 6 次没碰上 → 自动标上「待复查」→ 复盘时重审一遍（留着 · 改写 · 拆成两条 · 停用）。",
       "gap": "你的指令要求了、它却反复没做到的，每次醒来都会提醒它照做。",
       "finding": "复盘发现你的交易指令本身可能在让它亏钱，只给你看。",
       "todoTitle": "你要做的（大多数时候什么都不用做）",
@@ -678,7 +675,6 @@
     "queued": "排队中 · 本轮结束后发出",
     "cancelQueued": "不发了",
     "cancelQueuedAria": "取消这条排队消息",
-    "generating": "生成中",
     "regen": "重新生成",
     "regenTitle": "重新生成这条回答",
     "copyAnswer": "复制回答",
@@ -743,9 +739,11 @@
     "groupWeek": "近 7 天",
     "groupOlder": "更早",
     "clearAll": "清空全部对话",
-    "clearAllConfirm": "删除全部历史对话？不可恢复。进行中的会话会保留。",
+    "clearSure": "不可恢复，再点一次",
+    "cleared": "历史对话已清空",
     "clearedSkipped_other": "{{count}} 个进行中的会话未删除",
-    "deleteConfirm_other": "删除会话「{{title}}」？{{count}} 条消息与它的续聊上下文会一并清掉，不可恢复。"
+    "deleteConfirm": "删除会话「{{title}}」？",
+    "deleteHint_other": "{{count}} 条消息与它的续聊上下文会一并清掉，不可恢复。再点一次垃圾桶确认"
   },
   "composer": {
     "qMarket": "BTC 现在的市场结构怎么样？",
@@ -805,6 +803,7 @@
     "roundsHint_other": "接下来 {{count}} 次唤醒都会带上这句",
     "clear": "撤回",
     "wakeHint": "会真实执行一次交易决策，可能开仓或平仓",
+    "noteAction": "留言",
     "wakeAction": "立即唤醒",
     "lastFailed": " · 上次失败",
     "yes": "有",
@@ -822,11 +821,13 @@
     "default": "默认",
     "viaDefault": "（默认）",
     "effortTail": "档位 {{effort}} · key 尾号 {{tail}}",
+    "contextOf": "上下文 {{k}}K",
     "unused": "未被任何用途使用",
     "setDefault": "设为默认",
     "setDefaultTitle": "设为默认：没按用途指定的地方都用它",
     "firstIsDefault": "第一条会自动成为默认",
     "removeConfirm": "删除端点「{{name}}」（{{model}}）？{{warn}}",
+    "removeSure": "确认删除",
     "removeWarn": "\n正在被 {{used}} 使用，删除后这些用途回落到默认端点。",
     "bindTitle": "谁用哪条",
     "usageChat": "对话·主模型",
@@ -849,7 +850,9 @@
     "subAgentOn": "允许派后台子 agent",
     "subAgentOnHint": "关掉后主模型只用自己的工具作答；深度研判不受影响（那是你在确认卡上点过头的）",
     "subAgentLimit": "同时最多几个",
-    "subAgentLimitHint": "同一时间在跑的后台任务上限（1–{{max}}），超过的派发会被拒、主模型自己做"
+    "subAgentLimitHint": "同一时间在跑的后台任务上限（1–{{max}}），超过的派发会被拒、主模型自己做",
+    "less": "少一个",
+    "more": "多一个"
   },
   "endpoint": {
     "name": "名称",

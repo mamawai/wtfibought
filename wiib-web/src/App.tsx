@@ -14,6 +14,7 @@ import { CoinRoute } from './pages/Coin';
 import { CoinSelect } from './pages/CoinSelect';
 import { CommoditySelect } from './pages/CommoditySelect';
 import { TradFiSelect } from './pages/TradFiSelect';
+import { Markets } from './pages/Markets';
 import { Ranking } from './pages/Ranking';
 import { Comments } from './pages/Comments';
 import { Login } from './pages/Login';
@@ -32,7 +33,7 @@ import { ForceOrders } from './pages/ForceOrders';
 import { EconCalendar } from './pages/EconCalendar';
 import { useUserStore } from './stores/userStore';
 
-// 指令生成器：motion / WebGL 只有这页用，单独成 chunk，主包不为它涨
+// 指令生成器单独成 chunk，主包不为它涨
 const PromptGen = lazy(() => import('./pages/PromptGen').then(m => ({ default: m.PromptGen })));
 const pageLoading = (
   <div className="flex justify-center p-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
@@ -123,13 +124,16 @@ function App() {
                     页里要登录的接口自己按 token 判，游客不发；游客误发的 401 拦截器不弹人 */}
                 <Route path="/" element={<Home />} />
                 <Route path="/intro" element={<Intro />} />
-                <Route path="/bstock" element={<BStockList />} />
+                {/* 四个市场列表共用一层页签，切市场时那一层不重挂 */}
+                <Route element={<Markets />}>
+                  <Route path="/bstock" element={<BStockList />} />
+                  <Route path="/coin" element={<CoinSelect />} />
+                  <Route path="/commodity" element={<CommoditySelect />} />
+                  <Route path="/tradfi" element={<TradFiSelect />} />
+                </Route>
                 <Route path="/bstock/:symbol" element={<BStockRoute />} />
                 <Route path="/trades" element={<Trades />} />
-                <Route path="/coin" element={<CoinSelect />} />
                 <Route path="/coin/:symbol" element={<CoinRoute />} />
-                <Route path="/commodity" element={<CommoditySelect />} />
-                <Route path="/tradfi" element={<TradFiSelect />} />
                 <Route path="/ranking" element={<Ranking />} />
                 <Route path="/comments" element={<Comments />} />
                 <Route path="/arena" element={<Arena />} />

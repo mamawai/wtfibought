@@ -33,6 +33,11 @@
     "prevMonth": "上个月",
     "nextMonth": "下个月"
   },
+  "pager": {
+    "prev": "上一页",
+    "next": "下一页",
+    "page": "第 <0>{{page}}</0> / <1>{{pages}}</1> 页"
+  },
   "time": {
     "justNow": "刚刚",
     "minutesAgo_other": "{{count}}分钟前",

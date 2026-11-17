@@ -16,7 +16,6 @@
   "strategies": {
     "title": "Strategy accounts",
     "subtitle": "Four strategies, four accounts · Run on the platform paper account · Decision and fill price from one source",
-    "testnetLink": "Testnet monitor",
     "loading": "Loading strategy accounts...",
     "offline": "Offline",
     "name": {
@@ -34,7 +33,7 @@
       "hint": "sim is off or has never opened a position — recovers automatically once started"
     },
     "stats": {
-      "equity": "Equity · Avail. ${{available}}",
+      "equity": "Equity · Avail. ₮{{available}}",
       "realized_one": "Cum. realized · {{count}} trade",
       "realized_other": "Cum. realized · {{count}} trades",
       "winRate": "Win rate · {{wins}}/{{total}}",
@@ -140,6 +139,8 @@
       }
     },
     "equity": {
+      "title": "PnL curve",
+      "sub": "Cumulative realized PnL",
       "empty": "No equity curve yet",
       "emptyHint": "It appears after the first closed trade"
     },
@@ -159,7 +160,8 @@
       "mark": "Mark",
       "margin": "Margin",
       "unrealized": "Unrealized PnL",
-      "close": "Close"
+      "close": "Close",
+      "closeSure": "Confirm close"
     },
     "toast": {
       "loadFailed": "Failed to load strategy accounts",
@@ -202,12 +204,17 @@
       "forceClose": "Force close",
       "liquidation": "Liquidation"
     },
+    "idleTitle": "Pick a strategy and a range, then run the backtest",
+    "idleHint": "As it runs, the chart is revealed bar by bar and every step the strategy takes is logged on the right",
     "form": {
+      "strategy": "Strategy",
       "symbol": "Symbol",
       "from": "Start date",
       "to": "End date",
       "balance": "Starting capital",
-      "leverage": "Leverage"
+      "leverage": "Leverage",
+      "less": "Decrease",
+      "more": "Increase"
     },
     "run": {
       "queued": "Queued…",
@@ -255,7 +262,16 @@
       "title": "Trades",
       "count_one": "{{count}} trade",
       "count_other": "{{count}} trades",
-      "jumpTip": "Click to locate on the chart"
+      "jumpTip": "Click to locate on the chart",
+      "col": {
+        "open": "Opened",
+        "side": "Side",
+        "entry": "Entry",
+        "exit": "Exit",
+        "reason": "Exit by",
+        "hold": "Held",
+        "pnl": "PnL"
+      }
     },
     "toast": {
       "badRange": "Invalid date range",
@@ -300,6 +316,13 @@
     "next": "Next bar",
     "speed": "{{n}} bars/s",
     "spaceHint": "Space = next bar · No going back",
+    "manual": "Manual",
+    "levLabel": "Leverage",
+    "levHint": "For the next open / add",
+    "openLabel": "Open / add",
+    "openHint": "Share of available cash",
+    "closeLabel": "Close / reduce",
+    "closeHint": "Share of that side's position",
     "rewound": "Switching to a larger interval moved progress back to bars you've already seen. Trading is paused until a new bar opens",
     "aiHint": "AI hint",
     "aiHintTip": "Ask AI ({{model}}) to read the chart: structure / key levels / volume / position risk",
@@ -360,7 +383,7 @@
     },
     "stat": {
       "equity": "Equity",
-      "available": "Available ${{value}}",
+      "available": "Available ₮{{value}}",
       "cumPnl": "Cum. PnL",
       "cumPnlSub": "Incl. fees · Live",
       "fillRate": "Entry fill rate",
@@ -387,8 +410,7 @@
     },
     "pos": {
       "mark": "Mark price",
-      "liq": "Liq. price",
-      "entry": "Entry price"
+      "liq": "Liq. price"
     },
     "order": {
       "entry": "Entry",
@@ -424,11 +446,8 @@
       "pricePh": "Order price",
       "leverage": "Leverage",
       "submit": "Place order",
-      "submitting": "Submitting…",
       "closeMarket": "Close at market",
-      "closing": "Closing…",
       "cancelAll": "Cancel orders",
-      "cancelling": "Cancelling…",
       "qtyPositive": "Quantity must be > 0",
       "priceRequired": "LIMIT needs a price",
       "opFailed": "Operation failed",
@@ -439,6 +458,7 @@
     }
   },
   "monitor": {
+    "title": "Processes",
     "live": "Live",
     "heap": "Heap",
     "nonHeap": "Non-heap",

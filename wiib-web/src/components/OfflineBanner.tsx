@@ -26,12 +26,11 @@ export function OfflineBanner() {
   if (!offline) return null;
 
   return (
-    <div
-      role="status"
-      className="flex items-center justify-center gap-2 h-7 border-b border-warning/30 bg-warning/15 text-warning text-[11px] font-semibold"
-    >
-      <WifiOff className="w-3.5 h-3.5" />
-      {t('offline')}
+    <div className="page-shell">
+      <div role="status" className="offline">
+        <WifiOff className="ic" />
+        {t('offline')}
+      </div>
     </div>
   );
 }

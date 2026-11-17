@@ -19,6 +19,7 @@
     "marginLoan": "杠杆借款",
     "interestAccrued": "应计利息",
     "transfer": "划转",
+    "today": "今日",
     "dist": "分布",
     "profit": "收益",
     "ability": "能力"
@@ -50,7 +51,12 @@
     "prediction": "预测"
   },
   "holdings": {
-    "empty": "暂无持仓"
+    "empty": "暂无持仓",
+    "goMarkets": "去市场看看"
+  },
+  "dist": {
+    "total": "合计",
+    "futures": "{{name}} 合约"
   },
   "spot": {
     "cryptoTitle": "币种持仓",
@@ -87,7 +93,6 @@
     "warnCost": "每自然周限 1 次重置（周一刷新），破产自动恢复也计入次数。",
     "confirmName": "请输入你的用户名 <0>{{name}}</0> 以确认：",
     "namePlaceholder": "输入用户名",
-    "submitting": "重置中…",
     "submit": "确认重置"
   },
   "wallet": {
@@ -116,9 +121,6 @@
     "roi": "回报率",
     "openedAt": "开仓时间",
     "duration": "持仓时间"
-  },
-  "pager": {
-    "page": "第 {{page}} / {{pages}} 页"
   },
   "history": {
     "back": "返回持仓",
@@ -156,7 +158,6 @@
   "force": {
     "title": "爆仓记录",
     "desc": "Binance 合约市场最近爆仓记录。SELL 代表多头被强平，BUY 代表空头被强平。大额连续爆仓通常意味着短时波动和情绪放大，但不是独立交易信号。",
-    "descShort": "Binance 合约爆仓记录。SELL=多头强平，BUY=空头强平。",
     "longLiquidated": "多头爆仓",
     "shortLiquidated": "空头爆仓",
     "statLong": "当前页多头爆仓",
@@ -187,11 +188,10 @@
     "balanceAfter": "余 {{value}}"
   },
   "chart": {
-    "assetAllocation": "资产分布",
-    "gameWalletNote": "不可直接交易，需划转至余额钱包",
+    "gameWalletNote": "游戏钱包不可直接交易，需划转至余额钱包。",
     "futuresLoss": "合约浮亏",
-    "futuresLossNote": "合约浮亏 {{value}} 尚未扣除，平仓时从这里扣",
     "noHistory": "暂无历史数据，每日零点自动快照",
+    "profitAria": "收益曲线，左右方向键逐日查看",
     "cumulative": "累计",
     "range": "{{days}}天",
     "cumPnl": "累计盈亏 {{value}}"

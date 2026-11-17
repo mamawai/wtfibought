@@ -1,0 +1,27 @@
+/* 段选：一片滑块在底下滑，200ms 到位；按住时字先暗一下。轨道色 --tr 跟着所在的面走（白底上浅灰，进了 .blk 深一档） */
+@layer components {
+  .seg{position:relative;display:inline-flex;padding:3px;border-radius:11px;background:var(--tr)}
+  .seg .th{position:absolute;left:0;top:3px;bottom:3px;width:0;border-radius:8px;background:var(--color-raise);box-shadow:var(--sh-thumb);transition:transform var(--slow) var(--ease-control),width var(--slow) var(--ease-control),background-color var(--t) var(--ease-control)}
+  .seg button{position:relative;z-index:1;height:28px;padding:0 13px;border-radius:8px;font-size:13px;font-weight:500;color:var(--color-muted-foreground);white-space:nowrap;transition:color var(--t) var(--ease-control),opacity var(--fast)}
+  @media (hover:hover){.seg button:hover:not(:disabled){color:var(--color-foreground)}}
+  .seg button:active{opacity:.6;transition-duration:0s}
+  .seg button[aria-pressed="true"]{color:var(--color-foreground)}
+  .seg button:disabled{opacity:.45;cursor:not-allowed}
+  .seg.full{display:flex}
+  .seg.full button{flex:1}
+  /* 不让切：整排晃一下 */
+  .seg.nope{animation:wiib-nope 180ms var(--ease-control)}
+
+  /* 做多 / 做空：滑块自己带方向色 */
+  .seg.k-side{display:grid;grid-template-columns:1fr 1fr;padding:4px;border-radius:15px;background:var(--color-fill2)}
+  .seg.k-side .th{top:4px;bottom:4px;border-radius:11px;background:var(--color-gain-solid);box-shadow:0 1px 2px rgb(0 0 0 / .14)}
+  .seg.k-side[data-val="SHORT"] .th,.seg.k-side[data-val="SELL"] .th{background:var(--color-loss-solid)}
+  .seg.k-side button{height:44px;border-radius:11px;font-size:16px;font-weight:600}
+  .seg.k-side button[aria-pressed="true"]{color:#fff}
+
+  @media (prefers-reduced-motion:reduce){
+    .seg .th,.seg button{transition:none}
+    .seg button:active{opacity:1}
+    .seg.nope{animation:none}
+  }
+}

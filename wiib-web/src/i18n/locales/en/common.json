@@ -33,6 +33,11 @@
     "prevMonth": "Previous month",
     "nextMonth": "Next month"
   },
+  "pager": {
+    "prev": "Previous page",
+    "next": "Next page",
+    "page": "Page <0>{{page}}</0> of <1>{{pages}}</1>"
+  },
   "time": {
     "justNow": "Just now",
     "minutesAgo_one": "{{count}} minute ago",

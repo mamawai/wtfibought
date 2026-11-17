@@ -48,6 +48,7 @@
   "keepHint": "只保留最近 3 版",
   "continueFrom": "从这版继续",
   "rollbackConfirm": "用 v{{no}} 当时的对话替换当前对话，接着从那里聊？",
+  "rollbackSure": "替换当前对话，再点一次",
   "body": "指令正文",
   "writingNow": "正在写新一版",
   "orbHint": "正在构思，马上开始出字",

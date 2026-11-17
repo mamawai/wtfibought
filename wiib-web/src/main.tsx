@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
-// 字体本地打包（国内不走 Google CDN）：Archivo 带 wdth 轴，字宽 62%~125% 可调，family 名带 "Variable" 后缀
-import '@fontsource-variable/archivo/wdth.css'
+// 字体本地打包（国内不走 Google CDN）：Geist 可变字重 100~900，family 名带 "Variable" 后缀
+import '@fontsource-variable/geist'
 import '@fontsource-variable/jetbrains-mono'
 import './index.css'
 // 国际化初始化：必须排在 App 之前，组件首次渲染时词表就得在位

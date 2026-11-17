@@ -9,7 +9,7 @@
   },
   "hero": {
     "howToPlay": "How it works",
-    "totalAssets": "Total assets USD",
+    "totalAssets": "Total assets USDT",
     "profitPct": "Total return",
     "balance": "Available balance",
     "totalPnl": "Total PnL",
@@ -82,6 +82,8 @@
     "longLiq": "Longs liquidated",
     "shortLiq": "Shorts liquidated",
     "window": "{{count}} in the last hour",
+    "longShare": "Long {{pct}}%",
+    "shortShare": "Short {{pct}}%",
     "viewAll": "View all"
   },
   "calendar": {
@@ -120,12 +122,12 @@
     "fri": "Fr",
     "sat": "Sa",
     "sun": "Su",
-    "today": "Today",
-    "trades_one": "{{count}} trade",
-    "trades_other": "{{count}} trades"
+    "monthTotal": "Month total"
   },
   "dayDetail": {
     "note": "Daily PnL · whole account · snapshot basis, reference only",
+    "prevDay": "Previous day",
+    "nextDay": "Next day",
     "stocks": "Stocks",
     "crypto": "Crypto",
     "commodity": "Commodities",
