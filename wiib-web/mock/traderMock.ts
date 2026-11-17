@@ -10,6 +10,10 @@ import type { ServerResponse } from 'node:http';
 import { basePrice, hasFutures, klines, livePrice, roundPrice } from './market';
 import { handleQuotes } from './stompMock';
 import { LEDGER_BIZ_TYPES, LEDGER_ENTRIES, rankingRows } from './account';
+import {
+  ADMIN_ASSIGNMENTS, ADMIN_KEYS, ADMIN_RATE, TN_FILL_STATS, feedStreams, inviteCodes,
+  tnDailyGrid, tnEquity, tnOverview, tnTrades,
+} from './admin';
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -98,6 +102,47 @@ const PLANS = [
     openedWakeTime: now() - 8 * HOUR, revisionsJson: null, stale: false,
   },
 ];
+
+// ==================== 配置台：模型端点、经验账本、平台默认指令 ====================
+
+const ENDPOINTS = [
+  { id: 12, name: 'Claude 主力', apiProtocol: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-opus-5', reasoningEffort: 'high', webSearch: true, antigravity: false, contextWindow: 800_000, apiKeyTail: 'x7Qd', isDefault: true },
+  { id: 13, name: 'GPT 轻量', apiProtocol: 'responses', baseUrl: 'https://api.openai.com', model: 'gpt-5-mini', reasoningEffort: null, webSearch: true, antigravity: false, contextWindow: 320_000, apiKeyTail: '9fKe', isDefault: false },
+  { id: 14, name: 'DeepSeek 备用', apiProtocol: 'openai', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', reasoningEffort: null, webSearch: false, antigravity: false, contextWindow: 128_000, apiKeyTail: 'b2Lm', isDefault: false },
+];
+
+/** 经验账本：在用的规律两条、待验证一条、没做到一条、给主人的提醒一条、停用的一条 */
+const EXPERIENCES = [
+  { id: 1, roundNo: 3, playType: '趋势跟随', kind: 'RULE', slot: 'ENTRY', direction: 'OPPORTUNITY', text: '4h 收盘站稳 EMA20 且 MACD 柱连续走扩时顺势做多，比在区间中轨进场稳得多。', evidence: 'R3 的 BTC 多单 #501、R2 的 #318 都是这个形态进的，两笔合计 +612', supports: 4, opposes: 1, untested: 2, citedOpen: 3, citedHold: 5, status: 'ACTIVE', flagged: false, pinned: true, retireReason: null, createdAt: '2026-09-03 08:00:12' },
+  { id: 2, roundNo: 3, playType: null, kind: 'RULE', slot: 'RISK', direction: 'RESTRICTION', text: '同一时间三个币同向开仓，本质是一个仓位加了三倍杠杆；同向敞口已经有两个币就别再开。', evidence: 'R2 中段 BTC / ETH / SOL 三多同开，回撤 -14%', supports: 3, opposes: 0, untested: 4, citedOpen: 0, citedHold: 6, status: 'ACTIVE', flagged: false, pinned: false, retireReason: null, createdAt: '2026-09-03 08:00:12' },
+  { id: 3, roundNo: 3, playType: '区间高抛', kind: 'HYPOTHESIS', slot: 'FAIL_DEF', direction: 'EXECUTION', text: 'RSI 顶背离只说明动能减弱，不算反转；结构没破之前的背离空单大多被止损。', evidence: 'SOL 空单 #502 逆势进场，目前浮亏', supports: 1, opposes: 0, untested: 1, citedOpen: 0, citedHold: 1, status: 'ACTIVE', flagged: false, pinned: false, retireReason: null, createdAt: '2026-09-04 08:00:31' },
+  { id: 4, roundNo: 3, playType: null, kind: 'GAP', slot: 'EXEC', direction: 'EXECUTION', text: '指令要求「开仓前先写失效条件」，有两次是开完仓才补写的计划。', evidence: '#465、#442 的计划晚于开仓', supports: 5, opposes: 2, untested: 0, citedOpen: 0, citedHold: 0, status: 'ACTIVE', flagged: true, pinned: false, retireReason: null, createdAt: '2026-09-04 08:00:31' },
+  { id: 5, roundNo: 3, playType: null, kind: 'FINDING', slot: 'ENTRY', direction: 'OPPORTUNITY', text: '你的指令偏好「顺着 4h 结构做」，但 SOL 这一局大部分时间在区间里横着，R3 有 6 次醒来是空转。考虑把 SOL 从币种里拿掉，或者写明区间里怎么做。', evidence: 'R3 第 1–3 天 SOL 的 6 次例行唤醒都以「没有边缘机会」收尾', supports: 0, opposes: 0, untested: 0, citedOpen: 0, citedHold: 0, status: 'ACTIVE', flagged: false, pinned: false, retireReason: null, createdAt: '2026-09-05 08:00:05' },
+  { id: 6, roundNo: 3, playType: null, kind: 'RULE', slot: 'RISK', direction: 'EXECUTION', text: '止损挂在整数关口更安全。', evidence: 'R1 两笔单子', supports: 2, opposes: 3, untested: 1, citedOpen: 1, citedHold: 0, status: 'RETIRED', flagged: false, pinned: false, retireReason: '主人手动停用', createdAt: '2026-09-02 08:00:44' },
+];
+
+const DEFAULT_INSTRUCTIONS = `## 目标
+净盈亏最大化，不追求交易次数。没有把握的时候空仓是合格的答案。
+
+## 边界
+- 单笔最多亏权益的 2%，同时持仓的最大亏损合计不超过 6%
+- 止损放在结构位外侧，不放整数关口
+- 同向敞口不超过两个币
+
+## 偏好
+- 偏好拿 4 到 24 小时的波段，不做几分钟的来回
+- 顺着 4h 结构做，逆势单只在区间边缘、带紧止损的时候考虑`;
+
+/** 它给自己布的盯盘条件：看价格的三条（一条带移止损预案、一条带减仓预案）+ 看时间的一条 */
+const watches = () => {
+  const t = now();
+  return [
+    { id: 1, symbol: 'BTCUSDT', kind: 'CLOSE_ABOVE', level: 64200, period: '4h', atTime: null, note: '站上去就把止盈从 66,500 往上挪', actionJson: null, createdWakeTime: t - 12 * MIN },
+    { id: 2, symbol: 'BTCUSDT', kind: 'TOUCH_ABOVE', level: 65000, period: null, atTime: null, note: '到这里先锁一段利润', actionJson: JSON.stringify({ type: 'MOVE_STOP', symbol: 'BTCUSDT', side: 'LONG', positionId: 501, stopLossPrice: 63200 }), createdWakeTime: t - 12 * MIN },
+    { id: 3, symbol: 'SOLUSDT', kind: 'TOUCH_ABOVE', level: 205, period: null, atTime: null, note: '区间上沿破位的话先减一半', actionJson: JSON.stringify({ type: 'CLOSE', symbol: 'SOLUSDT', side: 'SHORT', positionId: 502, closePercent: 50 }), createdWakeTime: t - 3 * HOUR },
+    { id: 4, symbol: 'BTCUSDT', kind: 'AT_TIME', level: null, period: null, atTime: t + 5 * HOUR + 12 * MIN, note: 'CPI 公布后看一眼波动有没有改结构', actionJson: null, createdWakeTime: t - 6 * HOUR },
+  ];
+};
 
 const MEMORY = `## 已经吃过的亏
 
@@ -451,6 +496,121 @@ const timeStr = (ms: number) => {
 };
 
 const START_CAPITAL = 10000;
+
+/** 留言板：三条根留言，第一条带两条回复，第三条是作者自删的占位 */
+const COMMENTS = [
+  {
+    id: 301, userId: 9002, username: 'Northstar', content: 'BTC 4h 这根收在 EMA20 上面了，多单继续拿。上周被洗出去两次，这回止损放到结构低点下面。',
+    likeCount: 12, dislikeCount: 1, voted: false, childCount: 2, createdAt: timeStr(Date.now() - 0.4 * HOUR),
+    children: [
+      { id: 302, userId: 9001, username: 'mock', rootId: 301, replyToUserId: 9002, replyToUsername: 'Northstar', content: '同看多，我在 62,500 附近挂了限价。', likeCount: 3, dislikeCount: 0, voted: true, childCount: 0, createdAt: timeStr(Date.now() - 0.3 * HOUR) },
+      { id: 303, userId: 9003, username: 'Orion', rootId: 301, replyToUserId: 9001, replyToUsername: 'mock', content: '资金费转正了，注意别追太高。', likeCount: 1, dislikeCount: 0, voted: false, childCount: 0, updatedAt: timeStr(Date.now() - 0.1 * HOUR), createdAt: timeStr(Date.now() - 0.2 * HOUR) },
+    ],
+  },
+  { id: 300, userId: 9001, username: 'mock', content: 'AI 竞技场里 Kairos 这周的回撤控制得不错，想看看它的交易指令是怎么写的。', likeCount: 5, dislikeCount: 0, voted: false, childCount: 0, createdAt: timeStr(Date.now() - 5 * HOUR) },
+  { id: 299, userId: 9004, username: 'Atlas', content: '该留言已被作者删除', selfDeleted: true, likeCount: 0, dislikeCount: 2, voted: false, childCount: 0, createdAt: timeStr(Date.now() - 26 * HOUR) },
+];
+
+/** 全站成交：现货、合约、AI 下的单各几条 */
+const PUBLIC_TRADES = [
+  ['FUTURES', 'a3f2c1', false, 'BTCUSDT', 'OPEN_LONG', 0.157, 62764.2],
+  ['SPOT', '9bd04e', false, 'ETHUSDT', 'BUY', 1.2, 2418.6],
+  ['FUTURES', 'quant-01', true, 'SOLUSDT', 'OPEN_SHORT', 12, 201.4],
+  ['SPOT', '71c8aa', false, 'NVDABUSDT', 'SELL', 8, 182.1],
+  ['FUTURES', 'a3f2c1', false, 'ETHUSDT', 'CLOSE_SHORT', 2.5, 2409.3],
+  ['FUTURES', 'quant-02', true, 'XAUUSDT', 'OPEN_LONG', 3, 3486.2],
+  ['SPOT', '5e19f0', false, 'BTCUSDT', 'BUY', 0.21, 63580.5],
+  ['FUTURES', '9bd04e', false, 'BTCUSDT', 'CLOSE_LONG', 0.08, 63912.0],
+].map(([kind, alias, isAi, symbol, orderSide, quantity, filledPrice], i) => ({
+  kind, tradeId: 8800 - i, alias, isAi, symbol, orderSide, quantity, filledPrice,
+  filledAmount: r2((quantity as number) * (filledPrice as number)), createdAt: timeStr(Date.now() - (i * 0.6 + 0.1) * HOUR),
+}));
+
+/** 合约仓位历史：一笔止盈、一笔止损、一笔被强平，各带开平两条成交 */
+const POSITION_HISTORY = [
+  { id: 71, symbol: 'BTCUSDT', side: 'LONG', lev: 5, status: 'CLOSED', memo: null, entry: 61240, close: 63580, qty: 0.2, closeStatus: 'TAKE_PROFIT' },
+  { id: 70, symbol: 'SOLUSDT', side: 'SHORT', lev: 3, status: 'CLOSED', memo: 'Kairos', entry: 198.4, close: 204.9, qty: 12, closeStatus: 'STOP_LOSS' },
+  { id: 69, symbol: 'ETHUSDT', side: 'LONG', lev: 20, status: 'LIQUIDATED', memo: null, entry: 2520, close: 2401.6, qty: 3, closeStatus: 'LIQUIDATED' },
+].map((p, i) => {
+  const dir = p.side === 'LONG' ? 1 : -1;
+  const gross = (p.close - p.entry) * p.qty * dir;
+  const commission = r2((p.entry + p.close) * p.qty * 0.0004);
+  const liquidationFee = p.status === 'LIQUIDATED' ? r2(p.close * p.qty * 0.005) : 0;
+  const fundingFeeTotal = r2(p.entry * p.qty * 0.0003);
+  const investedMargin = r2(p.entry * p.qty / p.lev);
+  const realizedPnl = r2(gross - commission - liquidationFee - fundingFeeTotal);
+  const openedAt = Date.now() - (i * 30 + 40) * HOUR, closedAt = openedAt + 18 * HOUR;
+  const fill = (orderSide: string, status: string, price: number, at: number, pnl: number | null) => ({
+    positionId: p.id, orderId: p.id * 10 + (pnl == null ? 1 : 2), orderSide, orderType: 'MARKET', status,
+    quantity: p.qty, price, amount: r2(price * p.qty), commission: r2(price * p.qty * 0.0004),
+    liquidationFee: status === 'LIQUIDATED' ? liquidationFee : null, realizedPnl: pnl, filledAt: timeStr(at),
+  });
+  return {
+    id: p.id, symbol: p.symbol, side: p.side, marginMode: 'CROSS', leverage: p.lev, status: p.status, memo: p.memo,
+    entryPrice: p.entry, closedQty: p.qty, closeAmount: r2(p.close * p.qty), closeAvgPrice: p.close,
+    investedMargin, commission, liquidationFee, fundingFeeTotal, realizedPnl, roiPct: r2(realizedPnl / investedMargin * 100),
+    openedAt: timeStr(openedAt), closedAt: timeStr(closedAt),
+    fills: [
+      fill(`OPEN_${p.side}`, 'FILLED', p.entry, openedAt, null),
+      fill(`CLOSE_${p.side}`, p.closeStatus, p.close, closedAt, r2(gross)),
+    ],
+  };
+});
+
+/** 别人主页上公开的持仓：现货两只、合约一多一空 */
+const PROFILE_POSITIONS = {
+  spotPositions: [
+    { symbol: 'BTCUSDT', quantity: 0.31, entryPrice: 60120, currentPrice: 63610, value: 19719.1, profit: 1081.9, side: null, leverage: null, marginMode: null },
+    { symbol: 'NVDABUSDT', quantity: 25, entryPrice: 171.4, currentPrice: 181.9, value: 4547.5, profit: 262.5, side: null, leverage: null, marginMode: null },
+  ],
+  futuresPositions: [
+    { symbol: 'ETHUSDT', quantity: 2.4, entryPrice: 2388, currentPrice: 2421.6, value: 1226.9, profit: 80.64, side: 'LONG', leverage: 5, marginMode: 'CROSS' },
+    { symbol: 'SOLUSDT', quantity: 20, entryPrice: 196.2, currentPrice: 201.7, value: 544, profit: -110, side: 'SHORT', leverage: 6, marginMode: 'ISOLATED' },
+  ],
+};
+
+/** 策略页：三套策略各一个账户。第一套有持仓有平仓记录，第二套只有平仓记录，第三套账户不可用 */
+const STRATEGY_ACCOUNTS = [
+  {
+    strategyId: 'FIBO', accountUserId: 2, available: true, balance: 10412.6, unrealizedPnl: 96.4, equity: 10509, cumPnl: 509, tradeCount: 14, winCount: 9, winRate: 0.643,
+    positions: [{
+      id: 901, userId: 2, symbol: 'BTCUSDT', side: 'LONG', leverage: 5, marginMode: 'CROSS', quantity: 0.12, entryPrice: 62810, margin: 1507.4, fundingFeeTotal: -1.2,
+      stopLosses: [{ id: 1, price: 61900, quantity: 0.12 }], takeProfits: [{ id: 2, price: 65200, quantity: 0.12 }], status: 'OPEN',
+      createdAt: timeStr(Date.now() - 9 * HOUR), updatedAt: timeStr(Date.now() - 9 * HOUR), realizedPnl: -3,
+      currentPrice: 63613, markPrice: 63610, positionValue: 7633.2, unrealizedPnl: 96.4, unrealizedPnlPct: 6.39,
+      effectiveMargin: 1603.8, maintenanceMargin: 30.5, liquidationPrice: 50480, fundingFeePerCycle: -0.76,
+    }],
+    closedPositions: [
+      { id: 880, userId: 2, symbol: 'BTCUSDT', side: 'LONG', leverage: 5, quantity: 0.1, entryPrice: 60980, margin: 1219.6, fundingFeeTotal: -0.9, status: 'CLOSED', closedPrice: 62340, closedPnl: 131.2, createdAt: timeStr(Date.now() - 60 * HOUR), updatedAt: timeStr(Date.now() - 44 * HOUR) },
+      { id: 871, userId: 2, symbol: 'ETHUSDT', side: 'SHORT', leverage: 5, quantity: 2, entryPrice: 2390, margin: 956, fundingFeeTotal: 0.4, status: 'CLOSED', closedPrice: 2431, closedPnl: -85.6, createdAt: timeStr(Date.now() - 96 * HOUR), updatedAt: timeStr(Date.now() - 80 * HOUR) },
+    ],
+  },
+  {
+    strategyId: 'TURTLE', accountUserId: 3, available: true, balance: 9764.2, unrealizedPnl: 0, equity: 9764.2, cumPnl: -235.8, tradeCount: 6, winCount: 2, winRate: 0.333,
+    positions: [],
+    closedPositions: [
+      { id: 861, userId: 3, symbol: 'SOLUSDT', side: 'LONG', leverage: 3, quantity: 15, entryPrice: 208.3, margin: 1041.5, fundingFeeTotal: -0.3, status: 'CLOSED', closedPrice: 201.9, closedPnl: -98.4, createdAt: timeStr(Date.now() - 120 * HOUR), updatedAt: timeStr(Date.now() - 100 * HOUR) },
+    ],
+  },
+  { strategyId: 'SQZMOM', accountUserId: null, available: false, balance: null, unrealizedPnl: null, equity: null, cumPnl: null, tradeCount: 0, winCount: 0, winRate: 0, positions: [], closedPositions: [] },
+];
+const STRATEGY_SIGNALS = [
+  { strategyId: 'SQZMOM', symbol: 'BTCUSDT', state: { key: 'sqzmom.idle', vars: {} }, metrics: [{ key: 'price', vars: { v: '63,610.0' } }] },
+];
+
+/** 财经日历：过去两天和未来三天各几条，美国的居多 */
+const ECON_EVENTS = [
+  [-50, 'US', 'USD', 'Inflation Rate YoY', '3.1%', '3.0%', '2.9%'],
+  [-49, 'US', 'USD', 'Unemployment Rate', '4.1%', '4.2%', '4.2%'],
+  [-27, 'AU', 'AUD', 'RBA Interest Rate Decision', '3.85%', '3.85%', '4.10%'],
+  [-3, 'AU', 'AUD', 'Unemployment Rate', '4.3%', '4.3%', '4.2%'],
+  [6, 'US', 'USD', 'GDP Growth Rate QoQ', null, '2.4%', '3.0%'],
+  [22, 'AU', 'AUD', 'Balance of Trade', null, '5.2B', '4.9B'],
+  [30, 'US', 'USD', 'Balance of Trade', null, '-68.5B', '-70.3B'],
+  [54, 'AU', 'AUD', 'RBA Meeting Minutes', null, null, null],
+].map(([h, country, currency, title, actual, forecast, previous], i) => ({
+  sourceId: `mock-${i}`, eventTime: Date.now() + (h as number) * HOUR, country, currency, title, actual, forecast, previous,
+}));
 
 /** 30 天净值：起手 10 万，中间有跌破本金的一段，收在 128,406.52 */
 const EQUITY_SERIES = [
@@ -838,9 +998,11 @@ export function traderMock(): Plugin {
       return [{
         tag: 'script',
         injectTo: 'head-prepend' as const,
-        // ?dark / ?light 钉死主题，?en 切英文（不跟浏览器），?guest 不塞 token（看登录页）；首页公告也按"已看过"处理，截图省得手点
+        // ?dark / ?light 钉死主题，?en 切英文（不跟浏览器），?guest 不塞 token（看登录页），?admin 当前用户变成 1 号管理员（看管理页和 testnet 页）；
+        // 首页公告也按"已看过"处理，截图省得手点
         children: `if (location.search.includes('guest')) localStorage.removeItem('wiib-user');
 else localStorage.setItem('wiib-user', JSON.stringify({ state: { token: 'mock-token' }, version: 0 }));
+document.cookie = 'wiib-mock-admin=' + (location.search.includes('admin') ? 1 : 0) + '; path=/';
 localStorage.setItem('wiib-lang', location.search.includes('en') ? 'en' : 'zh');
 localStorage.setItem('wiib-notice-seen', '1');
 if (location.search.includes('dark')) localStorage.setItem('theme', 'dark');
@@ -896,6 +1058,26 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
             note: null, noteRounds: 1, noteMaxRounds: 24, noteMaxChars: 500,
           });
         }
+        // ---- 配置台 / AI 页：模型端点、经验账本、平台默认指令、系统提示词预览 ----
+        if (path === '/api/ai/llm-endpoints') return ok(res, ENDPOINTS);
+        if (path === '/api/ai/llm-endpoints/bindings') return ok(res, { CHAT_MAIN: 12, CHAT_LIGHT: 13 });
+        if (path === '/api/ai/trader/mine/experiences') return ok(res, EXPERIENCES);
+        if (path === '/api/ai/trader/default-instructions') return ok(res, DEFAULT_INSTRUCTIONS);
+        if (path === '/api/ai/trader/prompt-template') return ok(res, SYSTEM_PROMPT);
+        if (path === '/api/ai/workbench/prefs') return ok(res, { subAgentsEnabled: true, subAgentLimit: 2, maxLimit: 4 });
+        if (path === '/api/user/lang') return ok(res, 'zh');
+
+        // ---- 留言板 / 全站成交 / 财经日历 / 仓位历史：几条够看版面的假数据 ----
+        if (path === '/api/comments') return ok(res, q.get('page') === '1' ? COMMENTS : []);
+        if (path === '/api/trades/public') return ok(res, page(PUBLIC_TRADES, 20));
+        if (path === '/api/futures/position-history') return ok(res, page(POSITION_HISTORY, 20));
+        if (path === '/api/ai/strategies/overview') return ok(res, STRATEGY_ACCOUNTS);
+        if (path === '/api/ai/strategies/signals') return ok(res, STRATEGY_SIGNALS);
+        if (path === '/api/ai/quant/econ-calendar') {
+          return ok(res, { past: ECON_EVENTS.filter(e => e.eventTime <= Date.now()), upcoming: ECON_EVENTS.filter(e => e.eventTime > Date.now()) });
+        }
+        if (path === '/api/ai/quant/econ-calendar/events') return ok(res, ECON_EVENTS);
+        if (path === '/api/ai/quant/econ-calendar/series') return ok(res, []);
 
         // ---- 普通 GET ----
         if (path === '/api/ai/trader/arena') return ok(res, TRADERS);
@@ -908,7 +1090,9 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         }
         if (path === '/api/auth/current') {
           return ok(res, {
-            id: 9001, username: 'mock', balance: 8799.46, gameBalance: 0, frozenBalance: 725.4,
+            // 开页时网址带了 ?admin 就是 1 号
+            id: (req.headers.cookie ?? '').includes('wiib-mock-admin=1') ? 1 : 9001,
+            username: 'mock', balance: 8799.46, gameBalance: 0, frozenBalance: 725.4,
             positionMarketValue: 13893.6, marginLoanPrincipal: 0, marginInterestAccrued: 0,
             bankrupt: false, bankruptCount: 0, totalAssets: 11842.36, profit: 1842.36, profitPct: 18.42,
           });
@@ -930,6 +1114,8 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
             plans: mine ? PLANS : [],
             memory: mine ? MEMORY : null,
             lastReviewAt: mine ? now() - 14 * HOUR : null,
+            nextWakeAt: tr.status === 'RUNNING' ? nextWake() : null,
+            watches: mine ? watches() : [],
           });
         }
 
@@ -1005,9 +1191,10 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         if (path === '/api/ranking/me') return ok(res, rankingRows(q.get('sort')).find(row => row.userId === 9001));
         const rankingUser = path.match(/^\/api\/ranking\/users\/(\d+)(?:\/(trades|position-history))?$/);
         if (rankingUser) {
+          if (rankingUser[2] === 'position-history') return ok(res, page(POSITION_HISTORY));
           if (rankingUser[2]) return ok(res, page([]));
           const summary = rankingRows('ASSETS').find(row => row.userId === Number(rankingUser[1]));
-          return ok(res, summary ? { summary, spotPositions: [], futuresPositions: [] } : null);
+          return ok(res, summary ? { summary, ...PROFILE_POSITIONS } : null);
         }
 
         // ---- 持仓页 ----
@@ -1020,6 +1207,27 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         }
         if (path === '/api/user/category-averages') return ok(res, CATEGORY_AVERAGES);
         if (path === '/api/prediction/pnl') return ok(res, PREDICTION_PNL);
+
+        // ---- 管理页：列表只管读，存和删走最下面的"写操作一律成功" ----
+        if (req.method === 'GET') {
+          if (path === '/api/admin/ai-agent/keys') return ok(res, ADMIN_KEYS);
+          if (path === '/api/admin/ai-agent/assignments') return ok(res, ADMIN_ASSIGNMENTS);
+          if (path === '/api/admin/invite-code/list') return ok(res, inviteCodes());
+          if (path === '/api/monitor/streams') return ok(res, feedStreams());
+        }
+        if (path === '/api/admin/task/margin/daily-interest-rate') return ok(res, ADMIN_RATE);
+        if (path === '/api/admin/ai-agent/news/backfill') return ok(res, { fetched: 100, inserted: 37 });
+        if (/^\/api\/monitor\/streams\/[^/]+\/retry$/.test(path)) return ok(res, { ok: true, name: decodeURIComponent(path.split('/')[4]) });
+
+        // ---- testnet 页 ----
+        if (path === '/api/testnet/overview') return ok(res, tnOverview());
+        if (path === '/api/testnet/trades') return ok(res, tnTrades(q.get('symbol')));
+        if (path === '/api/testnet/daily-grid') return ok(res, tnDailyGrid(q.get('symbol')));
+        if (path === '/api/testnet/equity') return ok(res, tnEquity(q.get('symbol')));
+        if (path === '/api/testnet/fill-stats') return ok(res, TN_FILL_STATS);
+        if (path === '/api/testnet/manual/order' || path === '/api/testnet/manual/close') {
+          return ok(res, { orderId: 990200, symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', status: 'FILLED', avgPrice: 63738.9, origQty: 0.002, price: 0 });
+        }
         // K 线上的快讯标记：跟快讯用同一批，publishedAt 已经贴着现在
 
         // K 线不走业务包装（rawKlines 直接吃 res.data），要裸数组；

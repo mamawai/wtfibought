@@ -16,6 +16,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { livePrice, liveBar, roundPrice } from './market';
+import { jvm } from './admin';
 
 /** SockJS 开场白：2048 个 h，逼浏览器把 XHR 的响应缓冲吐出来，之后的帧才是流式到达的 */
 const PRELUDE = 'h'.repeat(2048) + '\n';
@@ -70,6 +71,50 @@ const parseFrame = (raw: string) => {
   return { command, headers };
 };
 
+/** 假盘口每边出几行、几个价格单位各是最小价位的几倍，同行情服务的 OrderBook */
+const BOOK_ROWS = 10;
+const BOOK_MULTS = [1, 10, 100, 1000];
+
+/**
+ * 假盘口，形状同行情服务发的那份：最小价位按价格的量级给（6 万的币 0.1，3 千的 0.01）；
+ * 每个价位的挂单量是拿价位序号散出来的伪随机数，同一个价位每帧都一样，价动了盘口才跟着挪，不会整屏乱跳。
+ * 三成的价位空着，整十、整百的价位挂得多一些。
+ */
+const depthBook = (symbol: string) => {
+  const mid = livePrice(symbol);
+  const exp = Math.floor(Math.log10(mid)) - 5;
+  const tick = 10 ** exp;
+  const dec = Math.max(0, -exp);
+  // 买一落在第几个价位
+  const best = Math.floor(mid / tick);
+  // 一个价位大约挂 3 万 U
+  const unit = 30_000 / mid;
+  const qtyAt = (k: number) => {
+    const r = Math.abs(Math.sin(k * 12.9898) * 43758.5453) % 1;
+    return r < 0.3 ? 0 : unit * r * r * (k % 100 === 0 ? 9 : k % 10 === 0 ? 3 : 1);
+  };
+  const side = (bid: boolean, mult: number) => {
+    const rows: [number, number][] = [];
+    let bucket = NaN, sum = 0;
+    for (let k = bid ? best : best + 1; rows.length < BOOK_ROWS; k += bid ? -1 : 1) {
+      const qty = qtyAt(k);
+      if (qty === 0) continue;
+      // 买盘往下取整、卖盘往上取整
+      const b = (bid ? Math.floor(k / mult) : Math.ceil(k / mult)) * mult;
+      if (b !== bucket && sum > 0) {
+        rows.push([+(bucket * tick).toFixed(dec), +sum.toFixed(4)]);
+        sum = 0;
+      }
+      bucket = b;
+      sum += qty;
+    }
+    return rows;
+  };
+  return {
+    ladders: BOOK_MULTS.map(mult => ({ step: String(+(tick * mult).toFixed(dec)), b: side(true, mult), a: side(false, mult) })),
+  };
+};
+
 /** 该 destination 这一秒要推的 body（kline 一次三档，前端自己按 i 过滤） */
 const payloadsFor = (dest: string): unknown[] => {
   let m = /^\/topic\/crypto\/([A-Z0-9]+)$/.exec(dest);
@@ -83,6 +128,13 @@ const payloadsFor = (dest: string): unknown[] => {
 
   m = /^\/topic\/kline\/([A-Z0-9]+)$/.exec(dest);
   if (m) return KLINE_IVS.map(iv => liveBar(m![1], iv));
+
+  m = /^\/topic\/depth\/([A-Z0-9]+)$/.exec(dest);
+  if (m) return [depthBook(m[1])];
+
+  // 管理页那三个进程的 JVM 状况
+  m = /^\/topic\/monitor\/([a-z]+)$/.exec(dest);
+  if (m) return [jvm(m[1])];
 
   return [];   // 其它 destination 静默
 };
