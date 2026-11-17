@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
+import { useIsDark } from '../../hooks/useIsDark';
 import { SCATTER_MS } from '../../hooks/useWhatIfCycle';
+import { REDUCED_MOTION } from '../../lib/motion';
 
 /** 圆点网格的间距（CSS px）：宽屏 / 窄屏 */
 const CELL = 14, CELL_NARROW = 11;
@@ -14,7 +16,6 @@ const BASE = 0.12;
 /** 山聚拢用几秒；手动换标的时先把旧的散掉用几秒 */
 const GATHER_S = 1.3, SWAP_S = 0.45;
 const TAU = Math.PI * 2;
-const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 type El = RefObject<HTMLElement | null>;
 
@@ -84,13 +85,26 @@ export function DotField({ values, scatter, cardRef, heroRef, mottoRef }: Props)
   const want = useMemo(() => toShape(values), [values]);
   // 画的那边每帧来这儿看：该画成什么形状、该不该散
   const live = useRef({ want, scatter });
-  // 不放动效时没有每帧重画，形状变了靠它补一张
+  // 不放动效时没有每帧重画，形状变了、切了明暗靠它补一张
   const repaint = useRef<(() => void) | null>(null);
+  const isDark = useIsDark();
+  // 点的三种颜色：墨、绿、红，切明暗时取一次
+  const colors = useRef({ ink: '', green: '', red: '' });
 
   useEffect(() => {
     live.current = { want, scatter };
     repaint.current?.();
   }, [want, scatter]);
+
+  useEffect(() => {
+    const css = getComputedStyle(document.documentElement);
+    colors.current = {
+      ink: css.getPropertyValue('--color-foreground'),
+      green: css.getPropertyValue('--color-gain'),
+      red: css.getPropertyValue('--color-loss'),
+    };
+    repaint.current?.();
+  }, [isDark]);
 
   useEffect(() => {
     const cv = canvasRef.current!, cx = cv.getContext('2d')!;
@@ -125,15 +139,14 @@ export function DotField({ values, scatter, cardRef, heroRef, mottoRef }: Props)
       const { want: to, scatter: out } = live.current;
       const dt = Math.min(0.1, Math.max(0, t - lastT));
       lastT = t;
-      if (REDUCED) { shown = to; gather = 1; }
+      if (REDUCED_MOTION) { shown = to; gather = 1; }
       else if (shown !== to) { gather -= dt / SWAP_S; if (gather <= 0) { gather = 0; shown = to; } }
       else if (out) gather = Math.max(0, gather - dt * 1000 / SCATTER_MS);
       else gather = Math.min(1, gather + dt / GATHER_S);
       // e 是缓过的聚拢程度，loose 是散了多少
       const e = gather * gather * (3 - 2 * gather), loose = 1 - e;
 
-      const css = getComputedStyle(document.documentElement);
-      const ink = css.getPropertyValue('--color-foreground'), green = css.getPropertyValue('--color-gain'), red = css.getPropertyValue('--color-loss');
+      const { ink, green, red } = colors.current;
       cx.setTransform(dpr, 0, 0, dpr, 0, 0);
       cx.clearRect(0, 0, W, H);
       // 灰点按深浅分三堆，山脊上沿的点按绿红分两堆
@@ -212,7 +225,7 @@ export function DotField({ values, scatter, cardRef, heroRef, mottoRef }: Props)
       landTop = hero.bottom + 44; landLow = motto.top - 70; landFloor = motto.top - 16;
       // 窄屏上下排，或者屏幕太矮腾不出地方，就不画山
       landRight = W >= WIDE && landLow - landTop > 40 ? cardRef.current!.getBoundingClientRect().left - 28 : 0;
-      if (REDUCED) still();
+      if (REDUCED_MOTION) still();
     };
 
     const onMove = (e: PointerEvent) => { mx = e.clientX; my = e.clientY; };
@@ -228,12 +241,9 @@ export function DotField({ values, scatter, cardRef, heroRef, mottoRef }: Props)
     clear.forEach(el => ro.observe(el));
     measure();
 
-    let raf = 0, mo: MutationObserver | undefined;
-    if (REDUCED) {
+    let raf = 0;
+    if (REDUCED_MOTION) {
       repaint.current = still;
-      // 没有每帧重画，切明暗也得补一张
-      mo = new MutationObserver(still);
-      mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     } else {
       // 烟走得慢，隔一帧画一次就够
       let odd = false;
@@ -246,7 +256,6 @@ export function DotField({ values, scatter, cardRef, heroRef, mottoRef }: Props)
     }
     return () => {
       cancelAnimationFrame(raf);
-      mo?.disconnect();
       ro.disconnect();
       repaint.current = null;
       window.removeEventListener('resize', measure);

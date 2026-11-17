@@ -9,6 +9,7 @@ import { useWhatIfCycle } from '../hooks/useWhatIfCycle';
 import { DotField } from '../components/fx/DotField';
 import { GitHubLink } from '../components/GitHubLink';
 import { LoginHero } from '../components/LoginHero';
+import { REDUCED_MOTION } from '../lib/motion';
 import { WHAT_IF } from '../lib/whatIfData';
 import { cn } from '../lib/utils';
 import { CircleAlert, Eye, EyeOff, LogIn, Moon, RefreshCw, Sun } from 'lucide-react';
@@ -28,7 +29,6 @@ const PAINT: Record<Provider, string[]> = {
 const PAINT_MS = 520;
 /** OAuth state 的 localStorage 键，值是"来源:随机串" */
 const OAUTH_STATE_KEY = 'oauth_state';
-const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const authorizeUrl = (mode: AuthMode, p: Provider) => (p === 'google' ? mode.googleAuthorizeUrl : mode.linuxDoAuthorizeUrl);
 

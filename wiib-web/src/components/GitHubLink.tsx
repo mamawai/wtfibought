@@ -1,6 +1,6 @@
 import { cn } from '../lib/utils';
 
-/** 仓库入口图标：顶栏与登录页共用。壳是裸链接，尺寸由调用方定：顶栏给 svg 传 ic 跟邻居 15px 对齐，登录页给壳传 w-8 h-8 跟旁边语言钮对齐 */
+/** 仓库入口图标：顶栏与登录页共用。壳是裸链接，尺寸由调用方定：顶栏给 svg 传 ic，登录页再给壳传 ib，跟旁边语言钮一样大 */
 export function GitHubLink({ className, iconClassName = 'w-4 h-4' }: { className?: string; iconClassName?: string }) {
   return (
     <a

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { REDUCED_MOTION } from '../lib/motion';
 import { WHAT_IF } from '../lib/whatIfData';
 
 /** 选定一个标的之后，第几毫秒山开始散、第几毫秒换下一个标的 */
@@ -7,7 +8,6 @@ const SCATTER_AT_MS = 10_000, NEXT_AT_MS = 18_000;
 export const SCATTER_MS = 1800;
 /** 一进来先演哪档时间：一年前 */
 const START_SPAN = 2;
-const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
  * 登录页现在演的是哪个标的、哪档时间，和背景里的山该不该散。
@@ -20,7 +20,7 @@ export function useWhatIfCycle() {
   const [scatter, setScatter] = useState(false);
 
   useEffect(() => {
-    if (REDUCED) return;
+    if (REDUCED_MOTION) return;
     const fade = window.setTimeout(() => setScatter(true), SCATTER_AT_MS);
     const next = window.setTimeout(() => {
       setScatter(false);
