@@ -4,7 +4,6 @@ import { ArrowUpRight, Bot, Database, Eye, LayoutGrid, Library, Pickaxe, Ruler, 
 import { alpha, ApiError, clearToken, getToken, type DataStatus } from './api';
 import i18n from './i18n';
 import { usePoll } from './poll';
-import { RevealGate } from './reveal';
 import { AuthErrorContext, useFail, useToast } from './toast';
 import { Header } from './components/Header';
 import { Splash } from './components/Splash';
@@ -47,9 +46,6 @@ export function App() {
   const [admin, setAdmin] = useState(false);
   // 手里有 token 时 /me 回没回来：回来之前开屏不收
   const [authChecked, setAuthChecked] = useState(() => !getToken());
-  // 开屏裂开了没有：裂开之后入场动效才开始揭开
-  const [opened, setOpened] = useState(false);
-  const open = useCallback(() => setOpened(true), []);
   const [status, setStatus] = useState<DataStatus | null>(null);
   // 头一次拉状态失败的原因，显示在开屏上；拉到过之后的失败只弹提示
   const [down, setDown] = useState<string | null>(null);
@@ -101,20 +97,20 @@ export function App() {
 
   return (
     <AuthErrorContext.Provider value={onAuthError}>
-      <RevealGate.Provider value={opened}>
-        <Splash ready={status !== null && authChecked} error={down} onRetry={() => void loadStatus()} onOpen={open} />
-        {status && authChecked && (
-          <div className="flex min-h-screen flex-col">
-            <Header items={items} active={shown} onGo={go} admin={admin} badges={<>
-              {refreshing && <Badge tone="info" pulse>{t('data.refreshing')}</Badge>}
-              {!status.loaded && <Badge tone="warn" icon={TriangleAlert}>{t('data.none')}</Badge>}
-            </>} />
+      <Splash ready={status !== null && authChecked} error={down} onRetry={() => void loadStatus()} />
+      {status && authChecked && (
+        <div className="flex min-h-screen flex-col">
+          <Header items={items} active={shown} onGo={go} admin={admin} badges={<>
+            {refreshing && <Badge tone="info" pulse>{t('data.refreshing')}</Badge>}
+            {!status.loaded && <Badge tone="warn" icon={TriangleAlert}>{t('data.none')}</Badge>}
+          </>} />
 
-            {/* 各块都常驻，切走只是藏起来：挖掘那块的事件流不断。
-                挖掘两种模式是两套组件、交易员按模式换 key，切模式就整块换掉重拉，不留另一种模式的内容；
-                观察区、因子库、手填评估只有管理员才挂 */}
-            <main className="wrap flex-1">
-              <div className="page-h"><h1>{t('title')}</h1></div>
+          {/* 各块都常驻，切走只是藏起来：挖掘那块的事件流不断。
+              挖掘两种模式是两套组件、交易员按模式换 key，切模式就整块换掉重拉，不留另一种模式的内容；
+              观察区、因子库、手填评估只有管理员才挂 */}
+          <main className="wrap flex-1">
+            <div className="pg-h"><h1>{t('title')}</h1></div>
+            <div className="mt-10">
               <div hidden={shown !== 'trader'}>
                 <TraderPanel key={String(admin)} active={shown === 'trader'} admin={admin} />
               </div>
@@ -135,28 +131,26 @@ export function App() {
               </div>
               <div hidden={shown !== 'reference'}><ReferencePanel active={shown === 'reference'} admin={admin} /></div>
               {admin && <div hidden={shown !== 'eval'}><EvalPanel loaded={status.loaded} /></div>}
-            </main>
+            </div>
+          </main>
 
-            <footer className="wrap">
-              <div className="foot flex flex-wrap items-baseline justify-between gap-x-8 gap-y-3 text-[12.5px] text-muted">
-                <span className="text-[15px] font-bold text-fg">{t('footer.brand')}</span>
-                <nav className="flex flex-wrap gap-x-5 gap-y-1 text-fg">
-                  <a href="https://wtfibought.com" className="underline underline-offset-3">wtfibought.com</a>
-                  <a href="https://intro.wtfibought.com" target="_blank" rel="noopener noreferrer"
-                     className="inline-flex items-center gap-0.5 underline underline-offset-3">
-                    {t('footer.intro')}<ArrowUpRight className="w-3 h-3" />
-                  </a>
-                  <a href="https://github.com/mamawai/wtfibought" target="_blank" rel="noopener noreferrer"
-                     className="inline-flex items-center gap-0.5 underline underline-offset-3">
-                    GitHub<ArrowUpRight className="w-3 h-3" />
-                  </a>
-                </nav>
-                <span>{t('footer.disclaimer')}</span>
-              </div>
-            </footer>
-          </div>
-        )}
-      </RevealGate.Provider>
+          <footer className="wrap foot">
+            <span className="font-medium text-fg">{t('footer.brand')}</span>
+            <nav className="flex flex-wrap gap-x-5 gap-y-1">
+              <a href="https://wtfibought.com" className="transition-colors hover:text-fg">wtfibought.com</a>
+              <a href="https://intro.wtfibought.com" target="_blank" rel="noopener noreferrer"
+                 className="inline-flex items-center gap-0.5 transition-colors hover:text-fg">
+                {t('footer.intro')}<ArrowUpRight className="w-3 h-3" />
+              </a>
+              <a href="https://github.com/mamawai/wtfibought" target="_blank" rel="noopener noreferrer"
+                 className="inline-flex items-center gap-0.5 transition-colors hover:text-fg">
+                GitHub<ArrowUpRight className="w-3 h-3" />
+              </a>
+            </nav>
+            <span>{t('footer.disclaimer')}</span>
+          </footer>
+        </div>
+      )}
     </AuthErrorContext.Provider>
   );
 }

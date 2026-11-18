@@ -8,14 +8,13 @@ import { Button } from './ui';
 type Phase = 'init' | 'go' | 'done' | 'out' | 'gone';
 
 /**
- * 开屏（同主站）：logo 和字标从墨线后面升起，墨线当进度慢慢走；ready 了补满、沿线上下裂开，裂开时调 onOpen；
+ * 开屏（同主站）：logo 和字标从墨线后面升起，墨线当进度慢慢走；ready 了补满、沿线上下裂开；
  * 头一次就连不上，线下给原因和重试
  */
-export function Splash({ ready, error, onRetry, onOpen }: {
+export function Splash({ ready, error, onRetry }: {
   ready: boolean;
   error: string | null;
   onRetry: () => void;
-  onOpen: () => void;
 }) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('init');
@@ -34,11 +33,11 @@ export function Splash({ ready, error, onRetry, onOpen }: {
     const wait = Math.max(0, 950 - (performance.now() - born.current));
     const ids = [
       setTimeout(() => setPhase('done'), wait),
-      setTimeout(() => { setPhase('out'); onOpen(); }, wait + 320),
+      setTimeout(() => setPhase('out'), wait + 320),
       setTimeout(() => setPhase('gone'), wait + 320 + 780),
     ];
     return () => ids.forEach(clearTimeout);
-  }, [ready, onOpen]);
+  }, [ready]);
 
   if (phase === 'gone') return null;
   return (

@@ -11,7 +11,7 @@ import { Button, Card, Empty, Spinner, Stat, Strip } from '../components/ui';
 export function OverviewStats({ trials, factors, observing }: { trials: number; factors: number; observing: number }) {
   const { t } = useTranslation();
   return (
-    <Strip cols={3} ruled>
+    <Strip cols={3} boxed>
       <Stat label={t('overview.trials')} hint={t('overview.trialsHint')}>{trials}</Stat>
       <Stat label={t('overview.observing')}>{observing}</Stat>
       <Stat label={t('overview.factors')}>{factors}</Stat>

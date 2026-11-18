@@ -153,7 +153,7 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
                 <tbody>
                   {sorted.map(f => (
                     <tr key={f.id} onClick={() => open(f.id)} className="cursor-pointer">
-                      <td className="font-mono text-[12.5px] font-bold whitespace-nowrap">{f.name}{staleBadge(f, 'ml-1.5 font-sans')}</td>
+                      <td className="font-mono text-[12.5px] font-semibold whitespace-nowrap">{f.name}{staleBadge(f, 'ml-1.5 font-sans')}</td>
                       <td className="max-w-[28rem]"><code className="block truncate text-[12px] text-muted" title={f.expr}>{f.expr}</code></td>
                       <td className="r num whitespace-nowrap">{localTime(f.approved_at)}</td>
                       <td className="r num">{num(primaryIc(f))}</td>
@@ -185,7 +185,7 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
               <tbody>
                 {retired.map(f => (
                   <tr key={f.id} onClick={() => open(f.id)} className="cursor-pointer">
-                    <td className="font-mono text-[12.5px] font-bold whitespace-nowrap text-muted">{f.name}</td>
+                    <td className="font-mono text-[12.5px] font-semibold whitespace-nowrap text-muted">{f.name}</td>
                     <td className="max-w-[24rem]"><code className="block truncate text-[12px] text-muted" title={f.expr}>{f.expr}</code></td>
                     <td className="r num whitespace-nowrap">{localTime(f.retired_at)}</td>
                     <td className="text-[12.5px]">{f.retire_reason}</td>
@@ -200,7 +200,7 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
       <Drawer open={openId !== null} onClose={close}
               title={detail
                 ? <div className="flex items-center gap-2.5">
-                    <span className="font-mono text-[16px] font-bold">{detail.name}</span>
+                    <span className="font-mono text-[16px] font-semibold">{detail.name}</span>
                     {detail.retired_at == null
                       ? <Badge tone="gain">{t('status.approved')}</Badge>
                       : <Badge tone="muted" icon={Archive}>{t('status.retired')}</Badge>}
@@ -250,9 +250,9 @@ function FactorDetailView({ f, blocked, rechecking, onRecheck, onChanged }: {
       <GateList gates={f.gates} />
       <BriefTable brief={f.brief} />
       {f.reeval && <ReevalBlock r={f.reeval} />}
-      <section className="space-y-3 border-t border-fg pt-4">
+      <section className="space-y-3 border-t border-line pt-5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[14px] font-extrabold">{t('library.recheck')}</span>
+          <span className="text-[14px] font-semibold">{t('library.recheck')}</span>
           <span className="text-[12.5px] text-muted">{t('library.recheckHint')}</span>
           <Button icon={RefreshCw} loading={rechecking} disabled={!!blocked} onClick={onRecheck} className="ml-auto">
             {t('library.recheckRun')}
@@ -289,9 +289,9 @@ function RetireSection({ f, onChanged }: { f: FactorDetail; onChanged: () => Pro
 
   if (f.retired_at != null) {
     return (
-      <section className="space-y-3 border-t border-fg pt-4">
+      <section className="space-y-3 border-t border-line pt-5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[14px] font-extrabold">{t('library.retireSection')}</span>
+          <span className="text-[14px] font-semibold">{t('library.retireSection')}</span>
           <span className="text-[12.5px] text-muted">{t('library.restoreHint')}</span>
           <Button icon={ArchiveRestore} loading={busy} onClick={() => void act(() => alpha.restoreFactor(f.id))}
                   className="ml-auto">
@@ -303,9 +303,9 @@ function RetireSection({ f, onChanged }: { f: FactorDetail; onChanged: () => Pro
     );
   }
   return (
-    <section className="space-y-3 border-t border-fg pt-4">
+    <section className="space-y-3 border-t border-line pt-5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[14px] font-extrabold">{t('library.retireSection')}</span>
+        <span className="text-[14px] font-semibold">{t('library.retireSection')}</span>
         <span className="text-[12.5px] text-muted">{t('library.retireHint')}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -385,7 +385,7 @@ function ComboCard({ combo }: { combo: ComboReport }) {
             <tbody>
               {combo.weights.map(w => (
                 <tr key={w.name}>
-                  <td className="font-mono text-[12.5px] font-bold">{w.name}</td>
+                  <td className="font-mono text-[12.5px] font-semibold">{w.name}</td>
                   <td className="r num">{num(w.weight * 1e4, 1)} bps</td>
                   <td className="r num text-muted">{totalWeight > 0 ? pct(Math.abs(w.weight) / totalWeight, 0) : '-'}</td>
                   <td className="w-32 align-middle"><Diverging v={w.weight} max={maxWeight} /></td>
@@ -401,7 +401,7 @@ function ComboCard({ combo }: { combo: ComboReport }) {
               <tbody>
                 {latest.map(([s, v]) => (
                   <tr key={s}>
-                    <td className="num font-mono text-[12.5px]">{s}</td>
+                    <td>{s}</td>
                     <td className="r num">{num(v, 3)}</td>
                     <td className="w-32 align-middle"><Diverging v={v} max={maxLatest} /></td>
                   </tr>

@@ -40,7 +40,7 @@ export function EvalPanel({ loaded }: { loaded: boolean }) {
 
   return (
     <div className="space-y-14">
-      <Card title={t('eval.title')} hint={t('eval.hint')}>
+      <Card title={t('eval.title')} hint={t('eval.hint')} blk>
         <div className="space-y-3">
           <textarea value={expr} onChange={e => setExpr(e.target.value)} placeholder={t('eval.ph')} rows={3}
                     onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && ready) void run(); }}

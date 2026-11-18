@@ -85,10 +85,8 @@ export function ReferencePanel({ active, admin }: { active: boolean; admin: bool
               <span className="mr-1 text-[12.5px] text-muted">{t('reference.windows')}</span>
               {/* 选中的窗口填墨 */}
               {WINDOWS.map(([w, label]) => (
-                <button key={w} onClick={() => toggleWindow(w)} aria-pressed={windows.includes(w)}
-                        className={cx('h-[30px] px-2.5 border border-fg text-[12.5px] font-semibold num cursor-pointer transition-colors',
-                          windows.includes(w) ? 'bg-fg text-bg' : 'text-muted hover:bg-panel-2 hover:text-fg')}>
-                  {label}<span className="ml-1 opacity-60">({w})</span>
+                <button key={w} onClick={() => toggleWindow(w)} aria-pressed={windows.includes(w)} className="chip num">
+                  {label}<em>({w})</em>
                 </button>
               ))}
               <Button variant="primary" icon={Play} loading={starting || running} disabled={!!blocked?.reference}
@@ -164,7 +162,7 @@ export function ReferencePanel({ active, admin }: { active: boolean; admin: bool
                     return (
                       <Fragment key={item.name}>
                         <tr onClick={() => setOpenName(open ? null : item.name)} className="cursor-pointer">
-                          <td className="font-mono text-[12.5px] font-bold whitespace-nowrap">{item.name}</td>
+                          <td className="font-mono text-[12.5px] font-semibold whitespace-nowrap">{item.name}</td>
                           <td className="max-w-[26rem]"><code className="block truncate text-[12px] text-muted" title={item.expr}>{item.expr}</code></td>
                           <td className="r">
                             {item.passed

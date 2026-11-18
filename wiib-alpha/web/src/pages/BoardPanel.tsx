@@ -38,9 +38,9 @@ export function BoardPanel({ active, admin }: { active: boolean; admin: boolean 
                 </tr>
               </thead>
               <tbody>
-                <tr className="bg-panel-2">
+                <tr className="bg-fill">
                   <td className="whitespace-nowrap">
-                    <div className="text-[13px] font-extrabold">{t('board.combo')}</div>
+                    <div className="text-[13px] font-semibold">{t('board.combo')}</div>
                     <div className="text-[11.5px] text-muted">{t('board.comboSub')}</div>
                   </td>
                   {board.coins.map(c => <td key={c}><StanceCell v={board.combo[c]} /></td>)}
@@ -49,7 +49,7 @@ export function BoardPanel({ active, admin }: { active: boolean; admin: boolean 
                   <tr key={f.no}>
                     <td className="whitespace-nowrap">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[13px] font-bold">{t('board.factorNo', { no: f.no })}</span>
+                        <span className="text-[13px] font-semibold">{t('board.factorNo', { no: f.no })}</span>
                         {!f.live && <Badge tone="warn">{t('board.notLive')}</Badge>}
                         {f.live && !f.inCombo && <Badge>{t('board.notInCombo')}</Badge>}
                       </div>

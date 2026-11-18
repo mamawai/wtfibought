@@ -84,7 +84,7 @@ export function ExprBlock({ expr, note, direction }: { expr: string; note?: stri
   const { t } = useTranslation();
   return (
     <div className="space-y-1.5">
-      <code className="block border border-line bg-panel-2 px-3 py-2 text-[12.5px] break-all">{expr}</code>
+      <code className="expr">{expr}</code>
       {direction != null && <DirectionLine direction={direction} />}
       {note && <p className="text-[12.5px] text-muted leading-relaxed">{t('cand.note')}：{note}</p>}
     </div>
@@ -112,7 +112,7 @@ export function GateList({ gates }: { gates: GateRow[] }) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="microlabel">{t('gates.title')}</span>
-        <span className={cx('text-[12.5px] font-bold num', failed.length ? 'text-loss' : 'text-gain')}>
+        <span className={cx('text-[12.5px] font-semibold num', failed.length ? 'text-loss' : 'text-gain')}>
           {gates.length - failed.length}/{gates.length}
         </span>
         {failed.length > 0 && (
@@ -121,13 +121,13 @@ export function GateList({ gates }: { gates: GateRow[] }) {
           </span>
         )}
       </div>
-      <ul className="border-t border-fg">
+      <ul>
         {gates.map(g => (
           <li key={g.id} className="flex items-start gap-2 border-b border-line py-1.5 text-[12.5px] leading-relaxed">
             {g.passed
               ? <Check className="w-3 h-3 shrink-0 mt-[4px] text-gain" />
               : <X className="w-3 h-3 shrink-0 mt-[4px] text-loss" />}
-            <span className="num font-mono font-bold shrink-0 w-7 text-[12px]">{g.id}</span>
+            <span className="num font-mono font-semibold shrink-0 w-7 text-[12px]">{g.id}</span>
             {g.name && <span className="text-muted shrink-0">{g.name}</span>}
             <span className="min-w-0 break-words">
               <span className={g.passed ? 'text-muted' : 'text-fg'}>{g.note}</span>
@@ -292,7 +292,7 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
   );
   return (
     <div className="space-y-5 min-w-0">
-      <div className="overflow-x-auto">
+      <div className="tw">
         <table className="tbl">
           <HorizonHead label={t('brief.metric')} primary={primary} />
           <tbody>
@@ -335,14 +335,14 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
           <dd className="num">{t('brief.complexityValue', complexity)}</dd>
         </dl>
       )}
-      {holdout && <div className="overflow-x-auto"><HoldoutTable holdout={holdout} primary={primary} /></div>}
-      {unseen && <div className="overflow-x-auto"><HoldoutTable holdout={unseen} primary={primary} titleKey="brief.unseen" /></div>}
-      {timeseries && <div className="overflow-x-auto"><TimeseriesTable ts={timeseries} primary={primary} /></div>}
+      {holdout && <div className="tw"><HoldoutTable holdout={holdout} primary={primary} /></div>}
+      {unseen && <div className="tw"><HoldoutTable holdout={unseen} primary={primary} titleKey="brief.unseen" /></div>}
+      {timeseries && <div className="tw"><TimeseriesTable ts={timeseries} primary={primary} /></div>}
     </div>
   );
 }
 
-/** 一条因子：顶上一道墨线开头，观察中的换成 2px 橙线；候选、手填评估共用 */
+/** 一条因子：一块浅灰，观察中的边上描一圈橙；候选、手填评估共用 */
 export function FactorCard({ title, badges, meta, hypothesis, expr, note, direction, reason, review, gates, brief, highlight,
   children }: {
   title: ReactNode;
@@ -361,9 +361,9 @@ export function FactorCard({ title, badges, meta, hypothesis, expr, note, direct
 }) {
   const { t } = useTranslation();
   return (
-    <article className={cx('pt-4', highlight ? 'border-t-2 border-primary' : 'border-t border-fg')}>
+    <article className={cx('blk', highlight && 'hl')}>
       <header className="flex flex-wrap items-center gap-2">
-        <h3 className="text-[15px] font-bold break-all">{title}</h3>
+        <h3 className="text-[15px] font-semibold break-all">{title}</h3>
         {badges}
         {meta && <span className="ml-auto text-[12px] text-muted num">{meta}</span>}
       </header>
@@ -384,7 +384,7 @@ export function FactorCard({ title, badges, meta, hypothesis, expr, note, direct
   );
 }
 
-/** 一条候选：轮次详情与观察区共用；meta 不给就显示写了几次，children 放在卡片底部；观察中的橙线开头 */
+/** 一条候选：轮次详情与观察区共用；meta 不给就显示写了几次，children 放在卡片底部；观察中的描一圈橙 */
 export function CandidateCard({ c, meta, children }: { c: Candidate; meta?: ReactNode; children?: ReactNode }) {
   const { t } = useTranslation();
   return (

@@ -107,7 +107,7 @@ export function TraderPanel({ active, admin }: { active: boolean; admin: boolean
         {!daily ? <Spinner /> : <DailyView daily={daily} live={live} admin={admin} />}
       </Card>
       {admin ? (
-        <div className="grid items-start gap-x-12 gap-y-14 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="grid grid-cols-1 items-start gap-x-12 gap-y-14 *:min-w-0 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <PositionsCard positions={positions} admin />
           <div className="space-y-14">
             <SizingCard sizing={sizing} onSaved={setSizing} />
@@ -134,9 +134,9 @@ function AccountCard({ account, live, stale, daily, lastRun, onReload }: {
     <Card title={t('trader.title')} hint={t('trader.hint')} more={t('trader.hintMore')}
           actions={<Button variant="icon" icon={RefreshCw} aria-label={t('common.refresh')} onClick={() => void onReload()} />}>
       {!account ? <Spinner /> : (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {!live ? (account.userId == null ? <Empty>{t('trader.noAccount')}</Empty> : !stale && <Spinner />) : (
-            <div>
+            <div className="space-y-7">
               {/* 记分牌：净值、累计收益两个大数，底下一排细项；数字跟着实时推送跳 */}
               <Strip cols={2}>
                 <Stat label={t('trader.equity')} size="lg">{money(live.equity)}</Stat>
@@ -278,12 +278,12 @@ function DailyView({ daily, live, admin }: { daily: TraderDaily; live: TraderLiv
 function LegsStrip({ legs }: { legs: Record<TradeLeg, LegSummary> }) {
   const { t } = useTranslation();
   return (
-    <div className="grid gap-x-10 gap-y-5 md:grid-cols-2">
+    <div className="grid gap-4 md:grid-cols-2">
       {TRADE_LEGS.map(leg => {
         const s = legs[leg];
         return (
-          <div key={leg} className={cx('space-y-2 border-t pt-3', s.hit ? 'border-loss' : 'border-fg')}>
-            <div className="flex items-center gap-2 text-[13px] font-extrabold">
+          <div key={leg} className={cx('blk space-y-4', s.hit && 'bg-loss-soft')}>
+            <div className="flex items-center gap-2 text-[13px] font-semibold">
               <span>{t(`trader.leg.${leg}`)}<Tip text={t(`trader.legTip.${leg}`)} /></span>
               <span className="text-[12px] font-normal text-muted num">{t('trader.legDays', { n: s.days })}</span>
               {s.hit && <Badge tone="loss" icon={TriangleAlert} className="ml-auto">{t('trader.legHit')}</Badge>}
@@ -311,15 +311,15 @@ function PnlBars({ rows }: { rows: DayRow[] }) {
     <div>
       <div className="flex items-baseline justify-between text-[12.5px] text-muted">
         <span>{t('trader.dailyBars')}</span>
-        <span className={cx('num font-bold', h ? tone(h.pnl) : undefined)}>
+        <span className={cx('num font-medium', h ? tone(h.pnl) : undefined)}>
           {h ? t('trader.dayTip', { day: h.day, pnl: signedMoney(h.pnl), pct: signedPct(h.pct, 2) }) : ''}
         </span>
       </div>
       <div className="pnl-bars mt-2" onMouseLeave={() => setHover(null)}>
-        {rows.map((r, i) => (
+        {rows.map(r => (
           <div key={r.day} className="b" onMouseEnter={() => setHover(r.day)}>
             <i className={cx(r.pnl >= 0 ? 'pos' : 'neg', r.live && 'live', hover === r.day && 'on')}
-               style={{ height: `${(Math.abs(r.pnl) / max) * 50}%`, transitionDelay: `${i * 8}ms, 0ms` }} />
+               style={{ height: `${(Math.abs(r.pnl) / max) * 50}%` }} />
           </div>
         ))}
       </div>
@@ -357,7 +357,7 @@ function PositionsCard({ positions, admin }: { positions: { items: TraderPositio
             <tbody>
               {items.map(p => (
                 <tr key={`${p.symbol}-${p.side}`}>
-                  <td className="num font-mono text-[12.5px] font-bold">{p.symbol}</td>
+                  <td className="font-semibold">{p.symbol}</td>
                   <td><SideBadge side={p.side} /></td>
                   <td className="r num">{p.quantity}</td>
                   <td className="r num">{money(p.notional)}</td>
@@ -381,7 +381,7 @@ function SizingCard({ sizing, onSaved }: { sizing: TraderSizing | null; onSaved:
   const { t } = useTranslation();
   const p = sizing?.preview;
   return (
-    <Card title={t('trader.sizing.title')} hint={t('trader.sizing.hint')} more={t('trader.sizing.more')}>
+    <Card title={t('trader.sizing.title')} hint={t('trader.sizing.hint')} more={t('trader.sizing.more')} blk>
       {!sizing ? <Spinner /> : (
         <div className="space-y-3">
           {/* 设定变了换一个表单，输入框从新的值起 */}
@@ -434,15 +434,15 @@ function SizingForm({ sizing, onSaved }: { sizing: TraderSizing; onSaved: (s: Tr
   };
 
   return (
-    <form onSubmit={e => void save(e)} className="space-y-2 border-t border-fg pt-3">
+    <form onSubmit={e => void save(e)} className="space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
         <span className="text-muted">{t('trader.sizing.leverage')}</span>
         <input type="number" min={1} step={1} value={leverage} onChange={e => setLeverage(e.target.value)} disabled={busy}
-               className="input w-20 text-right font-mono" />
+               className="input num w-20 text-right" />
         <span className="mr-3 text-muted">{t('trader.sizing.times')}</span>
         <span className="text-muted">{t('trader.sizing.margin')}</span>
         <input type="number" min={1} step={1} value={margin} onChange={e => setMargin(e.target.value)} disabled={busy}
-               className="input w-20 text-right font-mono" />
+               className="input num w-20 text-right" />
         <span className="text-muted">%</span>
         <Button type="submit" icon={Save} loading={busy}
                 disabled={!valid || (lev === sizing.leverage && m === sizing.margin)}>
@@ -527,10 +527,10 @@ function FactorsCard({ factors, carry, compare, blocked, onChanged, onList, onCa
   };
 
   return (
-    <Card title={t('trader.factors')} hint={t('trader.factorsHint')} more={t('trader.factorsMore')}>
+    <Card title={t('trader.factors')} hint={t('trader.factorsHint')} more={t('trader.factorsMore')} blk>
       {!factors || !carry ? <Spinner /> : (
         <div className="space-y-5">
-          <ul className="border-t border-fg divide-y divide-line border-b border-b-line">
+          <ul className="-mt-3 divide-y divide-line">
             <li className="flex items-start gap-3 py-3">
               <button onClick={() => void toggleCarry()} disabled={busy !== null}
                       title={carry.enabled ? t('trader.selected') : t('trader.unselected')}
@@ -538,7 +538,7 @@ function FactorsCard({ factors, carry, compare, blocked, onChanged, onList, onCa
                 {carry.enabled ? <SquareCheck className="w-4 h-4" /> : <Square className="w-4 h-4" />}
               </button>
               <div className="min-w-0 flex-1 space-y-0.5">
-                <div className="font-mono text-[13px] font-bold">{t('trader.leg.carry')}</div>
+                <div className="text-[13px] font-semibold">{t('trader.leg.carry')}</div>
                 <p className="text-[12px] text-muted">{t('trader.carryExpr')}</p>
                 {/* 份额变了换一个输入框，从新的值起 */}
                 <CarryShare key={carry.share} share={carry.share} busy={busy} blocked={blocked?.carryShare}
@@ -559,7 +559,7 @@ function FactorsCard({ factors, carry, compare, blocked, onChanged, onList, onCa
                   {f.selected ? <SquareCheck className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                 </button>
                 <div className="min-w-0 flex-1 space-y-0.5">
-                  <div className="font-mono text-[13px] font-bold">{f.name}</div>
+                  <div className="font-mono text-[13px] font-semibold">{f.name}</div>
                   <code className="block truncate text-[12px] text-muted" title={f.expr}>{f.expr}</code>
                   {f.missing.length > 0 && (
                     <p className="flex items-center gap-1 text-[12px] text-warn">
@@ -598,7 +598,7 @@ function CarryShare({ share, busy, blocked, onSave }: {
       <div className="flex flex-wrap items-center gap-2 text-[12px]">
         <span className="text-muted">{t('trader.carryShare')}</span>
         <input type="number" min={0} max={100} step={0.5} value={value} onChange={e => setValue(e.target.value)}
-               disabled={busy !== null} className="input w-20 text-right font-mono" />
+               disabled={busy !== null} className="input num w-20 text-right" />
         <span className="text-muted">%</span>
         <Button onClick={() => onSave(Number(value) / 100)} loading={busy === 'share'}
                 disabled={busy !== null || !!blocked || value === '' || Number(value) / 100 === share}>
@@ -642,9 +642,9 @@ function CompareView({ job }: { job: CompareJob }) {
     ] : []),
   ];
   return (
-    <section className="space-y-3 border-t border-fg pt-4">
+    <section className="space-y-3 border-t border-line pt-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[14px] font-extrabold">{t('trader.compareTitle', { action, name: job.name })}</span>
+        <span className="text-[14px] font-semibold">{t('trader.compareTitle', { action, name: job.name })}</span>
         <span className="ml-auto text-[12px] text-muted num">{t('trader.compareAt', { time: localTime(job.finishedAt) })}</span>
       </div>
       <p className="text-[12.5px] text-muted">
@@ -653,7 +653,7 @@ function CompareView({ job }: { job: CompareJob }) {
           alt: r.alt.factors.join(', ') || t('trader.noneFactors'),
         })}
       </p>
-      <div className="overflow-x-auto">
+      <div className="tw">
         <table className="tbl">
           <thead>
             <tr>
@@ -791,7 +791,7 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
       {coins.length > 0 && (
         <section className="space-y-2">
           <div className="microlabel">{t('trader.targets')}</div>
-          <div className="max-h-[28rem] overflow-auto">
+          <div className="tw max-h-[28rem] overflow-y-auto">
             <table className="tbl tbl-sticky">
               <thead>
                 <tr>
@@ -809,7 +809,7 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
               <tbody>
                 {coins.map(c => (
                   <tr key={c.symbol}>
-                    <td className="num font-mono text-[12.5px] font-bold">{c.symbol}</td>
+                    <td className="font-semibold">{c.symbol}</td>
                     <td className="r num">{signedPct(c.weight, 2)}</td>
                     {TRADE_LEGS.map(leg => <td key={leg} className="r num">{signedPct(c[leg], 2)}</td>)}
                     <td className="r num">{money(c.notional)}</td>
@@ -828,7 +828,7 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
       <section className="space-y-2">
         <div className="microlabel">{t('trader.orders')}</div>
         {run.orders.length === 0 ? <Empty>{t('trader.ordersEmpty')}</Empty> : (
-          <div className="max-h-[28rem] overflow-auto">
+          <div className="tw max-h-[28rem] overflow-y-auto">
             <table className="tbl tbl-sticky">
               <thead>
                 <tr>
@@ -842,7 +842,7 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
               <tbody>
                 {run.orders.map(o => (
                   <tr key={`${o.symbol}-${o.action}-${o.side}`}>
-                    <td className="num font-mono text-[12.5px] font-bold">{o.symbol}</td>
+                    <td className="font-semibold">{o.symbol}</td>
                     <td className="whitespace-nowrap">
                       <span className="mr-1.5">{t(`trader.action.${o.action}`)}</span>{o.side && <SideBadge side={o.side} />}
                     </td>
@@ -874,7 +874,7 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
             {TRADE_LEGS.map(leg => (
               <div key={leg} className="space-y-2">
                 <div className="microlabel">{t(`trader.leg.${leg}`)}</div>
-                <div className="max-h-[24rem] overflow-auto">
+                <div className="tw max-h-[24rem] overflow-y-auto">
                   <table className="tbl tbl-sticky">
                     <thead>
                       <tr>
@@ -888,7 +888,7 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
                     <tbody>
                       {[...run.targets!.signals[leg]].sort((a, b) => a.rank - b.rank).map(c => (
                         <tr key={c.symbol}>
-                          <td className="num font-mono text-[12.5px]">{c.symbol}</td>
+                          <td>{c.symbol}</td>
                           <td className="r num">{c.rank}</td>
                           <td className="r num">{num(c.signal, 5)}</td>
                           <td className="r num">{num(c.vol, 5)}</td>
@@ -933,7 +933,7 @@ function AttribView({ attrib }: { attrib: DayAttrib }) {
         </p>
       )}
       {coins.length > 0 && (
-        <div className="max-h-[28rem] overflow-auto">
+        <div className="tw max-h-[28rem] overflow-y-auto">
           <table className="tbl tbl-sticky">
             <thead>
               <tr>
@@ -949,7 +949,7 @@ function AttribView({ attrib }: { attrib: DayAttrib }) {
             <tbody>
               {coins.map(c => (
                 <tr key={c.symbol}>
-                  <td className="num font-mono text-[12.5px] font-bold">{c.symbol}</td>
+                  <td className="font-semibold">{c.symbol}</td>
                   {TRADE_LEGS.map(leg => <td key={leg} className="r num">{c[leg] ? signedPct(c[leg], 2) : ''}</td>)}
                   <td className="r num">{c.entry}</td>
                   <td className="r num">{c.exit}</td>

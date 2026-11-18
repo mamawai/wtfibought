@@ -240,7 +240,7 @@ export function MinePanel({ active }: { active: boolean }) {
   const toggle = (key: string) => setPicked(shownId === key ? '' : key);
 
   return (
-    <div className="grid items-start gap-x-12 gap-y-14 lg:grid-cols-[24rem_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 items-start gap-x-12 gap-y-14 *:min-w-0 lg:grid-cols-[24rem_minmax(0,1fr)]">
       <div className="lg:col-span-2"><OverviewStats {...stats} /></div>
       <div className="space-y-14">
         <ModelSettings onReady={setModelsReady} />
@@ -255,7 +255,7 @@ export function MinePanel({ active }: { active: boolean }) {
         <Card title={t('campaign.list')}
               actions={<Button variant="icon" icon={RefreshCw} aria-label={t('common.refresh')} onClick={() => void loadLists()} />}>
           {campaigns.length === 0 && !groups.get(null) ? <Empty>{t('campaign.none')}</Empty> : (
-            <div className="-mx-3 max-h-[26rem] overflow-y-auto border-t border-fg px-3 divide-y divide-line">
+            <div className="-mx-3 max-h-[26rem] overflow-y-auto px-3 divide-y divide-line">
               {campaigns.map(c => (
                 <CampaignGroup key={c.id} campaign={c.id === liveNow?.campaign.id ? liveNow.campaign : c}
                                runs={groups.get(c.id) ?? []} open={c.id === shownId} openId={run?.id}
@@ -272,7 +272,7 @@ export function MinePanel({ active }: { active: boolean }) {
         <Lessons detail={shown} />
 
         <Card title={t('detail.log')}>
-          <div ref={logRef} className="max-h-80 overflow-y-auto space-y-1 bg-panel-2 px-3 py-2.5 font-mono text-[12px] leading-relaxed">
+          <div ref={logRef} className="max-h-80 overflow-y-auto space-y-1 rounded-[14px] bg-fill px-4 py-3 font-mono text-[12px] leading-relaxed">
             {logs.length === 0 && <Empty>{t('detail.logEmpty')}</Empty>}
             {logs.map((line, i) => (
               <p key={i} className={cx('break-words', line.kind === 'done' && 'text-gain', line.kind === 'error' && 'text-loss',
@@ -287,14 +287,14 @@ export function MinePanel({ active }: { active: boolean }) {
         </Card>
       </div>
 
-      <div className="min-w-0 space-y-12">
+      <div className="space-y-12">
         {!run ? (
           <Card title={t('cand.title')}><Empty>{t('detail.pick')}</Empty></Card>
         ) : (
           <>
-            <Card>
+            <Card blk>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                <span className="num font-mono text-[15px] font-bold">{run.id}</span>
+                <span className="font-mono text-[15px] font-semibold">{run.id}</span>
                 <RunBadge status={run.status} />
                 {shownStage && <span className="text-[13px] text-muted">{t(`stage.${shownStage}`)}</span>}
                 {streaming && <Badge tone="info" pulse>{t('detail.live')}</Badge>}
@@ -360,7 +360,7 @@ function StartCampaign({ modelsReady, blocked, onStarted }: {
   );
 
   return (
-    <Card title={t('campaign.title')} hint={t('campaign.hint')}>
+    <Card title={t('campaign.title')} hint={t('campaign.hint')} blk>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <label className="space-y-1.5">
@@ -427,10 +427,10 @@ function LiveCampaign({ campaign: c, runs, openId, onOpen, onStopped }: {
   // 正在跑的这一轮也算进去
   const current = Math.min(c.rounds, c.done_rounds + 1);
   return (
-    <Card title={t('campaign.running')} actions={<CampaignBadge status={c.status} />}>
+    <Card title={t('campaign.running')} actions={<CampaignBadge status={c.status} />} blk>
       <div className="space-y-3">
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <span className="text-[26px] font-bold leading-none tracking-tight num [font-stretch:75%]">{t('campaign.round', { n: current, total: c.rounds })}</span>
+          <span className="text-[30px] font-light leading-none tracking-[-.04em] num">{t('campaign.round', { n: current, total: c.rounds })}</span>
           <span className="text-[13px] num">
             {c.max_survivors != null ? t('campaign.survivorsOf', { n: c.survivors, max: c.max_survivors })
               : t('campaign.survivors', { n: c.survivors })}
@@ -458,12 +458,12 @@ function LiveCampaign({ campaign: c, runs, openId, onOpen, onStopped }: {
 function RoundList({ runs, openId, onOpen }: { runs: RunRow[]; openId?: string; onOpen: (id: string) => void }) {
   const { t } = useTranslation();
   return (
-    <ul className="-mx-3 max-h-72 overflow-y-auto border-t border-fg px-3">
+    <ul className="-mx-3 max-h-72 overflow-y-auto px-3">
       {runs.map((r, i) => (
         <li key={r.id} onClick={() => onOpen(r.id)}
             className={cx('hov flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-line py-2 cursor-pointer',
               openId === r.id && 'on')}>
-          <span className="w-12 shrink-0 text-[12px] font-bold num">{t('campaign.roundNo', { n: runs.length - i })}</span>
+          <span className="w-12 shrink-0 text-[12px] font-semibold num">{t('campaign.roundNo', { n: runs.length - i })}</span>
           <RunBadge status={r.status} />
           <span className="text-[12px] text-muted num" title={r.id}>{localTime(r.created_at)}</span>
           <div className="basis-full pl-[3.625rem]"><StatusCountBadges counts={r.counts} /></div>
@@ -519,7 +519,7 @@ function Lessons({ detail }: { detail: CampaignDetail | null }) {
   return (
     <Card title={t('lessons.title')} hint={t('lessons.hint')}>
       {!detail || detail.lessons.length === 0 ? <Empty>{t('lessons.empty')}</Empty> : (
-        <ol className="max-h-[22rem] overflow-y-auto border-t border-fg">
+        <ol className="max-h-[22rem] overflow-y-auto">
           {detail.lessons.map(x => {
             const { icon: Icon, tone } = LESSON_ICON[x.kind];
             return (

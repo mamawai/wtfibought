@@ -20,18 +20,18 @@ export function PolicySettings({ blocked }: { blocked: string | null | undefined
 
   return (
     <>
-      <Card title={t('policy.title')} hint={t('policy.hint')}
+      <Card title={t('policy.title')} hint={t('policy.hint')} blk
             actions={<Button variant="icon" icon={Pencil} aria-label={t('policy.edit')} disabled={!policy}
                              onClick={() => setOpen(true)} />}>
         {!policy ? <Spinner /> : (
-          <p className="border-t border-fg pt-2 text-[13px]">
+          <p className="text-[13px]">
             {t('policy.summary', { id: policy.id, time: localTime(policy.createdAt), n: policy.families.length })}
           </p>
         )}
       </Card>
       {policy && (
         <Drawer open={open} onClose={() => setOpen(false)}
-                title={<span className="text-[16px] font-extrabold">{t('policy.editTitle', { id: policy.id })}</span>}>
+                title={<span className="text-[16px] font-semibold">{t('policy.editTitle', { id: policy.id })}</span>}>
           <PolicyForm key={policy.id} policy={policy} blocked={blocked} onSaved={p => { setPolicy(p); setOpen(false); }} />
         </Drawer>
       )}
@@ -79,7 +79,7 @@ function PolicyForm({ policy, blocked, onSaved }: {
       <TextBlock label={t('policy.reviewRules')} value={reviewRules} onChange={setReviewRules} />
       <div className="space-y-2.5">
         <div>
-          <div className="text-[14px] font-extrabold">{t('policy.families')}</div>
+          <div className="text-[14px] font-semibold">{t('policy.families')}</div>
           <p className="text-[12px] text-muted">{t('policy.familiesHint')}</p>
         </div>
         {families.map((f, i) => (
@@ -107,7 +107,7 @@ function PolicyForm({ policy, blocked, onSaved }: {
           {t('policy.addFamily')}
         </Button>
       </div>
-      <div className="space-y-2 border-t border-fg pt-3">
+      <div className="space-y-2 border-t border-line pt-4">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <Button type="submit" variant="primary" icon={Save} loading={busy} disabled={!!blocked}>{t('policy.save')}</Button>
           <span className="text-[12px] text-muted">
@@ -124,7 +124,7 @@ function PolicyForm({ policy, blocked, onSaved }: {
 function TextBlock({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-[14px] font-extrabold">{label}</span>
+      <span className="text-[14px] font-semibold">{label}</span>
       <textarea value={value} onChange={e => onChange(e.target.value)} rows={Math.max(3, value.split('\n').length + 1)}
                 maxLength={4000} className="input h-auto w-full py-2 leading-relaxed" />
     </label>

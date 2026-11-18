@@ -5,15 +5,12 @@ import { currentLang, setLang } from '../i18n';
 import { cx } from '../format';
 import { Badge } from './ui';
 
-/** 展开态是整词，往下滚折叠成 WIIB.：留 W(hat) I(f) I B(ought)，其余字母挂 go 淡掉（同主站） */
+/** 展开态是整词，往下滚收拢成 WIIB.：留 W(hat) I(f) I B(ought)，其余字母挂 go 淡掉（同主站） */
 const WORDMARK = 'WHATIFIBOUGHT';
 const WORDMARK_KEEP = new Set([0, 4, 6, 7]);
 
-/** 往下滚过这么多 px 顶栏就折叠，回到这以内展开；只是防顶部回弹抖动的阈值 */
+/** 往下滚过这么多 px 顶栏就收拢，回到这以内展开；只是防顶部回弹抖动的阈值 */
 const COLLAPSE_AT = 8;
-
-/** 折叠过渡的时长（CSS 里 .hdr 的 --dur）再多留一点，期间每帧跟着摆橙方块 */
-const FOLD_MS = 620;
 
 export interface NavItem<T extends string> {
   id: T;
@@ -21,10 +18,22 @@ export interface NavItem<T extends string> {
   label: string;
 }
 
+/** 收拢动画要知道各处自然宽：要淡掉的字母写在自己身上，导航项量文字层写在项上，ALPHA 的字宽写 --tw。
+ *  先全部量完再一起写，边量边写每次都要重排 */
+function measure(hdr: HTMLElement) {
+  const gos = [...hdr.querySelectorAll<HTMLElement>('.logo .go')];
+  const items = [...hdr.querySelectorAll<HTMLElement>('.nav .item')];
+  const goW = gos.map(el => el.getBoundingClientRect().width);
+  const itemW = items.map(el => el.querySelector('.lab')!.getBoundingClientRect().width);
+  const tagW = hdr.querySelector('.atag .tf')!.getBoundingClientRect().width;
+  gos.forEach((el, i) => el.style.setProperty('--w', `${goW[i]}px`));
+  items.forEach((el, i) => el.style.setProperty('--w', `${itemW[i]}px`));
+  hdr.style.setProperty('--tw', `${tagW}px`);
+}
+
 /**
- * 顶栏：字标 + 分区导航 + 工具，底下 2px 墨线。
- * 折叠、橙方块、阅读进度全部直接操作 DOM，滚动不走 React 状态：
- * 折叠是给 header 切 collapsed，动画本身是 CSS 过渡；橙方块停在当前项左侧 13px，悬停到别的项滑过去，移开滑回
+ * 顶栏（同主站）：字标 + ALPHA 小牌 + 分区导航 + 工具。
+ * 收拢是给 header 切 collapsed，动画本身是 CSS 过渡；滚动不走 React 状态
  */
 export function Header<T extends string>({ items, active, onGo, admin, badges }: {
   items: NavItem<T>[];
@@ -35,100 +44,29 @@ export function Header<T extends string>({ items, active, onGo, admin, badges }:
 }) {
   const { t, i18n } = useTranslation();
   const hdrRef = useRef<HTMLElement>(null);
-  const navRef = useRef<HTMLElement>(null);
-  const dotRef = useRef<HTMLSpanElement>(null);
-  const headRef = useRef<HTMLElement>(null);
-  // 当前项、语言、项数变了时的归位：重量宽、方块滑过去
-  const homeRef = useRef<(() => void) | null>(null);
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
 
-  // 首帧画出来之前量好各处宽度
+  // 首帧画出来之前量好、按滚动位置摆好，下一帧再挂 ready 开过渡
   useLayoutEffect(() => {
-    const hdr = hdrRef.current!, nav = navRef.current!, dot = dotRef.current!, head = headRef.current!;
-
-    // 折叠动画要知道各处自然宽：要淡掉的字母写在自己身上，导航项量文案层写在项上，ALPHA 的字宽写 --tw
-    const measure = () => {
-      hdr.querySelectorAll<HTMLElement>('.logo .go').forEach(el =>
-        el.style.setProperty('--w', `${el.getBoundingClientRect().width}px`));
-      nav.querySelectorAll<HTMLElement>('.item').forEach(el =>
-        el.style.setProperty('--w', `${el.querySelector('.lab')!.getBoundingClientRect().width}px`));
-      hdr.style.setProperty('--tw', `${hdr.querySelector('.tag .tf')!.getBoundingClientRect().width}px`);
-    };
-
-    let hover: HTMLElement | null = null;
-    const place = (animate: boolean) => {
-      const el = hover ?? nav.querySelector<HTMLElement>('.item.on');
-      if (!el) { dot.style.opacity = '0'; return; }
-      dot.style.transition = animate ? '' : 'none';
-      dot.style.left = `${el.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft - 13}px`;
-      dot.style.opacity = '1';
-    };
-
-    // 阅读进度：底线上的橙方块按滚了多少从左走到右；一帧最多算一次
-    let progressRaf = 0;
-    const progress = () => {
-      if (progressRaf) return;
-      progressRaf = requestAnimationFrame(() => {
-        progressRaf = 0;
-        const max = document.documentElement.scrollHeight - window.innerHeight;
-        const p = max > 0 ? Math.min(1, window.scrollY / max) : 0;
-        head.style.transform = `translateX(${p * (head.parentElement!.clientWidth - 8)}px)`;
-      });
-    };
-
-    // 折叠过渡期间导航项在变窄，每帧把方块摆到当前项上
-    let raf = 0;
-    let until = 0;
-    const track = () => {
-      place(false);
-      raf = performance.now() < until ? requestAnimationFrame(track) : 0;
-    };
-    const onScroll = () => {
-      progress();
-      const want = window.scrollY > COLLAPSE_AT;
-      if (want === hdr.classList.contains('collapsed')) return;
-      hdr.classList.toggle('collapsed', want);
-      until = performance.now() + FOLD_MS;
-      if (!raf) raf = requestAnimationFrame(track);
-    };
-
-    const over = (e: MouseEvent) => {
-      const item = (e.target as HTMLElement).closest<HTMLElement>('.item');
-      if (item && item !== hover) { hover = item; place(true); }
-    };
-    const leave = () => { hover = null; place(true); };
-    const relayout = () => { measure(); place(false); progress(); };
-    homeRef.current = () => { measure(); place(true); progress(); };
-
-    measure();
-    hdr.classList.toggle('collapsed', window.scrollY > COLLAPSE_AT);
-    place(false);
-    progress();
-    // 先按位摆好，下一帧再挂 ready 开过渡
+    const hdr = hdrRef.current!;
+    const onScroll = () => { hdr.classList.toggle('collapsed', window.scrollY > COLLAPSE_AT); };
+    const remeasure = () => measure(hdr);
+    remeasure();
+    onScroll();
     const readyRaf = requestAnimationFrame(() => hdr.classList.add('ready'));
-
-    nav.addEventListener('mouseover', over);
-    nav.addEventListener('mouseleave', leave);
-    window.addEventListener('resize', relayout);
     window.addEventListener('scroll', onScroll, { passive: true });
-    // 页面变高变矮（数据到了、展开收起）也重算阅读进度
-    const ro = new ResizeObserver(progress);
-    ro.observe(document.body);
+    window.addEventListener('resize', remeasure);
     // 字体就位后再量一次
-    void document.fonts.ready.then(relayout);
+    void document.fonts.ready.then(remeasure);
     return () => {
-      nav.removeEventListener('mouseover', over);
-      nav.removeEventListener('mouseleave', leave);
-      window.removeEventListener('resize', relayout);
       window.removeEventListener('scroll', onScroll);
-      ro.disconnect();
-      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', remeasure);
       cancelAnimationFrame(readyRaf);
-      cancelAnimationFrame(progressRaf);
     };
   }, []);
 
-  useEffect(() => { homeRef.current!(); }, [active, items.length, i18n.language]);
+  // 换语言、换当前项（当前项字重粗一档）、管理员的分区出来了：文字宽变了，重量
+  useEffect(() => { measure(hdrRef.current!); }, [active, items.length, i18n.language]);
 
   // 深浅色存在 localStorage 的 theme，和主站共用
   const toggleTheme = () => {
@@ -142,14 +80,13 @@ export function Header<T extends string>({ items, active, onGo, admin, badges }:
     <header ref={hdrRef} className="hdr">
       <div className="wrap top">
         <a className="logo" href="https://wtfibought.com" aria-label="WhatIfIBought">
-          <span className="word" aria-hidden="true">
+          <span aria-hidden="true">
             {[...WORDMARK].map((c, i) => <span key={i} className={WORDMARK_KEEP.has(i) ? undefined : 'go'}>{c}</span>)}
             <i>.</i>
           </span>
         </a>
-        <span className="tag"><span className="tf">ALPHA</span><span className="ta" aria-hidden="true">α</span></span>
-        <nav ref={navRef} className="nav">
-          <span ref={dotRef} className="nav-dot" />
+        <span className="atag"><span className="tf">ALPHA</span><span className="ta" aria-hidden="true">α</span></span>
+        <nav className="nav">
           {items.map(({ id, icon: Icon, label }) => (
             <button key={id} type="button" onClick={() => onGo(id)} data-label={label}
                     aria-current={active === id ? 'page' : undefined} className={cx('item', active === id && 'on')}>
@@ -173,7 +110,6 @@ export function Header<T extends string>({ items, active, onGo, admin, badges }:
           {admin && <Badge tone="gain" icon={ShieldCheck}>{t('auth.admin')}</Badge>}
         </div>
       </div>
-      <div className="rule"><i ref={headRef} className="rule-head" /></div>
     </header>
   );
 }

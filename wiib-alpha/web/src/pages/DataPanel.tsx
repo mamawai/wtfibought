@@ -153,9 +153,9 @@ function PoolCard({ pool, products }: { pool: DataStatus['pool']; products: stri
         </div>
       )}
       {Object.keys(pool.status).length > 0 && (
-        <div className="mt-10 space-y-3 border-t border-fg pt-4">
+        <div className="mt-12 space-y-3">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="text-[14px] font-extrabold">{t('pool.status')}</span>
+            <span className="text-[15px] font-semibold">{t('pool.status')}</span>
             <span className="text-[12.5px] text-muted">{t('pool.statusHint')}</span>
           </div>
           <PanelTable status={pool.status} products={products} filterable initial={{ key: 'poolMonths', dir: 'desc' }} />
@@ -185,7 +185,7 @@ function GridLine({ grid }: { grid: GridStatus }) {
   );
 }
 
-/** 每月池子大小，一月一根柱，从底升起依次登场；最近一月墨色，鼠标指上去变橙、右上角读数 */
+/** 每月池子大小，一月一根柱；最近一月墨色，鼠标指上去变橙、右上角读数 */
 function PoolBars({ months }: { months: [string, number][] }) {
   const { t } = useTranslation();
   const [hover, setHover] = useState<[string, number] | null>(null);
@@ -194,13 +194,13 @@ function PoolBars({ months }: { months: [string, number][] }) {
     <div>
       <div className="flex items-baseline justify-between text-[12.5px] text-muted">
         <span>{t('pool.sizes')}</span>
-        <span className="num font-bold text-fg">{hover ? t('pool.monthTip', { month: hover[0], n: hover[1] }) : ''}</span>
+        <span className="num font-medium text-fg">{hover ? t('pool.monthTip', { month: hover[0], n: hover[1] }) : ''}</span>
       </div>
       <div className="bars mt-2" onMouseLeave={() => setHover(null)}>
         {months.map(([m, n], i) => (
           <div key={m} className="b" onMouseEnter={() => setHover([m, n])}>
             <i className={cx(hover?.[0] === m ? 'on' : i === months.length - 1 && 'last')}
-               style={{ height: `${(n / max) * 100}%`, transitionDelay: `${i * 8}ms, 0ms` }} />
+               style={{ height: `${(n / max) * 100}%` }} />
           </div>
         ))}
       </div>
@@ -280,7 +280,7 @@ function PanelTable({ status, products, filterable, initial }: {
           <thead>
             <tr>
               <th colSpan={7} className="border-b-0" />
-              <th colSpan={COVERAGE_COLUMNS.length} className="text-center border-b-line">{t('panel.coverage')}</th>
+              <th colSpan={COVERAGE_COLUMNS.length} className="text-center">{t('panel.coverage')}</th>
               <th className="border-b-0" />
             </tr>
             <tr>
@@ -298,12 +298,12 @@ function PanelTable({ status, products, filterable, initial }: {
           <tbody>
             {sorted.map(({ symbol, s, product }) => (
               <tr key={symbol}>
-                <td className={cx('num whitespace-nowrap font-mono text-[12.5px]', product && 'text-primary font-bold')}
+                <td className={cx('whitespace-nowrap', product ? 'font-semibold text-primary' : 'font-medium')}
                     title={product ? t('panel.product') : undefined}>{symbol}</td>
                 <td className="r num">{s.rows.toLocaleString()}</td>
                 <td className="r num whitespace-nowrap">{utcDay(s.from)}</td>
                 <td className="r num whitespace-nowrap">{utcMinute(s.to)}</td>
-                <td className={cx('num whitespace-nowrap font-mono text-[12.5px]', s.spotSymbol === null && 'text-warn')}
+                <td className={cx('whitespace-nowrap', s.spotSymbol === null && 'text-warn')}
                     title={s.spotSymbol === null ? t('data.spotMissing') : undefined}>{s.spotSymbol ?? DASH}</td>
                 <td className="r num whitespace-nowrap">{utcDay(s.liqFrom)}</td>
                 <td className={cx('r num', s.gaps > 0 && 'text-warn')}>{s.gaps}</td>

@@ -45,14 +45,14 @@ export function StandardCard({ busy, active }: { busy: Busy | null; active: bool
     }
   };
 
-  if (!view) return <Card title={t('standard.title')} hint={t('standard.hint')}><Spinner /></Card>;
+  if (!view) return <Card title={t('standard.title')} hint={t('standard.hint')} blk><Spinner /></Card>;
   const { stale, calibration: cal, job } = view;
   // 上次标定之后变了的东西：空就还作数
   const changed = cal ? (['standard', 'data', 'library'] as const).filter(k => !cal.same[k]) : [];
   return (
-    <Card title={t('standard.title')} hint={t('standard.hint')} more={t('standard.more')}>
+    <Card title={t('standard.title')} hint={t('standard.hint')} more={t('standard.more')} blk>
       <div className="space-y-4">
-        <div className="space-y-1.5 border-t border-fg pt-2 text-[13px]">
+        <div className="space-y-1.5 text-[13px]">
           <p>{t('standard.summary', { id: view.id, time: localTime(view.createdAt), ids: view.history.map(h => `#${h.id}`).join(' ') })}</p>
           {stale.library || stale.observing ? (
             <p className="flex items-start gap-1.5 text-warn">
@@ -85,7 +85,7 @@ export function StandardCard({ busy, active }: { busy: Busy | null; active: bool
           <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
             <span className="text-muted">{t('standard.randoms')}</span>
             <input type="number" min={1} max={2000} step={1} value={randoms} onChange={e => setRandoms(e.target.value)}
-                   disabled={running} className="input w-24 text-right font-mono" />
+                   disabled={running} className="input num w-24 text-right" />
             <label className="flex items-center gap-1.5 text-muted">
               <input type="checkbox" checked={candidates} onChange={e => setCandidates(e.target.checked)} disabled={running} />
               {t('standard.withCandidates')}
@@ -155,7 +155,7 @@ function LineEditor({ view, valid, blocked, onSaved }: {
       <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
         <span className="text-muted">{t('standard.lineNow', { line })}</span>
         <input type="number" min={0} max={1} step={0.001} value={value} onChange={e => setValue(e.target.value)}
-               disabled={saving} className="input w-24 text-right font-mono" />
+               disabled={saving} className="input num w-24 text-right" />
         <Button icon={Save} loading={saving} disabled={!!blocked || value === '' || Number(value) === line}
                 onClick={() => void save(Number(value))}>
           {t('standard.lineSave')}
