@@ -781,8 +781,9 @@ html.pwa nav a {
   .hdr.collapsed::after{opacity:1}
   /* 高度恒定：sticky 元素自身高度一变整页内容就跟着挪 */
   .top{position:relative;display:flex;align-items:center;gap:30px;height:60px}
-  /* 栏正中的图形 logo：平时不在；收拢时等导航滑拢了才从下面浮上来，展开时它先淡掉、不等导航 */
-  .hmark{position:absolute;left:50%;top:50%;height:26px;width:auto;translate:-50% -50%;opacity:0;transform:translateY(7px);pointer-events:none;transition:opacity 300ms ease,transform 300ms ease}
+  /* 栏正中的图形 logo：平时不在；收拢时等导航滑拢了才从下面浮上来，展开时它先淡掉、不等导航。
+     居中靠 inset + margin，transform 只管浮上来 */
+  .hmark{position:absolute;inset:0;margin:auto;height:26px;width:auto;opacity:0;transform:translateY(7px);pointer-events:none;transition:opacity 300ms ease,transform 300ms ease}
   .hdr.collapsed .hmark{opacity:1;transform:none;transition:opacity 380ms ease 240ms,transform 460ms var(--ease-control) 240ms}
   .mtop{display:flex;align-items:center;height:56px}
   .logo{flex:none;font-weight:600;font-size:16px;letter-spacing:-.02em;white-space:nowrap}
