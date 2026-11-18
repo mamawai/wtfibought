@@ -58,7 +58,7 @@ const COPY = {
   b3k: { zh: '<div>44 种业务类型 按类型筛选</div><div>仓位历史一行一笔 可展开</div>', en: '<div>44 business types filterable</div><div>One row per position expandable</div>' },
   b4t: { zh: '三个进程', en: 'Three processes' },
   b4p: { zh: 'feed 接行情 sim 记账交易 agent 跑 AI 和策略<br>一个挂了不影响另外两个', en: 'feed ingests prices sim keeps the ledger agent runs the AI and strategies<br>One crash does not take the others down' },
-  b4k: { zh: '<div>:8081 · :8080 · :8082</div><div>开源 MIT 自己能跑一套</div>', en: '<div>:8081 · :8080 · :8082</div><div>MIT licensed and self-hostable</div>' },
+  b4k: { zh: '<div>:8081 · :8080 · :8082</div><div>开源 AGPL-3.0 自己能跑一套</div>', en: '<div>:8081 · :8080 · :8082</div><div>AGPL-3.0 licensed and self-hostable</div>' },
   pullQ: { zh: '重点不在预测准不准 而在于<mark>能看到模型怎么想</mark>', en: 'The point is not whether it predicts well but that <mark>you can see how it thinks</mark>' },
 
   s6h: { zh: '除了 AI 交易 还能做什么', en: 'Beyond the AI trader' },
@@ -84,7 +84,7 @@ const STRIP = [
   { zh: '真实资金费率', en: 'Real funding', sub: 'AS SETTLED' },
   { zh: '真实杠杆档位', en: 'Real leverage tiers', sub: '1–150X' },
   { zh: 'BYOK', en: 'BYOK', sub: 'YOUR MODEL · YOUR KEY' },
-  { zh: '开源', en: 'Open source', sub: 'MIT LICENSE' }
+  { zh: '开源', en: 'Open source', sub: 'AGPL-3.0' }
 ];
 
 /* 首屏六步：一次唤醒的闭环；cap 进格子小字，trace 进底下一行 */

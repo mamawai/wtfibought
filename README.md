@@ -12,7 +12,7 @@
 
 [![GitHub Stars](https://img.shields.io/github/stars/mamawai/wtfibought?style=flat-square&color=FFD700)](https://github.com/mamawai/wtfibought/stargazers)
 [![Release](https://img.shields.io/github/v/release/mamawai/wtfibought?style=flat-square)](https://github.com/mamawai/wtfibought/releases)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-green?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Web%20%7C%20PWA-lightgrey?style=flat-square)](https://wtfibought.com)
 [![Linux.do](https://img.shields.io/badge/Linux.do-community-FFB003?style=flat-square&logo=data:image/svg%2Bxml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48c3ZnIHZlcnNpb249IjEuMiIgYmFzZVByb2ZpbGU9InRpbnktcHMiIHdpZHRoPSIxMjgiIGhlaWdodD0iMTI4IiB2aWV3Qm94PSIwIDAgMTIwIDEyMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+TElOVVggRE8gTG9nbzwvdGl0bGU+PGNsaXBQYXRoIGlkPSJhIj48Y2lyY2xlIGN4PSI2MCIgY3k9IjYwIiByPSI0NyIvPjwvY2xpcFBhdGg+PGNpcmNsZSBmaWxsPSIjZjBmMGYwIiBjeD0iNjAiIGN5PSI2MCIgcj0iNTAiLz48cmVjdCBmaWxsPSIjMWMxYzFlIiBjbGlwLXBhdGg9InVybCgjYSkiIHg9IjEwIiB5PSIxMCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIzMCIvPjxyZWN0IGZpbGw9IiNmMGYwZjAiIGNsaXAtcGF0aD0idXJsKCNhKSIgeD0iMTAiIHk9IjQwIiB3aWR0aD0iMTAwIiBoZWlnaHQ9IjQwIi8+PHJlY3QgZmlsbD0iI2ZmYjAwMyIgY2xpcC1wYXRoPSJ1cmwoI2EpIiB4PSIxMCIgeT0iODAiIHdpZHRoPSIxMDAiIGhlaWdodD0iMzAiLz48L3N2Zz4=)](https://linux.do)
 
@@ -262,4 +262,4 @@ Thanks to [**LinuxDo**](https://linux.do/). The site's first sign-in was LinuxDo
 
 Issues and PRs welcome — trading rules, AI Trader quality, Research Workbench, deploy. Invite code: **mawai@linux.do**.
 
-[MIT License](LICENSE) · All data is simulated, for entertainment only, and is not investment advice
+Copyright © 2026 mamawai · [AGPL-3.0 License](LICENSE) · All data is simulated, for entertainment only, and is not investment advice
