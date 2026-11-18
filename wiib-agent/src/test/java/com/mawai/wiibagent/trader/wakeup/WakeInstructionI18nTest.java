@@ -3,6 +3,7 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
@@ -30,6 +31,8 @@ import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
@@ -199,7 +202,7 @@ class WakeInstructionI18nTest {
             String planEvents = wakeObservation.planEvents(List.of(
                     new TraderPlanStore.EntryFilled(plan, filled, counts),
                     new TraderPlanStore.EntryCancelled(plan, cancelled, counts)), lang);
-            String text = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+            String text = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(), "",
                     List.of(), planEvents, List.of(), BOUNDARY, lang, List.of(), List.of(), List.of(), Map.of()).text();
             assertThat(text).contains("102 × 3", "104 × 4", "102.1", cancelled.getReason());
             assertThat(text).contains(lang == AgentLang.ZH ? "共 3 档，已成交 1 档，还挂 0 档" : "3 entries, 1 filled, 0 pending");
@@ -210,7 +213,7 @@ class WakeInstructionI18nTest {
     /** 观察包（账户/上一轮结论）的文案：英文侧零中文（含全角【】），中文侧段头齐全；没承诺、没事件就不算忙 */
     @Test
     void 观察包中英文案无中文() {
-        WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+        WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(), "",
                 List.of(), "", List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(), Map.of());
         PromptI18nAssertions.assertNoCjk("英文观察包", en.text());
         PromptI18nAssertions.assertNoCjk("英文第一段（带观察包）",
@@ -220,10 +223,52 @@ class WakeInstructionI18nTest {
         assertThat(en.text()).contains("[Account]").contains("[Last round's conclusion]");
         assertThat(en.busy()).isFalse();
 
-        WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+        WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(), "",
                 List.of(), "", List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(), Map.of());
         assertThat(zh.text()).contains("【当前账户】").contains("\"equity\":10000.00")
                 .contains("【上一轮结论】本局还没有上一轮结论");
+    }
+
+    /**
+     * 账户块下面那一行：只数今天（北京时间）净亏损了结的，止损单触发的另数；赚的、昨天的、主人标了不算数的都不数。
+     * 一笔都没有、或者已平仓位没取到，就没有这一行
+     */
+    @Test
+    void 今天净亏损了结按币和方向数() {
+        // BOUNDARY 是北京时间 01:00
+        FuturesPositionDTO ignored = closedPos("-40", "STOP_LOSS", BOUNDARY - 400_000L);
+        ignored.setId(9L);
+        AiTraderPlan stale = new AiTraderPlan();
+        stale.setPositionId(9L);
+        stale.setStale(true);
+        List<FuturesPositionDTO> closed = List.of(
+                closedPos("-30", "STOP_LOSS", BOUNDARY - 600_000L),
+                closedPos("-12", "FILLED", BOUNDARY - 300_000L),
+                closedPos("50", "TAKE_PROFIT", BOUNDARY - 200_000L),
+                ignored,
+                // 前一天 23:00
+                closedPos("-80", "STOP_LOSS", BOUNDARY - 7_200_000L));
+
+        assertThat(wakeObservation.lossesToday(trader(), () -> closed, List.of(stale), BOUNDARY, AgentLang.ZH))
+                .isEqualTo("今天（北京时间 0 点起）净亏损了结的仓位：BTCUSDT SHORT 2 次（其中止损单触发 1 次）\n");
+        String en = wakeObservation.lossesToday(trader(), () -> closed, List.of(stale), BOUNDARY, AgentLang.EN);
+        PromptI18nAssertions.assertNoCjk("英文今天净亏损了结行", en);
+        assertThat(en).contains("BTCUSDT SHORT 2 (of which 1 by stop order)");
+        assertThat(wakeObservation.lossesToday(trader(), List::of, List.of(), BOUNDARY, AgentLang.ZH)).isEmpty();
+        assertThat(wakeObservation.lossesToday(trader(), () -> {
+            throw new IllegalStateException("sim down");
+        }, List.of(), BOUNDARY, AgentLang.ZH)).isEmpty();
+    }
+
+    private static FuturesPositionDTO closedPos(String pnl, String closedBy, long closedMs) {
+        FuturesPositionDTO p = new FuturesPositionDTO();
+        p.setSymbol("BTCUSDT");
+        p.setSide("SHORT");
+        p.setStatus("CLOSED");
+        p.setClosedPnl(new BigDecimal(pnl));
+        p.setClosedBy(closedBy);
+        p.setUpdatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(closedMs), ZoneId.systemDefault()));
+        return p;
     }
 
     /** 承诺块：在盯的价格条件带"离现价多远"，中英各自成文；布了条件就算忙 */
@@ -237,13 +282,13 @@ class WakeInstructionI18nTest {
         w.setCreatedWakeTime(BOUNDARY - 3_600_000L);
         Map<String, BigDecimal> marks = Map.of("BTCUSDT", new BigDecimal("64000"));
 
-        WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+        WakeObservation.Pack zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(), "",
                 List.of(), "", List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(), List.of(w), marks);
         assertThat(zh.text()).contains("【你的承诺】")
                 .contains("- BTCUSDT 触及 65000 以上（备注：breakout, chase long）：未命中；现价 64000，在 65000 下方 1.54%");
         assertThat(zh.busy()).isTrue();
 
-        WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+        WakeObservation.Pack en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(), "",
                 List.of(), "", List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(), List.of(w), marks);
         PromptI18nAssertions.assertNoCjk("英文承诺块", en.text());
         assertThat(en.text()).contains("[Your commitments]").contains("1.54% below 65000");
@@ -269,14 +314,14 @@ class WakeInstructionI18nTest {
         fired.setActionOk(true);
         fired.setActionResult("ETHUSDT LONG 止损 3000→3050");
 
-        String zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+        String zh = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(), "",
                 List.of(), "", List.of(), BOUNDARY, AgentLang.ZH, List.of(), List.of(fired), List.of(armed), Map.of()).text();
         assertThat(zh)
                 .contains("- BTCUSDT 触及 63000 以下（备注：market breaks, cut the alt）：未命中；预案：命中后平台市价平掉 ETHUSDT LONG（positionId 12）的 50%，然后叫醒你")
                 .contains("你的备注：lock breakeven｜预案已由平台执行：ETHUSDT LONG 止损 3000→3050");
 
         fired.setActionResult("ETHUSDT LONG stop 3000→3050");
-        String en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(),
+        String en = wakeObservation.assemble(trader(), List.of("BTCUSDT"), new BigDecimal("10000"), List.of(), List.of(), "",
                 List.of(), "", List.of(), BOUNDARY, AgentLang.EN, List.of(), List.of(fired), List.of(armed), Map.of()).text();
         PromptI18nAssertions.assertNoCjk("英文预案", en);
         assertThat(en).contains("standing order: when it fires the platform closes 50% of ETHUSDT LONG (positionId 12) at market, then wakes you")

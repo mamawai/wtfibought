@@ -179,6 +179,32 @@ class PlayStatsAssemblerTest {
         assertThat(out).contains("按入场方式：限价 5笔 3胜2负 合计+105.00 USDT ｜ 市价 2笔（样本不足）；另 1 笔未记录入场方式");
     }
 
+    /** 按币分桶：标签合计是正的，拆到币上一个亏一个样本不足；笔数多的币在前 */
+    @Test
+    void bucketsBySymbol() {
+        List<FuturesPositionDTO> positions = new ArrayList<>();
+        List<AiTraderPlan> plans = new ArrayList<>();
+        // 前 2 笔 ETH 各 +100，后 5 笔 BTC 合计 -75
+        String[] btcPnls = {"-30", "-20", "10", "-40", "5"};
+        for (int i = 0; i < 7; i++) {
+            long open = T0 + i * 7200_000L;
+            String symbol = i < 2 ? "ETHUSDT" : "BTCUSDT";
+            FuturesPositionDTO p = pos(i < 2 ? "100" : btcPnls[i - 2], open);
+            p.setSymbol(symbol);
+            positions.add(p);
+            AiTraderPlan pl = plan("PULLBACK", open, false);
+            pl.setSymbol(symbol);
+            plans.add(pl);
+        }
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(positions);
+        when(planMapper.selectList(any())).thenReturn(plans);
+
+        String out = assembler.assemble(trader(), AgentLang.ZH);
+
+        assertThat(out).contains("PULLBACK：7笔 4胜3负 盈亏合计+125.00 USDT");
+        assertThat(out).contains("按币：BTCUSDT 5笔 2胜3负 合计-75.00 USDT ｜ ETHUSDT 2笔（样本不足）\n");
+    }
+
     /**
      * 重放汇总：5 笔多单入场 100、止损 98（R=2）、目标 106，开仓后那根 5m 最低 97.5、最高 100.5。
      * 止损原样被打（-1R），放宽到 1.5 倍以上没碰到；每笔净 -10、开仓数量 5，实际 = -10 ÷ (5×2) = -1R。

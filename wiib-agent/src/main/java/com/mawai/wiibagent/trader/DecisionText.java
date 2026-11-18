@@ -11,8 +11,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -107,6 +109,19 @@ public class DecisionText {
             out.add(new ConclusionSegment(symbol, conclusionBody.substring(start)));
         }
         return out;
+    }
+
+    /** 账本编号的写法：#后面跟数字 */
+    private static final Pattern LEDGER_REF = Pattern.compile("#(\\d{1,18})(?!\\d)");
+
+    /** 一段文字里引用的账本 #编号，按出现顺序去重 */
+    public static Set<Long> ledgerRefs(String text) {
+        Set<Long> ids = new LinkedHashSet<>();
+        Matcher m = LEDGER_REF.matcher(text);
+        while (m.find()) {
+            ids.add(Long.parseLong(m.group(1)));
+        }
+        return ids;
     }
 
     /** 结论块正文里第一个 [SYMBOL] 标记之前的引子（总评、主人留言的对账行）；没分段的整块都是引子 */

@@ -92,7 +92,7 @@ public class TradeRecordService {
      * 同一边界可能既有例行轮又有手动轮（手动唤醒的 wake_time 就是当前边界）：开了仓的那条才是"论点"所在。
      * write_plan 补立的计划 openedWakeTime 是仓位创建时刻而非任何边界，天然配不到，openDecision 留空。
      */
-    private Map<Long, AiTraderDecision> openDecisions(AiTrader t, Collection<AiTraderPlan> plans) {
+    public Map<Long, AiTraderDecision> openDecisions(AiTrader t, Collection<AiTraderPlan> plans) {
         Set<Long> times = plans.stream().map(AiTraderPlan::getOpenedWakeTime)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
         if (times.isEmpty()) {

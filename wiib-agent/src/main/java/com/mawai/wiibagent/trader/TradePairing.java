@@ -84,6 +84,8 @@ public final class TradePairing {
 
     /** 主动平仓的码：竞技场判"要不要挂平仓决策"靠它，别再拿文案字符串比 */
     public static final String MANNER_MANUAL = "manual";
+    /** 止损单触发的码 */
+    public static final String MANNER_STOP_LOSS = "stopLoss";
     /** 判不出来时的码：它本身就是码不是文案，两门语言都原样透传 */
     public static final String MANNER_UNKNOWN = "UNKNOWN";
 
@@ -102,7 +104,7 @@ public final class TradePairing {
             return MANNER_UNKNOWN;
         }
         return switch (closedBy) {
-            case "STOP_LOSS" -> "stopLoss";
+            case "STOP_LOSS" -> MANNER_STOP_LOSS;
             case "TAKE_PROFIT" -> "takeProfit";
             default -> MANNER_MANUAL;
         };

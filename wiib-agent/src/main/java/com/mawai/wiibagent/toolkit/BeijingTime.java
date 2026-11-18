@@ -32,6 +32,11 @@ public final class BeijingTime {
         return SHORT.format(Instant.ofEpochMilli(epochMs));
     }
 
+    /** 这一刻所在的北京时间当天 0 点 */
+    public static long dayStart(long epochMs) {
+        return Instant.ofEpochMilli(epochMs).atZone(ZONE).toLocalDate().atStartOfDay(ZONE).toInstant().toEpochMilli();
+    }
+
     /** 读回 epoch ms；格式不对抛 DateTimeParseException */
     public static long parse(String text) {
         return LocalDateTime.parse(text.strip(), FMT).atZone(ZONE).toInstant().toEpochMilli();

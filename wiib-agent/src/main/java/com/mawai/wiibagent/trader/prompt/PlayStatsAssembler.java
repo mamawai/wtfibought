@@ -18,16 +18,18 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Function;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 本局论点战绩统计（纯代码，可单测）：sim 已平仓位 ⟵配对⟶ 本局计划，按论点标签聚合成
- * 每次唤醒注入的统计块，另按入场方式分桶、附开仓后不动的重放汇总。配对复用 {@link TradePairing#pairAll}——复盘/竞技场/统计
+ * 每次唤醒注入的统计块，另按入场方式、按币各分一次桶，附开仓后不动的重放汇总。配对复用 {@link TradePairing#pairAll}——复盘/竞技场/统计
  * 三处必须同一套算法。事实裁定归代码，模型只许引用不许自算，与复盘战绩表同一条纪律。
  * <p>
  * stale 过滤在<b>配对之后</b>：被忽略的计划仍参与配对占位，先滤后配会让它的仓位
@@ -68,6 +70,8 @@ public class PlayStatsAssembler {
             // 同一批了结再按入场方式（限价 / 市价 / 分档）分一次桶；入场上下文里没记的另计笔数
             Map<String, List<BigDecimal>> byEntry = new LinkedHashMap<>();
             int unknownEntry = 0;
+            // 再按币分一次桶
+            Map<String, List<BigDecimal>> bySymbol = new LinkedHashMap<>();
             List<CaseFileBuilder.Replay> replays = new ArrayList<>();
             int taken = 0;
             for (FuturesPositionDTO pos : closed) {
@@ -85,6 +89,7 @@ public class PlayStatsAssembler {
                 } else {
                     byEntry.computeIfAbsent(entry, k -> new ArrayList<>()).add(pos.getClosedPnl());
                 }
+                bySymbol.computeIfAbsent(pos.getSymbol(), k -> new ArrayList<>()).add(pos.getClosedPnl());
                 CaseFileBuilder.Replay replay = caseFiles.replay(pos, plan);
                 if (replay != null) {
                     replays.add(replay);
@@ -104,6 +109,9 @@ public class PlayStatsAssembler {
             if (!byEntry.isEmpty()) {
                 sb.append(entryLine(byEntry, unknownEntry, lang)).append('\n');
             }
+            sb.append(prompts.get(lang, "trader.label.playStatsSymbolLine", Map.of("rows", bucketRows(
+                    bySymbol.entrySet().stream().sorted((a, b) -> b.getValue().size() - a.getValue().size()).toList(),
+                    symbol -> symbol, lang)))).append('\n');
             if (replays.size() >= MIN_SAMPLE) {
                 sb.append(replayLines(replays, lang));
             }
@@ -139,24 +147,29 @@ public class PlayStatsAssembler {
 
     /** 按入场方式一行：限价、市价各自的笔数、胜负、合计；样本不足的只给笔数 */
     private String entryLine(Map<String, List<BigDecimal>> byEntry, int unknown, AgentLang lang) {
+        return prompts.get(lang, "trader.label.playStatsEntryLine", Map.of(
+                "rows", bucketRows(byEntry.entrySet(),
+                        entry -> prompts.get(lang, "trader.label.playStatsEntry." + entry.toLowerCase(Locale.ROOT)), lang),
+                "unknown", unknown == 0 ? "" : prompts.get(lang, "trader.label.playStatsEntryUnknown", Map.of("n", unknown))));
+    }
+
+    /** 几个桶拼成一行，每桶：名字、笔数、胜负、合计；样本不足的只给笔数 */
+    private String bucketRows(Collection<Map.Entry<String, List<BigDecimal>>> buckets, Function<String, String> name, AgentLang lang) {
         StringBuilder rows = new StringBuilder();
-        for (Map.Entry<String, List<BigDecimal>> e : byEntry.entrySet()) {
-            String method = prompts.get(lang, "trader.label.playStatsEntry." + e.getKey().toLowerCase(Locale.ROOT));
+        for (Map.Entry<String, List<BigDecimal>> e : buckets) {
             int n = e.getValue().size();
             if (!rows.isEmpty()) {
                 rows.append(prompts.get(lang, "trader.label.playStatsEntrySep"));
             }
             if (n < MIN_SAMPLE) {
-                rows.append(prompts.get(lang, "trader.label.playStatsEntryRowSmall", Map.of("method", method, "n", n)));
+                rows.append(prompts.get(lang, "trader.label.playStatsBucketRowSmall", Map.of("name", name.apply(e.getKey()), "n", n)));
             } else {
                 long wins = e.getValue().stream().filter(p -> p.signum() > 0).count();
-                rows.append(prompts.get(lang, "trader.label.playStatsEntryRow", Map.of(
-                        "method", method, "n", n, "wins", wins, "losses", n - wins, "pnl", signedSum(e.getValue()))));
+                rows.append(prompts.get(lang, "trader.label.playStatsBucketRow", Map.of(
+                        "name", name.apply(e.getKey()), "n", n, "wins", wins, "losses", n - wins, "pnl", signedSum(e.getValue()))));
             }
         }
-        return prompts.get(lang, "trader.label.playStatsEntryLine", Map.of(
-                "rows", rows.toString(),
-                "unknown", unknown == 0 ? "" : prompts.get(lang, "trader.label.playStatsEntryUnknown", Map.of("n", unknown))));
+        return rows.toString();
     }
 
     /**

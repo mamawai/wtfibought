@@ -33,7 +33,8 @@ reviewer:
     - When a group has both winners and losers, look for the dividing line first: how the winners and the losers differed in entry context and early path
     - One line of opportunity audit: against the biggest swing in this period's market, which of my setups should have caught it; if missed, did the condition not occur or was it defined wrong. A cancelled limit order whose price later reached the original target belongs here
     - One line of watch audit: did the round that learned of a hit do what the note written with the condition said, and if not, had things changed or was it dropped; which levels written in a Waiting line were never set as a condition and then missed (only one per direction can be set, so farther ones left in the Waiting line are not misses); if the watches were good, say so
-    - Experience ledger: every active entry whose setup type traded this period must get one verdict line. Experiences take SUPPORT / OPPOSE / UNTESTED, execution gaps take KEPT / BROKEN; every verdict cites this period's trades
+    - Experience ledger: every active entry whose setup type traded this period, or whose row is followed by a line of trades whose opening round cited it, must get one verdict line. Experiences take SUPPORT / OPPOSE / UNTESTED, execution gaps take KEPT / BROKEN; every verdict cites this period's trades. For a cited entry, the trades that cited it are its evidence whatever their setup type: judge by how they ended, and where what was done does not match the entry's condition, say in the evidence where it differs
+    - The ledger has a quota, and the line under its header shows how much is taken: an ADD into a full bucket is not recorded. To add into a full bucket, write a DELETE row for a hypothesis that occupies that same bucket: a RESTRICTION hypothesis when RESTRICTION is full, a hypothesis of that setup type when the setup type is full, any hypothesis when the active total is full. If that bucket holds no hypothesis to delete, the ADD cannot go in, and nothing else should be deleted for it
     - Only three kinds may be added: execution gaps (what I wrote down myself in a plan, a watch note or a Waiting line and keep failing to do), hypotheses (patterns observed this period with too little sample yet; a hypothesis is not injected into the trader, it is only once 3 supports promote it to a rule), findings (a limit or requirement in the owner's instructions is costing money — for the owner). Anything already in the owner's instructions does not go into the ledger; do not recopy last period's lessons; do not re-add what the ledger already holds
     - A new entry's text is "condition → action", at most 160 characters; evidence names specific trades and numbers, at most 120 characters
     - Do not bring back ideas on the retired list; entries marked under review still get a verdict this period, the audit is a separate flow
@@ -182,9 +183,14 @@ reviewer:
     caseReplaySummary: "This period's replay summary:"
     # Plans archived without ever binding a position
     cancelledHeader: "Limit entries cancelled unfilled (5m candles over the 24h after the cancellation):"
-    cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, ended {{closed}}: {{reason}} | afterwards price {{touched}} the limit level; {{targetsAfter}}"
-    reached: reached
-    notReached: never reached
+    cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, ended {{closed}}: {{reason}} | {{after}}"
+    # Never came back to the limit level: how many rungs price reached in these 24h
+    cancelledNotTouched: "afterwards price never reached the limit level; {{targetsAfter}}"
+    # Came back to the limit level: walked on from that candle with the original stop and rungs, counting rungs reached before it settled
+    cancelledTouched: "afterwards price came back to the limit level at {{at}}; from that candle on {{end}}; {{targetsAfter}}"
+    cancelledStopped: it ran until the stop was hit
+    cancelledTargetsDone: it ran until the take-profit rungs closed the whole position
+    cancelledUndecided: it was still open at the end of these candles (stop not hit)
     caseHourly: "  1h closes: {{closes}}"
     casePlan: "  Plan: thesis {{signals}} | invalidation {{invalidation}} | revisions {{revisions}}"
     caseWithAdds: " (includes adds; actual includes their PnL, replay uses initial entries only)"
@@ -223,8 +229,16 @@ reviewer:
 
     # ---- experience ledger ----
     ledgerHeader: "[EXPERIENCE LEDGER] ({{n}} active; #id is what the ledger updates refer to; entries marked under review still get a verdict this period)"
+    # How much of the ledger quota is taken (the caps live in ExperienceLedger), right under the block header
+    ledgerQuota: "Quota: {{n}}/{{max}} active; at most {{perPlay}} per setup type{{fullPlays}}; RESTRICTION {{r}}/{{rMax}}{{rIds}}. An ADD into a full bucket is not recorded"
+    ledgerQuotaFull: " (full: {{plays}})"
+    ledgerQuotaIds: " ({{ids}})"
+    listSep: ", "
     ledgerEmpty: "(the ledger is empty: this period can only add)"
     ledgerRow: "#{{id}} {{kind}} {{slot}} {{dir}} {{play}} | {{text}} | supported {{supports}} opposed {{opposes}} untested {{untested}} | evidence {{evidence}}{{flagged}}"
+    # Under an entry row: this period's trades whose opening round cited it in its conclusion, whatever their setup type
+    ledgerCited: "  This period's trades whose opening round cited it: {{trades}}"
+    ledgerCitedTrade: "{{symbol}} {{side}} {{play}} {{opened}} net {{net}}"
     ledgerFlagged: " | under review"
     findingsHeader: "[RECORDED FINDINGS] (already handed to the owner, do not add them again)"
     findingRow: "#{{id}} {{text}} | {{evidence}}"
@@ -232,6 +246,8 @@ reviewer:
     retiredRow: "#{{id}} {{text}} | {{reason}}"
     # Header of the audit verdicts appended to the review body (written by code)
     auditAppendix: "[AUDIT VERDICTS]"
+    # Header of the adds that hit a full quota, appended to the review body (written by code), one per line below
+    overCapAppendix: "[NOT RECORDED] These additions were not recorded because the ledger quota is full:"
 
   # Persisted text: goes into ai_trader_decision.error and is on public display in the arena timeline
   error:

@@ -29,6 +29,8 @@ trader:
       持仓另带三个代码算的数：unrealizedR 浮盈是几 R（R＝开仓价到计划原始止损的距离）、stopDistancePct 标记价离最近一档止损百分之几、
       lossAtStopPctOfEquity 当前止损全被打掉相对开仓价亏权益百分之几（负数是已经锁住的利润）；
       lossAtAllStopsPctOfEquity 是全部持仓合计。都不计手续费
+      账户块下面另有一行「今天净亏损了结的仓位」：代码按币和方向数的、今天（北京时间 0 点起）扣完手续费和资金费是亏的了结次数，
+      其中由止损单触发的另数；今天一笔都没有就没有这一行
       持仓的 sinceLastWake 是自你上次完成决策那轮以来这个仓位经历的波动：代码按已收盘的 5m K线算的首根开盘、
       最高与最低各在何时、末根收盘、开盘到收盘的涨跌，from / to 是实际覆盖的起止；仓位是那之后才开的，从开仓所在那根 5m 算起
     - 【上一轮结论】：每个可交易币最近一次写下的判断、动作与等待条件，段头带写下它的时刻；
@@ -38,7 +40,7 @@ trader:
     - 主人的留言（若有，压在第一段最末，段内自带说明）
     还会提供行情与历史信息：
     - 【各币自上次唤醒以来】：每个可交易币和 BTCUSDT（大盘参考）自你上次完成决策以来的开高低收（代码按已收盘 5m 算）
-    - 【最近唤醒轨迹】：最近几轮的时刻、状态、权益、调过的工具；论点战绩：本局已了结交易按论点标签、入场方式的代码统计，加开仓后不动的重放汇总，只许引用不许自算
+    - 【最近唤醒轨迹】：最近几轮的时刻、状态、权益、调过的工具；论点战绩：本局已了结交易按论点标签、入场方式、币的代码统计，加开仓后不动的重放汇总，只许引用不许自算
     - 行情快照：各币标记价、最近 1h / 4h / 24h 涨跌与资金费率，BTCUSDT 不可交易也带一行当大盘参考；
       后面是美股参考：纳指期货、标普期货、VIX 的现价与相对昨收的涨跌（Yahoo，可能晚 15 分钟）；【财经日历】：美国的 High 级宏观事件
     - 休眠提示（只在唤醒时段末次唤醒出现）：下次例行唤醒何时、期间在岗的只有止损止盈单和预案
@@ -200,8 +202,11 @@ trader:
     playStatsRowSmall: "{{play}}：{{n}}笔（样本不足，不作参考）"
     # 同一批了结按入场方式再分一次桶；入场上下文里没记方式的只报笔数
     playStatsEntryLine: "按入场方式：{{rows}}{{unknown}}"
-    playStatsEntryRow: "{{method}} {{n}}笔 {{wins}}胜{{losses}}负 合计{{pnl}} USDT"
-    playStatsEntryRowSmall: "{{method}} {{n}}笔（样本不足）"
+    # 同一批了结再按币分一次桶
+    playStatsSymbolLine: "按币：{{rows}}"
+    # 入场方式、币这两行里的一个桶
+    playStatsBucketRow: "{{name}} {{n}}笔 {{wins}}胜{{losses}}负 合计{{pnl}} USDT"
+    playStatsBucketRowSmall: "{{name}} {{n}}笔（样本不足）"
     playStatsEntrySep: " ｜ "
     playStatsEntryUnknown: "；另 {{n}} 笔未记录入场方式"
     playStatsEntry:
@@ -398,6 +403,10 @@ trader:
     watchHitsHeader: 【这根收盘命中了你布的盯盘条件】
     watchHitLine: "- {{detail}}。你布它时的备注：{{note}}"
     accountHeader: 【当前账户】（实时数据，不是指令；权益/持仓/挂单/计划已给出，交易或异步成交后可用 get_account 确认变化；盯盘条件在下面的承诺块里）
+    # 账户块下面的一行：今天净亏损了结的仓位按币和方向数，一笔都没有就不出
+    lossesToday: "今天（北京时间 0 点起）净亏损了结的仓位：{{rows}}"
+    lossesTodayRow: "{{position}} {{n}} 次（其中止损单触发 {{stops}} 次）"
+    lossesTodaySep: "；"
     lastConclusionHeader: 【上一轮结论】（最近一轮 {{time}}，权益{{equity}}）每个币最近一次写下的判断、动作与等待条件；没变化的币沿用旧段，段头是写下它的时刻
     # 一个币最近一次的结论段的段头；往回翻都没写过的币单起一行点名
     lastSegment: "[{{symbol}}]（{{time}} 写下）"

@@ -11,6 +11,7 @@ import com.mawai.wiibagent.mapper.AiTraderExperienceVerdictMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
@@ -86,7 +87,8 @@ class ReviewLoopTest {
             new ReviewMaterialAssembler(decisionMapper, planMapper, simTradeClient, prompts,
                     new CaseFileBuilder(historyStore), ledger,
                     new PlayStatsAssembler(simTradeClient, planMapper, prompts, new CaseFileBuilder(historyStore)),
-                    mock(TraderWatchStore.class), new DecisionText(prompts)),
+                    mock(TraderWatchStore.class), new DecisionText(prompts),
+                    new TradeRecordService(simTradeClient, planMapper, decisionMapper)),
             modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), simTradeClient);
 
     {

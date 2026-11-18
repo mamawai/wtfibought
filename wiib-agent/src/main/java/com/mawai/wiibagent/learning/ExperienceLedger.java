@@ -25,6 +25,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 经验账本：复盘提议的操作在这里落账，计数、升级、举旗、退役全由代码做；
@@ -88,7 +89,8 @@ public class ExperienceLedger {
     public record Audit(long id, String kind, String newText, String reason) {
     }
 
-    public record Applied(int applied, int dropped) {
+    /** overCap：合法、但名额满了没记进账本的新增（已计在 dropped 里） */
+    public record Applied(int applied, int dropped, List<Add> overCap) {
     }
 
     // ==================== 查 ====================
@@ -150,19 +152,22 @@ public class ExperienceLedger {
 
     /**
      * 逐行独立生效；不合法的行丢弃记日志，不中断。reviewId 为空＝迁移产生，没有复盘行可挂。
-     * 同一条经验一篇只认第一行结论。positionIdsByPlay：本期仓位 id 按单子类型分组（未标类型键为空串），
-     * 结论流水按经验的类型记涉及的仓位
+     * 同一条经验一篇只认第一行结论。新增排到最后落账，同一篇里的删除先腾出名额。
+     * positionIds：每条经验本期涉及的仓位 id（键是经验 id），结论流水照它记
      */
     public Applied apply(long traderId, int roundNo, Long reviewId, List<Op> ops, AgentLang lang,
-                         Map<String, List<Long>> positionIdsByPlay) {
+                         Map<Long, List<Long>> positionIds) {
         List<AiTraderExperience> actives = active(traderId, roundNo);
         Set<Long> judged = new HashSet<>();
+        List<Add> overCap = new ArrayList<>();
         int applied = 0;
         int dropped = 0;
-        for (Op op : ops) {
+        List<Op> ordered = new ArrayList<>(ops.stream().filter(op -> !(op instanceof Add)).toList());
+        ordered.addAll(ops.stream().filter(Add.class::isInstance).toList());
+        for (Op op : ordered) {
             boolean ok = switch (op) {
-                case Verdict v -> judged.add(v.id()) && verdict(traderId, roundNo, reviewId, v, positionIdsByPlay);
-                case Add a -> add(traderId, roundNo, reviewId, a, actives, lang);
+                case Verdict v -> judged.add(v.id()) && verdict(traderId, roundNo, reviewId, v, positionIds);
+                case Add a -> add(traderId, roundNo, reviewId, a, actives, lang, overCap);
                 case Finding f -> finding(traderId, roundNo, reviewId, f, actives, lang);
                 case Delete d -> delete(traderId, roundNo, reviewId, d, actives);
             };
@@ -173,10 +178,10 @@ public class ExperienceLedger {
                 log.info("[Ledger] 丢弃操作 traderId={} op={}", traderId, op);
             }
         }
-        return new Applied(applied, dropped);
+        return new Applied(applied, dropped, overCap);
     }
 
-    private boolean verdict(long traderId, int roundNo, Long reviewId, Verdict v, Map<String, List<Long>> positionIdsByPlay) {
+    private boolean verdict(long traderId, int roundNo, Long reviewId, Verdict v, Map<Long, List<Long>> positionIds) {
         AiTraderExperience e = owned(traderId, v.id());
         if (e == null || reviewId == null || !Objects.equals(e.getRoundNo(), roundNo)
                 || !AiTraderExperience.STATUS_ACTIVE.equals(e.getStatus())
@@ -188,7 +193,7 @@ public class ExperienceLedger {
         row.setReviewId(reviewId);
         row.setVerdict(v.verdict());
         row.setNote(cut(v.note(), 255));
-        row.setPositionIds(joinIds(positionIdsFor(e.getPlayType(), positionIdsByPlay)));
+        row.setPositionIds(joinIds(positionIds.getOrDefault(e.getId(), List.of())));
         verdictMapper.insert(row);
 
         switch (v.verdict()) {
@@ -250,23 +255,43 @@ public class ExperienceLedger {
                 && (blank(a.playType()) || TradeGuard.PLAY_TYPES.contains(a.playType().trim().toUpperCase(Locale.ROOT)));
     }
 
-    private boolean add(long traderId, int roundNo, Long reviewId, Add a, List<AiTraderExperience> actives, AgentLang lang) {
+    /** 新增一条；合法但名额满了的记进 overCap */
+    private boolean add(long traderId, int roundNo, Long reviewId, Add a, List<AiTraderExperience> actives, AgentLang lang,
+                        List<Add> overCap) {
         if (!valid(a)) {
             return false;
         }
-        String play = blank(a.playType()) ? null : a.playType().trim().toUpperCase(Locale.ROOT);
-        List<AiTraderExperience> counted = actives.stream()
-                .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
-        if (counted.size() >= MAX_ACTIVE
-                || counted.stream().filter(e -> Objects.equals(e.getPlayType(), play)).count() >= MAX_PER_PLAY
-                || (AiTraderExperience.DIR_RESTRICTION.equals(a.direction()) && counted.stream()
-                        .filter(e -> AiTraderExperience.DIR_RESTRICTION.equals(e.getDirection())).count() >= MAX_RESTRICTION)) {
+        if (full(a, actives)) {
+            overCap.add(a);
             return false;
         }
         AiTraderExperience e = entry(traderId, roundNo, reviewId, a, lang);
         expMapper.insert(e);
         actives.add(e);
         return true;
+    }
+
+    /** 这条新增要占的名额满没满：现役总数、同一单子类型、限制型 */
+    private static boolean full(Add a, List<AiTraderExperience> actives) {
+        Quota q = quota(actives);
+        String play = blank(a.playType()) ? "" : a.playType().trim().toUpperCase(Locale.ROOT);
+        return q.active() >= MAX_ACTIVE
+                || q.perPlay().getOrDefault(play, 0L) >= MAX_PER_PLAY
+                || (AiTraderExperience.DIR_RESTRICTION.equals(a.direction()) && q.restrictions().size() >= MAX_RESTRICTION);
+    }
+
+    /** 账本名额占了多少：现役几条、各单子类型几条（通用的键是空串）、限制型是哪几条的编号。发现不占名额 */
+    public record Quota(int active, Map<String, Long> perPlay, List<Long> restrictions) {
+    }
+
+    public static Quota quota(List<AiTraderExperience> actives) {
+        List<AiTraderExperience> counted = actives.stream()
+                .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
+        return new Quota(counted.size(),
+                counted.stream().collect(Collectors.groupingBy(e -> Objects.toString(e.getPlayType(), ""),
+                        LinkedHashMap::new, Collectors.counting())),
+                counted.stream().filter(e -> AiTraderExperience.DIR_RESTRICTION.equals(e.getDirection()))
+                        .map(AiTraderExperience::getId).toList());
     }
 
     private boolean finding(long traderId, int roundNo, Long reviewId, Finding f, List<AiTraderExperience> actives, AgentLang lang) {
@@ -611,14 +636,6 @@ public class ExperienceLedger {
     /** 计数列原子加一 */
     private void bump(long id, String column) {
         expMapper.update(null, upd(id).setSql(column + " = " + column + " + 1"));
-    }
-
-    /** 该经验本期涉及的仓位：没标类型就是全部，否则同类型的 */
-    private static List<Long> positionIdsFor(String playType, Map<String, List<Long>> byPlay) {
-        if (playType == null) {
-            return byPlay.values().stream().flatMap(List::stream).toList();
-        }
-        return byPlay.getOrDefault(playType, List.of());
     }
 
     /** 逗号拼接，超过 255 字截到放得下的整数个；一个没有给 null */

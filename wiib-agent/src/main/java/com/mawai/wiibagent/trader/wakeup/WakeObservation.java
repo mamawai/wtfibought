@@ -33,6 +33,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -122,6 +124,7 @@ public class WakeObservation {
      * 第一段的观察包：收盘命中 + 事件 + 账户 + 上一轮结论 + 承诺。排在头部事实之后、第一段的问题之前。
      *
      * @param symbols      可交易币（运行器算好的白名单），承诺块只念这些币的等待行
+     * @param lossesToday  账户块下面"今天净亏损了结"那一行（{@link #lossesToday}），没有就是空串
      * @param live         对完账还活着的计划
      * @param planEvents   对账事件行（{@link #planEvents}），连同之前没成功告诉过它的，进"自上次唤醒以来"
      * @param hitsNow      这根收盘刚命中的收盘类盯盘条件（只有例行轮有），单起一块念
@@ -130,7 +133,8 @@ public class WakeObservation {
      * @param marks        各币标记价，承诺块算"离价位多远"用；没有的币不带距离
      */
     Pack assemble(AiTrader trader, Collection<String> symbols, BigDecimal equity, List<FuturesPositionDTO> positions,
-                  List<FuturesOrderResponse> pendingOrders, List<AiTraderPlan> live, String planEvents,
+                  List<FuturesOrderResponse> pendingOrders, String lossesToday,
+                  List<AiTraderPlan> live, String planEvents,
                   List<RecentWake> recent, long wakeTime, AgentLang lang,
                   List<AiTraderWatch> hitsNow, List<AiTraderWatch> firedQuietly, List<AiTraderWatch> armed,
                   Map<String, BigDecimal> marks) {
@@ -154,7 +158,8 @@ public class WakeObservation {
         }
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
                 .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, live,
-                        wakeTime, paths)).append('\n');
+                        wakeTime, paths)).append('\n')
+                .append(lossesToday);
         Map<String, Segment> segments = latestSegments(recent, symbols);
         sb.append('\n').append(lastConclusion(latestConcluded(recent), segments, symbols, lang));
         String commitments = commitments(trader, positions, pendingOrders, live,
@@ -162,6 +167,49 @@ public class WakeObservation {
         sb.append(commitments);
         boolean busy = !hitsNow.isEmpty() || !firedQuietly.isEmpty() || !planEvents.isEmpty() || !commitments.isEmpty();
         return new Pack(sb.toString(), busy, lastOk);
+    }
+
+    /**
+     * 账户块下面那一行：今天（北京时间 0 点起）净亏损了结的仓位，按币和方向数，其中止损单触发的另数。
+     * 净亏损按 sim 给的净盈亏（已扣手续费和资金费）判；主人标了不算数的那几笔不数。
+     * 一笔都没有、或者已平仓位这次没取到，返回空串
+     *
+     * @param closed sim 最近的已平仓位，这里第一次用到才去取
+     * @param plans  本局全部计划，认主人标了不算数的用
+     */
+    String lossesToday(AiTrader trader, Supplier<List<FuturesPositionDTO>> closed, List<AiTraderPlan> plans,
+                       long wakeTime, AgentLang lang) {
+        List<FuturesPositionDTO> positions;
+        try {
+            positions = closed.get();
+        } catch (Exception e) {
+            log.warn("[WakeObservation] 已平仓位没取到，本轮不带今天净亏损了结那一行 traderId={} msg={}", trader.getId(), e.toString());
+            return "";
+        }
+        Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(positions, plans);
+        long dayStart = BeijingTime.dayStart(wakeTime);
+        // 值是 [亏损了结几次, 其中止损单触发几次]
+        Map<String, int[]> counts = new TreeMap<>();
+        for (FuturesPositionDTO p : positions) {
+            AiTraderPlan plan = planByPos.get(p);
+            if (p.getClosedPnl() == null || p.getClosedPnl().signum() >= 0 || TradePairing.msOf(p.getUpdatedAt()) < dayStart
+                    || (plan != null && Boolean.TRUE.equals(plan.getStale()))) {
+                continue;
+            }
+            int[] c = counts.computeIfAbsent(p.getSymbol() + " " + p.getSide(), k -> new int[2]);
+            c[0]++;
+            if (TradePairing.MANNER_STOP_LOSS.equals(TradePairing.closeMannerKey(p))) {
+                c[1]++;
+            }
+        }
+        if (counts.isEmpty()) {
+            return "";
+        }
+        String rows = counts.entrySet().stream()
+                .map(e -> prompts.get(lang, "trader.wake.lossesTodayRow", Map.of(
+                        "position", e.getKey(), "n", e.getValue()[0], "stops", e.getValue()[1])))
+                .collect(Collectors.joining(prompts.get(lang, "trader.wake.lossesTodaySep")));
+        return prompts.get(lang, "trader.wake.lossesToday", Map.of("rows", rows)) + "\n";
     }
 
     /** 第二段的历史块：最近轨迹 + 论点战绩；都没有返回空串 */

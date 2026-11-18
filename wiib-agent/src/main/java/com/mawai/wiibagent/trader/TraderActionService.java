@@ -17,7 +17,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -249,7 +248,7 @@ public class TraderActionService {
 
     /** 今天（北京时间零点起）本局醒了几次，按叫醒原因分，多的在前；复盘不算醒来，跳过的不算 */
     private Map<String, Long> todayWakes(AiTrader t) {
-        long dayStart = LocalDate.now(BeijingTime.ZONE).atStartOfDay(BeijingTime.ZONE).toInstant().toEpochMilli();
+        long dayStart = BeijingTime.dayStart(System.currentTimeMillis());
         List<Map<String, Object>> rows = decisionMapper.selectMaps(new QueryWrapper<AiTraderDecision>()
                 .select("kind", "COUNT(*) AS n")
                 .eq("trader_id", t.getId())

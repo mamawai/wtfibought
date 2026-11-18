@@ -17,6 +17,7 @@ import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
 import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
@@ -601,7 +602,8 @@ class PromptI18nTest {
         t.setSymbols("BTCUSDT");
         CaseFileBuilder caseFiles = new CaseFileBuilder(store);
         return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, prompts, caseFiles,
-                ledger, new PlayStatsAssembler(sim, planMapper, prompts, caseFiles), mock(TraderWatchStore.class), new DecisionText(prompts))
+                ledger, new PlayStatsAssembler(sim, planMapper, prompts, caseFiles), mock(TraderWatchStore.class), new DecisionText(prompts),
+                new TradeRecordService(sim, planMapper, decisionMapper))
                 .assemble(t, FROM, TO, AgentLang.EN);
     }
 

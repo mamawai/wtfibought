@@ -8,6 +8,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
+import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.toolkit.BeijingTime;
@@ -81,7 +82,8 @@ class ReviewMaterialAssemblerTest {
 
     private final ReviewMaterialAssembler assembler = new ReviewMaterialAssembler(
             decisionMapper, planMapper, simTradeClient, prompts, caseFiles, ledger,
-            new PlayStatsAssembler(simTradeClient, planMapper, prompts, caseFiles), watchStore, new DecisionText(prompts));
+            new PlayStatsAssembler(simTradeClient, planMapper, prompts, caseFiles), watchStore, new DecisionText(prompts),
+            new TradeRecordService(simTradeClient, planMapper, decisionMapper));
 
     private AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -169,10 +171,14 @@ class ReviewMaterialAssemblerTest {
         String zh = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
         assertThat(zh).contains("入场安排", "100 × 3", "98 × 4", "97 × 3", "105 × 2（加仓）",
                 "计划合计 13，实际成交 5", "cancel-reason-1", "cancel-reason-2", "含加仓",
-                "限价 98 止损 96 目标 104(100%)", "限价 97 止损 96 目标 104(100%)", "限价 103 止损 100 目标 110(100%)");
+                "限价 98 止损 96 目标 104(100%)", "限价 97 止损 96 目标 104(100%)", "限价 103 止损 100 目标 110(100%)",
+                // 98 那档第二根才回到限价位，最低 97 没到止损 96，后面没 K线了；103 那档第一根就回到，同一根最低 99 打掉止损 100
+                "回到限价位，从那一根起走到这段 K线末尾还没了结（止损没碰到），到过原目标 0/1 档",
+                "回到限价位，从那一根起走到止损被打掉为止，到过原目标 0/1 档");
         String en = assembler.assemble(trader(), FROM, TO, AgentLang.EN).casesBlock();
         assertThat(en).contains("Entry arrangement", "planned total 13, actually filled 5", "includes adds", "cancel-reason-2",
-                "limit 103 stop 100 target 110(100%)");
+                "limit 103 stop 100 target 110(100%)",
+                "from that candle on it ran until the stop was hit; reached 0/1 of the original targets");
         PlanEntry.save(plan, List.of(entries.getFirst()));
         // 只有一档且已成交：不出入场安排那一行（块头的说明里也有这四个字，认行首）
         assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock()).doesNotContain("  入场安排：");
@@ -602,6 +608,64 @@ class ReviewMaterialAssemblerTest {
 
         assertThat(block).startsWith("【经验账本】（现役 0 条").contains("账本为空：本期只能新增");
         assertThat(block).doesNotContain("【已记录的发现】").doesNotContain("【退役名单】");
+    }
+
+    /** 块头下面的名额行：现役几条、哪个单子类型满了、限制型几条（带编号） */
+    @Test
+    void ledgerBlockShowsQuotaUsage() {
+        when(ledger.active(7L, 1)).thenReturn(List.of(
+                exp(62L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
+                        AiTraderExperience.DIR_RESTRICTION, "PULLBACK", "破位不挂内侧限价"),
+                exp(81L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.SLOT_RISK,
+                        AiTraderExperience.DIR_RESTRICTION, null, "止损不窄于 0.75 ATR"),
+                exp(75L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
+                        AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "保留原主阻力限价单"),
+                exp(76L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.SLOT_ENTRY,
+                        AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "回踩到位再挂")));
+
+        String block = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).ledgerBlock();
+
+        assertThat(block).contains("\n名额：现役 4/10 条；同一单子类型最多 3 条（已满：PULLBACK）；限制型 2/2 条（#62、#81）。"
+                + "满了的那一类再写新增不会记进账本\n");
+    }
+
+    /**
+     * 开仓那轮结论里该币那一段引用了某条经验：这笔单子列在那条的账本行下面（不管单子类型），结论流水的仓位也带上它。
+     * 那一轮没开过的币（续立行对上的对账轮就是这样），它那段里的引用不算
+     */
+    @Test
+    void ledgerRowListsTradesWhoseOpeningRoundCitedIt() {
+        long opened = FROM + H;
+        FuturesPositionDTO pos = closedPos("LONG", "100000", "99000", "-293.29", opened, opened + H);
+        pos.setId(42L);
+        AiTraderPlan plan = planOf("BTCUSDT", "BREAKOUT", opened, false);
+        plan.setPositionId(42L);
+        // ETH 这笔的计划行也对到这一轮，但这一轮没开 ETH
+        FuturesPositionDTO carried = closedPos("LONG", "2000", "1990", "-50", opened + M5, opened + H);
+        carried.setSymbol("ETHUSDT");
+        carried.setId(43L);
+        AiTraderPlan carriedPlan = planOf("ETHUSDT", "PULLBACK", opened, false);
+        carriedPlan.setPositionId(43L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos, carried));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan, carriedPlan));
+        AiTraderDecision open = equityRow(opened, "10000");
+        open.setReasoning("求证过程\n[本轮结论]\n总评：遵 #75 续持\n[BTCUSDT]\n动作：遵 #62 市价开多\n[ETHUSDT]\n判断：遵 #75 保留挂单");
+        open.setActionsJson("[{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"},\"status\":\"ok\"}]");
+        when(decisionMapper.selectList(any())).thenReturn(List.of(open));
+        when(ledger.active(7L, 1)).thenReturn(List.of(
+                exp(62L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
+                        AiTraderExperience.DIR_RESTRICTION, "PULLBACK", "破位不挂内侧限价"),
+                exp(75L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
+                        AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "保留原主阻力限价单")));
+
+        ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
+
+        assertThat(m.ledgerBlock()).contains("证据 证据-62\n  本期开仓那轮引用了它的单子：BTCUSDT LONG BREAKOUT "
+                + TIME.format(Instant.ofEpochMilli(opened)) + " 净 -293.29\n");
+        // #75 出现在总评和 ETH 那段：总评不绑币，ETH 这一轮没开，都不算引用
+        assertThat(m.ledgerBlock()).doesNotContain("证据 证据-75\n  本期开仓那轮");
+        // 结论流水的仓位：同类型的（ETH 那笔是 PULLBACK）加上引用了它的（BTC 那笔）
+        assertThat(m.positionIdsByExperience()).isEqualTo(Map.of(62L, List.of(43L, 42L), 75L, List.of(43L)));
     }
 
     /**

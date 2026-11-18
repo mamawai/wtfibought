@@ -237,24 +237,61 @@ class CaseFileBuilderTest {
         assertThat(builder.replay(pos, plan("98", null, null)).actualR()).isEqualByComparingTo("-2.00");
     }
 
-    /** 撤掉的限价单：从给的那一刻起，价格到没到过限价位、到过几档止盈 */
+    /** 撤掉的限价单，价格没回到限价位：数这段时间里到过几档止盈 */
     @Test
-    void cancelledLimitCountsTargetsReachedAfterwards() {
+    void cancelledLimitNeverTouchedCountsTargetsPriceReached() {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
                 bar(T0, new double[]{100, 103, 99.5, 102}),
                 bar(T0 + M5, new double[]{102, 104.5, 101, 104})));
+
+        CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(cancelledLong(), T0);
+
+        // 最低 99.5 没回到限价 99；最高 104.5 到过第一档
+        assertThat(c.touchedAt()).isNull();
+        assertThat(c.end()).isEqualTo(CaseFileBuilder.CancelledEnd.NOT_TOUCHED);
+        assertThat(c.reachedTargets()).isEqualTo(1);
+    }
+
+    /** 价格先到了目标、之后才回到限价位、接着打掉止损：成交之前到的目标不算 */
+    @Test
+    void cancelledLimitIgnoresTargetsReachedBeforePriceCameBack() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 108.5, 99.5, 108}),
+                bar(T0 + M5, new double[]{108, 108, 98.5, 99}),
+                bar(T0 + 2 * M5, new double[]{99, 99.5, 95.5, 96})));
+
+        CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(cancelledLong(), T0);
+
+        assertThat(c.touchedAt()).isEqualTo(T0 + M5);
+        assertThat(c.end()).isEqualTo(CaseFileBuilder.CancelledEnd.STOPPED);
+        assertThat(c.reachedTargets()).isZero();
+    }
+
+    /** 回到限价位之后两档止盈都到了，仓位已经平完，再往后跌破止损不算 */
+    @Test
+    void cancelledLimitStopsWalkingOnceAllRungsClosedThePosition() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 100.5, 98.8, 99.5}),
+                bar(T0 + M5, new double[]{99.5, 104.5, 99.2, 104}),
+                bar(T0 + 2 * M5, new double[]{104, 108.2, 103, 108}),
+                bar(T0 + 3 * M5, new double[]{108, 108, 95, 95.5})));
+
+        CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(cancelledLong(), T0);
+
+        assertThat(c.touchedAt()).isEqualTo(T0);
+        assertThat(c.end()).isEqualTo(CaseFileBuilder.CancelledEnd.TARGETS_DONE);
+        assertThat(c.reachedTargets()).isEqualTo(2);
+    }
+
+    /** 撤掉的限价多单：限价 99、止损 96、止盈 104 / 108 各一半 */
+    private static AiTraderPlan cancelledLong() {
         AiTraderPlan plan = plan("96", null, null);
         plan.setSymbol("BTCUSDT");
         plan.setSide("LONG");
         plan.setEntryPrice(new BigDecimal("99"));
         plan.setClosedWakeTime(T0);
         plan.setTakeProfitsJson("[{\"price\":104,\"percent\":50},{\"price\":108,\"percent\":50}]");
-
-        CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(plan, T0);
-
-        // 最低 99.5 没回到限价 99；最高 104.5 到过第一档
-        assertThat(c.touchedLimit()).isFalse();
-        assertThat(c.reachedTargets()).isEqualTo(1);
+        return plan;
     }
 
     /** K 线没覆盖到开仓后 24 小时：拿满 24 小时的位置留空，两头都没碰到的记未决 */

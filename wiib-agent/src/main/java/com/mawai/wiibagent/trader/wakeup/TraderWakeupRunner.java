@@ -71,8 +71,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -106,8 +105,6 @@ public class TraderWakeupRunner {
     static final int MAX_CONSECUTIVE_FAILURES = 5;
     /** 出局判定线：权益 < 初始资金 10000 的 1% */
     static final BigDecimal BUST_OUT_FLOOR = new BigDecimal("100");
-    /** 结论里引用账本条目的写法：#编号 */
-    private static final Pattern LEDGER_REF = Pattern.compile("#(\\d{1,18})(?!\\d)");
     /** 一批触发合成一轮时决策行的 kind：按要紧程度，持仓事件 > 盯盘命中 > 波动警报 */
     private static final List<String> TRIGGER_KIND_PRIORITY =
             List.of(AiTraderDecision.KIND_EVENT, AiTraderDecision.KIND_WATCH, AiTraderDecision.KIND_ALERT);
@@ -287,11 +284,7 @@ public class TraderWakeupRunner {
             if (block == null) {
                 return;
             }
-            Set<Long> ids = new LinkedHashSet<>();
-            Matcher m = LEDGER_REF.matcher(block);
-            while (m.find()) {
-                ids.add(Long.parseLong(m.group(1)));
-            }
+            Set<Long> ids = DecisionText.ledgerRefs(block);
             if (ids.isEmpty()) {
                 return;
             }
@@ -319,6 +312,17 @@ public class TraderWakeupRunner {
     private record Session(String reasoning, List<Long> watchHits) {
     }
 
+    /** 只取一次：第一次调才真去取，取到了之后都给同一份 */
+    private static <T> Supplier<T> once(Supplier<T> source) {
+        List<T> got = new ArrayList<>(1);
+        return () -> {
+            if (got.isEmpty()) {
+                got.add(source.get());
+            }
+            return got.getFirst();
+        };
+    }
+
     /**
      * ReactLoop 会话：备料（计划/最近几轮/提示词/观察包）→ 选走法、出开场白 → 建工具和循环 → 限时执行，过程逐帧推给现场 {@code run}。
      * 动作轨迹随 decision 一并写入。triggers 为空=例行或手动轮，非空=非例行唤醒。
@@ -332,9 +336,12 @@ public class TraderWakeupRunner {
         // 本轮是否联网，决定工具列表和走法
         boolean webSearch = modelFactory.webSearchEnabled(trader);
         Set<String> whitelist = Arrays.stream(trader.getSymbols().split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
-        // 计划对照 sim 持仓/挂单：了结的归档并报结局、限价成交的绑上仓位，存活的随持仓注入账户状态；已平仓位只在有事时才查
+        // 已平仓位这一轮最多拉一次，第一次用到才拉：对账有事时用，开场白里今天净亏损了结的次数也从它数
+        Supplier<List<FuturesPositionDTO>> closed = once(
+                () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT));
+        // 计划对照 sim 持仓/挂单：了结的归档并报结局、限价成交的绑上仓位，存活的随持仓注入账户状态
         TraderPlanStore.Reconcile reconcile = planStore.reconcile(trader.getId(), trader.getRoundNo(), positions, pendingOrders,
-                () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT),
+                closed,
                 group -> simTradeClient.getGroupOrders(trader.getSimUserId(), group), wakeTime, lang);
         // 对账事件行，连同之前没成功告诉过模型的
         String planEvents = unreportedEvents(trader, wakeObservation.planEvents(reconcile.events(), lang));
@@ -362,6 +369,7 @@ public class TraderWakeupRunner {
         quotes.forEach((symbol, q) -> marks.put(symbol, q.path("markPrice").asDecimal(null)));
         // 第一段的观察包：上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 承诺
         WakeObservation.Pack pack = wakeObservation.assemble(trader, whitelist, equity, positions, pendingOrders,
+                wakeObservation.lossesToday(trader, closed, plans, wakeTime, lang),
                 reconcile.live(), planEvents, recent, wakeTime, lang, hitsNow, quiet, armed, marks);
         // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报/事件轮在 K 线中间，主人留的话多半是按收盘说的
         String ownerNote = !triggers.isEmpty() ? "" : promptAssembler.ownerNoteBlock(trader, lang);

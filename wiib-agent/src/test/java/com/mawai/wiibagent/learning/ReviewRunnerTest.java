@@ -79,7 +79,7 @@ class ReviewRunnerTest {
             String m = inv.getArgument(0);
             return m != null && m.startsWith("【经验账本】");
         });
-        when(ledger.apply(anyLong(), anyInt(), any(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(2, 0));
+        when(ledger.apply(anyLong(), anyInt(), any(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(2, 0, List.of()));
         when(ledger.writeMemory(any(), any())).thenReturn("【经验账本】\n#1 规律 执行型 ｜ 出场只认目标位");
     }
 
@@ -106,7 +106,7 @@ class ReviewRunnerTest {
                         "【本期行情】\n- BTCUSDT 81144 → 86579，低到高 8.1%\n",
                         "【盯盘布防】\n- 期间布防 0 条（—）；命中 0 条；复盘时仍在盯 0 条\n",
                         "【经验账本】（现役 1 条）\n#1 规律 盈利处理 执行型 PULLBACK ｜ 出场只认目标位 ｜ 支持 5 反对 1 未测试 0 ｜ 证据 x\n", 2,
-                        Map.of("PULLBACK", List.of(42L))));
+                        Map.of(1L, List.of(42L))));
     }
 
     private ChatModel modelReturning(String... texts) {
@@ -155,10 +155,10 @@ class ReviewRunnerTest {
         assertThat(d.getModelCalls()).isEqualTo(1);
         assertThat(d.getPromptTokens()).isEqualTo(1000L);
 
-        // 两行操作带着复盘行 id 与本期仓位分组落账
+        // 两行操作带着复盘行 id 与每条经验本期涉及的仓位落账
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ExperienceLedger.Op>> ops = ArgumentCaptor.forClass((Class) List.class);
-        verify(ledger).apply(eq(7L), eq(1), eq(900L), ops.capture(), eq(AgentLang.ZH), eq(Map.of("PULLBACK", List.of(42L))));
+        verify(ledger).apply(eq(7L), eq(1), eq(900L), ops.capture(), eq(AgentLang.ZH), eq(Map.of(1L, List.of(42L))));
         assertThat(ops.getValue()).hasSize(2);
         assertThat(ops.getValue().get(0)).isEqualTo(new ExperienceLedger.Verdict(1L, AiTraderExperienceVerdict.SUPPORT, "09-21 BTC 平在目标位"));
 
@@ -173,6 +173,29 @@ class ReviewRunnerTest {
         verify(decisionMapper, never()).updateById(any(AiTraderDecision.class));
         // 没有旗就不复审
         verify(model, times(1)).call(any(Prompt.class));
+    }
+
+    /** 名额满了没记进账本的新增，列在复盘正文末尾 */
+    @Test
+    void overCapAddsAreListedAtTheEndOfTheReviewText() {
+        stubMaterial();
+        ChatModel model = modelReturning(OUTPUT);
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        when(ledger.apply(anyLong(), anyInt(), any(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(1, 1,
+                List.of(new ExperienceLedger.Add("PULLBACK", AiTraderExperience.SLOT_FAIL_DEF, AiTraderExperience.DIR_EXECUTION,
+                        "90 分钟没到目标 25% 即判失败", "ETH 09:32、SOL 23:33", null))));
+
+        runner.review(trader(), BOUNDARY);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<LambdaUpdateWrapper<AiTraderDecision>> up = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
+        // 先是账本快照那次，追加段排在最后
+        verify(decisionMapper, times(2)).update(isNull(), up.capture());
+        assertThat(up.getAllValues().getFirst().getSqlSet()).contains("memory_after");
+        assertThat(up.getAllValues().getLast().getSqlSet()).contains("reasoning");
+        assertThat(up.getAllValues().getLast().getParamNameValuePairs().values()).anySatisfy(v -> assertThat(v.toString())
+                .contains("#1 支持")
+                .endsWith("【没记进账本】下面几条新增因为账本名额已满，没有记进账本：\n- 90 分钟没到目标 25% 即判失败"));
     }
 
     @Test
@@ -376,7 +399,7 @@ class ReviewRunnerTest {
         t.setMemory("【已验证纪律】\n全是主人指令的复述");
         when(ledger.active(7L, 1)).thenReturn(List.of());
         when(ledger.retired(7L, 1)).thenReturn(List.of());
-        when(ledger.apply(anyLong(), anyInt(), isNull(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(0, 2));
+        when(ledger.apply(anyLong(), anyInt(), isNull(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(0, 2, List.of()));
         ChatModel model = modelReturning("新增 BREAKOUT 入场条件 机会型 ｜ 指令里已有的 ｜ 没证据", OUTPUT);
         when(modelFactory.modelFor(any())).thenReturn(model);
 

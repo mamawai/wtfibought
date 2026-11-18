@@ -6,6 +6,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
+import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TargetRung;
 import com.mawai.wiibagent.trader.trade.PlanEntry;
@@ -39,13 +40,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -84,11 +85,15 @@ public class ReviewMaterialAssembler {
     private final PlayStatsAssembler playStats;
     private final TraderWatchStore watchStore;
     private final DecisionText decisionText;
+    private final TradeRecordService tradeRecords;
 
-    /** 六块素材文本 + 已了结笔数（调用方日志用）+ 本期仓位 id 按单子类型分组（未标类型键为空串），结论流水记 position_ids 用 */
+    /**
+     * 六块素材文本 + 已了结笔数（调用方日志用）+ 每条现役经验本期涉及的仓位 id（键是经验 id）：
+     * 同类型的单子（没标类型的经验是全部），加上开仓那轮引用了它的单子；结论流水记 position_ids 用
+     */
     public record ReviewMaterial(String statsBlock, String playStatsBlock, String casesBlock,
                                  String marketBlock, String watchBlock, String ledgerBlock, int closedTrades,
-                                 Map<String, List<Long>> positionIdsByPlay) {
+                                 Map<Long, List<Long>> positionIdsByExperience) {
     }
 
     /** 上一期成功的复盘行；无 → null（本局首篇，素材窗口从本局开始算） */
@@ -131,12 +136,8 @@ public class ReviewMaterialAssembler {
                 .toList();
         List<CaseFileBuilder.TradeCase> cases = visible.stream()
                 .map(p -> caseFiles.build(p, planByPos.get(p))).toList();
-        Map<String, List<Long>> idsByPlay = new LinkedHashMap<>();
-        for (CaseFileBuilder.TradeCase c : cases) {
-            if (c.pos().getId() != null) {
-                idsByPlay.computeIfAbsent(Objects.toString(c.playType(), ""), k -> new ArrayList<>()).add(c.pos().getId());
-            }
-        }
+        List<AiTraderExperience> active = ledger.active(trader.getId(), trader.getRoundNo());
+        Map<Long, List<CaseFileBuilder.TradeCase>> citedBy = citedBy(trader, cases, active);
         List<CaseFileBuilder.CancelledLimit> cancelled = new ArrayList<>();
         for (AiTraderPlan plan : plans) {
             if (isStale(plan)) continue;
@@ -158,13 +159,87 @@ public class ReviewMaterialAssembler {
                 casesBlock(cases, cancelled, lang),
                 marketBlock(trader, fromMs, toMs, lang),
                 watchBlock(trader, fromMs, toMs, lang),
-                ledgerBlock(trader, lang),
+                ledgerBlock(trader, active, citedBy, lang),
                 visible.size(),
-                idsByPlay);
+                positionIds(active, cases, citedBy));
     }
 
     private static boolean isStale(AiTraderPlan p) {
         return p != null && Boolean.TRUE.equals(p.getStale());
+    }
+
+    /**
+     * 现役经验各自被本期哪些单子引用过：单子开仓那轮的结论里，该币那一段写了它的 #编号
+     * （那轮没按币分段就看整块结论）。发现不算。
+     * 计划行对上的那一轮得真开过这个币这个方向才算：续立行对上的是对账那轮，补归档行对不上任何一轮，这两种不列
+     */
+    private Map<Long, List<CaseFileBuilder.TradeCase>> citedBy(AiTrader trader, List<CaseFileBuilder.TradeCase> cases,
+                                                               List<AiTraderExperience> active) {
+        Map<Long, AiTraderDecision> openByWake = tradeRecords.openDecisions(trader,
+                cases.stream().map(CaseFileBuilder.TradeCase::plan).filter(Objects::nonNull).toList());
+        Set<Long> ids = active.stream().filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind()))
+                .map(AiTraderExperience::getId).collect(Collectors.toSet());
+        Map<Long, List<CaseFileBuilder.TradeCase>> out = new HashMap<>();
+        for (CaseFileBuilder.TradeCase c : cases) {
+            AiTraderDecision open = c.plan() == null ? null : openByWake.get(c.plan().getOpenedWakeTime());
+            if (open == null || !opened(open, c.pos())) {
+                continue;
+            }
+            for (Long id : citedIds(open.getReasoning(), c.pos().getSymbol())) {
+                if (ids.contains(id)) {
+                    out.computeIfAbsent(id, k -> new ArrayList<>()).add(c);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 这一轮的动作里有没有开成这个币这个方向的仓（反手的开仓腿也算） */
+    private static boolean opened(AiTraderDecision d, FuturesPositionDTO pos) {
+        if (d.getActionsJson() == null) {
+            return false;
+        }
+        for (JsonNode action : MAPPER.readTree(d.getActionsJson())) {
+            for (JsonNode leg : TradeActions.legs(action)) {
+                if (TradeActions.opened(leg) && pos.getSymbol().equals(leg.path("args").path("symbol").asString(null))
+                        && pos.getSide().equals(leg.path("args").path("side").asString(null))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 一轮结论里该币那一段引用的账本编号；那轮没按币分段就看整块结论 */
+    private Set<Long> citedIds(String reasoning, String symbol) {
+        String block = decisionText.conclusionBlock(reasoning);
+        if (block == null) {
+            return Set.of();
+        }
+        List<DecisionText.ConclusionSegment> segments = DecisionText.splitSegments(block);
+        return DecisionText.ledgerRefs(segments.isEmpty() ? block : segments.stream()
+                .filter(s -> symbol.equals(s.symbol())).map(DecisionText.ConclusionSegment::body)
+                .collect(Collectors.joining("\n")));
+    }
+
+    /** 每条现役经验本期涉及的仓位：同类型的单子（没标类型的经验是全部），加上开仓那轮引用了它的单子 */
+    private static Map<Long, List<Long>> positionIds(List<AiTraderExperience> active, List<CaseFileBuilder.TradeCase> cases,
+                                                     Map<Long, List<CaseFileBuilder.TradeCase>> citedBy) {
+        Map<Long, List<Long>> out = new HashMap<>();
+        for (AiTraderExperience e : active) {
+            Set<Long> ids = new LinkedHashSet<>();
+            for (CaseFileBuilder.TradeCase c : cases) {
+                if (e.getPlayType() == null || e.getPlayType().equals(c.playType())) {
+                    ids.add(c.pos().getId());
+                }
+            }
+            citedBy.getOrDefault(e.getId(), List.of()).forEach(c -> ids.add(c.pos().getId()));
+            ids.remove(null);
+            if (!ids.isEmpty()) {
+                out.put(e.getId(), List.copyOf(ids));
+            }
+        }
+        return out;
     }
 
     // ==================== 战绩表 ====================
@@ -276,11 +351,26 @@ public class ReviewMaterialAssembler {
                         "target", targets(c.targets(), lang),
                         "closed", BeijingTime.shortFormat(c.cancelledAt()),
                         "reason", c.entry() == null ? prompts.get(lang, "trader.cancelReason.unknown") : nullSafe(c.entry().getReason()),
-                        "touched", prompts.get(lang, c.touchedLimit() ? "reviewer.label.reached" : "reviewer.label.notReached"),
-                        "targetsAfter", targetsAfter(c.targets(), c.reachedTargets(), lang)))).append('\n');
+                        "after", cancelledAfter(c, lang)))).append('\n');
             }
         }
         return sb.toString();
+    }
+
+    /** 撤掉的限价档之后怎么走的那半句：没回到过限价位的只说到过几档；回到过的带上那一根的时刻和走到哪了结 */
+    private String cancelledAfter(CaseFileBuilder.CancelledLimit c, AgentLang lang) {
+        String targets = targetsAfter(c.targets(), c.reachedTargets(), lang);
+        if (c.end() == CaseFileBuilder.CancelledEnd.NOT_TOUCHED) {
+            return prompts.get(lang, "reviewer.label.cancelledNotTouched", Map.of("targetsAfter", targets));
+        }
+        return prompts.get(lang, "reviewer.label.cancelledTouched", Map.of(
+                "at", BeijingTime.shortFormat(c.touchedAt()),
+                "end", prompts.get(lang, switch (c.end()) {
+                    case STOPPED -> "reviewer.label.cancelledStopped";
+                    case TARGETS_DONE -> "reviewer.label.cancelledTargetsDone";
+                    default -> "reviewer.label.cancelledUndecided";
+                }),
+                "targetsAfter", targets));
     }
 
     /**
@@ -600,15 +690,17 @@ public class ReviewMaterialAssembler {
 
     // ==================== 经验账本 ====================
 
-    private String ledgerBlock(AiTrader t, AgentLang lang) {
-        List<AiTraderExperience> active = ledger.active(t.getId(), t.getRoundNo());
+    private String ledgerBlock(AiTrader t, List<AiTraderExperience> active,
+                               Map<Long, List<CaseFileBuilder.TradeCase>> citedBy, AgentLang lang) {
         List<AiTraderExperience> entries = active.stream()
                 .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
         StringBuilder sb = new StringBuilder(prompts.get(lang, "reviewer.label.ledgerHeader",
                 Map.of("n", entries.size()))).append('\n');
+        sb.append(quotaLine(active, lang)).append('\n');
         if (entries.isEmpty()) {
             sb.append(prompts.get(lang, "reviewer.label.ledgerEmpty")).append('\n');
         }
+        String sep = prompts.get(lang, "reviewer.label.listSep");
         for (AiTraderExperience e : entries) {
             sb.append(prompts.get(lang, "reviewer.label.ledgerRow", Map.ofEntries(
                     Map.entry("id", e.getId()),
@@ -623,6 +715,17 @@ public class ReviewMaterialAssembler {
                     Map.entry("evidence", nullSafe(e.getEvidence())),
                     Map.entry("flagged", Boolean.TRUE.equals(e.getFlagged())
                             ? prompts.get(lang, "reviewer.label.ledgerFlagged") : "")))).append('\n');
+            // 本期开仓那轮引用了它的单子，不管单子是什么类型
+            List<CaseFileBuilder.TradeCase> cited = citedBy.get(e.getId());
+            if (cited != null) {
+                sb.append(prompts.get(lang, "reviewer.label.ledgerCited", Map.of("trades", cited.stream()
+                        .map(c -> prompts.get(lang, "reviewer.label.ledgerCitedTrade", Map.of(
+                                "symbol", c.pos().getSymbol(), "side", c.pos().getSide(),
+                                "play", c.playType() == null ? prompts.get(lang, "reviewer.label.caseGeneral") : c.playType(),
+                                "opened", BeijingTime.shortFormat(TradePairing.msOf(c.pos().getCreatedAt())),
+                                "net", signed(c.net()))))
+                        .collect(Collectors.joining(sep))))).append('\n');
+            }
         }
         List<AiTraderExperience> findings = active.stream()
                 .filter(e -> AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
@@ -642,6 +745,22 @@ public class ReviewMaterialAssembler {
             }
         }
         return sb.toString();
+    }
+
+    /** 账本名额占了多少：现役总数、哪些单子类型满了、限制型几条（带编号）；数由账本出 */
+    private String quotaLine(List<AiTraderExperience> active, AgentLang lang) {
+        String sep = prompts.get(lang, "reviewer.label.listSep");
+        ExperienceLedger.Quota q = ExperienceLedger.quota(active);
+        String fullPlays = q.perPlay().entrySet().stream().filter(e -> e.getValue() >= ExperienceLedger.MAX_PER_PLAY)
+                .map(e -> e.getKey().isEmpty() ? prompts.get(lang, "reviewer.op.general") : e.getKey())
+                .collect(Collectors.joining(sep));
+        String restrictions = q.restrictions().stream().map(id -> "#" + id).collect(Collectors.joining(sep));
+        return prompts.get(lang, "reviewer.label.ledgerQuota", Map.of(
+                "n", q.active(), "max", ExperienceLedger.MAX_ACTIVE,
+                "perPlay", ExperienceLedger.MAX_PER_PLAY,
+                "fullPlays", fullPlays.isEmpty() ? "" : prompts.get(lang, "reviewer.label.ledgerQuotaFull", Map.of("plays", fullPlays)),
+                "r", q.restrictions().size(), "rMax", ExperienceLedger.MAX_RESTRICTION,
+                "rIds", restrictions.isEmpty() ? "" : prompts.get(lang, "reviewer.label.ledgerQuotaIds", Map.of("ids", restrictions))));
     }
 
     /** 复审一条经验的素材：条目全文 + 结论流水 + 支持率 + 历史最长连败 + 支持 / 反对两组单子的对照表；positions 是调用方拉好的已平仓位按 id */

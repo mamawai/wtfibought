@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
@@ -60,8 +59,7 @@ public class EconCalendarAssembler {
 
     /** 北京时间当天 24:00 */
     static long endOfDay(long nowMs) {
-        return Instant.ofEpochMilli(nowMs).atZone(BeijingTime.ZONE).toLocalDate().plusDays(1)
-                .atStartOfDay(BeijingTime.ZONE).toInstant().toEpochMilli();
+        return BeijingTime.dayStart(nowMs) + 86_400_000L;
     }
 
     /** @param justPublished 刚公布段：数字型事件（有预测或前值）到点了实际值还没到，明写"暂缺"，别让模型当成讲话类 */

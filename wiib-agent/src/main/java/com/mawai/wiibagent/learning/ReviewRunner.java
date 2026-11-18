@@ -129,7 +129,7 @@ public class ReviewRunner {
             // 先落行拿 id
             decisionMapper.insert(d);
             ExperienceLedger.Applied applied = ledger.apply(trader.getId(), trader.getRoundNo(), d.getId(), ops, lang,
-                    material.positionIdsByPlay());
+                    material.positionIdsByExperience());
             log.info("[Review] 复盘落账 traderId={} 已了结{}笔 生效{}条 丢弃{}条",
                     trader.getId(), material.closedTrades(), applied.applied(), applied.dropped());
             writeMemory(trader, d, lang);
@@ -137,6 +137,10 @@ public class ReviewRunner {
             List<AiTraderExperience> flagged = ledger.flagged(trader.getId(), trader.getRoundNo());
             if (!flagged.isEmpty()) {
                 audit(trader, d, flagged, model, lang, start, deadline);
+            }
+            // 展示用的追加段放最后，出错不耽误前面的账本渲染和复审
+            if (!applied.overCap().isEmpty()) {
+                appendOverCap(d, applied.overCap(), lang);
             }
         } catch (Exception e) {
             Throwable t = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
@@ -210,6 +214,17 @@ public class ReviewRunner {
             writeMemory(trader, d, lang);
         }
         log.info("[Review] 复审完成 traderId={} 举旗{}条 生效{}条", trader.getId(), flagged.size(), applied);
+    }
+
+    /** 名额满了没记进账本的新增，列在复盘正文末尾 */
+    private void appendOverCap(AiTraderDecision d, List<ExperienceLedger.Add> overCap, AgentLang lang) {
+        StringBuilder sb = new StringBuilder(d.getReasoning()).append("\n\n")
+                .append(prompts.get(lang, "reviewer.label.overCapAppendix"));
+        overCap.forEach(a -> sb.append("\n- ").append(a.text()));
+        d.setReasoning(sb.toString());
+        decisionMapper.update(null, new LambdaUpdateWrapper<AiTraderDecision>()
+                .eq(AiTraderDecision::getId, d.getId())
+                .set(AiTraderDecision::getReasoning, d.getReasoning()));
     }
 
     /** 账本渲染文本写回 ai_trader.memory，并按列存进 REVIEW 行的 memory_after */

@@ -230,6 +230,8 @@ class ExperienceLedgerTest {
 
         assertThat(r.applied()).isEqualTo(2);
         assertThat(r.dropped()).isEqualTo(4);
+        // 名额满了丢的那两条单独带出来，不合法的两条不在里面
+        assertThat(r.overCap()).extracting(ExperienceLedger.Add::playType).containsExactly("PULLBACK", "BREAKOUT");
         ArgumentCaptor<AiTraderExperience> cap = ArgumentCaptor.forClass(AiTraderExperience.class);
         verify(expMapper, times(2)).insert(cap.capture());
         AiTraderExperience gap = cap.getAllValues().get(0);
@@ -495,9 +497,9 @@ class ExperienceLedgerTest {
         assertThat(sets.get(1)).contains("cited_hold = cited_hold + 1");
     }
 
-    /** 结论流水记本期涉及的仓位：标了类型只记同类型的，通用记全部 */
+    /** 结论流水记本期涉及的仓位：照传进来的、这条经验自己的那几个 id 记，没给的留空 */
     @Test
-    void verdictRecordsPositionIdsByPlayType() {
+    void verdictRecordsPositionIdsGivenForTheEntry() {
         AiTraderExperience typed = exp(5L, AiTraderExperience.KIND_RULE, AiTraderExperience.DIR_EXECUTION, "PULLBACK", 1, 0);
         AiTraderExperience general = exp(6L, AiTraderExperience.KIND_GAP, AiTraderExperience.DIR_EXECUTION, null, 1, 0);
         when(expMapper.selectById(5L)).thenReturn(typed);
@@ -507,12 +509,31 @@ class ExperienceLedgerTest {
         ledger.apply(7L, 1, 100L, List.of(
                         new ExperienceLedger.Verdict(5L, AiTraderExperienceVerdict.SUPPORT, "a"),
                         new ExperienceLedger.Verdict(6L, AiTraderExperienceVerdict.OPPOSE, "b")), AgentLang.ZH,
-                Map.of("PULLBACK", List.of(42L, 43L), "BREAKOUT", List.of(44L), "", List.of(45L)));
+                Map.of(5L, List.of(42L, 43L)));
 
         ArgumentCaptor<AiTraderExperienceVerdict> rows = ArgumentCaptor.forClass(AiTraderExperienceVerdict.class);
         verify(verdictMapper, times(2)).insert(rows.capture());
         assertThat(rows.getAllValues().get(0).getPositionIds()).isEqualTo("42,43");
-        assertThat(rows.getAllValues().get(1).getPositionIds().split(",")).containsExactlyInAnyOrder("42", "43", "44", "45");
+        assertThat(rows.getAllValues().get(1).getPositionIds()).isNull();
+    }
+
+    /** 新增排到最后落账：同一篇里写在它后面的删除，也先把名额腾出来 */
+    @Test
+    void deleteInSameReviewFreesQuotaForAnAddWrittenBeforeIt() {
+        AiTraderExperience rule = exp(20L, AiTraderExperience.KIND_RULE, AiTraderExperience.DIR_RESTRICTION, "PULLBACK", 5, 1);
+        AiTraderExperience hyp = exp(21L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.DIR_RESTRICTION, null, 0, 1);
+        when(expMapper.selectById(21L)).thenReturn(hyp);
+        when(expMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(rule, hyp)));
+
+        ExperienceLedger.Applied r = ledger.apply(7L, 1, 100L, List.of(
+                new ExperienceLedger.Add("BREAKOUT", AiTraderExperience.SLOT_ENTRY, AiTraderExperience.DIR_RESTRICTION,
+                        "破位后不市价追", "HYPE 4 笔净 -783", null),
+                new ExperienceLedger.Delete(21L, "给新的一条腾名额")), AgentLang.ZH, Map.of());
+
+        assertThat(r.applied()).isEqualTo(2);
+        assertThat(r.overCap()).isEmpty();
+        assertThat(hyp.getStatus()).isEqualTo(AiTraderExperience.STATUS_RETIRED);
+        verify(expMapper).insert(any(AiTraderExperience.class));
     }
 
     /** position_ids 超过 255 字截到放得下的整数个 id；一个没有给 null */
