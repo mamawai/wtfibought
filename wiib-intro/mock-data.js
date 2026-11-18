@@ -3,7 +3,7 @@
    模拟看板的示例数据：一只虚构 trader 的公开主页
    全部手编，只为展示版面与信息密度；不是实时，不对应任何真实账户
    格式对齐现行口径：论点标签取 TradeGuard.PLAY_TYPES，决策正文是 [本轮结论] + 逐币 判断/动作/等待，
-   经验账本是代码渲染的文本（ExperienceLedger.render）：按单子类型分组，一条一行带 #编号与支持/反对次数
+   经验账本是代码渲染的文本（ExperienceLedger.render）：按单子类型分组，一条一行带 #编号与名下单子的账
    ============================================================ */
 
 /* 北京时间 2026-08-25 00:00 起，每小时一个点，到 09-02 10:00 */
@@ -110,18 +110,18 @@ const MOCK = {
     time: '09/02 08:00',
     zh: `【经验账本】
 〔BREAKOUT〕
-#3 规律·执行型 ｜ 失效条件触发 → 当根收盘就平，不等确认根 ｜ 支持 3 反对 0
+#3 执行缺口 ｜ 失效条件触发 → 当根收盘就平，不等确认根 ｜ 碰到 5 次，做到 3 次
 〔PULLBACK〕
-#5 规律·机会型 ｜ 资金费连续 3 期为负且反弹停在前高下方 → 做空反弹结束，不追跌 ｜ 支持 3 反对 1
+#5 规律·机会型 ｜ 资金费连续 3 期为负且反弹停在前高下方 → 做空反弹结束，不追跌 ｜ 照做 6 笔，赚 4 亏 2，合计 +968.40 USDT
 〔通用〕
-#9 执行缺口 ｜ 目标按 2×ATR 挂后不手动缩目标 ｜ 支持 1 反对 3 ｜ 待复审`,
+#9 执行缺口 ｜ 目标按 2×ATR 挂后不手动缩目标 ｜ 碰到 9 次，做到 6 次`,
     en: `[EXPERIENCE LEDGER]
 — BREAKOUT —
-#3 rule·execution | invalidation triggered → close on that candle's close, no confirmation candle | supported 3 opposed 0
+#3 execution gap | invalidation triggered → close on that candle's close, no confirmation candle | came up 5 times, done 3 times
 — PULLBACK —
-#5 rule·opportunity | funding negative 3 periods and the bounce stalls below the prior high → short the end of the bounce, never chase the drop | supported 3 opposed 1
+#5 rule·opportunity | funding negative 3 periods and the bounce stalls below the prior high → short the end of the bounce, never chase the drop | followed in 6 trades: 4 won, 2 lost, net +968.40 USDT
 — general —
-#9 execution gap | targets set at 2×ATR are not trimmed by hand | supported 1 opposed 3 | under review`
+#9 execution gap | targets set at 2×ATR are not trimmed by hand | came up 9 times, done 6 times`
   },
 
   /* 决策时间线，新在前 */
@@ -245,16 +245,16 @@ Waiting for: unchanged.`
 下次改什么：失效条件写了就当根执行，不再加"确认根"。
 案例二：PULLBACK（2 笔，净 +486.1）
 路径：ETH 空单 09/01 21:00 进 3,142，反弹停在 3,160 下方，出场 3,055，出场后 4h 最有利价 3,021，没到目标 2,990。
-赢在判断还是运气：出场后继续顺向走 1.1%，是判断对。
+对在哪：入场依据「反弹停在前高 3,160 下方」被证实，之后再没碰到 3,160，一路回落到 3,055。
 少赚了多少：出场 3,055 对最有利 3,021，少赚 1.1%。
 管理动作加分还是减分：实际 +1.9R，止损原样那一档到目标是 +3.4R，提前手动平是减分。
 可复制条件：资金费连续 3 期为负、4h ADX 31、反弹未过前高；同类亏单 08/29 那笔是追跌进的。
 机会：SOL 09/01 10:00 到 18:00 从 181 走到 189.6，PULLBACK 本该抓到；回踩只到 183.2 没碰通道下沿，是条件没出现。
 
 【经验更新】
-#3 支持 ｜ BTC 突破单触发失效后多拿一根，多亏 0.3%
-#5 支持 ｜ ETH 空单在反弹结束位进，出场后继续走 1.1%
-#9 破 ｜ ETH 空单目标 2,990，提前在 3,055 手动平
+#3 破 1187 ｜ 1h 收 78,870 跌破失效位 78,900，多拿一根才平，多亏 0.3%
+#5 名下 1190、1193 ｜ 两笔都等反弹停在前高下方才进空，没有追跌
+#9 守 1190 ｜ 破 1193 ｜ 1193 目标 2,990，提前在 3,055 手动平
 新增 PULLBACK 入场条件 机会型 ｜ 回踩到通道下沿且 4h 结构未坏 → 挂限价不追现价 ｜ SOL 09/01 回踩 183.2 未到下沿没进，涨 4.7%`,
         en: `[REVIEW]
 Scorecard: 14 closed this round, 8 won 6 lost, net +1,804.9, payoff ratio 1.6
@@ -266,16 +266,16 @@ How failure is defined and handled: a 1h close below 78,900, market close on the
 What to change next time: a written invalidation executes on its own candle, no more "confirmation candle".
 Case 2: PULLBACK (2 trades, net +486.1)
 Path: ETH short entered 09/01 21:00 at 3,142, the bounce stalled below 3,160, exited 3,055; best price in the 4h after exit 3,021, target 2,990 never reached.
-Judgement or luck: price kept going 1.1% after the exit, so judgement.
+What was right: the entry reason "the bounce stalled below the prior high 3,160" held — price never touched 3,160 again and fell back to 3,055.
 Left on the table: exit 3,055 against best 3,021, 1.1% left.
 Did managing add or cost: actual +1.9R against +3.4R for reaching the target at the original stop, so closing early by hand cost.
 Repeatable conditions: funding negative 3 periods, 4h ADX 31, bounce failed below the prior high; the losing trade of this type on 08/29 chased the drop instead.
 Opportunity: SOL ran 181 → 189.6 between 09/01 10:00 and 18:00, a PULLBACK should have caught it; the pullback stopped at 183.2 without touching the channel floor, so the condition never appeared.
 
 [LEDGER UPDATES]
-#3 SUPPORT | BTC breakout held one extra candle after invalidation, cost 0.3%
-#5 SUPPORT | ETH short entered at the end of the bounce, price kept going 1.1% after exit
-#9 BROKEN | ETH short target 2,990, closed by hand at 3,055
+#3 BROKEN 1187 | the 1h closed at 78,870 under the 78,900 invalidation, held one more candle, cost 0.3% more
+#5 UNDER 1190, 1193 | both shorts waited for the bounce to stall below the prior high, no chasing
+#9 KEPT 1190 | BROKEN 1193 | 1193 had a 2,990 target and was closed by hand at 3,055
 ADD PULLBACK ENTRY OPPORTUNITY | pullback to the channel floor with the 4h structure intact → bid with a limit, never chase | SOL 09/01 pulled back to 183.2 short of the floor, no entry, +4.7%`
       }
     },
