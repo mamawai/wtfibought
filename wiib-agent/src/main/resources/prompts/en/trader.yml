@@ -324,26 +324,28 @@ trader:
     playStatsManageLine: "Managing the position, {{n}} trades: actual total {{actual}}R, original-plan total {{untouched}}R (both after trading fees, neither includes funding){{adds}}"
     # follows the line above only when some trades were added to along the way
     playStatsManageAdds: "; {{n}} of them were added to along the way: the actual side includes the PnL of the adds, the original-plan side does not"
-    playStatsFooter: "(Covers only the recent settled trades listed above, regardless of config changes in between; with few samples luck and skill look identical - never treat a small sample as a pattern.)"
+    playStatsFooter: "(Covers only the recent settled trades listed above, regardless of config changes in between; with few samples you cannot tell a good method from a bad one - never treat a small sample as a pattern.)"
     memory: "————— Experience ledger (what your reviews have distilled, kept by code; cite entries by #id in your conclusion) —————"
     # Rendered ledger text (ExperienceLedger.render): the first line is the marker that says "this memory is a ledger", recognised in both languages
     ledgerTitle: "[EXPERIENCE LEDGER]"
     # Two usage texts, picked by the owner's switch: the only difference is whether a "restriction" rule may by itself justify staying flat
     ledgerHoldAllowed: |-
-      These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion. Hypotheses the reviews have not verified enough are not listed here; they appear once promoted to rules.
+      These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion. The numbers after each entry are kept by code from your trades: an opportunity or execution entry counts the trades that followed it, a restriction entry counts the trades that ignored it and were taken anyway ("violated"), and an execution gap counts how many times the situation came up and how many times you did it. Hypotheses that have not gathered enough trades are not listed here.
       Rule: something you verified yourself; whether and how to use it is your call. A "restriction" rule says not to open in some situation; your owner allows you to use that kind as your reason to stay flat.
-      Execution gap: something you wrote down yourself in a plan, a watch note or a Waiting line and keep failing to do.
+      Execution gap: something you wrote down yourself to do, or a hard line with a number in your owner's instructions, that you did not do when the situation came up.
     ledgerHoldDenied: |-
-      These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion. Hypotheses the reviews have not verified enough are not listed here; they appear once promoted to rules.
+      These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion. The numbers after each entry are kept by code from your trades: an opportunity or execution entry counts the trades that followed it, a restriction entry counts the trades that ignored it and were taken anyway ("violated"), and an execution gap counts how many times the situation came up and how many times you did it. Hypotheses that have not gathered enough trades are not listed here.
       Rule: something you verified yourself; whether and how to use it is your call. A "restriction" rule says not to open in some situation; that kind cannot by itself be your reason to stay flat.
-      Execution gap: something you wrote down yourself in a plan, a watch note or a Waiting line and keep failing to do.
+      Execution gap: something you wrote down yourself to do, or a hard line with a number in your owner's instructions, that you did not do when the situation came up.
     ledgerGroup: "— {{play}} —"
     ledgerGeneral: general
-    # dir arrives from code with a "·" prefix; execution gaps carry no direction
-    ledgerRow: "#{{id}} {{kind}}{{dir}} | {{text}} | supported {{supports}} opposed {{opposes}}{{recent}}{{flagged}}"
-    # Only after more than 5 checks is the last-5 breakdown added; below that the totals are the whole story
-    ledgerRecent: " (last {{n}}: {{s}} supported, {{o}} opposed)"
-    ledgerFlagged: " | under review"
+    # A rule's row, all numbers cumulative: opportunity and execution entries count the trades that followed them, restriction entries the trades that violated them. dir arrives from code with a "·" prefix
+    ledgerRowFollowed: "#{{id}} {{kind}}{{dir}} | {{text}} | followed in {{n}} trades: {{wins}} won, {{losses}} lost, net {{net}} USDT{{miscited}}"
+    ledgerRowViolated: "#{{id}} {{kind}}{{dir}} | {{text}} | violated in {{n}} trades: {{wins}} won, {{losses}} lost, net {{net}} USDT{{miscited}}"
+    # Follows the two rows above only when the count is above 0
+    ledgerMiscited: " | cited {{m}} more times where the situation did not match"
+    # An execution gap's row (shown once broken twice): came up = kept + broken, done = kept
+    ledgerRowGap: "#{{id}} {{kind}} | {{text}} | came up {{met}} times, done {{kept}} times"
     ledgerKind:
       gap: execution gap
       hypothesis: hypothesis

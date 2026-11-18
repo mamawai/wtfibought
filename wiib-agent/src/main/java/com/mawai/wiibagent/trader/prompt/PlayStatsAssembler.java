@@ -44,7 +44,7 @@ public class PlayStatsAssembler {
 
     /** 统计窗口：最近配对成功的了结笔数上限 */
     static final int MAX_TRADES = 50;
-    /** 单标签低于这个样本量只列笔数不给胜负——样本少时运气和方法看起来一样 */
+    /** 单标签低于这个样本量只列笔数不给胜负——样本少时看不出方法好坏 */
     static final int MIN_SAMPLE = 5;
     /** 已平仓位拉取上限，与复盘素材同口径；唤醒取已平仓位也用它，两处口径必须一致 */
     public static final int FETCH_LIMIT = 200;

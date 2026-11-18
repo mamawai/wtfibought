@@ -137,7 +137,7 @@ final class LadderReplay {
                 break;
             }
             // 入场：实际市价档从成交那根的下一根起，实际限价档从成交那根起，用实际成交价和手续费；
-            // 其余限价档从挂出那根的下一根起，碰到限价就按限价成交、手续费按 maker 估
+            // 其余限价档从挂出那根的下一根起，穿过限价就按限价成交、手续费按 maker 估
             for (Entry entry : entries) {
                 if (entry.price != null) {
                     continue;
@@ -147,7 +147,7 @@ final class LadderReplay {
                 boolean actual = "FILLED".equals(original.getStatus()) && (market
                         ? bar.openTime() > floorBar(original.getClosedAt())
                         : bar.openTime() + BAR_MS > original.getClosedAt());
-                if (!actual && !touchesLimit(original, bar, isLong)) {
+                if (!actual && !crossesLimit(original, bar, isLong)) {
                     continue;
                 }
                 entry.price = actual ? original.getFilledPrice() : original.getLimitPrice();
@@ -201,12 +201,17 @@ final class LadderReplay {
         return new Walk(new WidthOutcome(width, Outcome.OPEN, null), firstFill);
     }
 
-    /** 这根有没有碰到这档的限价；市价档、挂出时刻所在的那根不算 */
-    private static boolean touchesLimit(PlanEntry entry, KlineBar bar, boolean isLong) {
+    /** 这根有没有穿过这档的限价；市价档、挂出时刻所在的那根不算 */
+    private static boolean crossesLimit(PlanEntry entry, KlineBar bar, boolean isLong) {
         if (entry.getLimitPrice() == null || bar.openTime() <= floorBar(entry.getPlacedAt())) {
             return false;
         }
-        return isLong ? bar.low().compareTo(entry.getLimitPrice()) <= 0 : bar.high().compareTo(entry.getLimitPrice()) >= 0;
+        return crosses(bar, entry.getLimitPrice(), isLong);
+    }
+
+    /** 限价单成交要穿过限价：多单要有价低于限价，空单要有价高于，正好等于不算，和模拟盘的限价单一样 */
+    static boolean crosses(KlineBar bar, BigDecimal limit, boolean isLong) {
+        return isLong ? bar.low().compareTo(limit) < 0 : bar.high().compareTo(limit) > 0;
     }
 
     /** 这个时刻所在那根 5m 的开盘时刻 */

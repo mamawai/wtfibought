@@ -562,7 +562,7 @@ class TraderServiceTest {
         assertThat(cap.getValue().getSqlSet()).contains("memory");
     }
 
-    /** 带入时现役账本行复制到新局、memory 按新局编号重渲染（账本空着就不碰 memory，旧自由文本留给首次复盘迁移） */
+    /** 带入时本局账本条目连同名下单子复制到新局、memory 按新局条目重渲染（账本空着就不碰 memory，旧自由文本留给首次复盘迁移） */
     @Test
     void resetWithCarryCopiesLedgerAndRerendersMemory() {
         AiTrader t = new AiTrader();
@@ -603,13 +603,14 @@ class TraderServiceTest {
         assertThat(cap.getValue().getSqlSet()).doesNotContain("memory");
     }
 
-    /** stale 标记：本人的 CLOSED 计划可标可取消（教材层忽略，钱账与公开记录不动） */
+    /** stale 标记：本人的 CLOSED 计划可标可取消（教材层忽略，钱账与公开记录不动）；经验账本的账跟着变，memory 重渲染 */
     @Test
-    void setPlanStaleMarksClosedPlan() {
+    void setPlanStaleMarksClosedPlanAndRerendersMemory() {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
         when(traderMapper.selectOne(any())).thenReturn(t);
+        when(langResolver.of(1L)).thenReturn(AgentLang.ZH);
         com.mawai.wiibcommon.entity.AiTraderPlan p = new com.mawai.wiibcommon.entity.AiTraderPlan();
         p.setId(9L);
         p.setTraderId(7L);
@@ -618,7 +619,9 @@ class TraderServiceTest {
 
         assertThat(service.setPlanStale(1L, 9L, true)).isNull();
 
-        verify(planStore).setStale(9L, true);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(planStore, ledger);
+        order.verify(planStore).setStale(9L, true);
+        order.verify(ledger).writeMemory(t, AgentLang.ZH);
     }
 
     /** 别人的计划标不了：stale 是主人对自己教材的治理权 */
@@ -638,6 +641,7 @@ class TraderServiceTest {
 
         verify(planStore, never()).setStale(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyBoolean());
+        verify(ledger, never()).writeMemory(any(), any());
     }
 
     /** LIVE 是在场纪律不许藏，只有 CLOSED 可标 */

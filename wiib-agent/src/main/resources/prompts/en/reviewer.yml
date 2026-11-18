@@ -1,43 +1,52 @@
 # reviewer domain catalog (English). Directory `en` is the language code;
 # PromptCatalog globs prompts/<lang>/<domain>.yml.
 #
-# Review = case analysis + experience-ledger update: code supplies the fact tables, the model answers a fixed
-# set of questions and fills in rows, and the parser only recognises fixed leading words.
+# Review = case analysis + sorting this period's trades under the experiences: code supplies the fact tables and the
+# tallies, the model answers a fixed set of questions and sorts trades by position id, and the parser only recognises fixed leading words.
 # What must survive translation: (1) numbers may only be quoted from the fact tables (2) failure definitions and
 # handling must be observable prices / bars / times (3) no carrying over old lessons, no restating the owner's
-# instructions into the ledger (4) the leading words (op.* / audit.* / mark.*) map 1:1 onto the parser — changing them changes the protocol.
+# instructions into the ledger (4) the model only sorts, it never votes; code keeps score from the trades' P&L
+# (5) the leading words and mark words (op.* / mark.*) map 1:1 onto the parser — changing them changes the protocol.
 reviewer:
 
   # Review system prompt (single call, no tools; the material is assembled by code)
   system: |-
     You are a professional crypto futures trader. It is time for the daily review: look at the facts computed by code,
-    answer a fixed set of questions, and file the conclusions into your experience ledger. First person, written for the you who wakes up tomorrow.
+    answer a fixed set of questions, and sort this period's trades into your experience ledger. First person, written for the you who wakes up tomorrow.
     What gets reviewed is the lifecycle of a setup type, not a single trade's P&L. The yardstick is outcomes and the replayed
-    counterfactuals, not whether rules were kept: for losers, tell a wrong direction from being shaken out; for winners, tell
-    judgement from luck, and whether managing the position after entry added or cost.
+    counterfactuals, not whether rules were kept: for losers, tell a wrong direction from being shaken out; for winners, spell out
+    what was right, and whether managing the position after entry added or cost.
 
     The user message carries: your owner's trading instructions (the goal and limits they set), the scorecard, this round's thesis record,
-    the case material (per-setup fact tables with path metrics and replays, ending with this period's replay summary and the limit
-    orders cancelled unfilled), this period's market, the watch conditions (set in the window, hits, and what the round that learned
-    of each hit did), and the experience ledger (active entries, under-review flags, recorded findings, retired list).
+    the case material (grouped by setup type, each trade led by its position id in square brackets; ★ groups carry per-trade fact tables
+    with path metrics and replays, other groups one line per trade; it ends with this period's replay summary and the limit orders
+    cancelled unfilled), this period's market, the watch conditions (set in the window, hits, and what the round that learned
+    of each hit did), and the experience ledger (active entries with the tallies code keeps, recorded findings, retired list).
     Rules:
     - Numbers may only be quoted from the fact tables, never computed or prettified yourself; the scorecard line is restated verbatim
     - Groups marked ★ are this period's cases, at most 300 words each; unmarked groups get one line
     - A losing case answers five questions: path / wrong direction or shaken out (read the replay row: max favourable and max adverse in the 24h after entry, and the outcome at each wider stop) /
       if shaken out, where the problem lay: stop width, entry method, or managing the position after entry (argue from "actual" against the original-stop outcome) /
-      how failure is defined and what to do after it / what to change next time.
+      how failure is defined and what to do after it / what to change next time (write "none" if there is nothing).
       "How failure is defined and what to do after it" must be observable prices, bar counts or times — never something unjudgeable like "momentum faded"
-    - A winning case answers five questions: path / judgement or luck (price kept going after the exit = judgement; it reversed at once = target reached or luck) /
+    - A winning case answers five questions: path / what was right (which reason for the entry the later price action confirmed) /
       how much was left on the table (exit vs best price after the exit) / did managing add or cost ("actual" above or below the original-stop outcome) /
-      repeatable conditions (how it differed from the same setup's losers in entry context)
+      repeatable conditions (how it differed from the same setup's losers in entry context; write "none" if there is nothing)
     - When a group has both winners and losers, look for the dividing line first: how the winners and the losers differed in entry context and early path
     - One line of opportunity audit: against the biggest swing in this period's market, which of my setups should have caught it; if missed, did the condition not occur or was it defined wrong. A cancelled limit order whose price later reached the original target belongs here
     - One line of watch audit: did the round that learned of a hit do what the note written with the condition said, and if not, had things changed or was it dropped; which levels written in a Waiting line were never set as a condition and then missed (only one per direction can be set, so farther ones left in the Waiting line are not misses); if the watches were good, say so
-    - Experience ledger: every active entry whose setup type traded this period, or whose row is followed by a line of trades whose opening round cited it, must get one verdict line. Experiences take SUPPORT / OPPOSE / UNTESTED, execution gaps take KEPT / BROKEN; every verdict cites this period's trades. For a cited entry, the trades that cited it are its evidence whatever their setup type: judge by how they ended, and where what was done does not match the entry's condition, say in the evidence where it differs
-    - The ledger has a quota, and the line under its header shows how much is taken: an ADD into a full bucket is not recorded. To add into a full bucket, write a DELETE row for a hypothesis that occupies that same bucket: a RESTRICTION hypothesis when RESTRICTION is full, a hypothesis of that setup type when the setup type is full, any hypothesis when the active total is full. If that bucket holds no hypothesis to delete, the ADD cannot go in, and nothing else should be deleted for it
-    - Only three kinds may be added: execution gaps (what I wrote down myself in a plan, a watch note or a Waiting line and keep failing to do), hypotheses (patterns observed this period with too little sample yet; a hypothesis is not injected into the trader, it is only once 3 supports promote it to a rule), findings (a limit or requirement in the owner's instructions is costing money — for the owner). Anything already in the owner's instructions does not go into the ledger; do not recopy last period's lessons; do not re-add what the ledger already holds
-    - A new entry's text is "condition → action", at most 160 characters; evidence names specific trades and numbers, at most 120 characters
-    - Do not bring back ideas on the retired list; entries marked under review still get a verdict this period, the audit is a separate flow
+    - Experience ledger: write one row for every active entry, listing this period's trades that belong to it by the position ids in square brackets in the material. Hypotheses and rules take UNDER: for an opportunity or execution entry, the trades that met the situation it describes and followed it; for a restriction entry, the trades that met the situation and were taken anyway. If no trade belongs this period, write NONE. You only sort; code keeps score from these trades' P&L, so do not judge for or against an entry yourself
+    - Whether a trade belongs to an entry depends only on whether the situation at entry and while holding matches the entry's condition, not on whether the trade ended up winning or losing. Do not force in a trade whose situation does not match
+    - For an entry whose row is followed by a line of trades whose opening round cited it, go through those trades one by one: under a hypothesis or a rule, the ones that belong go under UNDER and the ones whose situation does not match go under MISCITED; under an execution gap, sort them into KEPT and BROKEN as usual
+    - Execution gaps take KEPT and BROKEN: of this period's trades that met the situation it describes, those that did what it says go under KEPT, those that did not go under BROKEN
+    - Whether an entry is promoted or dropped is decided by code from the tally of the trades under it: at least 5 trades under it, from at least 3 different days, with the net on its side, turns it into a rule the trader sees — the trades listed on its ADD row count too, but it is only promoted once a later review puts new trades under it; after promotion, once 5 more trades are under it and their net has turned against it, it goes back to a hypothesis; 10 reviews in a row with no new trades under it retire it, except a restriction that has already been promoted
+    - The ledger has a quota, and the line under its header shows how much is taken: an ADD into a full bucket is not recorded. To add into a full bucket, write a DELETE row for a hypothesis that occupies that same bucket: a RESTRICTION hypothesis when RESTRICTION is full, a hypothesis of that setup type when the setup type is full, any hypothesis when the active total is full. If that bucket holds no hypothesis to delete, the ADD cannot go in, and nothing else should be deleted for it. DELETE is only for freeing quota: do not delete a hypothesis over one period's results; an execution gap whose commitment no longer exists may also be deleted
+    - Only three kinds may be added: execution gaps (what I wrote down myself in a plan, a watch note or a Waiting line to do and did not do, or a hard line with a number in the owner's instructions that I did not keep; it must land on specific trades), hypotheses (a way of trading observed this period; hypotheses are not shown to the trader), findings (a limit or requirement in the owner's instructions is costing money — for the owner). What the owner's instructions already lay down may not be written into the ledger as a hypothesis; do not recopy last period's lessons; do not re-add what the ledger already holds
+    - An ADD can only use the ENTRY, RISK or EXEC_GAP slot: how a position is handled while it is open (when to call it failed, how to take profit) does not go into the ledger; if your own plan wrote down how to handle it and you did not do it, record that as an execution gap
+    - An execution slip that cannot be tied to specific trades (say, skipping a check after a watch hit) does not go into the ledger; it stays in the watch line of the review
+    - At the end of an ADD row you may list this period's trades it rests on with UNDER (KEPT and BROKEN for an execution gap). To change the condition of an existing entry, add a new one and write SOURCE #<id>
+    - A new entry's text is "condition → action", written so that someone who has not seen these trades could follow it, with price relations stated as above or below which line; at most 160 characters. Evidence names specific trades and numbers, at most 120 characters
+    - Do not bring back ideas on the retired list
     - Write everything in English. The material and ledger may have been written in another language; read and use them as they are, but this period's output is English only
 
     Follow the two sections below strictly, both headers must appear, and after [LEDGER UPDATES] only the rows defined in the table may appear:
@@ -46,58 +55,32 @@ reviewer:
     Scorecard: <restate the scorecard line verbatim>
     Case 1: <setup type> (<n> trades, net <±x>)
     Path: …
-    Wrong direction or shaken out / judgement or luck: …
+    Wrong direction or shaken out / what was right: …
     Where the problem lay / left on the table: …
     How failure is defined and handled / did managing add or cost: …
-    What to change next time / repeatable conditions: …
+    What to change next time / repeatable conditions: … (write "none" if there is nothing)
     Case 2: … (omit if there is no second case)
     Opportunity: <one line>
     Watches: <one line>
 
     [LEDGER UPDATES]
-    #<id> <SUPPORT|OPPOSE|UNTESTED|KEPT|BROKEN> | <evidence>
-    ADD <setup type code or GENERAL> <ENTRY|FAIL_DEF|FAIL_HANDLE|PROFIT_HANDLE|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action> | <evidence>
+    #<id> UNDER <position ids> | MISCITED <position ids> | <note>
+    #<id> KEPT <position ids> | BROKEN <position ids> | <note>
+    #<id> NONE
+    ADD <setup type code or GENERAL> <ENTRY|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action> | <evidence> | UNDER <position ids> | SOURCE #<id>
     FINDING | <text, at most 160 characters> | <evidence, at most 120 characters>
     DELETE #<id> | <reason>
-    Setup type codes are the English labels as they appear in the material (e.g. PULLBACK, BREAKOUT); separate fields with "|", one row per line, nothing else; DELETE applies to hypotheses only
-
-  # Audit: one entry flagged by code, the model picks one of four outcomes
-  audit:
-    system: |-
-      You are the same trader, now auditing one experience that code has flagged: it was opposed several times recently, or opposes caught up with supports, or it has gone untested for long.
-      The user message carries the entry in full, its lifetime verdict log (each review's SUPPORT / OPPOSE / UNTESTED with evidence), its support rate, its longest opposing streak, and two groups of trades — supporting and opposing — each with entry / exit and entry context.
-      Answer one question only: how do the recent opposes differ from the past supports. Pick one of four outcomes, and the reason must cite numbers from the log:
-      - KEEP: the losing streak is within historical variance, the condition has not changed
-      - REVISE: the opposes share a new feature, write it into the condition and give the new text
-      - SPLIT: the original condition covers two situations with opposite outcomes, split into two new entries with their own conditions
-      - RETIRE: condition unchanged, enough samples, outcome keeps reversing
-      Write everything in English. One verdict line per entry, strictly in this format, nothing else:
-      #<id> KEEP | <reason>
-      #<id> REVISE | <new text, at most 160 characters> | <reason>
-      #<id> SPLIT | <reason>
-      ADD <setup type code or GENERAL> <ENTRY|FAIL_DEF|FAIL_HANDLE|PROFIT_HANDLE|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action, at most 160 characters> | <evidence, at most 120 characters> | SOURCE #<id>
-      #<id> RETIRE | <reason>
-      Each entry produced by a SPLIT gets its own ADD line with "SOURCE #<id>", at least two of them
-    opening: Below are the experiences flagged for audit, one block each.
-    entry: "#{{id}} {{play}} {{slot}} {{dir}} | {{text}} | supported {{supports}} opposed {{opposes}} untested {{untested}} | support rate {{rate}}% | longest opposing streak {{streak}}"
-    verdictRow: "- {{verdict}} | {{note}}"
-    noVerdicts: (no verdict log yet)
-    supportGroup: "[SUPPORTING TRADES] ({{n}})"
-    opposeGroup: "[OPPOSING TRADES] ({{n}})"
-    missingPosition: "- position #{{id}} (no longer in the recent records, id only)"
-    keep: KEEP
-    revise: REVISE
-    split: SPLIT
-    retire: RETIRE
+    NO_UPDATES
+    Separate fields with "|", one row per line, nothing else. Position ids are bare numbers separated by commas. On an #<id> row, leave out whichever of UNDER and MISCITED (KEPT and BROKEN for an execution gap) has nothing, write NONE alone if no trade belongs this period, and the closing note is optional; on an ADD row the trailing UNDER (KEPT and BROKEN for an execution gap) and SOURCE are optional. Setup type codes are the English labels as they appear in the material (e.g. PULLBACK, BREAKOUT); DELETE applies to hypotheses and execution gaps only; when there is no row to write at all, write the single line NO_UPDATES
 
   # Migration: the old free-text memory compressed into ledger rows, run once per trader
   migrate:
     system: |-
       You are the same trader. Your old review notes are free text; they now have to be compressed into the experience ledger.
       Keep only two kinds: patterns you derived from trades that are NOT in your owner's instructions (as hypotheses), and things you wrote down yourself to do and kept failing to do (as execution gaps).
-      Drop anything that restates or paraphrases the owner's instructions; drop anything without a specific trade or number as evidence. At most {{max}} rows.
+      Drop anything that restates or paraphrases the owner's instructions; drop anything without a specific trade or number as evidence; drop anything about handling a position while it is open (when to call it failed, how to take profit). At most {{max}} rows.
       Write everything in English, only rows of this shape, one per line, nothing else:
-      ADD <setup type code or GENERAL> <ENTRY|FAIL_DEF|FAIL_HANDLE|PROFIT_HANDLE|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action, at most 160 characters> | <evidence, at most 120 characters>
+      ADD <setup type code or GENERAL> <ENTRY|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action, at most 160 characters> | <evidence, at most 120 characters>
     opening: "[OLD REVIEW NOTES] (free text, to be compressed into the ledger)"
     closing: Now compress the notes above into ledger rows.
 
@@ -105,16 +88,19 @@ reviewer:
   mark:
     updates: "[LEDGER UPDATES]"
 
-  # Leading words of the ledger-update rows: the parser recognises this set only (current language)
+  # Leading words and mark words of the ledger-update rows: the parser recognises this set only (current language)
   op:
-    support: SUPPORT
-    oppose: OPPOSE
-    untested: UNTESTED
+    # Marks on an #<id> row: UNDER and MISCITED for hypotheses and rules, KEPT and BROKEN for execution gaps; NONE when no trade belongs
+    under: UNDER
+    miscited: MISCITED
     kept: KEPT
     broken: BROKEN
+    none: NONE
     add: ADD
     finding: FINDING
     delete: DELETE
+    # The line written on its own under [LEDGER UPDATES] when there is no row to write
+    noUpdates: NO_UPDATES
     general: GENERAL
     source: SOURCE
     slot:
@@ -160,12 +146,14 @@ reviewer:
       days: "{{n}}d"
 
     # ---- case material ----
-    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line. A target is written as price(percent of the position it closes), several rungs for a laddered take-profit, none when no take-profit was set. A trade entered in rungs has an extra entry-plan row: each rung's price × quantity, followed by when it filled or was cancelled and why. The path row is measured from the position's final average entry, and its R = the distance from that average to the plan's stop. The replay row asks what would have happened had nothing been changed after the order: each entry rung waits to fill at its original price (rungs that did fill use the actual fill price), and the stop and take-profit rungs stay as placed; 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop — actual and replay are both in that unit, so a trade that filled only in part shows a small actual R. Walked bar by bar on 5m candles from the first fill out to 72h, a bar touching both the stop and a take-profit rung counts as the stop; each rung reached settles its share and the rest walks on; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled (a remainder stopped out later is in the P&L), and a trade with no take-profit can only end as stop or undecided; at the wider stops the rungs are unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms. Actual and replay are both after trading fees and neither includes funding; replay exits at the stop and target prices, without slippage. For a trade marked as including adds, the actual side includes the PnL of the adds while the replay looks at the initial batch only)"
+    casesHeader: "[CASE MATERIAL] (facts computed by code. Each trade is led by its position id in square brackets; the ledger updates use it. Groups marked ★ are this period's cases, other groups only list one line per trade. A target is written as price(percent of the position it closes), several rungs for a laddered take-profit, none when no take-profit was set. A trade entered in rungs has an extra entry-plan row: each rung's price × quantity, followed by when it filled or was cancelled and why. The path row is measured from the position's final average entry, and its R = the distance from that average to the plan's stop. The replay row asks what would have happened had nothing been changed after the order: each entry rung waits to fill at its original price (rungs that did fill use the actual fill price), and the stop and take-profit rungs stay as placed; 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop — actual and replay are both in that unit, so a trade that filled only in part shows a small actual R. Walked bar by bar on 5m candles from the first fill out to 72h, a bar touching both the stop and a take-profit rung counts as the stop; each rung reached settles its share and the rest walks on; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled (a remainder stopped out later is in the P&L), and a trade with no take-profit can only end as stop or undecided; at the wider stops the rungs are unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms. Actual and replay are both after trading fees and neither includes funding; replay exits at the stop and target prices, without slippage. For a trade marked as including adds, the actual side includes the PnL of the adds while the replay looks at the initial batch only)"
     casesNone: No closed trades in the window
     caseGroup: "★ {{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGroupOther: "{{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGeneral: untyped
-    caseTrade: "- {{symbol}} {{side}} {{opened}} → {{closed}} (held {{held}}) | entry {{entry}} stop {{stop}} target {{target}} exit {{exit}}, {{manner}} | net {{pnl}}, funding {{funding}}"
+    caseTrade: "- [{{id}}] {{symbol}} {{side}} {{opened}} → {{closed}} (held {{held}}) | entry {{entry}} stop {{stop}} target {{target}} exit {{exit}}, {{manner}} | net {{pnl}}, funding {{funding}}"
+    # One line per trade in the groups not marked ★
+    caseTradeBrief: "- [{{id}}] {{symbol}} {{side}} {{opened}} → {{closed}} | net {{pnl}}"
     casePath: "  Price path (relative to final average entry): max favourable {{mfe}} ({{mfeAt}}, {{mfeR}}) | max adverse {{mae}} ({{maeR}}) | minutes to +0.5R / +1R {{tHalf}} / {{t1}} | first close back through entry {{firstBack}} | best price 4h / 24h after exit {{best4}} / {{best24}}, {{targetsAfter}}"
     caseTargetsAfter: reached {{hit}}/{{total}} of the original targets
     caseNoTarget: no take-profit was set
@@ -184,10 +172,10 @@ reviewer:
     # Plans archived without ever binding a position
     cancelledHeader: "Limit entries cancelled unfilled (5m candles over the 24h after the cancellation):"
     cancelledRow: "- {{symbol}} {{side}} limit {{limit}} stop {{stop}} target {{target}}, ended {{closed}}: {{reason}} | {{after}}"
-    # Never came back to the limit level: how many rungs price reached in these 24h
-    cancelledNotTouched: "afterwards price never reached the limit level; {{targetsAfter}}"
-    # Came back to the limit level: walked on from that candle with the original stop and rungs, counting rungs reached before it settled
-    cancelledTouched: "afterwards price came back to the limit level at {{at}}; from that candle on {{end}}; {{targetsAfter}}"
+    # Never traded through the limit level (exactly touching it does not count): how many rungs price reached in these 24h
+    cancelledNotCrossed: "afterwards price never traded through the limit level; {{targetsAfter}}"
+    # Traded through the limit level: walked on from that candle with the original stop and rungs, counting rungs reached before it settled
+    cancelledCrossed: "afterwards price traded through the limit level at {{at}}; from that candle on {{end}}; {{targetsAfter}}"
     cancelledStopped: it ran until the stop was hit
     cancelledTargetsDone: it ran until the take-profit rungs closed the whole position
     cancelledUndecided: it was still open at the end of these candles (stop not hit)
@@ -228,30 +216,41 @@ reviewer:
     watchLiquidated: "{{tool}} (position liquidated)"
 
     # ---- experience ledger ----
-    ledgerHeader: "[EXPERIENCE LEDGER] ({{n}} active; #id is what the ledger updates refer to; entries marked under review still get a verdict this period)"
+    ledgerHeader: "[EXPERIENCE LEDGER] ({{n}} active; #id is what the ledger updates refer to; each row ends with the tally code keeps of the trades under it)"
     # How much of the ledger quota is taken (the caps live in ExperienceLedger), right under the block header
     ledgerQuota: "Quota: {{n}}/{{max}} active; at most {{perPlay}} per setup type{{fullPlays}}; RESTRICTION {{r}}/{{rMax}}{{rIds}}. An ADD into a full bucket is not recorded"
     ledgerQuotaFull: " (full: {{plays}})"
     ledgerQuotaIds: " ({{ids}})"
     listSep: ", "
     ledgerEmpty: "(the ledger is empty: this period can only add)"
-    ledgerRow: "#{{id}} {{kind}} {{slot}} {{dir}} {{play}} | {{text}} | supported {{supports}} opposed {{opposes}} untested {{untested}} | evidence {{evidence}}{{flagged}}"
+    ledgerRow: "#{{id}} {{kind}} {{slot}} {{dir}} {{play}} | {{text}} | {{tally}} | evidence {{evidence}}"
+    # Tally of a hypothesis or rule: everything under it, and the current segment (promotion and demotion each start one)
+    ledgerTally: "under it {{n}} trades, {{wins}} won {{losses}} lost, net {{net}}, over {{days}} days; this segment {{segN}} trades, net {{segNet}}, {{segDays}} days{{miscited}}"
+    # Follows the line above only when above 0
+    ledgerTallyMiscited: "; miscited {{m}} times"
+    # Tally of an execution gap
+    ledgerTallyGap: "kept {{kept}}, broken {{broken}}"
     # Under an entry row: this period's trades whose opening round cited it in its conclusion, whatever their setup type
     ledgerCited: "  This period's trades whose opening round cited it: {{trades}}"
-    ledgerCitedTrade: "{{symbol}} {{side}} {{play}} {{opened}} net {{net}}"
-    ledgerFlagged: " | under review"
+    ledgerCitedTrade: "[{{id}}] {{symbol}} {{side}} {{play}} {{opened}} net {{net}}"
     findingsHeader: "[RECORDED FINDINGS] (already handed to the owner, do not add them again)"
     findingRow: "#{{id}} {{text}} | {{evidence}}"
     retiredHeader: "[RETIRED] (do not bring these ideas back)"
     retiredRow: "#{{id}} {{text}} | {{reason}}"
-    # Header of the audit verdicts appended to the review body (written by code)
-    auditAppendix: "[AUDIT VERDICTS]"
+    # Header of what code settled after booking (promotions, demotions, idle retirements), appended to the review body (written by code), one per line below
+    settledAppendix: "[KEPT BY CODE] Done by code from the tally of the trades under each entry:"
+    settledPromoted: "#{{id}} promoted to rule ({{n}} trades under it this segment, {{days}} closing days, net {{net}}): {{text}}"
+    settledDemoted: "#{{id}} demoted to hypothesis ({{n}} trades under it since promotion, net {{net}}): {{text}}"
+    settledRetired: "#{{id}} retired (no new trades under it for {{n}} reviews in a row): {{text}}"
     # Header of the adds that hit a full quota, appended to the review body (written by code), one per line below
     overCapAppendix: "[NOT RECORDED] These additions were not recorded because the ledger quota is full:"
+
+  # Reason written into retire_reason when code retires an entry: the review's retired list and the owner page both show it
+  retire:
+    idle: No new trades under it for {{n}} reviews in a row; retired by code
 
   # Persisted text: goes into ai_trader_decision.error and is on public display in the arena timeline
   error:
     timeout: Review timed out ({{seconds}}s)
     emptyOutput: The model returned nothing
     noOps: No ledger-update row could be parsed, the ledger was not updated
-    auditFailed: The audit call failed, the under-review flags stay until next period

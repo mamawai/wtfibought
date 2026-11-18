@@ -865,14 +865,11 @@ CREATE TABLE IF NOT EXISTS ai_trader_experience (
     direction       VARCHAR(12) NOT NULL,
     text            VARCHAR(255) NOT NULL,
     evidence        VARCHAR(255),
-    supports        INT NOT NULL DEFAULT 0,
-    opposes         INT NOT NULL DEFAULT 0,
-    untested        INT NOT NULL DEFAULT 0,
     cited_open      INT NOT NULL DEFAULT 0,
     cited_hold      INT NOT NULL DEFAULT 0,
     status          VARCHAR(12) NOT NULL DEFAULT 'ACTIVE',
-    flagged         BOOLEAN NOT NULL DEFAULT FALSE,
-    verdicts_since_audit INT NOT NULL DEFAULT 0,
+    segment_no      INT NOT NULL DEFAULT 0,
+    idle_reviews    INT NOT NULL DEFAULT 0,
     pinned          BOOLEAN NOT NULL DEFAULT FALSE,
     source_id       BIGINT,
     created_review_id BIGINT,
@@ -882,34 +879,39 @@ CREATE TABLE IF NOT EXISTS ai_trader_experience (
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_ate_trader_round_status ON ai_trader_experience (trader_id, round_no, status);
-COMMENT ON TABLE ai_trader_experience IS 'AI Trader经验账本：复盘写入的执行缺口/假设/规律/发现，一条一行；代码记支持反对次数、升级、举旗，退役不删；渲染文本写回ai_trader.memory注入trader';
+COMMENT ON TABLE ai_trader_experience IS 'AI Trader经验账本：复盘写入的执行缺口/假设/规律/发现，一条一行；名下的单子记在ai_trader_experience_trade，转正、降级、闲置退役由代码按账判，退役不删；渲染文本写回ai_trader.memory注入trader';
 COMMENT ON COLUMN ai_trader_experience.play_type IS '所属单子类型（TradeGuard.PLAY_TYPES），NULL=通用';
-COMMENT ON COLUMN ai_trader_experience.kind IS 'GAP=执行缺口（自己在计划、盯盘备注或等待行里写下要做却反复没照做） HYPOTHESIS=假设 RULE=规律（假设被支持够多次升级） FINDING=发现（指令本身在花钱，只给主人看不注入）';
-COMMENT ON COLUMN ai_trader_experience.slot IS '格子：ENTRY入场条件/FAIL_DEF失败判定/FAIL_HANDLE失败处理/PROFIT_HANDLE盈利处理/RISK风险限制/EXEC执行缺口';
+COMMENT ON COLUMN ai_trader_experience.kind IS 'GAP=执行缺口（自己写下要做、或主人指令里写了数字的硬线，碰到时没做到） HYPOTHESIS=假设 RULE=规律（名下单子的账够了由代码转正） FINDING=发现（指令本身在花钱，只给主人看不注入）';
+COMMENT ON COLUMN ai_trader_experience.slot IS '格子：ENTRY入场条件/RISK风险限制/EXEC执行缺口，新增只收这三种，转正只看前两种；FAIL_DEF失败判定/FAIL_HANDLE失败处理/PROFIT_HANDLE盈利处理只在旧数据里';
 COMMENT ON COLUMN ai_trader_experience.direction IS 'OPPORTUNITY机会型(某条件下该做)/RESTRICTION限制型(某条件下不做)/EXECUTION执行型(怎么做)；限制型全账户≤2条，能否作观望理由看ai_trader.learned_restriction_hold';
 COMMENT ON COLUMN ai_trader_experience.status IS 'ACTIVE现役（注入trader） RETIRED退役（不注入，复盘可见退役名单，主人可复活）';
-COMMENT ON COLUMN ai_trader_experience.flagged IS '待复审：近5次反对≥3 / 反对≥支持且核对≥4 / 近6次全未测试，由代码举旗，模型复审后四选一保留/修订/拆分/退役';
-COMMENT ON COLUMN ai_trader_experience.verdicts_since_audit IS '上次复审之后积累的结论数，复审保留后不满3次不重举旗';
-COMMENT ON COLUMN ai_trader_experience.pinned IS '主人钉住：不举旗不退役';
-COMMENT ON COLUMN ai_trader_experience.source_id IS '修订/拆分来源条目id，账不断';
+COMMENT ON COLUMN ai_trader_experience.segment_no IS '当前段，从0起：转正、降级各加一，转正降级只看当前段的名下单子';
+COMMENT ON COLUMN ai_trader_experience.idle_reviews IS '连续几篇复盘没有新单子记进名下/守/破，满10篇代码退役；本期没有已了结单子的复盘不数；钉住的、已转正的限制型不加一，有新单子照样清零';
+COMMENT ON COLUMN ai_trader_experience.pinned IS '主人钉住：不自动降级、不自动退役，复盘删不掉';
+COMMENT ON COLUMN ai_trader_experience.source_id IS '来源条目id：复盘新增时写的「来源 #编号」；开新局带入时是上一局的条目';
 COMMENT ON COLUMN ai_trader_experience.cited_open IS 'trader结论里作为开仓依据引用本条的次数（结论块里的#编号，开仓轮计这里）';
 COMMENT ON COLUMN ai_trader_experience.cited_hold IS 'trader结论里在观望轮引用本条的次数';
 
 -- ============================================
--- 31.2 经验结论流水（每次复盘对每条经验的支持/反对/未测试）
+-- 31.2 经验名下的单子（复盘归类、代码记账：一行=某条经验名下的某笔单子）
 -- ============================================
-CREATE TABLE IF NOT EXISTS ai_trader_experience_verdict (
+CREATE TABLE IF NOT EXISTS ai_trader_experience_trade (
     id              BIGSERIAL PRIMARY KEY,
     experience_id   BIGINT NOT NULL,
+    position_id     BIGINT NOT NULL,
     review_id       BIGINT NOT NULL,
-    verdict         VARCHAR(12) NOT NULL,
-    position_ids    VARCHAR(255),
-    note            VARCHAR(255),
+    mark            VARCHAR(12) NOT NULL,
+    net             NUMERIC(18,2) NOT NULL,
+    closed_day      DATE NOT NULL,
+    segment_no      INT NOT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_atev_exp ON ai_trader_experience_verdict (experience_id, id);
-COMMENT ON TABLE ai_trader_experience_verdict IS '经验结论流水：哪篇复盘(review_id=ai_trader_decision的REVIEW行)对哪条经验给了什么结论，附涉及仓位与一句证据；复审的对照表和历史最长连败从这里算';
-COMMENT ON COLUMN ai_trader_experience_verdict.verdict IS 'SUPPORT支持/OPPOSE反对/UNTESTED未测试（执行缺口的守/破内部同一套）';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_atet_exp_pos ON ai_trader_experience_trade (experience_id, position_id);
+COMMENT ON TABLE ai_trader_experience_trade IS '经验名下的单子：复盘模型给仓位编号，钱、笔数、天数由代码按仓位记；同一条经验同一笔单子只记一次；review_id=记下它的那篇复盘(ai_trader_decision的REVIEW行)';
+COMMENT ON COLUMN ai_trader_experience_trade.mark IS 'UNDER名下（假设/规律：机会型、执行型=碰到它说的情况并照做，限制型=碰到它说的情况还是做了） KEPT守 BROKEN破（执行缺口） MISCITED引用不符（开仓引用了它但情况对不上，只记次数不记钱）';
+COMMENT ON COLUMN ai_trader_experience_trade.net IS '这笔的净盈亏USDT：复盘案例行那个数（sim closed_pnl，扣了手续费和资金费，与战绩块同口径）';
+COMMENT ON COLUMN ai_trader_experience_trade.closed_day IS '平仓的北京日期，转正要求至少3个不同日子';
+COMMENT ON COLUMN ai_trader_experience_trade.segment_no IS '记下时条目所在的段：转正、降级各起一段，转正降级只看当前段';
 
 -- ============================================
 -- 32. 用户 BYOK 端点库

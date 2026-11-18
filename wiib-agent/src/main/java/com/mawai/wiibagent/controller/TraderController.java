@@ -43,6 +43,7 @@ import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
@@ -254,14 +255,33 @@ public class TraderController {
 
     // ========== 经验账本（主人管理） ==========
 
+    /**
+     * 主人页账本一条：条目本身 + 代码按名下单子算的账（主人标了不算数的单子不算）。
+     * shown＝trader 现在看得到它：现役的规律，或破满 2 笔的现役执行缺口
+     */
+    public record ExperienceView(long id, int roundNo, String playType, String kind, String slot, String direction,
+                                 String text, String evidence, String status, boolean pinned, String retireReason,
+                                 Long sourceId, int citedOpen, int citedHold, int segmentNo, int idleReviews,
+                                 LocalDateTime createdAt, boolean shown, ExperienceLedger.Tally tally) {
+    }
+
     @GetMapping("/mine/experiences")
-    @Operation(summary = "我的经验账本（本局全部条目：现役、发现、退役）")
-    public Result<List<AiTraderExperience>> experiences(@CurrentUserId long userId) {
+    @Operation(summary = "我的经验账本（本局全部条目：现役、发现、退役），每条带代码按名下单子算的账")
+    public Result<List<ExperienceView>> experiences(@CurrentUserId long userId) {
         AiTrader t = traderService.mine(userId);
         if (t == null) {
             return Result.fail(messages.get("trader.notCreated"));
         }
-        return Result.ok(ledger.all(t.getId(), t.getRoundNo()));
+        List<AiTraderExperience> all = ledger.all(t.getId(), t.getRoundNo());
+        Map<Long, ExperienceLedger.Tally> tallies = ledger.tallies(all);
+        return Result.ok(all.stream().map(e -> experienceView(e, tallies.get(e.getId()))).toList());
+    }
+
+    private static ExperienceView experienceView(AiTraderExperience e, ExperienceLedger.Tally tally) {
+        return new ExperienceView(e.getId(), e.getRoundNo(), e.getPlayType(), e.getKind(), e.getSlot(), e.getDirection(),
+                e.getText(), e.getEvidence(), e.getStatus(), e.getPinned(), e.getRetireReason(),
+                e.getSourceId(), e.getCitedOpen(), e.getCitedHold(), e.getSegmentNo(), e.getIdleReviews(), e.getCreatedAt(),
+                AiTraderExperience.STATUS_ACTIVE.equals(e.getStatus()) && ExperienceLedger.shown(e, tally), tally);
     }
 
     /** 包装 Boolean：缺字段是格式错误要拒 */
@@ -272,7 +292,7 @@ public class TraderController {
     }
 
     @PostMapping("/experience/{id}/pin")
-    @Operation(summary = "钉住/取消钉住一条经验（钉住的不会被代码举旗复审）")
+    @Operation(summary = "钉住/取消钉住一条经验（钉住的不会被代码自动降级或退役，复盘也删不掉）")
     public Result<Void> pinExperience(@CurrentUserId long userId, @PathVariable long id, @RequestBody PinRequest req) {
         if (req.pinned() == null) {
             return Result.fail(messages.get("trader.experience.pinnedRequired"));
@@ -296,7 +316,7 @@ public class TraderController {
     }
 
     @DeleteMapping("/experience/{id}")
-    @Operation(summary = "物理删除一条经验及其结论流水")
+    @Operation(summary = "物理删除一条经验及其名下单子")
     public Result<Void> deleteExperience(@CurrentUserId long userId, @PathVariable long id) {
         return experienceOp(userId, t -> ledger.delete(t.getId(), id));
     }

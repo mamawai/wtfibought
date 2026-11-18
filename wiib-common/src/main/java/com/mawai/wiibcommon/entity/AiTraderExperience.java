@@ -10,23 +10,24 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 经验账本的一条：复盘沉淀的执行缺口 / 假设 / 规律 / 发现。代码记支持反对次数、升级、举旗；
- * 退役不删，只是不再注入 trader。渲染文本写回 ai_trader.memory。
+ * 经验账本的一条：复盘沉淀的执行缺口 / 假设 / 规律 / 发现。名下的单子记在 ai_trader_experience_trade，
+ * 转正、降级、闲置退役由代码按账判；退役不删，只是不再注入 trader。渲染文本写回 ai_trader.memory。
  */
 @Data
 @TableName("ai_trader_experience")
 public class AiTraderExperience {
 
-    /** 主人指令要求了却反复没做到 */
+    /** 自己写下要做、或主人指令里写了数字的硬线，碰到时没做到 */
     public static final String KIND_GAP = "GAP";
-    /** 样本还不够的经验 */
+    /** 名下单子还不够的经验 */
     public static final String KIND_HYPOTHESIS = "HYPOTHESIS";
-    /** 假设被支持够多次升上来 */
+    /** 名下单子的账够了，代码转正 */
     public static final String KIND_RULE = "RULE";
     /** 指令本身在花钱，只给主人看，不注入 */
     public static final String KIND_FINDING = "FINDING";
 
     public static final String SLOT_ENTRY = "ENTRY";
+    // 这三种是持仓途中怎么处理：新增不收，只在旧数据里
     public static final String SLOT_FAIL_DEF = "FAIL_DEF";
     public static final String SLOT_FAIL_HANDLE = "FAIL_HANDLE";
     public static final String SLOT_PROFIT_HANDLE = "PROFIT_HANDLE";
@@ -63,12 +64,6 @@ public class AiTraderExperience {
 
     private String evidence;
 
-    private Integer supports;
-
-    private Integer opposes;
-
-    private Integer untested;
-
     /** trader 结论里作为开仓依据引用的次数 */
     private Integer citedOpen;
 
@@ -78,16 +73,16 @@ public class AiTraderExperience {
     /** ACTIVE / RETIRED */
     private String status;
 
-    /** 待复审 */
-    private Boolean flagged;
+    /** 当前段，从 0 起：转正、降级各加一 */
+    private Integer segmentNo;
 
-    /** 上次复审之后积累的结论数 */
-    private Integer verdictsSinceAudit;
+    /** 连续几篇复盘名下没有新单子 */
+    private Integer idleReviews;
 
-    /** 主人钉住：不举旗不退役 */
+    /** 主人钉住：不自动降级、不自动退役，复盘删不掉 */
     private Boolean pinned;
 
-    /** 修订 / 拆分的来源条目 */
+    /** 来源条目：复盘新增时写的「来源 #编号」，或开新局带入前的那一条 */
     private Long sourceId;
 
     private Long createdReviewId;

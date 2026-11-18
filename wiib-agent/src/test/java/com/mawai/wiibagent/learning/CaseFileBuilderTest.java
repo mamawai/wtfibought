@@ -237,22 +237,22 @@ class CaseFileBuilderTest {
         assertThat(builder.replay(pos, plan("98", null, null)).actualR()).isEqualByComparingTo("-2.00");
     }
 
-    /** 撤掉的限价单，价格没回到限价位：数这段时间里到过几档止盈 */
+    /** 撤掉的限价单，价格正好碰到限价位、没穿过：不算成交，数这段时间里到过几档止盈 */
     @Test
-    void cancelledLimitNeverTouchedCountsTargetsPriceReached() {
+    void cancelledLimitJustTouchedIsNotFilledAndCountsTargetsPriceReached() {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
-                bar(T0, new double[]{100, 103, 99.5, 102}),
+                bar(T0, new double[]{100, 103, 99, 102}),
                 bar(T0 + M5, new double[]{102, 104.5, 101, 104})));
 
         CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(cancelledLong(), T0);
 
-        // 最低 99.5 没回到限价 99；最高 104.5 到过第一档
-        assertThat(c.touchedAt()).isNull();
-        assertThat(c.end()).isEqualTo(CaseFileBuilder.CancelledEnd.NOT_TOUCHED);
+        // 最低正好是限价 99，没穿过；最高 104.5 到过第一档
+        assertThat(c.crossedAt()).isNull();
+        assertThat(c.end()).isEqualTo(CaseFileBuilder.CancelledEnd.NOT_CROSSED);
         assertThat(c.reachedTargets()).isEqualTo(1);
     }
 
-    /** 价格先到了目标、之后才回到限价位、接着打掉止损：成交之前到的目标不算 */
+    /** 价格先到了目标、之后才穿过限价位、接着打掉止损：成交之前到的目标不算 */
     @Test
     void cancelledLimitIgnoresTargetsReachedBeforePriceCameBack() {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
@@ -262,12 +262,12 @@ class CaseFileBuilderTest {
 
         CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(cancelledLong(), T0);
 
-        assertThat(c.touchedAt()).isEqualTo(T0 + M5);
+        assertThat(c.crossedAt()).isEqualTo(T0 + M5);
         assertThat(c.end()).isEqualTo(CaseFileBuilder.CancelledEnd.STOPPED);
         assertThat(c.reachedTargets()).isZero();
     }
 
-    /** 回到限价位之后两档止盈都到了，仓位已经平完，再往后跌破止损不算 */
+    /** 穿过限价位之后两档止盈都到了，仓位已经平完，再往后跌破止损不算 */
     @Test
     void cancelledLimitStopsWalkingOnceAllRungsClosedThePosition() {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
@@ -278,7 +278,7 @@ class CaseFileBuilderTest {
 
         CaseFileBuilder.CancelledLimit c = builder.cancelledLimit(cancelledLong(), T0);
 
-        assertThat(c.touchedAt()).isEqualTo(T0);
+        assertThat(c.crossedAt()).isEqualTo(T0);
         assertThat(c.end()).isEqualTo(CaseFileBuilder.CancelledEnd.TARGETS_DONE);
         assertThat(c.reachedTargets()).isEqualTo(2);
     }
@@ -554,6 +554,20 @@ class CaseFileBuilderTest {
                 bar(T0 + M5, new double[]{100, 101, 99, 100}), bar(T0 + 2 * M5, new double[]{100, 101, 97, 98})));
         assertThat(builder.replay(position("LONG", "100.2", "98", T0 + 3 * M5, T0 + 4 * M5), ladder(entry))
                 .untouched().r()).isEqualByComparingTo("-1.03");
+    }
+
+    /** 价格正好碰到限价不算成交，要穿过去：只碰到限价 100 的档一直没成交，之后到了目标也是未决 */
+    @ParameterizedTest
+    @CsvSource({"LONG,98,104", "SHORT,102,96"})
+    void limitJustTouchedDoesNotFill(String side, String stop, String target) {
+        boolean isLong = "LONG".equals(side);
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0 + M5, isLong ? new double[]{100.5, 101, 100, 100.5} : new double[]{99.5, 100, 99, 99.5}),
+                bar(T0 + 2 * M5, isLong ? new double[]{100.5, 104.5, 100.2, 104} : new double[]{99.5, 99.8, 95.5, 96})));
+        var replay = builder.replay(position(side, "100", "100", T0, T0 + 2 * M5),
+                ladder(entry("100", "1", stop, target, "CANCELLED", T0 + 2 * M5, "0")));
+        assertThat(replay.untouched().outcome()).isEqualTo(CaseFileBuilder.Outcome.OPEN);
+        assertThat(replay.fav24R()).isNull();
     }
 
     @ParameterizedTest

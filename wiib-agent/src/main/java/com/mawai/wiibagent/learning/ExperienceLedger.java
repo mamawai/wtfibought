@@ -4,20 +4,25 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.mapper.AiTraderExperienceMapper;
-import com.mawai.wiibagent.mapper.AiTraderExperienceVerdictMapper;
+import com.mawai.wiibagent.mapper.AiTraderExperienceTradeMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TradeGuard;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
-import com.mawai.wiibcommon.entity.AiTraderExperienceVerdict;
+import com.mawai.wiibcommon.entity.AiTraderExperienceTrade;
 import com.mawai.wiibcommon.enums.AgentLang;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,14 +32,22 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static com.mawai.wiibcommon.entity.AiTraderExperienceTrade.MARK_BROKEN;
+import static com.mawai.wiibcommon.entity.AiTraderExperienceTrade.MARK_KEPT;
+import static com.mawai.wiibcommon.entity.AiTraderExperienceTrade.MARK_MISCITED;
+import static com.mawai.wiibcommon.entity.AiTraderExperienceTrade.MARK_UNDER;
+
 /**
- * 经验账本：复盘提议的操作在这里落账，计数、升级、举旗、退役全由代码做；
- * 渲染成紧凑文本写回 ai_trader.memory 给 trader 每轮注入。
+ * 经验账本：复盘模型把本期单子按仓位编号归到经验名下，钱、笔数、天数由代码按仓位记（ai_trader_experience_trade）；
+ * 转正、降级、闲置退役由代码在复盘落账后按账判。渲染成紧凑文本写回 ai_trader.memory 给 trader 每轮注入。
  * <p>
- * 升级：假设支持满 {@value #PROMOTE_SUPPORTS} 次且反对不超过支持的三分之一 → 规律。
- * 举旗（待复审）：近 {@value #FLAG_RECENT} 次反对 ≥ {@value #FLAG_RECENT_OPPOSES}，或上次复审以来反对 ≥ 支持且核对 ≥ {@value #FLAG_MIN_CHECKS}，
- * 或近 {@value #FLAG_UNTESTED_STREAK} 次全未测试；复审保留后不满 {@value #AUDIT_THROTTLE} 次新结论不重举。
- * 降级只走复审，退役不删行。写库按列：计数用 SQL 加一，状态字段逐列 set。
+ * 单子的对错看净盈亏，主人标了不算数的单子在所有账里都不算。「站在它这边」：限制型是名下合计小于 0，其余大于 0。
+ * 新增只收入场条件、风险限制、执行缺口三个格子。
+ * 转正：入场条件、风险限制的假设，当前段名下满 {@value #PROMOTE_TRADES} 笔、来自至少 {@value #PROMOTE_DAYS} 个平仓日、合计站在它这边。
+ * 降级：规律转正后名下满 {@value #DEMOTE_TRADES} 笔、合计反过来，钉住的不降。转正、降级各起一段，判断只看当前段；
+ * 只在本篇有新单子记进它名下时判，本篇新建的不判转正。
+ * 退役：连续 {@value #IDLE_RETIRE} 篇复盘名下没有新单子，钉住的、已转正的限制型不退；本期一笔已了结单子都没有的复盘不数。
+ * 写库按列，状态字段逐列 set。
  */
 @Slf4j
 @Component
@@ -45,52 +58,73 @@ public class ExperienceLedger {
     static final int MAX_PER_PLAY = 3;
     static final int MAX_RESTRICTION = 2;
     static final int MAX_FINDINGS = 5;
-    static final int PROMOTE_SUPPORTS = 3;
-    static final int FLAG_RECENT = 5;
-    static final int FLAG_RECENT_OPPOSES = 3;
-    static final int FLAG_MIN_CHECKS = 4;
-    static final int FLAG_UNTESTED_STREAK = 6;
-    static final int AUDIT_THROTTLE = 3;
+    static final int PROMOTE_TRADES = 5;
+    static final int PROMOTE_DAYS = 3;
+    static final int DEMOTE_TRADES = 5;
+    static final int IDLE_RETIRE = 10;
+    /** 执行缺口破满几笔才给 trader 看 */
+    static final int GAP_SHOWN_BROKEN = 2;
+    /** 新增收的三种格子 */
+    static final Set<String> ADD_SLOTS = Set.of(
+            AiTraderExperience.SLOT_ENTRY, AiTraderExperience.SLOT_RISK, AiTraderExperience.SLOT_EXEC);
+    /** 能转正的格子 */
+    static final Set<String> PROMOTE_SLOTS = Set.of(AiTraderExperience.SLOT_ENTRY, AiTraderExperience.SLOT_RISK);
     /** 退役名单给复盘看的条数 */
     static final int RETIRED_SHOWN = 10;
 
-    public static final String AUDIT_KEEP = "KEEP";
-    public static final String AUDIT_REVISE = "REVISE";
-    public static final String AUDIT_SPLIT = "SPLIT";
-    public static final String AUDIT_RETIRE = "RETIRE";
-
     private final AiTraderExperienceMapper expMapper;
-    private final AiTraderExperienceVerdictMapper verdictMapper;
+    private final AiTraderExperienceTradeMapper tradeMapper;
     private final AiTraderMapper traderMapper;
+    /** 只为查主人标了不算数的单子 */
+    private final TraderPlanStore planStore;
     private final PromptCatalog prompts;
 
+    /** 本期一笔单子：净盈亏（案例行那个数）和平仓的北京日期，按仓位编号作键 */
+    public record PeriodTrade(BigDecimal net, LocalDate closedDay) {
+    }
+
+    /** 一笔单子归到经验名下的哪个标记（AiTraderExperienceTrade.MARK_*） */
+    public record Mark(String mark, long positionId) {
+    }
+
     /** 复盘提议的一个操作 */
-    public sealed interface Op permits Verdict, Add, Finding, Delete {
+    public sealed interface Op permits Classify, Add, Finding, Delete {
     }
 
-    /** 对现役经验的一次结论：SUPPORT / OPPOSE / UNTESTED */
-    public record Verdict(long id, String verdict, String note) implements Op {
+    /** 现役条目本期的归类；marks 为空＝写了「无」 */
+    public record Classify(long id, List<Mark> marks) implements Op {
     }
 
-    /** 新增经验；sourceId 非空＝拆分来的，只在复审路径出现 */
+    /** 新增；marks 是新增行末尾列的本期单子，sourceId 是「来源 #编号」 */
     public record Add(String playType, String slot, String direction, String text, String evidence,
-                      Long sourceId) implements Op {
+                      List<Mark> marks, Long sourceId) implements Op {
     }
 
     /** 发现：给主人看的，不注入 */
     public record Finding(String text, String evidence) implements Op {
     }
 
-    /** 删除提议：只对假设生效 */
+    /** 删除提议：只对没钉住的假设和执行缺口生效 */
     public record Delete(long id, String reason) implements Op {
-    }
-
-    /** 复审结论：KEEP / REVISE（带新正文）/ SPLIT / RETIRE */
-    public record Audit(long id, String kind, String newText, String reason) {
     }
 
     /** overCap：合法、但名额满了没记进账本的新增（已计在 dropped 里） */
     public record Applied(int applied, int dropped, List<Add> overCap) {
+    }
+
+    /**
+     * 一条经验名下单子的账。under 系列只算「名下」：笔数、赚几笔、亏几笔、合计、覆盖几个平仓日；
+     * segment 系列是当前段的；kept / broken / miscited 是守、破、引用不符的笔数
+     */
+    public record Tally(int under, int wins, int losses, BigDecimal net, int days,
+                        int segmentUnder, BigDecimal segmentNet, int segmentDays,
+                        int kept, int broken, int miscited) {
+    }
+
+    public enum ChangeKind { PROMOTED, DEMOTED, RETIRED }
+
+    /** 复盘落账后代码结账的一条结果；tally 是判它那一刻的账 */
+    public record Change(ChangeKind kind, AiTraderExperience entry, Tally tally) {
     }
 
     // ==================== 查 ====================
@@ -120,43 +154,56 @@ public class ExperienceLedger {
                 .last("LIMIT " + RETIRED_SHOWN));
     }
 
-    /** 现役里待复审的 */
-    public List<AiTraderExperience> flagged(long traderId, int roundNo) {
-        return active(traderId, roundNo).stream().filter(e -> Boolean.TRUE.equals(e.getFlagged())).toList();
-    }
-
-    /** 一条经验的全部结论，按时间升序 */
-    public List<AiTraderExperienceVerdict> verdicts(long experienceId) {
-        return verdictMapper.selectList(new LambdaQueryWrapper<AiTraderExperienceVerdict>()
-                .eq(AiTraderExperienceVerdict::getExperienceId, experienceId)
-                .orderByAsc(AiTraderExperienceVerdict::getId));
-    }
-
-    /** 历史最长连续反对 */
-    public static int maxOpposeStreak(List<AiTraderExperienceVerdict> verdicts) {
-        int best = 0;
-        int cur = 0;
-        for (AiTraderExperienceVerdict v : verdicts) {
-            cur = AiTraderExperienceVerdict.OPPOSE.equals(v.getVerdict()) ? cur + 1 : 0;
-            best = Math.max(best, cur);
-        }
-        return best;
-    }
-
     public AiTraderExperience owned(long traderId, long id) {
         AiTraderExperience e = expMapper.selectById(id);
         return e != null && Objects.equals(e.getTraderId(), traderId) ? e : null;
     }
 
+    /** 这些条目各自名下单子的账，每条都有；主人标了不算数的单子不算 */
+    public Map<Long, Tally> tallies(List<AiTraderExperience> entries) {
+        return entries.isEmpty() ? Map.of() : tallies(entries, rows(entries));
+    }
+
+    /** 同上，名下单子行已经查好 */
+    private Map<Long, Tally> tallies(List<AiTraderExperience> entries, List<AiTraderExperienceTrade> rows) {
+        Set<Long> stale = planStore.stalePositionIds(entries.getFirst().getTraderId());
+        Map<Long, List<AiTraderExperienceTrade>> byEntry = rows.stream()
+                .filter(r -> !stale.contains(r.getPositionId()))
+                .collect(Collectors.groupingBy(AiTraderExperienceTrade::getExperienceId));
+        Map<Long, Tally> out = new HashMap<>();
+        for (AiTraderExperience e : entries) {
+            out.put(e.getId(), tally(e.getSegmentNo(), byEntry.getOrDefault(e.getId(), List.of())));
+        }
+        return out;
+    }
+
+    /** 一条的账：名下行算笔数、赚亏、合计、平仓日，当前段的另算一份；守、破、引用不符只数笔数 */
+    static Tally tally(int segment, List<AiTraderExperienceTrade> rows) {
+        List<AiTraderExperienceTrade> under = rows.stream().filter(r -> MARK_UNDER.equals(r.getMark())).toList();
+        List<AiTraderExperienceTrade> current = under.stream().filter(r -> r.getSegmentNo() == segment).toList();
+        return new Tally(under.size(),
+                (int) under.stream().filter(r -> r.getNet().signum() > 0).count(),
+                (int) under.stream().filter(r -> r.getNet().signum() < 0).count(),
+                sum(under), days(under),
+                current.size(), sum(current), days(current),
+                count(rows, MARK_KEPT), count(rows, MARK_BROKEN), count(rows, MARK_MISCITED));
+    }
+
+    /** trader 看得到的条目：规律，和破满 {@value #GAP_SHOWN_BROKEN} 笔的执行缺口 */
+    public static boolean shown(AiTraderExperience e, Tally t) {
+        return AiTraderExperience.KIND_RULE.equals(e.getKind())
+                || AiTraderExperience.KIND_GAP.equals(e.getKind()) && t.broken() >= GAP_SHOWN_BROKEN;
+    }
+
     // ==================== 复盘落账 ====================
 
     /**
-     * 逐行独立生效；不合法的行丢弃记日志，不中断。reviewId 为空＝迁移产生，没有复盘行可挂。
-     * 同一条经验一篇只认第一行结论。新增排到最后落账，同一篇里的删除先腾出名额。
-     * positionIds：每条经验本期涉及的仓位 id（键是经验 id），结论流水照它记
+     * 逐行独立生效；不合法的行丢弃记日志，不中断。reviewId 为空＝迁移产生，没有复盘行可挂，也带不了单子。
+     * 同一条经验一篇只认第一行归类。新增排到最后落账，同一篇里的删除先腾出名额。
+     * trades：本期单子，归类和新增里的仓位编号只认这些
      */
     public Applied apply(long traderId, int roundNo, Long reviewId, List<Op> ops, AgentLang lang,
-                         Map<Long, List<Long>> positionIds) {
+                         Map<Long, PeriodTrade> trades) {
         List<AiTraderExperience> actives = active(traderId, roundNo);
         Set<Long> judged = new HashSet<>();
         List<Add> overCap = new ArrayList<>();
@@ -166,8 +213,8 @@ public class ExperienceLedger {
         ordered.addAll(ops.stream().filter(Add.class::isInstance).toList());
         for (Op op : ordered) {
             boolean ok = switch (op) {
-                case Verdict v -> judged.add(v.id()) && verdict(traderId, roundNo, reviewId, v, positionIds);
-                case Add a -> add(traderId, roundNo, reviewId, a, actives, lang, overCap);
+                case Classify c -> judged.add(c.id()) && classify(traderId, roundNo, reviewId, c, trades);
+                case Add a -> add(traderId, roundNo, reviewId, a, actives, lang, overCap, trades);
                 case Finding f -> finding(traderId, roundNo, reviewId, f, actives, lang);
                 case Delete d -> delete(traderId, roundNo, reviewId, d, actives);
             };
@@ -181,84 +228,55 @@ public class ExperienceLedger {
         return new Applied(applied, dropped, overCap);
     }
 
-    private boolean verdict(long traderId, int roundNo, Long reviewId, Verdict v, Map<Long, List<Long>> positionIds) {
-        AiTraderExperience e = owned(traderId, v.id());
+    /** 现役条目的归类：标记对得上种类、编号都在本期，才逐笔记下 */
+    private boolean classify(long traderId, int roundNo, Long reviewId, Classify c, Map<Long, PeriodTrade> trades) {
+        AiTraderExperience e = owned(traderId, c.id());
         if (e == null || reviewId == null || !Objects.equals(e.getRoundNo(), roundNo)
                 || !AiTraderExperience.STATUS_ACTIVE.equals(e.getStatus())
-                || AiTraderExperience.KIND_FINDING.equals(e.getKind())) {
+                || AiTraderExperience.KIND_FINDING.equals(e.getKind())
+                || !fits(AiTraderExperience.KIND_GAP.equals(e.getKind())
+                        ? Set.of(MARK_KEPT, MARK_BROKEN) : Set.of(MARK_UNDER, MARK_MISCITED), c.marks(), trades)) {
             return false;
         }
-        AiTraderExperienceVerdict row = new AiTraderExperienceVerdict();
-        row.setExperienceId(e.getId());
-        row.setReviewId(reviewId);
-        row.setVerdict(v.verdict());
-        row.setNote(cut(v.note(), 255));
-        row.setPositionIds(joinIds(positionIds.getOrDefault(e.getId(), List.of())));
-        verdictMapper.insert(row);
-
-        switch (v.verdict()) {
-            case AiTraderExperienceVerdict.SUPPORT -> {
-                e.setSupports(e.getSupports() + 1);
-                bump(e.getId(), "supports");
-            }
-            case AiTraderExperienceVerdict.OPPOSE -> {
-                e.setOpposes(e.getOpposes() + 1);
-                bump(e.getId(), "opposes");
-            }
-            default -> {
-                e.setUntested(e.getUntested() + 1);
-                bump(e.getId(), "untested");
-            }
-        }
-        e.setVerdictsSinceAudit(e.getVerdictsSinceAudit() + 1);
-        bump(e.getId(), "verdicts_since_audit");
-        if (AiTraderExperience.KIND_HYPOTHESIS.equals(e.getKind())
-                && e.getSupports() >= PROMOTE_SUPPORTS && e.getOpposes() * 3 <= e.getSupports()) {
-            e.setKind(AiTraderExperience.KIND_RULE);
-            expMapper.update(null, upd(e.getId()).set(AiTraderExperience::getKind, AiTraderExperience.KIND_RULE));
-        }
-        if (!Boolean.TRUE.equals(e.getPinned()) && !Boolean.TRUE.equals(e.getFlagged())
-                && e.getVerdictsSinceAudit() >= AUDIT_THROTTLE && shouldFlag(e, verdicts(e.getId()))) {
-            e.setFlagged(true);
-            expMapper.update(null, upd(e.getId()).set(AiTraderExperience::getFlagged, true));
-        }
+        record(e, reviewId, c.marks(), trades);
         return true;
     }
 
-    /** 三条举旗规则；第二条只看上次复审以来的那几条结论（从没复审过就是全部） */
-    private static boolean shouldFlag(AiTraderExperience e, List<AiTraderExperienceVerdict> all) {
-        List<AiTraderExperienceVerdict> recent = all.size() <= FLAG_RECENT ? all : all.subList(all.size() - FLAG_RECENT, all.size());
-        if (count(recent, AiTraderExperienceVerdict.OPPOSE) >= FLAG_RECENT_OPPOSES) {
-            return true;
-        }
-        int since = e.getVerdictsSinceAudit();
-        List<AiTraderExperienceVerdict> sinceAudit = all.size() <= since ? all : all.subList(all.size() - since, all.size());
-        long supports = count(sinceAudit, AiTraderExperienceVerdict.SUPPORT);
-        long opposes = count(sinceAudit, AiTraderExperienceVerdict.OPPOSE);
-        if (supports + opposes >= FLAG_MIN_CHECKS && opposes >= supports) {
-            return true;
-        }
-        if (all.size() < FLAG_UNTESTED_STREAK) {
-            return false;
-        }
-        return all.subList(all.size() - FLAG_UNTESTED_STREAK, all.size()).stream()
-                .allMatch(v -> AiTraderExperienceVerdict.UNTESTED.equals(v.getVerdict()));
+    /** 标记都是认的那几个，编号都在本期单子里 */
+    private static boolean fits(Set<String> allowed, List<Mark> marks, Map<Long, PeriodTrade> trades) {
+        return marks.stream().allMatch(m -> allowed.contains(m.mark()) && trades.containsKey(m.positionId()));
     }
 
-    private static long count(List<AiTraderExperienceVerdict> list, String verdict) {
-        return list.stream().filter(v -> verdict.equals(v.getVerdict())).count();
+    /** 逐笔记下，挂在这篇复盘上，段号取条目当前的段；这条经验名下已经有的那笔不再记 */
+    private void record(AiTraderExperience e, Long reviewId, List<Mark> marks, Map<Long, PeriodTrade> trades) {
+        for (Mark m : marks) {
+            PeriodTrade t = trades.get(m.positionId());
+            AiTraderExperienceTrade row = new AiTraderExperienceTrade();
+            row.setExperienceId(e.getId());
+            row.setPositionId(m.positionId());
+            row.setReviewId(reviewId);
+            row.setMark(m.mark());
+            row.setNet(t.net());
+            row.setClosedDay(t.closedDay());
+            row.setSegmentNo(e.getSegmentNo());
+            tradeMapper.insertIgnore(row);
+        }
     }
 
-    /** 新增行合法：正文与证据非空，单子类型是认识的 */
+    /** 新增行合法：格子是收的那三个，正文与证据非空，单子类型是认识的 */
     private static boolean valid(Add a) {
-        return !blank(a.text()) && !blank(a.evidence())
+        return ADD_SLOTS.contains(a.slot()) && !blank(a.text()) && !blank(a.evidence())
                 && (blank(a.playType()) || TradeGuard.PLAY_TYPES.contains(a.playType().trim().toUpperCase(Locale.ROOT)));
     }
 
-    /** 新增一条；合法但名额满了的记进 overCap */
+    /**
+     * 新增一条，连同它末尾列的本期单子（执行缺口带守、破，假设带名下）；合法但名额满了的记进 overCap。
+     * 来源是本局的条目才记
+     */
     private boolean add(long traderId, int roundNo, Long reviewId, Add a, List<AiTraderExperience> actives, AgentLang lang,
-                        List<Add> overCap) {
-        if (!valid(a)) {
+                        List<Add> overCap, Map<Long, PeriodTrade> trades) {
+        boolean gap = AiTraderExperience.SLOT_EXEC.equals(a.slot());
+        if (!valid(a) || !fits(gap ? Set.of(MARK_KEPT, MARK_BROKEN) : Set.of(MARK_UNDER), a.marks(), trades)) {
             return false;
         }
         if (full(a, actives)) {
@@ -266,8 +284,13 @@ public class ExperienceLedger {
             return false;
         }
         AiTraderExperience e = entry(traderId, roundNo, reviewId, a, lang);
+        AiTraderExperience source = a.sourceId() == null ? null : owned(traderId, a.sourceId());
+        if (source != null && Objects.equals(source.getRoundNo(), roundNo)) {
+            e.setSourceId(source.getId());
+        }
         expMapper.insert(e);
         actives.add(e);
+        record(e, reviewId, a.marks(), trades);
         return true;
     }
 
@@ -310,11 +333,12 @@ public class ExperienceLedger {
         return true;
     }
 
+    /** 删除：只对没钉住的现役假设和执行缺口生效，效果是退役并记理由 */
     private boolean delete(long traderId, int roundNo, Long reviewId, Delete d, List<AiTraderExperience> actives) {
         AiTraderExperience e = owned(traderId, d.id());
         if (e == null || !Objects.equals(e.getRoundNo(), roundNo) || blank(d.reason())
                 || !AiTraderExperience.STATUS_ACTIVE.equals(e.getStatus())
-                || !AiTraderExperience.KIND_HYPOTHESIS.equals(e.getKind())
+                || !(AiTraderExperience.KIND_HYPOTHESIS.equals(e.getKind()) || AiTraderExperience.KIND_GAP.equals(e.getKind()))
                 || Boolean.TRUE.equals(e.getPinned())) {
             return false;
         }
@@ -323,95 +347,112 @@ public class ExperienceLedger {
         return true;
     }
 
-    // ==================== 复审 ====================
+    // ==================== 复盘结账 ====================
 
-    /** 保留 / 修订 / 退役落账；只对现役且举了旗、没钉住的条目生效。拆分走 {@link #split} */
-    public boolean applyAudit(long traderId, int roundNo, Long reviewId, Audit audit, AgentLang lang) {
-        AiTraderExperience e = owned(traderId, audit.id());
-        if (!auditable(e, roundNo)) {
-            return false;
+    /**
+     * 复盘落账后代码结账。本篇新记的单子是挂在这篇复盘上的行，引用不符不算。
+     * 转正、降级只判本篇有新单子记进名下的条目，本篇新建的不判转正。
+     * 闲置：本篇有新单子记进名下、守、破的清零；没有的加一，满 {@value #IDLE_RETIRE} 篇退役，
+     * 钉住的、本篇新建的、已转正的限制型不加一。发现不管。hasClosed：本期有没有已了结的单子，一笔都没有就什么都不动
+     */
+    public List<Change> settle(long traderId, int roundNo, long reviewId, boolean hasClosed, AgentLang lang) {
+        List<AiTraderExperience> entries = active(traderId, roundNo).stream()
+                .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
+        if (!hasClosed || entries.isEmpty()) {
+            return List.of();
         }
-        switch (audit.kind()) {
-            case AUDIT_KEEP -> {
-                e.setFlagged(false);
-                e.setVerdictsSinceAudit(0);
-                expMapper.update(null, upd(e.getId())
-                        .set(AiTraderExperience::getFlagged, false)
-                        .set(AiTraderExperience::getVerdictsSinceAudit, 0));
-            }
-            case AUDIT_REVISE -> {
-                if (blank(audit.newText())) {
-                    return false;
+        List<AiTraderExperienceTrade> rows = rows(entries);
+        Map<Long, Tally> tallies = tallies(entries, rows);
+        Set<Long> under = recordedBy(rows, reviewId, Set.of(MARK_UNDER));
+        Set<Long> recorded = recordedBy(rows, reviewId, Set.of(MARK_UNDER, MARK_KEPT, MARK_BROKEN));
+        List<Change> changes = new ArrayList<>();
+        for (AiTraderExperience e : entries) {
+            Tally t = tallies.get(e.getId());
+            boolean created = Objects.equals(e.getCreatedReviewId(), reviewId);
+            if (under.contains(e.getId())) {
+                if (!created && promotes(e, t)) {
+                    move(e, AiTraderExperience.KIND_RULE);
+                    changes.add(new Change(ChangeKind.PROMOTED, e, t));
+                } else if (demotes(e, t)) {
+                    move(e, AiTraderExperience.KIND_HYPOTHESIS);
+                    changes.add(new Change(ChangeKind.DEMOTED, e, t));
                 }
-                AiTraderExperience revised = blank(traderId, roundNo, reviewId);
-                revised.setPlayType(e.getPlayType());
-                revised.setKind(e.getKind());
-                revised.setSlot(e.getSlot());
-                revised.setDirection(e.getDirection());
-                revised.setText(cut(audit.newText(), textMax(lang)));
-                revised.setEvidence(e.getEvidence());
-                revised.setSupports(e.getSupports());
-                revised.setOpposes(e.getOpposes());
-                revised.setUntested(e.getUntested());
-                revised.setSourceId(e.getId());
-                expMapper.insert(revised);
-                retire(e, reviewId, audit.reason());
             }
-            case AUDIT_RETIRE -> retire(e, reviewId, audit.reason());
+            // 已转正的限制型没有新单子＝被守住了
+            boolean keptRestriction = AiTraderExperience.KIND_RULE.equals(e.getKind())
+                    && AiTraderExperience.DIR_RESTRICTION.equals(e.getDirection());
+            int idle;
+            if (recorded.contains(e.getId())) {
+                idle = 0;
+            } else if (Boolean.TRUE.equals(e.getPinned()) || created || keptRestriction) {
+                continue;
+            } else {
+                idle = e.getIdleReviews() + 1;
+            }
+            if (idle >= IDLE_RETIRE) {
+                retire(e, reviewId, prompts.get(lang, "reviewer.retire.idle", Map.of("n", IDLE_RETIRE)));
+                changes.add(new Change(ChangeKind.RETIRED, e, t));
+            } else if (idle != e.getIdleReviews()) {
+                e.setIdleReviews(idle);
+                expMapper.update(null, upd(e.getId()).set(AiTraderExperience::getIdleReviews, idle));
+            }
         }
-        return true;
+        return changes;
     }
 
-    /** 拆分：子条先全部校验，合法的满两条才入账并退役父条；差一步父条子条都不动 */
-    public boolean split(long traderId, int roundNo, Long reviewId, Audit audit, List<Add> children, AgentLang lang) {
-        AiTraderExperience parent = owned(traderId, audit.id());
-        if (!auditable(parent, roundNo)) {
-            return false;
-        }
-        List<Add> valid = children.stream().filter(ExperienceLedger::valid).toList();
-        if (valid.size() < 2) {
-            return false;
-        }
-        for (Add c : valid) {
-            AiTraderExperience child = entry(traderId, roundNo, reviewId, c, lang);
-            child.setKind(parent.getKind());
-            child.setSupports(parent.getSupports());
-            child.setOpposes(parent.getOpposes());
-            child.setUntested(parent.getUntested());
-            child.setSourceId(parent.getId());
-            expMapper.insert(child);
-        }
-        retire(parent, reviewId, audit.reason());
-        return true;
+    /** 这篇复盘新记了这几种标记的条目 */
+    private static Set<Long> recordedBy(List<AiTraderExperienceTrade> rows, long reviewId, Set<String> marks) {
+        return rows.stream()
+                .filter(r -> Objects.equals(r.getReviewId(), reviewId) && marks.contains(r.getMark()))
+                .map(AiTraderExperienceTrade::getExperienceId)
+                .collect(Collectors.toSet());
     }
 
-    /** 复审能动的条目：本局现役、代码举了旗、主人没钉住 */
-    private static boolean auditable(AiTraderExperience e, int roundNo) {
-        return e != null && Objects.equals(e.getRoundNo(), roundNo)
-                && AiTraderExperience.STATUS_ACTIVE.equals(e.getStatus())
-                && Boolean.TRUE.equals(e.getFlagged())
-                && !Boolean.TRUE.equals(e.getPinned());
+    /** 入场条件、风险限制的假设，当前段名下够笔数、够平仓日，合计站在它这边 */
+    private static boolean promotes(AiTraderExperience e, Tally t) {
+        return AiTraderExperience.KIND_HYPOTHESIS.equals(e.getKind()) && PROMOTE_SLOTS.contains(e.getSlot())
+                && t.segmentUnder() >= PROMOTE_TRADES && t.segmentDays() >= PROMOTE_DAYS
+                && favours(e.getDirection(), t.segmentNet());
+    }
+
+    /** 规律转正后名下满笔数、合计反过来；钉住的不降 */
+    private static boolean demotes(AiTraderExperience e, Tally t) {
+        return AiTraderExperience.KIND_RULE.equals(e.getKind()) && !Boolean.TRUE.equals(e.getPinned())
+                && t.segmentUnder() >= DEMOTE_TRADES && favours(e.getDirection(), t.segmentNet().negate());
+    }
+
+    /** 合计站在它这边：限制型是小于 0，其余大于 0；等于 0 哪边都不算 */
+    static boolean favours(String direction, BigDecimal net) {
+        return AiTraderExperience.DIR_RESTRICTION.equals(direction) ? net.signum() < 0 : net.signum() > 0;
+    }
+
+    /** 转正或降级：换种类，另起一段 */
+    private void move(AiTraderExperience e, String kind) {
+        e.setKind(kind);
+        e.setSegmentNo(e.getSegmentNo() + 1);
+        expMapper.update(null, upd(e.getId())
+                .set(AiTraderExperience::getKind, kind)
+                .set(AiTraderExperience::getSegmentNo, e.getSegmentNo()));
     }
 
     private void retire(AiTraderExperience e, Long reviewId, String reason) {
         e.setStatus(AiTraderExperience.STATUS_RETIRED);
-        e.setFlagged(false);
         e.setRetiredReviewId(reviewId);
         e.setRetireReason(cut(reason, 255));
         expMapper.update(null, upd(e.getId())
                 .set(AiTraderExperience::getStatus, AiTraderExperience.STATUS_RETIRED)
-                .set(AiTraderExperience::getFlagged, false)
                 .set(AiTraderExperience::getRetiredReviewId, reviewId)
                 .set(AiTraderExperience::getRetireReason, e.getRetireReason()));
     }
 
     // ==================== 注入 trader ====================
 
-    /** 现役的规律与执行缺口渲染成紧凑文本：标题行 + 按单子类型分组的条目行。假设和发现不注入；一条都没有返回 null */
+    /** 现役里 trader 看得到的条目渲染成紧凑文本：标题行 + 按单子类型分组的条目行；一条都没有返回 null */
     public String render(long traderId, int roundNo, AgentLang lang) {
-        List<AiTraderExperience> list = active(traderId, roundNo).stream()
-                .filter(e -> AiTraderExperience.KIND_RULE.equals(e.getKind()) || AiTraderExperience.KIND_GAP.equals(e.getKind()))
-                .toList();
+        List<AiTraderExperience> entries = active(traderId, roundNo).stream()
+                .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
+        Map<Long, Tally> tallies = tallies(entries);
+        List<AiTraderExperience> list = entries.stream().filter(e -> shown(e, tallies.get(e.getId()))).toList();
         if (list.isEmpty()) {
             return null;
         }
@@ -424,44 +465,44 @@ public class ExperienceLedger {
             sb.append(prompts.get(lang, "trader.label.ledgerGroup", Map.of("play",
                     g.getKey().isEmpty() ? prompts.get(lang, "trader.label.ledgerGeneral") : g.getKey()))).append('\n');
             for (AiTraderExperience e : g.getValue()) {
-                sb.append(row(e, lang)).append('\n');
+                sb.append(row(e, tallies.get(e.getId()), lang)).append('\n');
             }
         }
         return sb.toString();
     }
 
-    /** 一行：方向带「·」前缀，执行缺口不带方向；核对超过 5 次才另给最近 5 次 */
-    private String row(AiTraderExperience e, AgentLang lang) {
-        List<AiTraderExperienceVerdict> all = verdicts(e.getId());
-        String recentText = "";
-        if (all.size() > FLAG_RECENT) {
-            List<AiTraderExperienceVerdict> recent = all.subList(all.size() - FLAG_RECENT, all.size());
-            recentText = prompts.get(lang, "trader.label.ledgerRecent", Map.of(
-                    "n", FLAG_RECENT,
-                    "s", count(recent, AiTraderExperienceVerdict.SUPPORT),
-                    "o", count(recent, AiTraderExperienceVerdict.OPPOSE)));
+    /** 一行：规律按方向写照做或违反，引用不符大于 0 才带；执行缺口写碰到几次、做到几次。数字都是累计 */
+    private String row(AiTraderExperience e, Tally t, AgentLang lang) {
+        String kind = prompts.get(lang, "trader.label.ledgerKind." + e.getKind().toLowerCase(Locale.ROOT));
+        if (AiTraderExperience.KIND_GAP.equals(e.getKind())) {
+            return prompts.get(lang, "trader.label.ledgerRowGap", Map.of(
+                    "id", e.getId(), "kind", kind, "text", e.getText(),
+                    "met", t.kept() + t.broken(), "kept", t.kept()));
         }
-        String dir = AiTraderExperience.KIND_GAP.equals(e.getKind()) ? ""
-                : "·" + prompts.get(lang, "trader.label.ledgerDir." + e.getDirection().toLowerCase(Locale.ROOT));
-        return prompts.get(lang, "trader.label.ledgerRow", Map.of(
+        String key = AiTraderExperience.DIR_RESTRICTION.equals(e.getDirection())
+                ? "trader.label.ledgerRowViolated" : "trader.label.ledgerRowFollowed";
+        return prompts.get(lang, key, Map.of(
                 "id", e.getId(),
-                "kind", prompts.get(lang, "trader.label.ledgerKind." + e.getKind().toLowerCase(Locale.ROOT)),
-                "dir", dir,
+                "kind", kind,
+                "dir", "·" + prompts.get(lang, "trader.label.ledgerDir." + e.getDirection().toLowerCase(Locale.ROOT)),
                 "text", e.getText(),
-                "supports", e.getSupports(),
-                "opposes", e.getOpposes(),
-                "recent", recentText,
-                "flagged", Boolean.TRUE.equals(e.getFlagged()) ? prompts.get(lang, "trader.label.ledgerFlagged") : ""));
+                "n", t.under(),
+                "wins", t.wins(),
+                "losses", t.losses(),
+                "net", money(t.net()),
+                "miscited", t.miscited() > 0
+                        ? prompts.get(lang, "trader.label.ledgerMiscited", Map.of("m", t.miscited())) : ""));
     }
 
     /**
-     * 渲染现役账本并按列写回 ai_trader.memory（一条都没有写 null）；返回渲染文本。
-     * 账本空着而 memory 还是没迁移的旧文本时不写库，返回 null
+     * 渲染现役账本并按列写回 ai_trader.memory（trader 一条都看不到就写 null）；返回渲染文本。
+     * 本局账本一条都没有、memory 还是没迁移的旧文本时不写库，旧文本留给迁移，返回 null
      */
     public String writeMemory(AiTrader trader, AgentLang lang) {
         String rendered = render(trader.getId(), trader.getRoundNo(), lang);
         String memory = trader.getMemory();
-        if (rendered == null && memory != null && !memory.isBlank() && !isRendered(memory)) {
+        if (rendered == null && memory != null && !memory.isBlank() && !isRendered(memory)
+                && all(trader.getId(), trader.getRoundNo()).isEmpty()) {
             return null;
         }
         traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
@@ -499,10 +540,20 @@ public class ExperienceLedger {
 
     // ==================== 开新局 / 清理 ====================
 
-    /** 开新局带入：本局全部条目复制到新局，计数、钉住、状态、退役原因照搬，结论流水留在旧行，旗与复审节拍清零；返回带入条数 */
+    /**
+     * 开新局带入：本局全部条目复制到新局，种类、段号、钉住、状态、退役原因、引用计数照搬，来源指回旧行，闲置清零；
+     * 名下的单子行一并复制到新条目上，主人标了不算数的不带。返回带入条数
+     */
     public int carryOver(long traderId, int fromRound, int toRound) {
-        int n = 0;
-        for (AiTraderExperience e : all(traderId, fromRound)) {
+        List<AiTraderExperience> entries = all(traderId, fromRound);
+        if (entries.isEmpty()) {
+            return 0;
+        }
+        Set<Long> stale = planStore.stalePositionIds(traderId);
+        Map<Long, List<AiTraderExperienceTrade>> rows = rows(entries).stream()
+                .filter(r -> !stale.contains(r.getPositionId()))
+                .collect(Collectors.groupingBy(AiTraderExperienceTrade::getExperienceId));
+        for (AiTraderExperience e : entries) {
             AiTraderExperience c = blank(traderId, toRound, null);
             c.setPlayType(e.getPlayType());
             c.setKind(e.getKind());
@@ -510,29 +561,30 @@ public class ExperienceLedger {
             c.setDirection(e.getDirection());
             c.setText(e.getText());
             c.setEvidence(e.getEvidence());
-            c.setSupports(e.getSupports());
-            c.setOpposes(e.getOpposes());
-            c.setUntested(e.getUntested());
             c.setCitedOpen(e.getCitedOpen());
             c.setCitedHold(e.getCitedHold());
             c.setPinned(e.getPinned());
             c.setStatus(e.getStatus());
             c.setRetireReason(e.getRetireReason());
+            c.setSegmentNo(e.getSegmentNo());
             c.setSourceId(e.getId());
             expMapper.insert(c);
-            n++;
+            for (AiTraderExperienceTrade r : rows.getOrDefault(e.getId(), List.of())) {
+                r.setExperienceId(c.getId());
+                tradeMapper.insertIgnore(r);
+            }
         }
-        return n;
+        return entries.size();
     }
 
-    /** 该局号及以前的条目连同结论流水一起删 */
+    /** 该局号及以前的条目连同名下单子一起删 */
     public void purgeRounds(long traderId, int roundNoInclusive) {
         purge(new LambdaQueryWrapper<AiTraderExperience>()
                 .eq(AiTraderExperience::getTraderId, traderId)
                 .le(AiTraderExperience::getRoundNo, roundNoInclusive));
     }
 
-    /** 删 trader：全部条目与结论流水 */
+    /** 删 trader：全部条目与名下单子 */
     public void purgeAll(long traderId) {
         purge(new LambdaQueryWrapper<AiTraderExperience>().eq(AiTraderExperience::getTraderId, traderId));
     }
@@ -542,8 +594,8 @@ public class ExperienceLedger {
         if (ids.isEmpty()) {
             return;
         }
-        verdictMapper.delete(new LambdaQueryWrapper<AiTraderExperienceVerdict>()
-                .in(AiTraderExperienceVerdict::getExperienceId, ids));
+        tradeMapper.delete(new LambdaQueryWrapper<AiTraderExperienceTrade>()
+                .in(AiTraderExperienceTrade::getExperienceId, ids));
         expMapper.deleteByIds(ids);
     }
 
@@ -554,11 +606,7 @@ public class ExperienceLedger {
         if (e == null) {
             return false;
         }
-        LambdaUpdateWrapper<AiTraderExperience> w = upd(id).set(AiTraderExperience::getPinned, pinned);
-        if (pinned) {
-            w.set(AiTraderExperience::getFlagged, false);
-        }
-        expMapper.update(null, w);
+        expMapper.update(null, upd(id).set(AiTraderExperience::getPinned, pinned));
         return true;
     }
 
@@ -580,7 +628,7 @@ public class ExperienceLedger {
                 .set(AiTraderExperience::getStatus, AiTraderExperience.STATUS_ACTIVE)
                 .set(AiTraderExperience::getRetiredReviewId, null)
                 .set(AiTraderExperience::getRetireReason, null)
-                .set(AiTraderExperience::getVerdictsSinceAudit, 0));
+                .set(AiTraderExperience::getIdleReviews, 0));
         return true;
     }
 
@@ -589,13 +637,36 @@ public class ExperienceLedger {
         if (e == null) {
             return false;
         }
-        verdictMapper.delete(new LambdaQueryWrapper<AiTraderExperienceVerdict>()
-                .eq(AiTraderExperienceVerdict::getExperienceId, id));
+        tradeMapper.delete(new LambdaQueryWrapper<AiTraderExperienceTrade>()
+                .eq(AiTraderExperienceTrade::getExperienceId, id));
         expMapper.deleteById(id);
         return true;
     }
 
     // ==================== 小工具 ====================
+
+    /** 这些条目名下的全部单子行 */
+    private List<AiTraderExperienceTrade> rows(Collection<AiTraderExperience> entries) {
+        return tradeMapper.selectList(new LambdaQueryWrapper<AiTraderExperienceTrade>()
+                .in(AiTraderExperienceTrade::getExperienceId, entries.stream().map(AiTraderExperience::getId).toList()));
+    }
+
+    private static BigDecimal sum(List<AiTraderExperienceTrade> rows) {
+        return rows.stream().map(AiTraderExperienceTrade::getNet).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static int days(List<AiTraderExperienceTrade> rows) {
+        return (int) rows.stream().map(AiTraderExperienceTrade::getClosedDay).distinct().count();
+    }
+
+    private static int count(List<AiTraderExperienceTrade> rows, String mark) {
+        return (int) rows.stream().filter(r -> mark.equals(r.getMark())).count();
+    }
+
+    /** 金额：两位小数，带正负号 */
+    static String money(BigDecimal v) {
+        return ReviewMaterialAssembler.signed(v.setScale(2, RoundingMode.HALF_UP));
+    }
 
     /** 由新增行造一条：类型大写、格子是执行缺口就是 GAP 否则假设、正文证据按语言截 */
     private static AiTraderExperience entry(long traderId, int roundNo, Long reviewId, Add a, AgentLang lang) {
@@ -613,14 +684,11 @@ public class ExperienceLedger {
         AiTraderExperience e = new AiTraderExperience();
         e.setTraderId(traderId);
         e.setRoundNo(roundNo);
-        e.setSupports(0);
-        e.setOpposes(0);
-        e.setUntested(0);
         e.setCitedOpen(0);
         e.setCitedHold(0);
         e.setStatus(AiTraderExperience.STATUS_ACTIVE);
-        e.setFlagged(false);
-        e.setVerdictsSinceAudit(0);
+        e.setSegmentNo(0);
+        e.setIdleReviews(0);
         e.setPinned(false);
         e.setCreatedReviewId(reviewId);
         return e;
@@ -636,19 +704,6 @@ public class ExperienceLedger {
     /** 计数列原子加一 */
     private void bump(long id, String column) {
         expMapper.update(null, upd(id).setSql(column + " = " + column + " + 1"));
-    }
-
-    /** 逗号拼接，超过 255 字截到放得下的整数个；一个没有给 null */
-    static String joinIds(List<Long> ids) {
-        StringBuilder sb = new StringBuilder();
-        for (Long id : ids) {
-            String next = sb.isEmpty() ? String.valueOf(id) : "," + id;
-            if (sb.length() + next.length() > 255) {
-                break;
-            }
-            sb.append(next);
-        }
-        return sb.isEmpty() ? null : sb.toString();
     }
 
     static int textMax(AgentLang lang) {

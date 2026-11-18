@@ -7,19 +7,20 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderExperienceMapper;
-import com.mawai.wiibagent.mapper.AiTraderExperienceVerdictMapper;
+import com.mawai.wiibagent.mapper.AiTraderExperienceTradeMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.TraderModelFactory;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
-import com.mawai.wiibcommon.entity.AiTraderExperienceVerdict;
+import com.mawai.wiibcommon.entity.AiTraderExperienceTrade;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -39,15 +40,16 @@ import org.springframework.ai.chat.prompt.Prompt;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -56,7 +58,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 复盘回路贯通：真 assembler + 真事实表 + 真账本 + 真解析器，只 mock 库与模型——
- * 组装出的事实真进了提示词，模型的更新表真落了账、真渲染进了 memory。
+ * 组装出的事实真进了提示词，模型按仓位编号的归类真记成了名下单子，结账和渲染进 memory 都走真代码。
  */
 class ReviewLoopTest {
 
@@ -66,7 +68,7 @@ class ReviewLoopTest {
     @BeforeAll
     static void initTableInfoCache() {
         for (Class<?> c : List.of(AiTrader.class, AiTraderDecision.class, AiTraderPlan.class,
-                AiTraderExperience.class, AiTraderExperienceVerdict.class)) {
+                AiTraderExperience.class, AiTraderExperienceTrade.class)) {
             TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), c);
         }
     }
@@ -79,9 +81,10 @@ class ReviewLoopTest {
     private final TraderModelFactory modelFactory = mock(TraderModelFactory.class);
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final AiTraderExperienceMapper expMapper = mock(AiTraderExperienceMapper.class);
-    private final AiTraderExperienceVerdictMapper verdictMapper = mock(AiTraderExperienceVerdictMapper.class);
+    private final AiTraderExperienceTradeMapper tradeMapper = mock(AiTraderExperienceTradeMapper.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
-    private final ExperienceLedger ledger = new ExperienceLedger(expMapper, verdictMapper, traderMapper, prompts);
+    private final ExperienceLedger ledger = new ExperienceLedger(expMapper, tradeMapper, traderMapper,
+            mock(TraderPlanStore.class), prompts);
 
     private final ReviewRunner runner = new ReviewRunner(
             new ReviewMaterialAssembler(decisionMapper, planMapper, simTradeClient, prompts,
@@ -89,7 +92,7 @@ class ReviewLoopTest {
                     new PlayStatsAssembler(simTradeClient, planMapper, prompts, new CaseFileBuilder(historyStore)),
                     mock(TraderWatchStore.class), new DecisionText(prompts),
                     new TradeRecordService(simTradeClient, planMapper, decisionMapper)),
-            modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), simTradeClient);
+            modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts));
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
@@ -125,8 +128,28 @@ class ReviewLoopTest {
                 new BigDecimal(l), new BigDecimal(c), BigDecimal.ZERO);
     }
 
+    private static AiTraderExperience entry(long id, String kind, String slot, String playType, String text, String evidence) {
+        AiTraderExperience e = new AiTraderExperience();
+        e.setId(id);
+        e.setTraderId(7L);
+        e.setRoundNo(1);
+        e.setPlayType(playType);
+        e.setKind(kind);
+        e.setSlot(slot);
+        e.setDirection(AiTraderExperience.DIR_EXECUTION);
+        e.setText(text);
+        e.setEvidence(evidence);
+        e.setCitedOpen(0);
+        e.setCitedHold(0);
+        e.setStatus(AiTraderExperience.STATUS_ACTIVE);
+        e.setSegmentNo(0);
+        e.setIdleReviews(0);
+        e.setPinned(false);
+        return e;
+    }
+
     @Test
-    void fullLoopAssemblesFactsCallsModelAppliesOpsAndRendersMemory() {
+    void fullLoopAssemblesFactsCallsModelRecordsTradesAndRendersMemory() {
         long openMs = FROM + 3_600_000L;
         long closeMs = FROM + 3_600_000L + 55 * 60_000L;
         FuturesPositionDTO pos = new FuturesPositionDTO();
@@ -173,43 +196,14 @@ class ReviewLoopTest {
         bars.add(bar(closeMs + 1_800_000L, "98900", "99400", "98800", "99300"));
         when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(bars);
 
-        // 账本：现役一条待核对的假设
-        AiTraderExperience hyp = new AiTraderExperience();
-        hyp.setId(5L);
-        hyp.setTraderId(7L);
-        hyp.setRoundNo(1);
-        hyp.setPlayType("BREAKOUT");
-        hyp.setKind(AiTraderExperience.KIND_HYPOTHESIS);
-        hyp.setSlot(AiTraderExperience.SLOT_FAIL_DEF);
-        hyp.setDirection(AiTraderExperience.DIR_EXECUTION);
-        hyp.setText("突破单两根 1h 收不出新高即判失败");
-        hyp.setEvidence("ETH 09:32");
-        hyp.setSupports(1);
-        hyp.setOpposes(0);
-        hyp.setUntested(0);
-        hyp.setStatus(AiTraderExperience.STATUS_ACTIVE);
-        hyp.setFlagged(false);
-        hyp.setPinned(false);
-        hyp.setVerdictsSinceAudit(1);
-        // 再放一条规律：假设不注入，memory 里只该见到它
-        AiTraderExperience rule = new AiTraderExperience();
-        rule.setId(4L);
-        rule.setTraderId(7L);
-        rule.setRoundNo(1);
-        rule.setKind(AiTraderExperience.KIND_RULE);
-        rule.setSlot(AiTraderExperience.SLOT_RISK);
-        rule.setDirection(AiTraderExperience.DIR_EXECUTION);
-        rule.setText("止损距离不小于 1 个 1h ATR");
-        rule.setEvidence("10-01 三笔");
-        rule.setSupports(4);
-        rule.setOpposes(0);
-        rule.setUntested(0);
-        rule.setStatus(AiTraderExperience.STATUS_ACTIVE);
-        rule.setFlagged(false);
-        rule.setPinned(false);
-        rule.setVerdictsSinceAudit(0);
+        // 账本：一条规律、一条待攒单子的假设；新增的那条进来拿到 6 号
+        AiTraderExperience rule = entry(4L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_RISK, null,
+                "止损距离不小于 1 个 1h ATR", "10-01 三笔");
+        AiTraderExperience hyp = entry(5L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.SLOT_ENTRY, "BREAKOUT",
+                "突破前高 → 等 1h 收稳再进", "ETH 09:32");
         List<AiTraderExperience> active = new ArrayList<>(List.of(rule, hyp));
         when(expMapper.selectList(any())).thenAnswer(inv -> new ArrayList<>(active));
+        when(expMapper.selectById(4L)).thenReturn(rule);
         when(expMapper.selectById(5L)).thenReturn(hyp);
         when(expMapper.insert(any(AiTraderExperience.class))).thenAnswer(inv -> {
             AiTraderExperience e = inv.getArgument(0);
@@ -217,7 +211,13 @@ class ReviewLoopTest {
             active.add(e);
             return 1;
         });
-        when(verdictMapper.selectList(any())).thenReturn(List.of());
+        // 名下单子表：插进去的行，结账和渲染时查得到
+        List<AiTraderExperienceTrade> trades = new ArrayList<>();
+        when(tradeMapper.insertIgnore(any())).thenAnswer(inv -> {
+            trades.add(inv.getArgument(0));
+            return 1;
+        });
+        when(tradeMapper.selectList(any())).thenAnswer(inv -> new ArrayList<>(trades));
 
         ChatModel model = mock(ChatModel.class);
         when(model.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(new Generation(
@@ -226,54 +226,58 @@ class ReviewLoopTest {
                         战绩：起始权益 10000.00 → 期末权益 9989.00，期间收益率 -0.11%
                         案例一：BREAKOUT（1 笔，净 -11）
                         路径：10 分钟到目标 45%，第 3 根收回入场价，第 4 根止损
-                        失败怎么界定：浮盈过目标 40% 又收回入场价
-                        失败后怎么处理：当轮市价平
-                        下次改什么：→ 新增
                         机会：BTC 窗口低到高 1.0%，没有可做的单边
                         【经验更新】
-                        #5 支持 ｜ 本笔第 3 根 1h 内已收回入场价，两根内未创新高
-                        新增 BREAKOUT 失败处理 执行型 ｜ 浮盈过目标 40% 又收回入场价即当轮市价平 ｜ BTC 100000 多 -11""")))));
+                        #4 无
+                        #5 名下 42 ｜ 等 1h 收稳后才进
+                        新增 BREAKOUT 入场条件 限制型 ｜ 突破前高后不等回踩 → 不市价追 ｜ BTC 100000 市价追多 -11 ｜ 名下 42""")))));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
         runner.review(trader(), DAY_BOUNDARY);
 
-        // 提示词里是代码算的事实原文
+        // 提示词里是代码算的事实原文，每笔前面带仓位编号，账本行带代码记的账
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model).call(prompt.capture());
         String all = prompt.getValue().getInstructions().stream().map(Message::getText).reduce("", String::concat);
         assertThat(all).contains("起始权益 10000.00").contains("-0.11%");                       // 战绩表
-        assertThat(all).contains("★ BREAKOUT（1 笔，0 胜，净 -11）");                             // 案例组
+        assertThat(all).contains("★ BREAKOUT（1 笔，0 胜，净 -11）").contains("- [42] BTCUSDT LONG"); // 案例组
         assertThat(all).contains("最大浮盈 100900").contains("+0.90R")                            // 路径
                 .contains("最大逆向 98850（-1.15R）")
                 .contains("出场后 4h / 24h 最有利 — / —，出场后数据不足");
         assertThat(all).contains("1h ADX 31.2 ｜ 1h 布林带宽 2.8").contains("止损 3.1 个 ATR");   // 入场上下文
         assertThat(all).contains("论点 突破前高100200").contains("失效 1h收盘跌回99500下方");       // 计划
         assertThat(all).contains("【本期行情】").contains("- BTCUSDT 100000 → 99300");             // 行情
-        assertThat(all).contains("#5 假设 失败判定 执行型 BREAKOUT ｜ 突破单两根 1h 收不出新高即判失败 ｜ 支持 1 反对 0 未测试 0");
+        assertThat(all).contains("#5 假设 入场条件 执行型 BREAKOUT ｜ 突破前高 → 等 1h 收稳再进 ｜ "
+                + "名下 0 笔，赚 0 亏 0，合计 +0.00，0 天；当前段 0 笔，合计 +0.00，0 天 ｜ 证据 ETH 09:32");
 
-        // 结论流水挂在复盘行上，计数 +1；新增入账
-        ArgumentCaptor<AiTraderExperienceVerdict> verdict = ArgumentCaptor.forClass(AiTraderExperienceVerdict.class);
-        verify(verdictMapper).insert(verdict.capture());
-        assertThat(verdict.getValue().getExperienceId()).isEqualTo(5L);
-        assertThat(verdict.getValue().getReviewId()).isEqualTo(900L);
-        assertThat(verdict.getValue().getPositionIds()).isEqualTo("42");
-        assertThat(hyp.getSupports()).isEqualTo(2);
+        // 名下单子按仓位记：净盈亏取案例行那个数，平仓日是北京日期；#5 和新增的 #6 各一行
+        assertThat(trades).extracting(AiTraderExperienceTrade::getExperienceId, AiTraderExperienceTrade::getPositionId,
+                AiTraderExperienceTrade::getReviewId, AiTraderExperienceTrade::getMark)
+                .containsExactly(tuple(5L, 42L, 900L, AiTraderExperienceTrade.MARK_UNDER),
+                        tuple(6L, 42L, 900L, AiTraderExperienceTrade.MARK_UNDER));
+        assertThat(trades.getFirst().getNet()).isEqualByComparingTo("-11");
+        assertThat(trades.getFirst().getClosedDay()).isEqualTo(LocalDate.of(2026, 7, 27));
         ArgumentCaptor<AiTraderExperience> added = ArgumentCaptor.forClass(AiTraderExperience.class);
         verify(expMapper).insert(added.capture());
-        assertThat(added.getValue().getSlot()).isEqualTo(AiTraderExperience.SLOT_FAIL_HANDLE);
+        assertThat(added.getValue().getSlot()).isEqualTo(AiTraderExperience.SLOT_ENTRY);
+        assertThat(added.getValue().getDirection()).isEqualTo(AiTraderExperience.DIR_RESTRICTION);
         assertThat(added.getValue().getCreatedReviewId()).isEqualTo(900L);
+        // 结账：#5 有新单子不加闲置，没单子的规律 #4 加一，本篇新增的 #6 不数
+        assertThat(hyp.getIdleReviews()).isZero();
+        assertThat(rule.getIdleReviews()).isEqualTo(1);
+        assertThat(hyp.getKind()).isEqualTo(AiTraderExperience.KIND_HYPOTHESIS);
 
         // REVIEW 行存全文；memory_after 与 ai_trader.memory 是渲染后的账本
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
-        assertThat(dec.getValue().getReasoning()).contains("案例一").contains("#5 支持");
+        assertThat(dec.getValue().getReasoning()).contains("案例一").contains("#5 名下 42");
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<LambdaUpdateWrapper<AiTraderDecision>> snap = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
         verify(decisionMapper).update(isNull(), snap.capture());
         assertThat(snap.getValue().getSqlSet()).contains("memory_after");
         // 假设（#5、新增的 #6）不注入，只有规律 #4
         assertThat(dec.getValue().getMemoryAfter()).startsWith("【经验账本】")
-                .contains("#4 规律·执行型 ｜ 止损距离不小于 1 个 1h ATR ｜ 支持 4 反对 0")
+                .contains("#4 规律·执行型 ｜ 止损距离不小于 1 个 1h ATR ｜ 照做 0 笔，赚 0 亏 0，合计 +0.00 USDT")
                 .doesNotContain("#5 ").doesNotContain("#6 ");
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> up = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);

@@ -646,6 +646,19 @@ public class TraderPlanStore {
         return mapper.selectById(planId);
     }
 
+    /** 主人标了不算数的单子对应的仓位（不分局）：经验账本算账时排除 */
+    public Set<Long> stalePositionIds(long traderId) {
+        Set<Long> ids = new HashSet<>();
+        for (AiTraderPlan p : mapper.selectList(new LambdaQueryWrapper<AiTraderPlan>()
+                .select(AiTraderPlan::getPositionId)
+                .eq(AiTraderPlan::getTraderId, traderId)
+                .eq(AiTraderPlan::getStale, true)
+                .isNotNull(AiTraderPlan::getPositionId))) {
+            ids.add(p.getPositionId());
+        }
+        return ids;
+    }
+
     // ==================== 治理 ====================
 
     /** 主人标记忽略/取消：只动 stale 列，计划本体不碰。 */

@@ -107,7 +107,6 @@ class PromptI18nTest {
     @Test
     void 英文reviewer提示词与素材块全文无中文() {
         assertNoCjk("英文 reviewer 系统提示词", prompts.get(AgentLang.EN, "reviewer.system"));
-        assertNoCjk("英文 reviewer 复审提示词", prompts.get(AgentLang.EN, "reviewer.audit.system"));
         assertNoCjk("英文 reviewer 迁移提示词", prompts.get(AgentLang.EN, "reviewer.migrate.system", Map.of("max", 10)));
         assertNoCjk("英文 reviewer 收尾指令", prompts.get(AgentLang.EN, "reviewer.label.closing"));
         assertNoCjk("英文 reviewer 输出语言硬收尾",
@@ -282,9 +281,18 @@ class PromptI18nTest {
                 .as("① 数字只许引用事实表").contains("所有数字只许引用事实表里的，禁止自算或美化")
                 .contains("战绩一行只许原样复述")
                 .as("② 界定与处理必须可观察").contains("必须是可观察的价格、根数或时间")
-                .as("③ 不抄指令、不继承旧教训").contains("主人指令里已经有的不写进账本")
+                .as("③ 不抄指令、不继承旧教训").contains("主人指令里的规定不能当假设写进账本")
                 .contains("上期的教训不许重抄")
                 .contains("【本期复盘】").contains("【经验更新】");
+    }
+
+    /** 不提运气：复盘赢单只问对在哪；论点战绩脚注（trader 和复盘都会看到）只说小样本不能当规律 */
+    @Test
+    void 复盘与论点战绩脚注不提运气() {
+        for (String key : List.of("reviewer.system", "trader.label.playStatsFooter")) {
+            assertThat(prompts.get(AgentLang.ZH, key)).as(key).doesNotContain("运气");
+            assertThat(prompts.get(AgentLang.EN, key)).as(key).doesNotContainIgnoringCase("luck");
+        }
     }
 
     /** 两处都要显式交代"笔记可能是另一门语言，照读照用，输出用当前语言" */
@@ -297,16 +305,15 @@ class PromptI18nTest {
         assertThat(prompts.get(AgentLang.EN, "reviewer.system")).contains("another language");
     }
 
-    /** 解析器靠行首固定词分流：同一门语言里结论词 / 格子词 / 方向词 / 复审结论词各组内不许撞 */
+    /** 解析器靠行首固定词和标记词分流：同一门语言里标记词 / 格子词 / 方向词各组内不许撞 */
     @Test
     void 解析固定词各组内互不相同() {
         for (AgentLang lang : AgentLang.values()) {
-            assertDistinct(lang, "结论词", "reviewer.op.support", "reviewer.op.oppose", "reviewer.op.untested",
-                    "reviewer.op.kept", "reviewer.op.broken");
+            assertDistinct(lang, "标记词", "reviewer.op.under", "reviewer.op.miscited", "reviewer.op.kept",
+                    "reviewer.op.broken", "reviewer.op.none");
             assertDistinct(lang, "格子词", "reviewer.op.slot.entry", "reviewer.op.slot.failDef", "reviewer.op.slot.failHandle",
                     "reviewer.op.slot.profitHandle", "reviewer.op.slot.risk", "reviewer.op.slot.exec");
             assertDistinct(lang, "方向词", "reviewer.op.dir.opportunity", "reviewer.op.dir.restriction", "reviewer.op.dir.execution");
-            assertDistinct(lang, "复审结论词", "reviewer.audit.keep", "reviewer.audit.revise", "reviewer.audit.split", "reviewer.audit.retire");
         }
     }
 
@@ -517,6 +524,7 @@ class PromptI18nTest {
 
     private static FuturesPositionDTO closedPos(String pnl, long openMs, long closeMs) {
         FuturesPositionDTO p = new FuturesPositionDTO();
+        p.setId(1L);
         p.setSymbol("BTCUSDT");
         p.setSide("LONG");
         p.setStatus("CLOSED");
@@ -576,14 +584,10 @@ class PromptI18nTest {
         AiTraderExperience active = new AiTraderExperience();
         active.setId(1L);
         active.setKind(AiTraderExperience.KIND_RULE);
-        active.setSlot(AiTraderExperience.SLOT_PROFIT_HANDLE);
+        active.setSlot(AiTraderExperience.SLOT_RISK);
         active.setDirection(AiTraderExperience.DIR_EXECUTION);
-        active.setText("exit only at target");
+        active.setText("stop at least 1 ATR on 1h");
         active.setEvidence("5 trades");
-        active.setSupports(5);
-        active.setOpposes(1);
-        active.setUntested(0);
-        active.setFlagged(true);
         AiTraderExperience finding = new AiTraderExperience();
         finding.setId(2L);
         finding.setKind(AiTraderExperience.KIND_FINDING);
@@ -594,9 +598,11 @@ class PromptI18nTest {
         AiTraderExperience retired = new AiTraderExperience();
         retired.setId(3L);
         retired.setText("chase only above volume ratio 2");
-        retired.setRetireReason("14 of 20 opposed");
+        retired.setRetireReason("No new trades under it for 10 reviews in a row; retired by code");
         when(ledger.active(anyLong(), anyInt())).thenReturn(List.of(active, finding));
         when(ledger.retired(anyLong(), anyInt())).thenReturn(List.of(retired));
+        when(ledger.tallies(any())).thenReturn(Map.of(1L, new ExperienceLedger.Tally(
+                6, 4, 2, new BigDecimal("40.00"), 4, 5, new BigDecimal("31.00"), 3, 0, 0, 2)));
 
         AiTrader t = enTrader();
         t.setSymbols("BTCUSDT");

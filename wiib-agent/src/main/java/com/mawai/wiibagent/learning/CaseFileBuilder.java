@@ -114,19 +114,19 @@ public class CaseFileBuilder {
     }
 
     /**
-     * 撤掉的限价档之后的结局：价格没回到过限价位；回到过并且止损被打掉；回到过并且止盈档把仓位平完；
-     * 回到过、走到这段 K 线末尾两头都没了结
+     * 撤掉的限价档之后的结局：价格没穿过限价位；穿过了并且止损被打掉；穿过了并且止盈档把仓位平完；
+     * 穿过了、走到这段 K 线末尾两头都没了结
      */
-    public enum CancelledEnd { NOT_TOUCHED, STOPPED, TARGETS_DONE, UNDECIDED }
+    public enum CancelledEnd { NOT_CROSSED, STOPPED, TARGETS_DONE, UNDECIDED }
 
     /**
      * 没成交就撤掉的限价档，撤单后 24 小时内（没有逐档记录的旧计划，从最后一次见它还挂着的那轮起）怎么走。
-     * touchedAt 是价格回到限价位的那根 5m，没回到过为 null。
-     * 回到过的：从那一根起按原止损、原止盈档往后走，reachedTargets 是了结之前（没了结就是到这段 K 线末尾）到过几档；
-     * 没回到过的：reachedTargets 是这 24 小时里价格到过几档
+     * crossedAt 是价格穿过限价位的那根 5m（正好碰到不算），没穿过为 null。
+     * 穿过的：从那一根起按原止损、原止盈档往后走，reachedTargets 是了结之前（没了结就是到这段 K 线末尾）到过几档；
+     * 没穿过的：reachedTargets 是这 24 小时里价格到过几档
      */
     public record CancelledLimit(AiTraderPlan plan, PlanEntry entry, BigDecimal limit, BigDecimal stop,
-                                 List<TargetRung> targets, long cancelledAt, Long touchedAt, CancelledEnd end, int reachedTargets) {
+                                 List<TargetRung> targets, long cancelledAt, Long crossedAt, CancelledEnd end, int reachedTargets) {
     }
 
     /** 同一类单子的一组，赢亏同台 */
@@ -196,15 +196,15 @@ public class CaseFileBuilder {
         }
         boolean isLong = "LONG".equals(plan.getSide());
         long cancelledAt = entry == null ? plan.getClosedWakeTime() : entry.getClosedAt();
-        int touch = 0;
-        while (touch < bars.size() && !reaches(bars.get(touch), limit, isLong)) {
-            touch++;
+        int cross = 0;
+        while (cross < bars.size() && !LadderReplay.crosses(bars.get(cross), limit, isLong)) {
+            cross++;
         }
-        if (touch == bars.size()) {
+        if (cross == bars.size()) {
             BigDecimal best = bars.stream().map(isLong ? KlineBar::high : KlineBar::low)
                     .reduce((a, b) -> better(a, b, isLong)).orElseThrow();
             return new CancelledLimit(plan, entry, limit, stop, targets, cancelledAt, null,
-                    CancelledEnd.NOT_TOUCHED, reached(targets, best, isLong));
+                    CancelledEnd.NOT_CROSSED, reached(targets, best, isLong));
         }
         // 止盈档由近到远，一档一档碰；left 是还没被止盈档平掉的仓位百分比
         List<TargetRung> rungs = targets.stream()
@@ -212,18 +212,18 @@ public class CaseFileBuilder {
         int hit = 0;
         BigDecimal left = BigDecimal.valueOf(100);
         boolean stopped = false;
-        for (int i = touch; i < bars.size() && left.signum() > 0 && !stopped; i++) {
+        for (int i = cross; i < bars.size() && left.signum() > 0 && !stopped; i++) {
             KlineBar b = bars.get(i);
-            // 每根先看止损；回到限价位的那一根不数止盈档，那根里先到的是哪头分不清
+            // 每根先看止损；穿过限价位的那一根不数止盈档，那根里先到的是哪头分不清
             stopped = reaches(b, stop, isLong);
-            while (!stopped && i > touch && hit < rungs.size() && reaches(b, rungs.get(hit).price(), !isLong)) {
+            while (!stopped && i > cross && hit < rungs.size() && reaches(b, rungs.get(hit).price(), !isLong)) {
                 left = left.subtract(rungs.get(hit).percent());
                 hit++;
             }
         }
         CancelledEnd end = stopped ? CancelledEnd.STOPPED
                 : left.signum() <= 0 ? CancelledEnd.TARGETS_DONE : CancelledEnd.UNDECIDED;
-        return new CancelledLimit(plan, entry, limit, stop, targets, cancelledAt, bars.get(touch).openTime(), end, hit);
+        return new CancelledLimit(plan, entry, limit, stop, targets, cancelledAt, bars.get(cross).openTime(), end, hit);
     }
 
     /** 这根的最低价有没有到 price 或更低（down），或者最高价有没有到 price 或更高 */

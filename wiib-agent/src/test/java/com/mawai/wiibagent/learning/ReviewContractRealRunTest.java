@@ -2,6 +2,7 @@ package com.mawai.wiibagent.learning;
 
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.trader.TraderModelFactory;
+import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,8 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +53,11 @@ class ReviewContractRealRunTest {
     private ExperienceOpParser parser;
     @Autowired
     private PromptCatalog prompts;
+    /** 重放行、本期重放汇总用真素材的写法 */
+    @Autowired
+    private ReviewMaterialAssembler assembler;
+    @Autowired
+    private PlayStatsAssembler playStats;
 
     @Test
     void 复盘两段契约两门语言真模型各服从一轮() {
@@ -70,63 +78,87 @@ class ReviewContractRealRunTest {
             log.info("[ReviewRealRun] {} 输出：\n{}", lang.code(), output);
 
             assertThat(output).as("%s 正文段标记", lang.code()).contains(lang == AgentLang.ZH ? "【本期复盘】" : "[REVIEW]");
-            List<ExperienceLedger.Op> ops = parser.parse(output, lang);
+            List<ExperienceLedger.Op> ops = parser.parse(output, lang).ops();
             assertThat(ops).as("%s 经验更新至少解析出一行", lang.code()).isNotEmpty();
-            // 现役那条本期有同类单子，必须给结论
-            assertThat(ops).as("%s 对 #1 给了结论", lang.code())
-                    .anyMatch(op -> op instanceof ExperienceLedger.Verdict v && v.id() == 1L);
+            // 每条现役条目都要写一行归类
+            assertThat(ops).as("%s 对 #1 写了归类", lang.code())
+                    .anyMatch(op -> op instanceof ExperienceLedger.Classify c && c.id() == 1L);
         }
     }
 
-    /** 手造素材：一组两笔的 PULLBACK（一赢一亏）+ 行情 + 账本里一条待核对的假设 */
+    /** 手造素材：一组两笔的 PULLBACK（一赢一亏，带重放）+ 行情 + 账本里一条待核对的假设 */
     private ReviewMaterialAssembler.ReviewMaterial material(AgentLang lang) {
         String none = prompts.get(lang, "reviewer.label.none");
+        // 赢的那笔各档止损宽度都到目标；亏的那笔原样被止损，放宽以后都没了结
+        CaseFileBuilder.Replay winner = new CaseFileBuilder.Replay(new BigDecimal("1.40"), new BigDecimal("3.80"),
+                new BigDecimal("-0.35"), new BigDecimal("3.50"), List.of(
+                        width("1", CaseFileBuilder.Outcome.TARGET, "1.98"), width("1.5", CaseFileBuilder.Outcome.TARGET, "1.31"),
+                        width("2", CaseFileBuilder.Outcome.TARGET, "0.98"), width("3", CaseFileBuilder.Outcome.TARGET, "0.65")), false);
+        CaseFileBuilder.Replay loser = new CaseFileBuilder.Replay(new BigDecimal("-1.07"), new BigDecimal("0.60"),
+                new BigDecimal("-1.40"), new BigDecimal("-0.10"), List.of(
+                        width("1", CaseFileBuilder.Outcome.STOP, "-1.02"), width("1.5", CaseFileBuilder.Outcome.OPEN, null),
+                        width("2", CaseFileBuilder.Outcome.OPEN, null), width("3", CaseFileBuilder.Outcome.OPEN, null)), false);
         String stats = prompts.get(lang, "reviewer.label.statsHeader") + "\n"
                 + prompts.get(lang, "reviewer.label.statsEquity", Map.of("start", "10000.00", "end", "9880.00", "pct", "-1.20")) + "\n"
                 + prompts.get(lang, "reviewer.label.statsDrawdown", Map.of("dd", "2.10")) + "\n"
                 + prompts.get(lang, "reviewer.label.statsClosed", Map.of("n", 2, "wins", 1, "losses", 1, "winRate", 50, "pnl", "-120.00")) + "\n";
         String cases = prompts.get(lang, "reviewer.label.casesHeader") + "\n"
                 + prompts.get(lang, "reviewer.label.caseGroup", Map.of("play", "PULLBACK", "n", 2, "wins", 1, "net", "-120")) + "\n"
-                + prompts.get(lang, "reviewer.label.caseTrade", Map.ofEntries(
+                + prompts.get(lang, "reviewer.label.caseTrade", Map.ofEntries(Map.entry("id", 2238),
                         Map.entry("symbol", "BTCUSDT"), Map.entry("side", "LONG"), Map.entry("opened", "10-09 09:00"), Map.entry("closed", "10-09 11:30"),
                         Map.entry("held", prompts.get(lang, "reviewer.label.duration.hours", Map.of("n", 2))),
                         Map.entry("entry", "100000"), Map.entry("stop", "99000"), Map.entry("target", "102000"), Map.entry("exit", "101400"),
                         Map.entry("manner", prompts.get(lang, "reviewer.label.closeManner.manual")), Map.entry("pnl", "+280"), Map.entry("funding", "-2"))) + "\n"
                 + prompts.get(lang, "reviewer.label.casePath", Map.ofEntries(
-                        Map.entry("mfe", "101900"), Map.entry("mfeAt", "11:05"), Map.entry("mfeFrac", "95%"), Map.entry("mae", "99650"), Map.entry("maeFrac", "35%"),
-                        Map.entry("t25", "20"), Map.entry("t50", "55"), Map.entry("firstBack", none), Map.entry("best4", "103100"), Map.entry("best24", "103800"),
-                        Map.entry("targetAfter", prompts.get(lang, "reviewer.label.caseTargetHit")))) + "\n"
+                        Map.entry("mfe", "101900"), Map.entry("mfeAt", "11:05"), Map.entry("mfeR", "+1.90R"), Map.entry("mae", "99650"), Map.entry("maeR", "-0.35R"),
+                        Map.entry("tHalf", "20"), Map.entry("t1", "55"), Map.entry("firstBack", none), Map.entry("best4", "103100"), Map.entry("best24", "103800"),
+                        Map.entry("targetsAfter", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 1, "total", 1))))) + "\n"
+                + assembler.replayLine(winner, lang) + "\n"
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100600 101300 101400")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩企稳 + 量比 1.6", "invalidation", "1h 收盘跌破 99000", "revisions", none)) + "\n"
                 + prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
                         Map.entry("adx", "31.2"), Map.entry("bollBw", "2.8"), Map.entry("atr", "420"), Map.entry("stopAtr", "2.4"), Map.entry("stopPct", "1.0"),
                         Map.entry("eventMin", none), Map.entry("eventTitle", ""), Map.entry("hour", "9"), Map.entry("funding", "0.0001"),
                         Map.entry("orderType", "MARKET"), Map.entry("leverage", "10"), Map.entry("pending", ""))) + "\n"
-                + prompts.get(lang, "reviewer.label.caseTrade", Map.ofEntries(
+                + prompts.get(lang, "reviewer.label.caseTrade", Map.ofEntries(Map.entry("id", 2241),
                         Map.entry("symbol", "BTCUSDT"), Map.entry("side", "LONG"), Map.entry("opened", "10-09 16:00"), Map.entry("closed", "10-09 17:40"),
                         Map.entry("held", prompts.get(lang, "reviewer.label.duration.minutes", Map.of("n", 100))),
                         Map.entry("entry", "101000"), Map.entry("stop", "100000"), Map.entry("target", "103000"), Map.entry("exit", "99950"),
                         Map.entry("manner", prompts.get(lang, "reviewer.label.closeManner.stopLoss")), Map.entry("pnl", "-400"), Map.entry("funding", "-1"))) + "\n"
                 + prompts.get(lang, "reviewer.label.casePath", Map.ofEntries(
-                        Map.entry("mfe", "101600"), Map.entry("mfeAt", "16:20"), Map.entry("mfeFrac", "30%"), Map.entry("mae", "99950"), Map.entry("maeFrac", "105%"),
-                        Map.entry("t25", "15"), Map.entry("t50", none), Map.entry("firstBack", "16:45"), Map.entry("best4", "100900"), Map.entry("best24", "100900"),
-                        Map.entry("targetAfter", prompts.get(lang, "reviewer.label.caseTargetMiss")))) + "\n"
+                        Map.entry("mfe", "101600"), Map.entry("mfeAt", "16:20"), Map.entry("mfeR", "+0.60R"), Map.entry("mae", "99950"), Map.entry("maeR", "-1.05R"),
+                        Map.entry("tHalf", "15"), Map.entry("t1", none), Map.entry("firstBack", "16:45"), Map.entry("best4", "100900"), Map.entry("best24", "100900"),
+                        Map.entry("targetsAfter", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 0, "total", 1))))) + "\n"
+                + assembler.replayLine(loser, lang) + "\n"
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100800 99950")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩 + 量比 1.1", "invalidation", "1h 收盘跌破 100000", "revisions", none)) + "\n"
                 + prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
                         Map.entry("adx", "17.5"), Map.entry("bollBw", "1.2"), Map.entry("atr", "380"), Map.entry("stopAtr", "2.6"), Map.entry("stopPct", "1.0"),
                         Map.entry("eventMin", "45"), Map.entry("eventTitle", "CPI"), Map.entry("hour", "16"), Map.entry("funding", "0.0003"),
-                        Map.entry("orderType", "MARKET"), Map.entry("leverage", "10"), Map.entry("pending", ""))) + "\n";
+                        Map.entry("orderType", "MARKET"), Map.entry("leverage", "10"), Map.entry("pending", ""))) + "\n"
+                + prompts.get(lang, "reviewer.label.caseReplaySummary") + "\n"
+                + playStats.replayLines(List.of(winner, loser), lang);
         String market = prompts.get(lang, "reviewer.label.marketHeader") + "\n"
                 + prompts.get(lang, "reviewer.label.marketRow", Map.of("symbol", "BTCUSDT", "open", "99800", "close", "100300",
                         "low", "99500", "lowAt", "10-09 03:00", "high", "103800", "highAt", "10-09 14:00", "range", "4.32")) + "\n";
         String ledger = prompts.get(lang, "reviewer.label.ledgerHeader", Map.of("n", 1)) + "\n"
+                + prompts.get(lang, "reviewer.label.ledgerQuota", Map.of("n", 1, "max", ExperienceLedger.MAX_ACTIVE,
+                        "perPlay", ExperienceLedger.MAX_PER_PLAY, "fullPlays", "",
+                        "r", 0, "rMax", ExperienceLedger.MAX_RESTRICTION, "rIds", "")) + "\n"
                 + prompts.get(lang, "reviewer.label.ledgerRow", Map.ofEntries(
                         Map.entry("id", 1), Map.entry("kind", prompts.get(lang, "trader.label.ledgerKind.hypothesis")),
                         Map.entry("slot", prompts.get(lang, "reviewer.op.slot.entry")), Map.entry("dir", prompts.get(lang, "reviewer.op.dir.opportunity")),
                         Map.entry("play", "PULLBACK"), Map.entry("text", lang == AgentLang.ZH ? "量比大于 1.5 的回踩才做" : "take the pullback only when volume ratio is above 1.5"),
-                        Map.entry("supports", 2), Map.entry("opposes", 0), Map.entry("untested", 0),
-                        Map.entry("evidence", lang == AgentLang.ZH ? "10-07 两笔" : "two trades on 10-07"), Map.entry("flagged", ""))) + "\n";
-        return new ReviewMaterialAssembler.ReviewMaterial(stats, "", cases, market, "", ledger, 2, Map.of());
+                        Map.entry("tally", prompts.get(lang, "reviewer.label.ledgerTally", Map.of("n", 2, "wins", 2, "losses", 0,
+                                "net", "+310.00", "days", 2, "segN", 2, "segNet", "+310.00", "segDays", 2, "miscited", ""))),
+                        Map.entry("evidence", lang == AgentLang.ZH ? "10-07 两笔" : "two trades on 10-07"))) + "\n";
+        return new ReviewMaterialAssembler.ReviewMaterial(stats, "", cases, market, "", ledger, Map.of(
+                2238L, new ExperienceLedger.PeriodTrade(new BigDecimal("280.00"), LocalDate.of(2026, 10, 9)),
+                2241L, new ExperienceLedger.PeriodTrade(new BigDecimal("-400.00"), LocalDate.of(2026, 10, 9))));
+    }
+
+    /** 一档止损宽度的重放结局；未决没有 r */
+    private static CaseFileBuilder.WidthOutcome width(String width, CaseFileBuilder.Outcome outcome, String r) {
+        return new CaseFileBuilder.WidthOutcome(new BigDecimal(width), outcome, r == null ? null : new BigDecimal(r));
     }
 }

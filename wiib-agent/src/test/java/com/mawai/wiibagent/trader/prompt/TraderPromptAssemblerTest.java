@@ -8,8 +8,9 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.mapper.AiTraderExperienceMapper;
-import com.mawai.wiibagent.mapper.AiTraderExperienceVerdictMapper;
+import com.mawai.wiibagent.mapper.AiTraderExperienceTradeMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -34,9 +35,10 @@ class TraderPromptAssemblerTest {
 
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final PromptCatalog prompts = new PromptCatalog();
-    /** 真账本只为认 memory 是不是渲染文本，三个 mapper 都是 mock */
+    /** 真账本只为认 memory 是不是渲染文本，mapper 和计划仓都是 mock */
     private final TraderPromptAssembler assembler = new TraderPromptAssembler(traderMapper, prompts,
-            new ExperienceLedger(mock(AiTraderExperienceMapper.class), mock(AiTraderExperienceVerdictMapper.class), traderMapper, prompts));
+            new ExperienceLedger(mock(AiTraderExperienceMapper.class), mock(AiTraderExperienceTradeMapper.class), traderMapper,
+                    mock(TraderPlanStore.class), prompts));
 
     private AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -367,7 +369,7 @@ class TraderPromptAssemblerTest {
     @Test
     void memoryInjectedWhenPresent() {
         AiTrader t = trader();
-        t.setMemory("【经验账本】\n#1 规律 执行型 ｜ 突破回踩不守住颈线就别追 ｜ 支持 3 反对 0");
+        t.setMemory("【经验账本】\n#1 规律·执行型 ｜ 突破回踩不守住颈线就别追 ｜ 照做 6 笔，赚 4 亏 2，合计 +310.50 USDT");
 
         // 认段头
         assertThat(assembler.assemble(t, AgentLang.ZH))
@@ -380,7 +382,7 @@ class TraderPromptAssemblerTest {
     @Test
     void ledgerUsageLineFollowsHoldSwitch() {
         AiTrader t = trader();
-        t.setMemory("【经验账本】\n〔PULLBACK〕\n#1 规律·限制型 ｜ ADX<30 不做回踩 ｜ 支持 3 反对 0");
+        t.setMemory("【经验账本】\n〔PULLBACK〕\n#1 规律·限制型 ｜ ADX<30 不做回踩 ｜ 违反 5 笔，赚 1 亏 4，合计 -420.00 USDT");
 
         t.setLearnedRestrictionHold(false);
         String denied = assembler.assemble(t, AgentLang.ZH);

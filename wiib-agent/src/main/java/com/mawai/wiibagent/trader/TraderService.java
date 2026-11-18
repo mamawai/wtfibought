@@ -230,7 +230,7 @@ public class TraderService {
 
     /**
      * 标记/取消忽略一笔已归档计划：只有主人能标；LIVE 是在场纪律不许藏，只有 CLOSED 可标。
-     * stale 只作用于教材层（论点战绩统计、复盘素材），权益/排行榜照常。
+     * stale 只作用于教材层（论点战绩统计、复盘素材、经验账本的账），权益/排行榜照常。
      */
     public String setPlanStale(long userId, long planId, boolean stale) {
         AiTrader t = mine(userId);
@@ -245,6 +245,8 @@ public class TraderService {
             return messages.get("trader.plan.notClosed");
         }
         planStore.setStale(planId, stale);
+        // 账本的账跟着变了：重渲染 memory，trader 下一轮读到的是改后的
+        ledger.writeMemory(t, langResolver.of(userId));
         return null;
     }
 
