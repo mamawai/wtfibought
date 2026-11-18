@@ -7,6 +7,7 @@
  */
 import type { Plugin } from 'vite';
 import type { ServerResponse } from 'node:http';
+import type { TraderExperience, TraderExperienceTally } from '../src/types';
 import { basePrice, hasFutures, klines, livePrice, roundPrice } from './market';
 import { handleQuotes } from './stompMock';
 import { LEDGER_BIZ_TYPES, LEDGER_ENTRIES, rankingRows } from './account';
@@ -107,14 +108,32 @@ const ENDPOINTS = [
   { id: 14, name: 'DeepSeek 备用', apiProtocol: 'openai', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', reasoningEffort: null, webSearch: false, antigravity: false, contextWindow: 128_000, apiKeyTail: 'b2Lm', isDefault: false },
 ];
 
-/** 经验账本：在用的规律两条、待验证一条、没做到一条、给主人的提醒一条、停用的一条 */
-const EXPERIENCES = [
-  { id: 1, roundNo: 3, playType: '趋势跟随', kind: 'RULE', slot: 'ENTRY', direction: 'OPPORTUNITY', text: '4h 收盘站稳 EMA20 且 MACD 柱连续走扩时顺势做多，比在区间中轨进场稳得多。', evidence: 'R3 的 BTC 多单 #501、R2 的 #318 都是这个形态进的，两笔合计 +612', supports: 4, opposes: 1, untested: 2, citedOpen: 3, citedHold: 5, status: 'ACTIVE', flagged: false, pinned: true, retireReason: null, createdAt: '2026-09-03 08:00:12' },
-  { id: 2, roundNo: 3, playType: null, kind: 'RULE', slot: 'RISK', direction: 'RESTRICTION', text: '同一时间三个币同向开仓，本质是一个仓位加了三倍杠杆；同向敞口已经有两个币就别再开。', evidence: 'R2 中段 BTC / ETH / SOL 三多同开，回撤 -14%', supports: 3, opposes: 0, untested: 4, citedOpen: 0, citedHold: 6, status: 'ACTIVE', flagged: false, pinned: false, retireReason: null, createdAt: '2026-09-03 08:00:12' },
-  { id: 3, roundNo: 3, playType: '区间高抛', kind: 'HYPOTHESIS', slot: 'FAIL_DEF', direction: 'EXECUTION', text: 'RSI 顶背离只说明动能减弱，不算反转；结构没破之前的背离空单大多被止损。', evidence: 'SOL 空单 #502 逆势进场，目前浮亏', supports: 1, opposes: 0, untested: 1, citedOpen: 0, citedHold: 1, status: 'ACTIVE', flagged: false, pinned: false, retireReason: null, createdAt: '2026-09-04 08:00:31' },
-  { id: 4, roundNo: 3, playType: null, kind: 'GAP', slot: 'EXEC', direction: 'EXECUTION', text: '指令要求「开仓前先写失效条件」，有两次是开完仓才补写的计划。', evidence: '#465、#442 的计划晚于开仓', supports: 5, opposes: 2, untested: 0, citedOpen: 0, citedHold: 0, status: 'ACTIVE', flagged: true, pinned: false, retireReason: null, createdAt: '2026-09-04 08:00:31' },
-  { id: 5, roundNo: 3, playType: null, kind: 'FINDING', slot: 'ENTRY', direction: 'OPPORTUNITY', text: '你的指令偏好「顺着 4h 结构做」，但 SOL 这一局大部分时间在区间里横着，R3 有 6 次醒来是空转。考虑把 SOL 从币种里拿掉，或者写明区间里怎么做。', evidence: 'R3 第 1–3 天 SOL 的 6 次例行唤醒都以「没有边缘机会」收尾', supports: 0, opposes: 0, untested: 0, citedOpen: 0, citedHold: 0, status: 'ACTIVE', flagged: false, pinned: false, retireReason: null, createdAt: '2026-09-05 08:00:05' },
-  { id: 6, roundNo: 3, playType: null, kind: 'RULE', slot: 'RISK', direction: 'EXECUTION', text: '止损挂在整数关口更安全。', evidence: 'R1 两笔单子', supports: 2, opposes: 3, untested: 1, citedOpen: 1, citedHold: 0, status: 'RETIRED', flagged: false, pinned: false, retireReason: '主人手动停用', createdAt: '2026-09-02 08:00:44' },
+/** 一条经验名下单子的账，没给的都是 0 */
+const tally = (t: Partial<TraderExperienceTally>): TraderExperienceTally => ({
+  under: 0, wins: 0, losses: 0, net: 0, days: 0, segmentUnder: 0, segmentNet: 0, segmentDays: 0, kept: 0, broken: 0, miscited: 0, ...t,
+});
+
+/**
+ * 经验账本：规律两条（机会型钉住了、限制型有引用不符）、待验证两条（存量的「怎么算看错」不会转正、降过级的入场条件）、
+ * 没做到两条（破满 2 次它看得到、只破 1 次还看不到）、给主人的提醒一条、停用的一条。段号从 0 起，转正、降级各加一
+ */
+const EXPERIENCES: TraderExperience[] = [
+  { id: 1, roundNo: 3, playType: '趋势跟随', kind: 'RULE', slot: 'ENTRY', direction: 'OPPORTUNITY', text: '4h 收盘站稳 EMA20 且 MACD 柱连续走扩时顺势做多，比在区间中轨进场稳得多。', evidence: 'R3 的 BTC 多单 #501、R2 的 #318 都是这个形态进的，两笔合计 +612', status: 'ACTIVE', pinned: true, retireReason: null, sourceId: null, citedOpen: 3, citedHold: 5, segmentNo: 1, idleReviews: 0, createdAt: '2026-09-03 08:00:12', shown: true,
+    tally: tally({ under: 9, wins: 6, losses: 3, net: 1284.6, days: 6, segmentUnder: 4, segmentNet: 512.3, segmentDays: 3 }) },
+  { id: 2, roundNo: 3, playType: null, kind: 'RULE', slot: 'RISK', direction: 'RESTRICTION', text: '同一时间三个币同向开仓，本质是一个仓位加了三倍杠杆；同向敞口已经有两个币就别再开。', evidence: 'R2 中段 BTC / ETH / SOL 三多同开，回撤 -14%', status: 'ACTIVE', pinned: false, retireReason: null, sourceId: null, citedOpen: 0, citedHold: 6, segmentNo: 1, idleReviews: 1, createdAt: '2026-09-03 08:00:12', shown: true,
+    tally: tally({ under: 7, wins: 2, losses: 5, net: -846.2, days: 4, segmentUnder: 2, segmentNet: -310.4, segmentDays: 1, miscited: 2 }) },
+  { id: 3, roundNo: 3, playType: '区间高抛', kind: 'HYPOTHESIS', slot: 'FAIL_DEF', direction: 'EXECUTION', text: 'RSI 顶背离只说明动能减弱，不算反转；结构没破之前的背离空单大多被止损。', evidence: 'SOL 空单 #502 逆势进场，目前浮亏', status: 'ACTIVE', pinned: false, retireReason: null, sourceId: null, citedOpen: 0, citedHold: 0, segmentNo: 0, idleReviews: 2, createdAt: '2026-09-04 08:00:31', shown: false,
+    tally: tally({ under: 3, wins: 2, losses: 1, net: 186.4, days: 2, segmentUnder: 3, segmentNet: 186.4, segmentDays: 2 }) },
+  { id: 4, roundNo: 3, playType: null, kind: 'GAP', slot: 'EXEC', direction: 'EXECUTION', text: '指令要求「开仓前先写失效条件」，有两次是开完仓才补写的计划。', evidence: '#465、#442 的计划晚于开仓', status: 'ACTIVE', pinned: false, retireReason: null, sourceId: null, citedOpen: 0, citedHold: 0, segmentNo: 0, idleReviews: 0, createdAt: '2026-09-04 08:00:31', shown: true,
+    tally: tally({ kept: 5, broken: 2 }) },
+  { id: 5, roundNo: 3, playType: null, kind: 'FINDING', slot: 'ENTRY', direction: 'OPPORTUNITY', text: '你的指令偏好「顺着 4h 结构做」，但 SOL 这一局大部分时间在区间里横着，R3 有 6 次醒来是空转。考虑把 SOL 从币种里拿掉，或者写明区间里怎么做。', evidence: 'R3 第 1–3 天 SOL 的 6 次例行唤醒都以「没有边缘机会」收尾', status: 'ACTIVE', pinned: false, retireReason: null, sourceId: null, citedOpen: 0, citedHold: 0, segmentNo: 0, idleReviews: 0, createdAt: '2026-09-05 08:00:05', shown: false,
+    tally: tally({}) },
+  { id: 6, roundNo: 3, playType: null, kind: 'RULE', slot: 'RISK', direction: 'EXECUTION', text: '止损挂在整数关口更安全。', evidence: 'R1 两笔单子', status: 'RETIRED', pinned: false, retireReason: '主人手动停用', sourceId: null, citedOpen: 1, citedHold: 0, segmentNo: 1, idleReviews: 0, createdAt: '2026-09-02 08:00:44', shown: false,
+    tally: tally({ under: 6, wins: 3, losses: 3, net: 74.8, days: 4, segmentUnder: 1, segmentNet: -42.6, segmentDays: 1 }) },
+  { id: 7, roundNo: 3, playType: null, kind: 'GAP', slot: 'EXEC', direction: 'EXECUTION', text: '失效条件触发 → 当根收盘就平，不等下一根确认', evidence: '#465 收盘跌破 205 后多拿了一根才平', status: 'ACTIVE', pinned: false, retireReason: null, sourceId: null, citedOpen: 0, citedHold: 0, segmentNo: 0, idleReviews: 0, createdAt: '2026-09-05 08:00:05', shown: false,
+    tally: tally({ kept: 3, broken: 1 }) },
+  { id: 8, roundNo: 3, playType: '突破跟随', kind: 'HYPOTHESIS', slot: 'ENTRY', direction: 'OPPORTUNITY', text: '日线新高且放量突破前高时跟进做多，不等回踩。', evidence: 'R2 的 #402、#417 放量突破后都拿到了目标', status: 'ACTIVE', pinned: false, retireReason: null, sourceId: null, citedOpen: 6, citedHold: 0, segmentNo: 2, idleReviews: 0, createdAt: '2026-09-02 08:00:44', shown: false,
+    tally: tally({ under: 12, wins: 6, losses: 6, net: 127.7, days: 7, segmentUnder: 2, segmentNet: -79.8, segmentDays: 2 }) },
 ];
 
 const DEFAULT_INSTRUCTIONS = `## 目标

@@ -839,7 +839,7 @@ export interface TraderOwnerView {
   wakeWindow: string | null;
 }
 
-/** 经验账本一条（ai_trader_experience 原样）。复盘落账，代码计数；RETIRED 的留在退役名单不注入 */
+/** 经验账本一条。复盘把单子归到它名下，代码按单子记账、自动转正降级退役；RETIRED 的留在退役名单不注入 */
 export interface TraderExperience {
   id: number;
   roundNo: number;
@@ -850,19 +850,45 @@ export interface TraderExperience {
   direction: 'OPPORTUNITY' | 'RESTRICTION' | 'EXECUTION';
   text: string;
   evidence: string | null;
-  supports: number;
-  opposes: number;
-  untested: number;
+  status: 'ACTIVE' | 'RETIRED';
+  /** 主人钉住：代码不降级不退役，复盘也删不掉 */
+  pinned: boolean;
+  retireReason: string | null;
+  /** 来源条目的编号；没有为 null */
+  sourceId: number | null;
   /** trader 结论里引用过它的次数：开仓轮 / 观望轮 */
   citedOpen: number;
   citedHold: number;
-  status: 'ACTIVE' | 'RETIRED';
-  /** 代码举旗待复审 */
-  flagged: boolean;
-  /** 主人钉住：不举旗 */
-  pinned: boolean;
-  retireReason: string | null;
+  /** 第几段，从 0 起：每转正或降级一次加一 */
+  segmentNo: number;
+  /** 连着几篇复盘名下没有新单子 */
+  idleReviews: number;
   createdAt: string;
+  /** trader 现在看不看得到：现役的规律，或破满 2 笔的现役执行缺口 */
+  shown: boolean;
+  tally: TraderExperienceTally;
+}
+
+/**
+ * 一条经验名下单子的账，代码按单子记。
+ * 名下：机会型、执行型是照它做的单子；限制型是没听它、还是做了的单子
+ */
+export interface TraderExperienceTally {
+  /** 累计：几笔、赚几笔、亏几笔、合计净盈亏（USDT）、覆盖几个不同的日子 */
+  under: number;
+  wins: number;
+  losses: number;
+  net: number;
+  days: number;
+  /** 当前这一段：转正和降级只看这段 */
+  segmentUnder: number;
+  segmentNet: number;
+  segmentDays: number;
+  /** 执行缺口：守几次、破几次 */
+  kept: number;
+  broken: number;
+  /** 引用了它、但单子不属于它说的情况的次数 */
+  miscited: number;
 }
 
 /**

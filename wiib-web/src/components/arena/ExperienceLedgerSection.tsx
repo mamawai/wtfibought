@@ -5,7 +5,7 @@ import { traderApi } from '../../api';
 import { useToast } from '../ui/use-toast';
 import { Tabs } from '../ui/tabs';
 import { SureButton } from '../SureButton';
-import { cn } from '../../lib/utils';
+import { cn, fmtSigned } from '../../lib/utils';
 import type { TraderExperience } from '../../types';
 
 type Tab = 'active' | 'findings' | 'retired';
@@ -22,17 +22,16 @@ function inTab(e: TraderExperience, tab: Tab): boolean {
   return e.status === 'ACTIVE' && (tab === 'findings') === (e.kind === 'FINDING');
 }
 
-/**
- * 它现在会不会看到这条、还差几次转正。转正条件同后端 ExperienceLedger：对满 3 次，且错的不超过对的三分之一
- */
-function stateOf(e: TraderExperience): { key: string; need?: number } {
-  if (e.status === 'RETIRED') return { key: 'ledger.state.off' };
-  if (e.kind === 'FINDING') return { key: 'ledger.state.me' };
-  if (e.kind === 'HYPOTHESIS') {
-    const need = Math.max(3, 3 * e.opposes) - e.supports;
-    return need > 0 ? { key: 'ledger.state.hyp', need } : { key: 'ledger.state.hypReady' };
-  }
-  return { key: 'ledger.state.inj' };
+/** 会转正的假设只在这两格；失败判定、失败处理、盈利处理三格不再新增，存量的留着但不转正 */
+const PROMOTABLE: TraderExperience['slot'][] = ['ENTRY', 'RISK'];
+
+/** 它现在看不看得到这条（后端给的 shown）；看不到的说一句什么时候才看得到 */
+function stateOf(e: TraderExperience): string {
+  if (e.status === 'RETIRED') return 'off';
+  if (e.kind === 'FINDING') return 'me';
+  if (e.shown) return 'on';
+  if (e.kind === 'GAP') return 'gap';
+  return PROMOTABLE.includes(e.slot) ? 'hyp' : 'stay';
 }
 
 /**
@@ -128,7 +127,7 @@ export function ExperienceLedgerSection({ id }: { id: string }) {
   );
 }
 
-/** 一条经验：标签一排（右边能点的按钮）→ 正文 → 证据 / 停用原因 → 对错计数、它用过几次、它现在看不看得到 */
+/** 一条经验：标签一排（右边能点的按钮）→ 正文 → 证据 / 停用原因 → 名下单子的账、它用过几次、它现在看不看得到 */
 function LedgerRow({ e, busy, retiring, reason, onReason, onPin, onRetire, onRetireOk, onRetireCancel, onRevive, onDelete }: {
   e: TraderExperience; busy: boolean; retiring: boolean; reason: string; onReason: (v: string) => void;
   onPin: () => void; onRetire: () => void; onRetireOk: () => void; onRetireCancel: () => void;
@@ -137,7 +136,6 @@ function LedgerRow({ e, busy, retiring, reason, onReason, onPin, onRetire, onRet
   const { t } = useTranslation(['ai', 'common']);
   const retired = e.status === 'RETIRED';
   const finding = e.kind === 'FINDING';
-  const st = stateOf(e);
   // 删除只给已停用的和给你的提醒；在用的经验先停用
   const del = (
     <SureButton className="btn sm" idleClassName="plain" sureLabel={t('ledger.deleteSure')} title={t('ledger.deleteConfirm')} onConfirm={onDelete}>
@@ -155,7 +153,6 @@ function LedgerRow({ e, busy, retiring, reason, onReason, onPin, onRetire, onRet
             <span className="tag">{e.playType ?? t('ledger.general')}</span>
           </>
         )}
-        {e.flagged && !retired && <span className="tag w">{t('ledger.flagged')}</span>}
         {e.pinned && !retired && <span className="tag ink"><Pin className="ic" />{t('ledger.pinned')}</span>}
         <span className="acts">
           {busy ? <Loader2 className="ic animate-spin mute" /> : retired ? (
@@ -175,14 +172,11 @@ function LedgerRow({ e, busy, retiring, reason, onReason, onPin, onRetire, onRet
       {e.evidence && <p className="evd">{t('ledger.evidenceOf', { v: e.evidence })}</p>}
       {retired && e.retireReason && <p className="evd">{t('ledger.retiredReasonOf', { v: e.retireReason })}</p>}
       <div className="ft">
-        {!finding && (
-          <span>
-            <Trans ns="ai" i18nKey={e.kind === 'GAP' ? 'ledger.countsGap' : 'ledger.counts'}
-                   values={{ s: e.supports, o: e.opposes, u: e.untested }} components={{ b: <b /> }} />
-          </span>
+        {!finding && <Tally e={e} />}
+        {!finding && e.citedOpen + e.citedHold > 0 && (
+          <span>{t('ledger.cited', { open: t('ledger.times', { count: e.citedOpen }), hold: t('ledger.times', { count: e.citedHold }) })}</span>
         )}
-        {!finding && e.citedOpen + e.citedHold > 0 && <span>{t('ledger.cited', { open: e.citedOpen, hold: e.citedHold })}</span>}
-        <span>{t(st.key, { n: st.need })}</span>
+        <span>{t(`ledger.state.${stateOf(e)}`)}</span>
       </div>
       {retiring && (
         <div className="rt">
@@ -199,7 +193,40 @@ function LedgerRow({ e, busy, retiring, reason, onReason, onPin, onRetire, onRet
   );
 }
 
-/** 说明：有什么用 → 一条经验怎么来的（复查也会重审）→ 你要做的 */
+/**
+ * 名下单子的账：规律和假设记钱（限制型记的是违反它的单子），转正或降级过的再列出当前这一段；
+ * 执行缺口只记碰到几次、做到几次
+ */
+function Tally({ e }: { e: TraderExperience }) {
+  const { t } = useTranslation('ai');
+  const tl = e.tally;
+  if (e.kind === 'GAP') {
+    return (
+      <span>
+        <Trans ns="ai" i18nKey="ledger.gapTally" count={tl.kept + tl.broken} values={{ kept: tl.kept }} components={{ b: <b /> }} />
+      </span>
+    );
+  }
+  return (
+    <>
+      <span>
+        <Trans ns="ai" i18nKey={e.direction === 'RESTRICTION' ? 'ledger.tallyAgainst' : 'ledger.tally'} count={tl.under}
+               values={{ w: tl.wins, l: tl.losses, net: fmtSigned(tl.net), days: t('ledger.days', { count: tl.days }) }}
+               components={{ b: <b /> }} />
+      </span>
+      {tl.miscited > 0 && <span>{t('ledger.miscited', { count: tl.miscited })}</span>}
+      {/* 段号从 0 起，大于 0 说明转正或降级过，当前段才和累计不一样 */}
+      {e.segmentNo > 0 && (
+        <span>
+          <Trans ns="ai" i18nKey={e.kind === 'RULE' ? 'ledger.segmentRule' : 'ledger.segmentHyp'} count={tl.segmentUnder}
+                 values={{ net: fmtSigned(tl.segmentNet), days: t('ledger.days', { count: tl.segmentDays }) }} components={{ b: <b /> }} />
+        </span>
+      )}
+    </>
+  );
+}
+
+/** 说明：有什么用 → 一条经验怎么来的（名下记哪些单子、代码怎么转正降级停用）→ 你要做的 */
 function LedgerHelp() {
   const { t } = useTranslation('ai');
   return (
@@ -215,7 +242,9 @@ function LedgerHelp() {
           <div key={n}><b>{t(`ledger.help.step${n}`)}</b><span>{t(`ledger.help.step${n}Sub`)}</span></div>
         ))}
       </div>
-      <p className="mt-3">{t('ledger.help.recheck')}</p>
+      <p className="mt-3">{t('ledger.help.under')}</p>
+      <p className="mt-1.5">{t('ledger.help.auto')}</p>
+      <p className="mt-1.5">{t('ledger.help.manage')}</p>
       <p className="mt-1.5"><span className="tag w sm">{t('ledger.kind.GAP')}</span> {t('ledger.help.gap')}</p>
       <p className="mt-1.5"><span className="tag o sm">{t('ledger.kind.FINDING')}</span> {t('ledger.help.finding')}</p>
       <h4>{t('ledger.help.todoTitle')}</h4>
