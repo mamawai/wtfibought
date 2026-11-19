@@ -56,9 +56,9 @@ class TraderActionToolkitTest {
     /** formType 是前端认卡的唯一依据，三个工具各推各的，串了就是点唤醒弹出复盘 */
     @Test
     void 三个工具各推各的表单() {
-        toolkit.wakeTrader(CTX);
-        toolkit.reviewTraderNow(CTX);
-        toolkit.leaveNoteToTrader("仓位轻点", 3, CTX);
+        toolkit.wakeTrader(null, CTX);
+        toolkit.reviewTraderNow(null, CTX);
+        toolkit.leaveNoteToTrader("仓位轻点", 3, null, CTX);
 
         assertThat(pushed).extracting(d -> d.path("form").asString(null))
                 .containsExactly("wake", "review", "note");
@@ -67,7 +67,7 @@ class TraderActionToolkitTest {
     /** 草稿与轮次都得随卡带过去：用户要在卡上看着改，而不是重打一遍 */
     @Test
     void 留言把草稿与轮次一起预填() {
-        String out = toolkit.leaveNoteToTrader("今晚有 CPI，仓位放轻", 3, CTX);
+        String out = toolkit.leaveNoteToTrader("今晚有 CPI，仓位放轻", 3, null, CTX);
 
         JsonNode prefill = pushed.getFirst().get("prefill");
         assertThat(prefill.path("note").asString(null)).isEqualTo("今晚有 CPI，仓位放轻");
@@ -78,11 +78,21 @@ class TraderActionToolkitTest {
     /** 模型没说几轮就别替它填：塞个空值进去，卡上会显示成"0 轮"这种谁也没要过的数 */
     @Test
     void 不填轮次时预填里没有轮次字段() {
-        toolkit.leaveNoteToTrader("仓位轻点", null, CTX);
+        toolkit.leaveNoteToTrader("仓位轻点", null, null, CTX);
 
         JsonNode prefill = pushed.getFirst().get("prefill");
         assertThat(prefill.path("note").asString(null)).isEqualTo("仓位轻点");
         assertThat(prefill.has("rounds")).isFalse();
+        assertThat(prefill.has("trader")).isFalse();
+    }
+
+    /** 点了名就随卡带过去（去掉首尾空格），卡上先高亮那个；开卡本身不等用户选 */
+    @Test
+    void 点名放进预填() {
+        String out = toolkit.wakeTrader(" Alpha ", CTX);
+
+        assertThat(pushed.getFirst().path("prefill").path("trader").asString(null)).isEqualTo("Alpha");
+        assertThat(parse(out).path("ok").asBoolean(false)).isTrue();
     }
 
     /**
@@ -93,7 +103,7 @@ class TraderActionToolkitTest {
     void 推不出去时如实说没打开() {
         runRegistry.finish(SESSION);
 
-        JsonNode out = parse(toolkit.wakeTrader(CTX));
+        JsonNode out = parse(toolkit.wakeTrader(null, CTX));
 
         assertThat(out.path("ok").asBoolean(false)).isFalse();
         assertThat(out.path("message").asString(null)).contains("没能打开").contains("面板");
@@ -103,7 +113,7 @@ class TraderActionToolkitTest {
     /** 没有会话号（state 里没带）时连推都不该推，更不能回一句"已打开" */
     @Test
     void 没有会话号时不推表单() {
-        JsonNode out = parse(toolkit.leaveNoteToTrader("仓位轻点", 1, new ToolContext(Map.of())));
+        JsonNode out = parse(toolkit.leaveNoteToTrader("仓位轻点", 1, null, new ToolContext(Map.of())));
 
         assertThat(out.path("ok").asBoolean(false)).isFalse();
         verify(runRegistry, never()).publishForm(any(), any(), any());
@@ -122,7 +132,7 @@ class TraderActionToolkitTest {
             // ToolContext 是框架注入的、不进 schema，模型看不见
             assertThat(m.getParameterTypes())
                     .as("工具 %s 的参数", m.getName())
-                    .allSatisfy(type -> assertThat(type).isIn(String.class, Integer.class, ToolContext.class));  // 只有 note / rounds
+                    .allSatisfy(type -> assertThat(type).isIn(String.class, Integer.class, ToolContext.class));  // 只有 note / rounds / trader 名字
         }
     }
 

@@ -54,8 +54,8 @@ public class RankingService {
     /** 单页封顶，同 force-orders / 全站成交那条口径 */
     private static final int MAX_PAGE_SIZE = 100;
 
-    /** AI Trader 子账户的用户名：ai_trader_{主人}_r{局号}（wiib-agent TraderService 建号） */
-    private static final Pattern TRADER_ACCOUNT = Pattern.compile(UserService.TRADER_ACCOUNT_PREFIX + "(\\d+)_r(\\d+)");
+    /** AI Trader 子账户的用户名：ai_trader_t{traderId}_r{局号}（wiib-agent TraderService 建号） */
+    private static final Pattern TRADER_ACCOUNT = Pattern.compile(UserService.TRADER_ACCOUNT_PREFIX + "t(\\d+)_r(\\d+)");
 
     @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
@@ -90,7 +90,7 @@ public class RankingService {
         }).toList();
     }
 
-    /** 是 AI Trader 的子账户就给出用户名的匹配结果（1=主人，2=局号），不是给 null */
+    /** 是 AI Trader 的子账户就给出用户名的匹配结果（1=traderId，2=局号），不是给 null */
     private static Matcher traderAccount(User user) {
         Matcher m = TRADER_ACCOUNT.matcher(user.getUsername());
         return m.matches() && UserService.isTraderSubAccount(user) ? m : null;

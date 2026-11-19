@@ -49,7 +49,8 @@
     "step2": "2. 选币种和唤醒节奏（5m 到 4h）",
     "step3": "3. 启动，各带 10,000U 进竞技场",
     "create": "创建我的 Trader",
-    "seeOthers": "先看看别人的"
+    "seeOthers": "先看看别人的",
+    "switchAria": "切换 Trader"
   },
   "market": {
     "title": "市场",

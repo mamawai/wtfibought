@@ -41,10 +41,10 @@ class UserServiceQuantAccountTest {
     void 同名机器人号直接复用() {
         User robot = new User();
         robot.setId(9L);
-        robot.setLinuxDoId("internal:ai_trader_7_r2");
+        robot.setLinuxDoId("internal:ai_trader_t7_r2");
         when(userMapper.selectOne(any())).thenReturn(robot);
 
-        assertThat(service.ensureQuantAccount("ai_trader_7_r2", new BigDecimal("10000"))).isSameAs(robot);
+        assertThat(service.ensureQuantAccount("ai_trader_t7_r2", new BigDecimal("10000"))).isSameAs(robot);
         verify(userMapper, never()).insert(any(User.class));
     }
 
@@ -55,7 +55,7 @@ class UserServiceQuantAccountTest {
         human.setGoogleId("google-sub-1");
         when(userMapper.selectOne(any())).thenReturn(human);
 
-        assertThrows(BizException.class, () -> service.ensureQuantAccount("ai_trader_7_r2", new BigDecimal("10000")));
+        assertThrows(BizException.class, () -> service.ensureQuantAccount("ai_trader_t7_r2", new BigDecimal("10000")));
         verify(userMapper, never()).insert(any(User.class));
     }
 }

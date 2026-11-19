@@ -141,11 +141,11 @@ class AccountResetServiceTest {
 
     @Test
     void deleteQuantAccountUnregistersIndexThenDeletes() {
-        when(userMapper.selectOne(any())).thenReturn(robotUser(9L, "ai_trader_1_r1"));
+        when(userMapper.selectOne(any())).thenReturn(robotUser(9L, "ai_trader_t1_r1"));
         FuturesPosition p = openPosition();
         when(positionMapper.selectList(any())).thenReturn(List.of(p));
 
-        service.deleteQuantAccount("ai_trader_1_r1");
+        service.deleteQuantAccount("ai_trader_t1_r1");
 
         // 弃局账户可能还挂着仓位，同样必须先摘触发索引再删表（幽灵索引问题与重置一致）
         InOrder order = inOrder(indexService, purgeTx);
@@ -157,7 +157,7 @@ class AccountResetServiceTest {
     void deleteQuantAccountIdempotentWhenMissing() {
         when(userMapper.selectOne(any())).thenReturn(null);
 
-        service.deleteQuantAccount("ai_trader_1_r1");   // 不抛：quant 重试无害
+        service.deleteQuantAccount("ai_trader_t1_r1");   // 不抛：quant 重试无害
 
         verify(purgeTx, never()).deleteAccount(anyLong());
     }
@@ -170,10 +170,10 @@ class AccountResetServiceTest {
 
         User human = new User();
         human.setId(10L);
-        human.setUsername("ai_trader_9_r1");
+        human.setUsername("ai_trader_t9_r1");
         human.setLinuxDoId("linuxdo-oauth-123");
         when(userMapper.selectOne(any())).thenReturn(human);
-        assertThrows(BizException.class, () -> service.deleteQuantAccount("ai_trader_9_r1"));
+        assertThrows(BizException.class, () -> service.deleteQuantAccount("ai_trader_t9_r1"));
 
         verify(purgeTx, never()).deleteAccount(anyLong());
     }

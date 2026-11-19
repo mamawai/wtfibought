@@ -158,11 +158,11 @@ export function ArenaDetail() {
   const toggleStale = useCallback((r: TradeRecordView) => {
     if (!r.plan) return;
     const next = r.plan.stale !== true;
-    void traderApi.setPlanStale(r.plan.id, next).then(() =>
+    void traderApi.setPlanStale(traderId, r.plan.id, next).then(() =>
       setTrades(prev => prev.map(x => x.positionId === r.positionId && x.plan
         ? { ...x, plan: { ...x.plan, stale: next } } : x))
     ).catch((e: Error) => toast(e.message || t('toast.actionFailed'), 'error'));
-  }, [toast, t]);
+  }, [traderId, toast, t]);
 
   // 定时刷新之外，一轮唤醒刚结束（endedAt 变）也立刻重拉：新决策行、净值点、持仓都在那一刻落库
   useEffect(() => {
@@ -396,7 +396,7 @@ export function ArenaDetail() {
               <button type="button" className="ib" aria-label={t('common:refresh')} title={t('common:refresh')} onClick={refresh}>
                 <RefreshCw className="ic" />
               </button>
-              {tr.mine && <Link className="btn" to="/my-trader"><SlidersHorizontal className="ic" />{t('detail.configure')}</Link>}
+              {tr.mine && <Link className="btn" to={`/my-trader/${traderId}`}><SlidersHorizontal className="ic" />{t('detail.configure')}</Link>}
             </div>
           </div>
         )}

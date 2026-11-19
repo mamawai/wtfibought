@@ -34,7 +34,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 自己写下的表。trader 依旧是那个"醒来读库→决策→写库→睡去"的无状态回路，
  * 它根本不知道有人在跟它聊天。
  * <p>
- * 所有方法按 userId 取自己的 trader，取不到就如实说"还没有"——归属判断只此一处。
+ * 五个查询拿的是已经定位好的 trader：查谁的、查哪个由调用方按烤死的 userId 定（见 TraderLocator）。
+ * 返回都带 trader 名字，模型清楚自己看的是哪一个，下次也能直接点名。
  */
 @Service
 @RequiredArgsConstructor
@@ -66,20 +67,39 @@ public class TraderChatService {
 
     // ===== 查询（纯读库） =====
 
+    /** 名下全部 trader 的简表：名字、状态、本局收益率、心跳、币种、模型 */
+    public String list(long userId, AgentLang lang) {
+        List<AiTrader> mine = traderService.listMine(userId);
+        if (mine.isEmpty()) {
+            return noTrader(lang);
+        }
+        ArrayNode arr = MAPPER.createArrayNode();
+        for (AiTrader t : mine) {
+            UserLlmEndpoint endpoint = modelFactory.endpointFor(t);
+            arr.add(MAPPER.createObjectNode()
+                    .put("name", t.getName())
+                    .put("status", t.getStatus())
+                    .put("pnlPct", TraderService.pnlPct(traderService.latestEquity(t)))
+                    .put("intervalCode", t.getIntervalCode())
+                    .put("symbols", t.getSymbols())
+                    .put("model", endpoint == null ? null : endpoint.getModel()));
+        }
+        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
+                .put("hasTrader", true)
+                .set("traders", arr)
+                .put("listNote", prompts.get(lang, "chat.traderQuery.listNote")));
+    }
+
     /**
      * 概况：状态/权益/轮次/配置 + 上次/下次唤醒与拦因 + 经验账本全文（账本是"它学到了什么"的唯一载体，必须给全）。
      * 唤醒三项与动作面板同源，表单卡上给用户看的就是它们。
      */
-    public String overview(long userId, AgentLang lang) {
-        AiTrader t = traderService.mine(userId);
-        if (t == null) {
-            return noTrader(lang);
-        }
+    public String overview(AiTrader t, AgentLang lang) {
         UserLlmEndpoint endpoint = modelFactory.endpointFor(t);   // 模型名从端点库现解析，ai_trader 已没有 model 列
         TraderActionService.WakeState wake = actionService.wakeState(t, lang);
         return MAPPER.writeValueAsString(MAPPER.createObjectNode()
                 .put("hasTrader", true)
-                .put("name", t.getName())
+                .put("trader", t.getName())
                 .put("status", t.getStatus())
                 .put("pausedReason", t.getPausedReason())
                 .put("roundNo", t.getRoundNo())
@@ -113,11 +133,7 @@ public class TraderChatService {
     }
 
     /** 当前持仓：口径与唤醒时注入给 trader 的账户状态一致，免得两处说法对不上。 */
-    public String positions(long userId, AgentLang lang) {
-        AiTrader t = traderService.mine(userId);
-        if (t == null) {
-            return noTrader(lang);
-        }
+    public String positions(AiTrader t, AgentLang lang) {
         ArrayNode arr = MAPPER.createArrayNode();
         for (FuturesPositionDTO p : simTradeClient.getAllPositions(t.getSimUserId())) {
             ObjectNode row = MAPPER.createObjectNode()
@@ -142,6 +158,7 @@ public class TraderChatService {
         }
         return MAPPER.writeValueAsString(MAPPER.createObjectNode()
                 .put("hasTrader", true)
+                .put("trader", t.getName())
                 .put("equity", traderService.latestEquity(t))
                 .set("positions", arr));
     }
@@ -152,11 +169,7 @@ public class TraderChatService {
      *
      * @param kind 只取这一类（TRADE/ALERT/MANUAL/REVIEW，不分大小写），空=全部。问复盘只拉 REVIEW，不用连带交易轮的全文
      */
-    public String decisions(long userId, Integer limit, String kind, AgentLang lang) {
-        AiTrader t = traderService.mine(userId);
-        if (t == null) {
-            return noTrader(lang);
-        }
+    public String decisions(AiTrader t, Integer limit, String kind, AgentLang lang) {
         int n = limit == null ? DEFAULT_DECISIONS : Math.clamp(limit, 1, MAX_DECISIONS);
         String kindFilter = kind == null || kind.isBlank() ? null : kind.trim().toUpperCase(Locale.ROOT);
         if (kindFilter != null && !ALL_KINDS.contains(kindFilter)) {
@@ -192,17 +205,14 @@ public class TraderChatService {
         }
         return MAPPER.writeValueAsString(MAPPER.createObjectNode()
                 .put("hasTrader", true)
+                .put("trader", t.getName())
                 .put("roundNo", t.getRoundNo())
                 .set("decisions", arr)
                 .put("kindNote", prompts.get(lang, "chat.traderQuery.kindNote")));
     }
 
     /** 交易计划：存活的全给，另附最近归档的几条——"上一笔为什么平了"只看 LIVE 是答不了的。 */
-    public String plans(long userId, AgentLang lang) {
-        AiTrader t = traderService.mine(userId);
-        if (t == null) {
-            return noTrader(lang);
-        }
+    public String plans(AiTrader t, AgentLang lang) {
         ArrayNode live = MAPPER.createArrayNode();
         planStore.list(t.getId(), t.getRoundNo()).forEach(p -> live.add(planJson(p)));
         ArrayNode closed = MAPPER.createArrayNode();
@@ -212,6 +222,7 @@ public class TraderChatService {
                 .forEach(p -> closed.add(planJson(p)));
         return MAPPER.writeValueAsString(MAPPER.createObjectNode()
                 .put("hasTrader", true)
+                .put("trader", t.getName())
                 .set("livePlans", live)
                 .set("recentClosedPlans", closed)
                 .put("planNote", prompts.get(lang, "chat.traderQuery.planNote")));
@@ -222,11 +233,7 @@ public class TraderChatService {
      * 看这个，plans 没有盈亏、overview 只有总权益。
      * 主人标记忽略（stale）的那笔不进对话教材（口径3），与 plans 同口径。count/wins/totalClosedPnl 只算返回的这几笔。
      */
-    public String trades(long userId, Integer limit, AgentLang lang) {
-        AiTrader t = traderService.mine(userId);
-        if (t == null) {
-            return noTrader(lang);
-        }
+    public String trades(AiTrader t, Integer limit, AgentLang lang) {
         int n = limit == null ? DEFAULT_TRADES : Math.clamp(limit, 1, MAX_TRADES);
         ArrayNode arr = MAPPER.createArrayNode();
         int wins = 0;
@@ -273,11 +280,42 @@ public class TraderChatService {
         }
         return MAPPER.writeValueAsString(MAPPER.createObjectNode()
                 .put("hasTrader", true)
+                .put("trader", t.getName())
                 .put("count", arr.size())
                 .put("wins", wins)
                 .put("totalClosedPnl", total)
                 .set("trades", arr)
                 .put("tradeNote", prompts.get(lang, "chat.traderQuery.tradeNote")));
+    }
+
+    // ===== 定不到 trader 时的回执 =====
+
+    public String noTrader(AgentLang lang) {
+        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
+                .put("hasTrader", false)
+                .put("message", prompts.get(lang, "chat.traderQuery.noTrader")));
+    }
+
+    /** 点的名字名下没有：把名单一并给回去 */
+    public String unknownName(String name, List<AiTrader> mine, AgentLang lang) {
+        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
+                .put("hasTrader", true)
+                .put("error", prompts.get(lang, "chat.traderQuery.unknownName", Map.of("name", name)))
+                .set("traders", MAPPER.valueToTree(mine.stream().map(AiTrader::getName).toList())));
+    }
+
+    /** 选择卡上没选（超时或点了停止）：这一轮随即结束 */
+    public String notPicked(AgentLang lang) {
+        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
+                .put("hasTrader", true)
+                .put("error", prompts.get(lang, "chat.traderQuery.notPicked")));
+    }
+
+    /** 指令生成器里点了别的名字：这段对话只能查它为之写的那一个 */
+    public String onlyThis(AiTrader t, AgentLang lang) {
+        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
+                .put("hasTrader", true)
+                .put("error", prompts.get(lang, "chat.traderQuery.onlyThis", Map.of("name", t.getName()))));
     }
 
     // ===== 内部 =====
@@ -324,12 +362,6 @@ public class TraderChatService {
 
     private static String plain(BigDecimal v) {
         return v == null ? "" : v.stripTrailingZeros().toPlainString();
-    }
-
-    private String noTrader(AgentLang lang) {
-        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
-                .put("hasTrader", false)
-                .put("message", prompts.get(lang, "chat.traderQuery.noTrader")));
     }
 
 }

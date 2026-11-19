@@ -1,7 +1,6 @@
 package com.mawai.wiibagent.trader;
 
 import com.mawai.wiibcommon.entity.AiTrader;
-import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.llm.LlmEndpointService;
@@ -17,8 +16,8 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 交易员的 BYOK 模型工厂：按 trader 缓存 ChatModel。端点每次唤醒现解析（{@link LlmEndpointService#resolve}：
- * TRADER 绑定优先，否则用户默认端点），指纹一变（换绑定/改端点/换 key）下次唤醒自动重建，无需显式刷新。
+ * 交易员的 BYOK 模型工厂：按 trader 缓存 ChatModel。端点每次唤醒现解析（{@link #endpointFor}：
+ * trader 自己选的端点优先，否则用户默认端点），指纹一变（换端点/改端点/换 key）下次唤醒自动重建，无需显式刷新。
  * 建模本身在 {@link ByokModelBuilder}，与对话轨同一条路。
  */
 @Slf4j
@@ -50,9 +49,14 @@ public class TraderModelFactory {
         return entry.model();
     }
 
-    /** trader 实际用的端点（可能为 null）；模型名展示、决策日志记 model 都从这里取，不再有 ai_trader.model 列 */
+    /**
+     * trader 实际用的端点（可能为 null）：选了的那条还在、也归这个用户就用它，否则用户默认端点。
+     * 模型名展示、决策日志记 model 都从这里取
+     */
     public UserLlmEndpoint endpointFor(AiTrader trader) {
-        return endpointService.resolve(trader.getUserId(), UserLlmBinding.TRADER);
+        UserLlmEndpoint chosen = trader.getLlmEndpointId() == null ? null
+                : endpointService.get(trader.getUserId(), trader.getLlmEndpointId());
+        return chosen != null ? chosen : endpointService.defaultOf(trader.getUserId());
     }
 
     /** 这个 trader 联不联网搜索，两道都要过：主人在「我的 Trader」开了，所用端点也开了 */

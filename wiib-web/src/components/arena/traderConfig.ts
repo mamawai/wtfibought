@@ -1,12 +1,14 @@
 /**
  * trader 配置台与工作台共用的常量和北京时间计算。
  * 数字都跟后端同一份，改一边要改另一边：可选币=agent 的 binance.symbols + crypto-futures-symbols，
- * 币数上限=TraderService.MAX_SYMBOLS，心跳档位=TraderScheduler.WAKE_INTERVALS，
+ * 币数上限=TraderService.MAX_SYMBOLS，每人 trader 上限=TraderService.MAX_PER_USER，心跳档位=TraderScheduler.WAKE_INTERVALS，
  * 警报基准=VolatilitySentinel.BASE_THRESHOLD_PCT，思考步数=TraderWakeupRunner.MAX_MODEL_CALLS
  */
 
 export const TRADER_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'XRPUSDT', 'BNBUSDT', 'ZECUSDT', 'HYPEUSDT'];
 export const MAX_SYMBOLS = 3;
+/** 每人最多几个 trader */
+export const MAX_TRADERS = 3;
 /** 心跳档位 → 分钟 */
 export const INTERVAL_MIN: Record<string, number> = { '15m': 15, '1h': 60, '4h': 240 };
 export const INTERVALS = Object.keys(INTERVAL_MIN);

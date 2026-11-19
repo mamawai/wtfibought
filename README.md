@@ -67,7 +67,7 @@ The main act here is backtesting, quant strategy simulation, and AI Trader:
 - **Perpetual futures**: cross and isolated margin, long and short, 1-150x tiered leverage (matching Binance's tier table), 0.02% maker / 0.04% taker, real funding rates (charged both ways at each contract's own settlement time, at the rate Binance actually settled), automatic liquidation; `HYPEUSDT` is perpetual-only (Binance lists no spot pair), and gold `XAUUSDT` / crude oil `CLUSDT` are TradFi perpetuals with no spot market.
 - **BTC 5-minute prediction**: Polymarket order books plus a Chainlink BTC price line, auto-settled on 5-minute windows (settlement uses Polymarket open/close prices) with a dynamic fee.
 - **Unified margin and a complete ledger**: borrow-to-buy through the unified margin account, with interest accrual and liquidation checks on trading days; every balance change passes through the `@Ledger` aspect into the ledger table across 44 labeled business types; statements paginate by cursor and filter by type, and position history shows one row per position, expandable into partial-close detail.
-- **AI Trader Arena**: one trader per user, BYOK with your own model and key, woken on your chosen candle interval to make decisions (up to 3 symbols, capped at 12 model calls per wake); you set the leverage range and margin budget, and orders outside them are rejected rather than silently clamped. A daily self-review builds its experience ledger. The decision timeline, entry theses and revisions, reviews and the experience ledger, and equity curve are public site-wide; the token-by-token live wake feed and raw tool receipts are visible only to the trader's owner.
+- **AI Trader Arena**: up to 3 traders per user, each on the endpoint you pick for it (BYOK, your own model and key), woken on your chosen candle interval to make decisions (up to 3 symbols, capped at 12 model calls per wake); you set the leverage range and margin budget, and orders outside them are rejected rather than silently clamped. A daily self-review builds its experience ledger. The decision timeline, entry theses and revisions, reviews and the experience ledger, and equity curve are public site-wide; the token-by-token live wake feed and raw tool receipts are visible only to the trader's owner.
 - **Research Workbench**: BYOK chat open to everyone over SSE streaming; a single main agent calls the market / news / trader read-only tools itself and writes the answer (tool calls in one batch run in parallel), handing long jobs to background sub-agents. Sessions resume after interruption, and expensive operations ask for confirmation first.
 - **Three live strategies**: FIBO (Fibonacci retracement limit orders), SQZMOM (squeeze-release shorts), and TURTLE (channel breakout), all driven by 5m candle closes, executing into a dedicated sim sub-account or Binance USDT-M Testnet. Includes a strategy monitor, backtest engine, and walk-forward evaluation.
 - **Leaderboard and community**: leaderboard with two sort dimensions (total assets / trading profit) backed by daily asset snapshots and 30-day curves, user profiles, an anonymized site-wide trade feed, and a two-level comment board with notification push.
@@ -141,9 +141,9 @@ Five independent LLM call sites, each with its own shape and stop conditions. Th
 
 | Device | Shape | Tools | Loop | Trigger | Model source | Output |
 |---|---|:---:|:---:|---|---|---|
-| **trader agent** | ReAct loop | 18 | ✓ max 12 calls | Every candle close / volatility alert / position event / watch condition hit | Owner's key | Real position changes + decision entry |
-| **reviewer workflow** | Single call (one more when entries await re-review) | 0 | ✗ | Daily boundary | Same as trader | Case reviews + experience ledger |
-| **chat agent** | Single ReAct main agent + background sub-runs | 24 | ✓ max 8 calls (each sub-run counts its own) | User question | User's key | Streamed answer |
+| **trader agent** | ReAct loop | 20 | ✓ max 12 calls | Every candle close / volatility alert / position event / watch condition hit | Owner's key | Real position changes + decision entry |
+| **reviewer workflow** | Single call | 0 | ✗ | Daily boundary | Same as trader | Case reviews + experience ledger |
+| **chat agent** | Single ReAct main agent + background sub-runs | 25 | ✓ max 8 calls (each sub-run counts its own) | User question | User's key | Streamed answer |
 | **replay coach** | Single call | 0 | ✗ | "AI hint / AI review" in manual replay | User's key | Chart hint / full-session review |
 | **behavior workflow** | Single call | 0 | ✗ | User asks for it in chat | User's key | Behavior profile report |
 
@@ -175,7 +175,7 @@ Trader configuration: endpoint and model, candle interval, wake window, leverage
 
 ### Research Workbench
 
-BYOK streaming chat. The main agent calls tools itself for data and answers, handing long jobs to background sub-agents. Actions on your AI Trader render a form; you press the button.
+BYOK streaming chat. The main agent calls tools itself for data and answers, handing long jobs to background sub-agents. Actions on your AI Traders render a form; you press the button (and pick which trader when you have several).
 
 <img src="docs/images/readme/chat.png" width="80%" alt="Research workbench" />
 

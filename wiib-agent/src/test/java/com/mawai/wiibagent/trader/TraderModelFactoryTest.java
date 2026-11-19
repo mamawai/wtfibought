@@ -1,7 +1,6 @@
 package com.mawai.wiibagent.trader;
 
 import com.mawai.wiibcommon.entity.AiTrader;
-import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibagent.llm.ApiKeyCrypto;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
@@ -17,11 +16,10 @@ import java.util.Base64;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** BYOK 建模：构造期不许抛（纯本地构造，不发网络请求）；端点换了要换模型，没端点要响亮失败。 */
+/** BYOK 建模：构造期不许抛（纯本地构造，不发网络请求）；端点怎么选；端点换了要换模型，没端点要响亮失败。 */
 class TraderModelFactoryTest {
 
     private final ApiKeyCrypto crypto = new ApiKeyCrypto(Base64.getEncoder().encodeToString(new byte[32]));
@@ -58,7 +56,7 @@ class TraderModelFactoryTest {
      */
     @Test
     void openAiProtocolModelBuildsWithoutCredentialError() {
-        when(endpointService.resolve(eq(9L), eq(UserLlmBinding.TRADER))).thenReturn(endpoint(1, "openai", "deepseek-chat"));
+        when(endpointService.defaultOf(9L)).thenReturn(endpoint(1, "openai", "deepseek-chat"));
 
         ChatModel model = factory().modelFor(trader());
 
@@ -67,21 +65,38 @@ class TraderModelFactoryTest {
 
     @Test
     void responsesProtocolModelBuilds() {
-        when(endpointService.resolve(eq(9L), eq(UserLlmBinding.TRADER))).thenReturn(endpoint(1, "responses", "grok-4"));
+        when(endpointService.defaultOf(9L)).thenReturn(endpoint(1, "responses", "grok-4"));
 
         assertThat(factory().modelFor(trader())).isNotNull();
     }
 
-    /** 同一端点复用缓存；用户换绑到另一条端点（指纹变）下次唤醒拿到新模型 */
+    /** trader 用哪条端点：选了的那条拿得到就用它；没选、或拿不到（被删了、不归这个用户）用默认端点 */
+    @Test
+    void endpointForUsesChosenElseDefault() {
+        UserLlmEndpoint chosen = endpoint(5, "openai", "deepseek-reasoner");
+        UserLlmEndpoint dft = endpoint(1, "openai", "deepseek-chat");
+        when(endpointService.get(9L, 5L)).thenReturn(chosen);
+        when(endpointService.defaultOf(9L)).thenReturn(dft);
+        AiTrader explicit = trader();
+        explicit.setLlmEndpointId(5L);
+        AiTrader gone = trader();
+        gone.setLlmEndpointId(6L);
+
+        assertThat(factory().endpointFor(explicit)).isSameAs(chosen);
+        assertThat(factory().endpointFor(trader())).isSameAs(dft);
+        assertThat(factory().endpointFor(gone)).isSameAs(dft);
+    }
+
+    /** 同一端点复用缓存；换到另一条端点（指纹变）下次唤醒拿到新模型 */
     @Test
     void endpointChangeRebuildsModel() {
         TraderModelFactory f = factory();
         UserLlmEndpoint a = endpoint(1, "openai", "deepseek-chat");
-        when(endpointService.resolve(eq(9L), eq(UserLlmBinding.TRADER))).thenReturn(a);
+        when(endpointService.defaultOf(9L)).thenReturn(a);
         ChatModel first = f.modelFor(trader());
         assertThat(f.modelFor(trader())).isSameAs(first);
 
-        when(endpointService.resolve(eq(9L), eq(UserLlmBinding.TRADER))).thenReturn(endpoint(2, "openai", "deepseek-reasoner"));
+        when(endpointService.defaultOf(9L)).thenReturn(endpoint(2, "openai", "deepseek-reasoner"));
 
         assertThat(f.modelFor(trader())).isNotSameAs(first);
     }
@@ -91,7 +106,7 @@ class TraderModelFactoryTest {
     void webSearchNeedsTraderSwitchAndEndpoint() {
         UserLlmEndpoint endpoint = endpoint(1, "responses", "grok-4");
         endpoint.setWebSearch(true);
-        when(endpointService.resolve(eq(9L), eq(UserLlmBinding.TRADER))).thenReturn(endpoint);
+        when(endpointService.defaultOf(9L)).thenReturn(endpoint);
         AiTrader switchedOn = trader();
         switchedOn.setWebSearchEnabled(true);
 
@@ -105,7 +120,7 @@ class TraderModelFactoryTest {
     /** 用户把端点删光：抛异常让 runner 的失败处理接管，不能悄悄返回 null 让下游 NPE */
     @Test
     void noEndpointThrows() {
-        when(endpointService.resolve(eq(9L), eq(UserLlmBinding.TRADER))).thenReturn(null);
+        when(endpointService.defaultOf(9L)).thenReturn(null);
 
         assertThatThrownBy(() -> factory().modelFor(trader()))
                 .isInstanceOf(IllegalStateException.class)

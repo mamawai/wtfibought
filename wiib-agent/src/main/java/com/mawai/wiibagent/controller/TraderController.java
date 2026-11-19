@@ -9,7 +9,6 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
-import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -23,6 +22,7 @@ import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.TraderActionService;
+import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
@@ -51,8 +51,9 @@ import java.util.function.Predicate;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * AI Trader：我的 trader 管理（创建/配置/启停/重置）+ 公开竞技场（排行/详情/决策时间线/净值曲线）。
- * 竞技场读接口登录即可看（决策日志天生公开——观赏性是产品核心）；写操作只动自己的 trader。
+ * AI Trader：我的 trader 管理（每人最多 3 个；创建/配置/启停/重置）+ 公开竞技场（排行/详情/决策时间线/净值曲线）。
+ * 竞技场读接口登录即可看（决策日志天生公开——观赏性是产品核心）；写操作只动自己的 trader：
+ * 主人操作都是 /{id}/…，不归当前用户的 id 一律当"trader 不存在"。
  * <p>
  * 唤醒现场（SSE，事件名即 {@code event:}，data 是 JSON，帧的拼装在 {@code WakeTrace}）。
  * 工作流程只给主人看——下面两个接口都拒绝非主人，公开的只到决策正文为止：
@@ -71,6 +72,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 public class TraderController {
 
     private final TraderService traderService;
+    private final TraderModelFactory modelFactory;
     private final SimTradeClient simTradeClient;
     private final TraderPromptAssembler promptAssembler;
     private final LlmEndpointService endpointService;
@@ -95,7 +97,7 @@ public class TraderController {
     }
 
     /**
-     * 主人视图：公开视图 + 配置回显。llmEndpointId=显式绑定的端点，null=跟随默认端点；wakeWindow null=全天；
+     * 主人视图：公开视图 + 配置回显。llmEndpointId=这个 trader 选的端点，null=跟随默认端点；wakeWindow null=全天；
      * learnedRestrictionHold=账本里限制型规律能否作为观望理由；webSearchEnabled=联网搜索开关，端点也开了才真搜
      */
     public record TraderOwnerView(TraderPublicView pub, Long llmEndpointId,
@@ -120,21 +122,21 @@ public class TraderController {
     }
 
     @GetMapping("/mine")
-    @Operation(summary = "我的trader（含配置回显，key只回尾4位）")
-    public Result<TraderOwnerView> mine(@CurrentUserId long userId) {
-        AiTrader t = traderService.mine(userId);
-        if (t == null) {
-            return Result.ok(null);
-        }
-        return Result.ok(new TraderOwnerView(publicView(t, userId, modelName(t)),
-                endpointService.bindings(userId).get(UserLlmBinding.TRADER),
+    @Operation(summary = "我名下的全部trader（按id升序，可能为空；含配置回显）")
+    public Result<List<TraderOwnerView>> mine(@CurrentUserId long userId) {
+        return Result.ok(traderService.listMine(userId).stream().map(t -> ownerView(t, userId)).toList());
+    }
+
+    private TraderOwnerView ownerView(AiTrader t, long userId) {
+        return new TraderOwnerView(publicView(t, userId, modelName(t)),
+                t.getLlmEndpointId(),
                 t.getCustomPrompt(), TraderSpec.of(t),
                 !Boolean.FALSE.equals(t.getAlertEnabled()),
                 t.getAlertThresholdMult() == null ? BigDecimal.ONE : t.getAlertThresholdMult(),
                 !Boolean.FALSE.equals(t.getReviewEnabled()),
                 Boolean.TRUE.equals(t.getLearnedRestrictionHold()),
                 Boolean.TRUE.equals(t.getWebSearchEnabled()),
-                t.getWakeWindow()));
+                t.getWakeWindow());
     }
 
     /** 提示词预览的入参：规格项太多，走 POST 带 body 比堆十个 query 参数干净。 */
@@ -187,30 +189,30 @@ public class TraderController {
     }
 
     @PostMapping
-    @Operation(summary = "创建trader（连通性校验→key加密→开sim子账户注资10000）")
-    public Result<Void> create(@CurrentUserId long userId, @RequestBody UpsertRequest req) {
-        String err = traderService.create(userId, req.toReq());
+    @Operation(summary = "创建trader（每人最多3个、名下不重名；连通性校验→入库→开sim子账户注资10000），返回新trader的id")
+    public Result<Long> create(@CurrentUserId long userId, @RequestBody UpsertRequest req) {
+        TraderService.CreateResult r = traderService.create(userId, req.toReq());
+        return r.error() == null ? Result.ok(r.id()) : Result.fail(r.error());
+    }
+
+    @PutMapping("/{id}/config")
+    @Operation(summary = "改配置（提示词改完下一根K线生效）")
+    public Result<Void> updateConfig(@CurrentUserId long userId, @PathVariable long id, @RequestBody UpsertRequest req) {
+        String err = traderService.updateConfig(userId, id, req.toReq());
         return err == null ? Result.ok(null) : Result.fail(err);
     }
 
-    @PutMapping("/config")
-    @Operation(summary = "改配置（apiKey传空=不换；提示词改完下一根K线生效）")
-    public Result<Void> updateConfig(@CurrentUserId long userId, @RequestBody UpsertRequest req) {
-        String err = traderService.updateConfig(userId, req.toReq());
-        return err == null ? Result.ok(null) : Result.fail(err);
-    }
-
-    @PostMapping("/start")
+    @PostMapping("/{id}/start")
     @Operation(summary = "启动")
-    public Result<Void> start(@CurrentUserId long userId) {
-        String err = traderService.start(userId);
+    public Result<Void> start(@CurrentUserId long userId, @PathVariable long id) {
+        String err = traderService.start(userId, id);
         return err == null ? Result.ok(null) : Result.fail(err);
     }
 
-    @PostMapping("/pause")
+    @PostMapping("/{id}/pause")
     @Operation(summary = "暂停")
-    public Result<Void> pause(@CurrentUserId long userId) {
-        String err = traderService.pause(userId);
+    public Result<Void> pause(@CurrentUserId long userId, @PathVariable long id) {
+        String err = traderService.pause(userId, id);
         return err == null ? Result.ok(null) : Result.fail(err);
     }
 
@@ -218,11 +220,12 @@ public class TraderController {
     public record ResetRequest(Boolean carryNotes) {
     }
 
-    @PostMapping("/reset")
+    @PostMapping("/{id}/reset")
     @Operation(summary = "重置开新局（旧账户挂单全撤、仓位全平，round+1，新子账户注资10000，历史留档；唤醒或复盘中拒；carryNotes=false不带入经验账本）")
-    public Result<Void> reset(@CurrentUserId long userId, @RequestBody(required = false) ResetRequest req) {
+    public Result<Void> reset(@CurrentUserId long userId, @PathVariable long id,
+                              @RequestBody(required = false) ResetRequest req) {
         boolean carry = req == null || req.carryNotes() == null || req.carryNotes();
-        String err = traderService.reset(userId, carry);
+        String err = traderService.reset(userId, id, carry);
         return err == null ? Result.ok(null) : Result.fail(err);
     }
 
@@ -230,11 +233,11 @@ public class TraderController {
      * confirmName 走 query 不走 body：DELETE 带 body 规范允许但一路上的代理不一定转发，
      * 而这就是一个短名字，没有藏进 body 的必要。
      */
-    @DeleteMapping
-    @Operation(summary = "删除我的 trader（决策/计划/每局sim子账户/TRADER端点绑定全物理删除，竞技场里彻底消失，删完可重建；需名字确认，唤醒中拒）")
-    public Result<Void> delete(@CurrentUserId long userId,
+    @DeleteMapping("/{id}")
+    @Operation(summary = "删除我的一个 trader（决策/计划/每局sim子账户全物理删除，竞技场里彻底消失，名额空出来可再建；需名字确认，唤醒中拒）")
+    public Result<Void> delete(@CurrentUserId long userId, @PathVariable long id,
                                @RequestParam(required = false) String confirmName) {
-        String err = traderService.delete(userId, confirmName);
+        String err = traderService.delete(userId, id, confirmName);
         return err == null ? Result.ok(null) : Result.fail(err);
     }
 
@@ -242,14 +245,14 @@ public class TraderController {
     public record PlanStaleRequest(Boolean stale) {
     }
 
-    @PostMapping("/plan/{planId}/stale")
+    @PostMapping("/{id}/plan/{planId}/stale")
     @Operation(summary = "标记/取消忽略一笔已了结交易（仅本人、仅CLOSED；忽略后AI统计与复盘不再参考，公开记录不变）")
-    public Result<Void> setPlanStale(@CurrentUserId long userId, @PathVariable long planId,
+    public Result<Void> setPlanStale(@CurrentUserId long userId, @PathVariable long id, @PathVariable long planId,
                                      @RequestBody PlanStaleRequest req) {
         if (req.stale() == null) {
             return Result.fail(messages.get("trader.plan.staleRequired"));
         }
-        String err = traderService.setPlanStale(userId, planId, req.stale());
+        String err = traderService.setPlanStale(userId, id, planId, req.stale());
         return err == null ? Result.ok(null) : Result.fail(err);
     }
 
@@ -265,12 +268,12 @@ public class TraderController {
                                  LocalDateTime createdAt, boolean shown, ExperienceLedger.Tally tally) {
     }
 
-    @GetMapping("/mine/experiences")
-    @Operation(summary = "我的经验账本（本局全部条目：现役、发现、退役），每条带代码按名下单子算的账")
-    public Result<List<ExperienceView>> experiences(@CurrentUserId long userId) {
-        AiTrader t = traderService.mine(userId);
+    @GetMapping("/{id}/experiences")
+    @Operation(summary = "我的 trader 的经验账本（仅主人；本局全部条目：现役、发现、退役），每条带代码按名下单子算的账")
+    public Result<List<ExperienceView>> experiences(@CurrentUserId long userId, @PathVariable long id) {
+        AiTrader t = traderService.owned(userId, id);
         if (t == null) {
-            return Result.fail(messages.get("trader.notCreated"));
+            return Result.fail(messages.get("trader.notFound"));
         }
         List<AiTraderExperience> all = ledger.all(t.getId(), t.getRoundNo());
         Map<Long, ExperienceLedger.Tally> tallies = ledger.tallies(all);
@@ -291,41 +294,43 @@ public class TraderController {
     public record RetireRequest(String reason) {
     }
 
-    @PostMapping("/experience/{id}/pin")
+    @PostMapping("/{id}/experience/{eid}/pin")
     @Operation(summary = "钉住/取消钉住一条经验（钉住的不会被代码自动降级或退役，复盘也删不掉）")
-    public Result<Void> pinExperience(@CurrentUserId long userId, @PathVariable long id, @RequestBody PinRequest req) {
+    public Result<Void> pinExperience(@CurrentUserId long userId, @PathVariable long id, @PathVariable long eid,
+                                      @RequestBody PinRequest req) {
         if (req.pinned() == null) {
             return Result.fail(messages.get("trader.experience.pinnedRequired"));
         }
-        return experienceOp(userId, t -> ledger.pin(t.getId(), id, req.pinned()));
+        return experienceOp(userId, id, t -> ledger.pin(t.getId(), eid, req.pinned()));
     }
 
-    @PostMapping("/experience/{id}/retire")
+    @PostMapping("/{id}/experience/{eid}/retire")
     @Operation(summary = "主人退役一条经验（留在退役名单，不再注入；理由会给复盘看）")
-    public Result<Void> retireExperience(@CurrentUserId long userId, @PathVariable long id, @RequestBody RetireRequest req) {
+    public Result<Void> retireExperience(@CurrentUserId long userId, @PathVariable long id, @PathVariable long eid,
+                                         @RequestBody RetireRequest req) {
         if (req.reason() == null || req.reason().isBlank()) {
             return Result.fail(messages.get("trader.experience.reasonRequired"));
         }
-        return experienceOp(userId, t -> ledger.retireByOwner(t.getId(), id, req.reason()));
+        return experienceOp(userId, id, t -> ledger.retireByOwner(t.getId(), eid, req.reason()));
     }
 
-    @PostMapping("/experience/{id}/revive")
+    @PostMapping("/{id}/experience/{eid}/revive")
     @Operation(summary = "把退役的经验恢复为现役")
-    public Result<Void> reviveExperience(@CurrentUserId long userId, @PathVariable long id) {
-        return experienceOp(userId, t -> ledger.revive(t.getId(), id));
+    public Result<Void> reviveExperience(@CurrentUserId long userId, @PathVariable long id, @PathVariable long eid) {
+        return experienceOp(userId, id, t -> ledger.revive(t.getId(), eid));
     }
 
-    @DeleteMapping("/experience/{id}")
+    @DeleteMapping("/{id}/experience/{eid}")
     @Operation(summary = "物理删除一条经验及其名下单子")
-    public Result<Void> deleteExperience(@CurrentUserId long userId, @PathVariable long id) {
-        return experienceOp(userId, t -> ledger.delete(t.getId(), id));
+    public Result<Void> deleteExperience(@CurrentUserId long userId, @PathVariable long id, @PathVariable long eid) {
+        return experienceOp(userId, id, t -> ledger.delete(t.getId(), eid));
     }
 
     /** 主人改了账本就重渲染 memory，trader 下一轮读到的是改后的 */
-    private Result<Void> experienceOp(long userId, Predicate<AiTrader> op) {
-        AiTrader t = traderService.mine(userId);
+    private Result<Void> experienceOp(long userId, long traderId, Predicate<AiTrader> op) {
+        AiTrader t = traderService.owned(userId, traderId);
         if (t == null) {
-            return Result.fail(messages.get("trader.notCreated"));
+            return Result.fail(messages.get("trader.notFound"));
         }
         if (!op.test(t)) {
             return Result.fail(messages.get("trader.experience.notFound"));
@@ -339,35 +344,36 @@ public class TraderController {
     // 一律 Result.ok(ActionResult)：业务结果（被拦下、无素材跳过）要显示在卡片里，
     // 走 Result.fail 会被前端当成接口报错弹 toast。
 
-    @GetMapping("/action-panel")
+    @GetMapping("/{id}/action-panel")
     @Operation(summary = "动作面板状态：上次/下次唤醒、留言剩余轮次、可否唤醒与复盘")
-    public Result<TraderActionService.ActionPanel> actionPanel(@CurrentUserId long userId) {
-        return Result.ok(actionService.panel(userId));
+    public Result<TraderActionService.ActionPanel> actionPanel(@CurrentUserId long userId, @PathVariable long id) {
+        TraderActionService.ActionPanel panel = actionService.panel(userId, id);
+        return panel == null ? Result.fail(messages.get("trader.notFound")) : Result.ok(panel);
     }
 
-    @PostMapping("/note")
+    @PostMapping("/{id}/note")
     @Operation(summary = "给 trader 留言（覆盖未读的那条，按轮次逐轮注入）")
-    public Result<TraderActionService.ActionResult> saveNote(@CurrentUserId long userId,
+    public Result<TraderActionService.ActionResult> saveNote(@CurrentUserId long userId, @PathVariable long id,
                                                              @RequestBody NoteRequest req) {
-        return Result.ok(actionService.saveNote(userId, req.note(), req.rounds()));
+        return Result.ok(actionService.saveNote(userId, id, req.note(), req.rounds()));
     }
 
-    @DeleteMapping("/note")
+    @DeleteMapping("/{id}/note")
     @Operation(summary = "撤回还没被读走的留言")
-    public Result<TraderActionService.ActionResult> clearNote(@CurrentUserId long userId) {
-        return Result.ok(actionService.clearNote(userId));
+    public Result<TraderActionService.ActionResult> clearNote(@CurrentUserId long userId, @PathVariable long id) {
+        return Result.ok(actionService.clearNote(userId, id));
     }
 
-    @PostMapping("/wake")
+    @PostMapping("/{id}/wake")
     @Operation(summary = "手动唤醒（真实执行一次决策，可能开/平仓）")
-    public Result<TraderActionService.ActionResult> wake(@CurrentUserId long userId) {
-        return Result.ok(actionService.wake(userId));
+    public Result<TraderActionService.ActionResult> wake(@CurrentUserId long userId, @PathVariable long id) {
+        return Result.ok(actionService.wake(userId, id));
     }
 
-    @PostMapping("/review")
+    @PostMapping("/{id}/review")
     @Operation(summary = "点播复盘（异步跑；无新素材则跳过且不消耗模型调用）")
-    public Result<TraderActionService.ActionResult> review(@CurrentUserId long userId) {
-        return Result.ok(actionService.review(userId));
+    public Result<TraderActionService.ActionResult> review(@CurrentUserId long userId, @PathVariable long id) {
+        return Result.ok(actionService.review(userId, id));
     }
 
     /** rounds 空=1 轮（等同"念一次就清"）；越界由 service 钳到 1~24 */
@@ -381,11 +387,10 @@ public class TraderController {
     public Result<List<TraderPublicView>> arena() {
         long viewer = viewerId();
         List<AiTrader> all = traderService.all();
-        // 模型名按人批量解析（两条查询），不在循环里逐个查
-        Map<Long, UserLlmEndpoint> endpoints = endpointService.resolveForUsers(
-                all.stream().map(AiTrader::getUserId).toList(), UserLlmBinding.TRADER);
+        // 模型名按 trader 批量解析，不在循环里逐个查
+        Map<Long, UserLlmEndpoint> endpoints = endpointService.resolveForTraders(all);
         return Result.ok(all.stream()
-                .map(t -> publicView(t, viewer, endpoints.containsKey(t.getUserId()) ? endpoints.get(t.getUserId()).getModel() : null))
+                .map(t -> publicView(t, viewer, endpoints.containsKey(t.getId()) ? endpoints.get(t.getId()).getModel() : null))
                 .sorted((a, b) -> b.pnlPct().compareTo(a.pnlPct()))
                 .toList());
     }
@@ -514,18 +519,15 @@ public class TraderController {
 
     /** 单个 trader 当前端点的模型名；用户把端点删光了给 null（前端显示"未配置"） */
     private String modelName(AiTrader t) {
-        UserLlmEndpoint e = endpointService.resolve(t.getUserId(), UserLlmBinding.TRADER);
+        UserLlmEndpoint e = modelFactory.endpointFor(t);
         return e == null ? null : e.getModel();
     }
 
     private TraderPublicView publicView(AiTrader t, long viewerUserId, String model) {
         BigDecimal equity = traderService.latestEquity(t);
-        BigDecimal pnlPct = equity.subtract(TraderService.INITIAL_BALANCE)
-                .divide(TraderService.INITIAL_BALANCE, 4, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100"));
         return new TraderPublicView(t.getId(), t.getName(), model, t.getStatus(), t.getPausedReason(),
                 t.getSymbols(), t.getIntervalCode(), t.getRoundNo(),
-                equity.setScale(2, RoundingMode.HALF_UP), pnlPct.setScale(2, RoundingMode.HALF_UP),
+                equity.setScale(2, RoundingMode.HALF_UP), TraderService.pnlPct(equity),
                 t.getUserId() == viewerUserId, t.getWakeWindow());
     }
 }

@@ -10,7 +10,6 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.i18n.RequestLang;
@@ -32,8 +31,10 @@ import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -45,10 +46,11 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * trader 生命周期：创建（选端点→连通性校验→开sim子账户注资）→ 启停 → 重置开新局。
- * 每用户 1 个；每局一个独立 sim 子账户（账号名 ai_trader_{userId}_r{round}），历史局留档。
+ * trader 生命周期：创建（选端点→连通性校验→入库→开sim子账户注资）→ 启停 → 重置开新局。
+ * 每用户最多 {@link #MAX_PER_USER} 个，同一个人名下不重名；每局一个独立 sim 子账户
+ * （账号名 ai_trader_t{traderId}_r{round}），历史局留档。
  * <p>
- * 模型端点不再存在 ai_trader 行里：从用户端点库（AI 页「模型配置」）里选一条绑到 TRADER 用途，
+ * 模型端点：从用户端点库（AI 页「模型配置」）里选一条记在 llm_endpoint_id，
  * 不选就跟随用户默认端点；唤醒时 {@link TraderModelFactory} 现解析。
  */
 @Slf4j
@@ -57,6 +59,8 @@ import java.util.stream.Collectors;
 public class TraderService {
 
     public static final BigDecimal INITIAL_BALANCE = new BigDecimal("10000");
+    /** 每用户最多几个 trader（前端 traderConfig.MAX_TRADERS 同一个数） */
+    public static final int MAX_PER_USER = 3;
     /** 轮次保留窗口：每 trader 只留最近 10 局（R10），开新局时更早的整局数据连同 sim 子账户一并清除 */
     public static final int MAX_ROUNDS_KEPT = 10;
     /** 币种上限：单轮 12 次模型调用按币摊，一个币扎实求证约 3 次，3 币正好（前端 MyTrader.MAX_SYMBOLS 同一个数） */
@@ -82,6 +86,8 @@ public class TraderService {
     private final MessageCatalog messages;
     /** 经验账本：开新局带入、清旧局、删 trader 时一并清 */
     private final ExperienceLedger ledger;
+    /** 创建时插行、开 sim 子账户、回写 sim_user_id 放一个事务 */
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（北京时间），null=全天。
@@ -96,8 +102,20 @@ public class TraderService {
                             Boolean webSearchEnabled, String wakeWindow) {
     }
 
-    public AiTrader mine(long userId) {
-        return traderMapper.selectOne(new LambdaQueryWrapper<AiTrader>().eq(AiTrader::getUserId, userId));
+    /** 创建结果：error 非空=没建成；建成了 id 是新 trader 的 id */
+    public record CreateResult(String error, Long id) {
+    }
+
+    /** 名下全部 trader，按 id 升序 */
+    public List<AiTrader> listMine(long userId) {
+        return traderMapper.selectList(new LambdaQueryWrapper<AiTrader>()
+                .eq(AiTrader::getUserId, userId).orderByAsc(AiTrader::getId));
+    }
+
+    /** 名下的一个；不归这个人的当不存在 */
+    public AiTrader owned(long userId, long traderId) {
+        AiTrader t = traderMapper.selectById(traderId);
+        return t != null && t.getUserId() == userId ? t : null;
     }
 
     public AiTrader byId(long id) {
@@ -108,22 +126,30 @@ public class TraderService {
         return traderMapper.selectList(new LambdaQueryWrapper<AiTrader>().orderByAsc(AiTrader::getId));
     }
 
-    /** 创建：校验→选端点→连通性测试→开子账户→PAUSED 入库→绑定用途。返回错误信息或 null。 */
-    public String create(long userId, UpsertReq req) {
-        if (mine(userId) != null) {
-            return messages.get("trader.alreadyExists");
+    /**
+     * 创建：数量→校验→重名→选端点→连通性测试→入库。
+     * 入库是一个事务：先插行（PAUSED，sim 账户空着）拿 id，按 id 开 sim 子账户，再回写 sim_user_id；
+     * 开账户失败整个回滚不留行，没提交前调度器和竞技场都看不到它。
+     */
+    public CreateResult create(long userId, UpsertReq req) {
+        List<AiTrader> mine = listMine(userId);
+        if (mine.size() >= MAX_PER_USER) {
+            return new CreateResult(messages.get("trader.limitReached", Map.of("max", MAX_PER_USER)), null);
         }
         String err = validate(req);
         if (err != null) {
-            return err;
+            return new CreateResult(err, null);
+        }
+        if (nameTaken(mine, req.name(), null)) {
+            return new CreateResult(messages.get("trader.config.nameTaken"), null);
         }
         UserLlmEndpoint endpoint = pickEndpoint(userId, req.llmEndpointId());
         if (endpoint == null) {
-            return messages.get("trader.noEndpoint");
+            return new CreateResult(messages.get("trader.noEndpoint"), null);
         }
         String connErr = modelFactory.testConnection(endpoint);
         if (connErr != null) {
-            return messages.get("trader.connectFailed", Map.of("reason", connErr));
+            return new CreateResult(messages.get("trader.connectFailed", Map.of("reason", connErr)), null);
         }
         AiTrader t = new AiTrader();
         t.setUserId(userId);
@@ -131,22 +157,29 @@ public class TraderService {
         t.setStatus(AiTrader.STATUS_PAUSED);
         t.setRoundNo(1);
         t.setConsecutiveFailures(0);
-        t.setSimUserId(simTradeClient.ensureAccount(accountName(userId, 1), INITIAL_BALANCE));
-        traderMapper.insert(t);
-        endpointService.bind(userId, UserLlmBinding.TRADER, req.llmEndpointId());
+        transactionTemplate.executeWithoutResult(_ -> {
+            traderMapper.insert(t);
+            Long simUserId = simTradeClient.ensureAccount(accountName(t.getId(), 1), INITIAL_BALANCE);
+            traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
+                    .eq(AiTrader::getId, t.getId())
+                    .set(AiTrader::getSimUserId, simUserId));
+        });
         log.info("[Trader] 创建 traderId={} userId={} model={}", t.getId(), userId, endpoint.getModel());
-        return null;
+        return new CreateResult(null, t.getId());
     }
 
     /** 改配置：换了端点（含"跟随默认"与显式之间切换到不同端点）就重测连通并逐出模型缓存。 */
-    public String updateConfig(long userId, UpsertReq req) {
-        AiTrader t = mine(userId);
+    public String updateConfig(long userId, long traderId, UpsertReq req) {
+        AiTrader t = owned(userId, traderId);
         if (t == null) {
-            return messages.get("trader.notCreated");
+            return messages.get("trader.notFound");
         }
         String err = validate(req);
         if (err != null) {
             return err;
+        }
+        if (nameTaken(listMine(userId), req.name(), t.getId())) {
+            return messages.get("trader.config.nameTaken");
         }
         UserLlmEndpoint endpoint = pickEndpoint(userId, req.llmEndpointId());
         if (endpoint == null) {
@@ -181,8 +214,8 @@ public class TraderService {
                 .set(AiTrader::getLearnedRestrictionHold, probe.getLearnedRestrictionHold())
                 .set(AiTrader::getWebSearchEnabled, probe.getWebSearchEnabled())
                 .set(AiTrader::getWakeWindow, probe.getWakeWindow())
+                .set(AiTrader::getLlmEndpointId, probe.getLlmEndpointId())
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
-        endpointService.bind(userId, UserLlmBinding.TRADER, req.llmEndpointId());
         if (modelChanged) {
             modelFactory.evict(t.getId());
         }
@@ -198,10 +231,10 @@ public class TraderService {
         return endpointService.defaultOf(userId);
     }
 
-    public String start(long userId) {
-        AiTrader t = mine(userId);
+    public String start(long userId, long traderId) {
+        AiTrader t = owned(userId, traderId);
         if (t == null) {
-            return messages.get("trader.notCreated");
+            return messages.get("trader.notFound");
         }
         if (AiTrader.STATUS_LIQUIDATED.equals(t.getStatus())) {
             return messages.get("trader.liquidatedRound");
@@ -215,10 +248,10 @@ public class TraderService {
         return null;
     }
 
-    public String pause(long userId) {
-        AiTrader t = mine(userId);
+    public String pause(long userId, long traderId) {
+        AiTrader t = owned(userId, traderId);
         if (t == null) {
-            return messages.get("trader.notCreated");
+            return messages.get("trader.notFound");
         }
         traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
                 .eq(AiTrader::getId, t.getId())
@@ -232,10 +265,10 @@ public class TraderService {
      * 标记/取消忽略一笔已归档计划：只有主人能标；LIVE 是在场纪律不许藏，只有 CLOSED 可标。
      * stale 只作用于教材层（论点战绩统计、复盘素材、经验账本的账），权益/排行榜照常。
      */
-    public String setPlanStale(long userId, long planId, boolean stale) {
-        AiTrader t = mine(userId);
+    public String setPlanStale(long userId, long traderId, long planId, boolean stale) {
+        AiTrader t = owned(userId, traderId);
         if (t == null) {
-            return messages.get("trader.notCreated");
+            return messages.get("trader.notFound");
         }
         AiTraderPlan p = planStore.byId(planId);
         if (p == null || !Objects.equals(p.getTraderId(), t.getId())) {
@@ -256,10 +289,10 @@ public class TraderService {
      * carryNotes=false 时 memory 生效版本一并清空——历届存档在 REVIEW 行 memory_after 里，
      * 永远查得到，清的只是"下局还注不注入"。
      */
-    public String reset(long userId, boolean carryNotes) {
-        AiTrader t = mine(userId);
+    public String reset(long userId, long traderId, boolean carryNotes) {
+        AiTrader t = owned(userId, traderId);
         if (t == null) {
-            return messages.get("trader.notCreated");
+            return messages.get("trader.notFound");
         }
         // 占住这个 trader 的位子：有唤醒或复盘在跑就拒，重置期间新的也进不来
         if (!scheduler.tryOccupy(t.getId())) {
@@ -281,7 +314,7 @@ public class TraderService {
                     Map.of("reason", SimTradeClient.describe(e, messages, RequestLang.current())));
         }
         int newRound = t.getRoundNo() + 1;
-        Long simUserId = simTradeClient.ensureAccount(accountName(userId, newRound), INITIAL_BALANCE);
+        Long simUserId = simTradeClient.ensureAccount(accountName(t.getId(), newRound), INITIAL_BALANCE);
         // 本局存活计划随重置归档（不删）：论点/失效条件/修订史是公开凭证，也是reviewer的复盘原料
         planStore.archiveRound(t.getId(), t.getRoundNo(), System.currentTimeMillis());
         watchStore.archiveRound(t.getId(), t.getRoundNo());
@@ -303,7 +336,7 @@ public class TraderService {
             upd.set(AiTrader::getMemory, ledger.render(t.getId(), newRound, langResolver.of(userId)));
         }
         traderMapper.update(null, upd);
-        purgeExpiredRounds(t.getId(), userId, newRound);
+        purgeExpiredRounds(t.getId(), newRound);
         log.info("[Trader] 重置开新局 traderId={} round={}", t.getId(), newRound);
         return null;
     }
@@ -324,16 +357,16 @@ public class TraderService {
     }
 
     /**
-     * 删 trader：决策/计划两表全轮次、每一局的 sim 子账户、TRADER 用途绑定一并物理删除，
-     * 竞技场里这个人彻底消失，删完可以立刻重建。端点本身不动——那是全站 BYOK 配置，不归 trader。
+     * 删 trader：决策/计划两表全轮次、每一局的 sim 子账户一并物理删除，
+     * 竞技场里这个 trader 彻底消失，名额空出来可以再建。端点本身不动——那是全站 BYOK 配置，不归 trader。
      * <p>
      * 两道闸：名字要原样打一遍；在途唤醒时拒——那一轮跑完要写 decision 行、要调 sim 交易工具，
      * 中途删了就是留一行永远查不到的孤儿加一串报错。
      */
-    public String delete(long userId, String confirmName) {
-        AiTrader t = mine(userId);
+    public String delete(long userId, long traderId, String confirmName) {
+        AiTrader t = owned(userId, traderId);
         if (t == null) {
-            return messages.get("trader.notCreated");
+            return messages.get("trader.notFound");
         }
         if (!t.getName().equals(confirmName)) {
             return messages.get("trader.delete.nameMismatch");
@@ -348,7 +381,6 @@ public class TraderService {
         watchStore.purgeAll(t.getId());
         ledger.purgeAll(t.getId());
         traderMapper.deleteById(t.getId());
-        endpointService.bind(userId, UserLlmBinding.TRADER, null);
         modelFactory.evict(t.getId());
         scheduler.forget(t.getId());
         hub.forget(t.getId());
@@ -357,7 +389,7 @@ public class TraderService {
         // 单局失败不阻断——本地已经删净，剩下的孤儿账户无业务引用，同 purgeExpiredRounds 口径
         for (int round = 1; round <= t.getRoundNo(); round++) {
             try {
-                simTradeClient.deleteAccount(accountName(userId, round));
+                simTradeClient.deleteAccount(accountName(t.getId(), round));
             } catch (Exception e) {
                 log.warn("[Trader] 删除时 sim 子账户销户失败 traderId={} round={}", t.getId(), round, e);
             }
@@ -371,7 +403,7 @@ public class TraderService {
      * 整段删（顺带自愈历史漏删），sim 子账户只删刚出窗那一局。
      * sim 删失败不阻断开新局（新局账户已就绪），留 warn——遗留的孤儿账户无业务引用，无害。
      */
-    private void purgeExpiredRounds(long traderId, long userId, int newRound) {
+    private void purgeExpiredRounds(long traderId, int newRound) {
         int expired = newRound - MAX_ROUNDS_KEPT;
         if (expired < 1) {
             return;
@@ -383,7 +415,7 @@ public class TraderService {
         watchStore.purgeRounds(traderId, expired);
         ledger.purgeRounds(traderId, expired);
         try {
-            simTradeClient.deleteAccount(accountName(userId, expired));
+            simTradeClient.deleteAccount(accountName(traderId, expired));
         } catch (Exception e) {
             log.warn("[Trader] 过期轮次 sim 子账户删除失败 traderId={} round={}", traderId, expired, e);
         }
@@ -399,6 +431,14 @@ public class TraderService {
                 .orderByDesc(AiTraderDecision::getWakeTime)
                 .last("LIMIT 1"));
         return d != null ? d.getEquity() : INITIAL_BALANCE;
+    }
+
+    /** 本局收益率（%，两位小数）：这个权益相对本局初始资金；竞技场和对话里显示的都是它 */
+    public static BigDecimal pnlPct(BigDecimal equity) {
+        return equity.subtract(INITIAL_BALANCE)
+                .divide(INITIAL_BALANCE, 4, RoundingMode.HALF_UP)
+                .multiply(new BigDecimal("100"))
+                .setScale(2, RoundingMode.HALF_UP);
     }
 
     /**
@@ -586,6 +626,8 @@ public class TraderService {
     /** @param endpoint 这次保存选定的端点 */
     private static void applyConfig(AiTrader t, UpsertReq req, UserLlmEndpoint endpoint) {
         t.setName(req.name().trim());
+        // 显式选的存 id，跟随默认存 null
+        t.setLlmEndpointId(req.llmEndpointId());
         t.setSymbols(String.join(",", parseSymbols(req.symbols())));
         t.setIntervalCode(req.intervalCode());
         t.setCustomPrompt(req.customPrompt());
@@ -614,7 +656,14 @@ public class TraderService {
                 .map(s -> s.trim().toUpperCase()).filter(s -> !s.isEmpty()).toList());
     }
 
-    private static String accountName(long userId, int round) {
-        return "ai_trader_" + userId + "_r" + round;
+    /** 名下别的 trader 有没有叫这个名字的：去首尾空格、不分大小写；selfId 是改配置时它自己，创建传 null */
+    private static boolean nameTaken(List<AiTrader> mine, String name, Long selfId) {
+        String n = name.trim();
+        return mine.stream().anyMatch(t -> !t.getId().equals(selfId) && t.getName().equalsIgnoreCase(n));
+    }
+
+    /** sim 子账户名：按 trader 和局号 */
+    private static String accountName(long traderId, int round) {
+        return "ai_trader_t" + traderId + "_r" + round;
     }
 }

@@ -380,6 +380,11 @@
       "notCreated": "未创建",
       "metaNew": "填好名字和下面几节；创建时先测一次模型端点的连通性"
     },
+    "switch": {
+      "aria": "切换 trader",
+      "new": "新建",
+      "full": "每人最多 {{max}} 个 trader，删掉一个才能再建"
+    },
     "hb": {
       "stopped": "停着，拨到「运行」后从下一根收盘开始醒",
       "today": "今天醒了",
@@ -716,6 +721,7 @@
       "orderbook_depth": "读取盘口深度",
       "news_search": "读取快讯",
       "web_search": "联网搜索",
+      "trader_list": "查看名下交易员",
       "trader_overview": "查看交易员概况",
       "trader_positions": "查看交易员持仓",
       "trader_trades": "查看交易员成交",
@@ -731,6 +737,18 @@
     "approve": "批准执行",
     "approved": "已批准 · 深研判继续执行",
     "rejected": "已拒绝 · 本次跳过深研判"
+  },
+  "pick": {
+    "title": "选择交易员",
+    "hint": "名下有几个交易员，这次要查哪一个？",
+    "left_other": "剩 {{count}} 秒",
+    "timeUp": "已到时间",
+    "collapse": "收起",
+    "aiNamed": "AI 点名",
+    "roundPnl": "本局 {{pnl}}",
+    "picked": "已选 {{name}}",
+    "expired": "已超时，这一轮已结束",
+    "cancelled": "已取消"
   },
   "history": {
     "title": "历史对话",
@@ -815,7 +833,19 @@
     "no": "无",
     "skipHint": "点了会跳过，不消耗模型调用",
     "reviewAdvice": "建议一天 1~2 次：复盘吃的是已了结交易，交易没变化时跑了也写不出新东西",
-    "reviewAction": "开始复盘"
+    "reviewAction": "开始复盘",
+    "multiHint": "名下有几个交易员，按下按钮后再选是哪一个",
+    "chooseNote": "留给哪个交易员",
+    "chooseWake": "唤醒哪个交易员",
+    "chooseReview": "复盘哪个交易员",
+    "chooseClear": "撤回哪个交易员的留言",
+    "lastWakeAgo": "上次唤醒 {{when}}",
+    "lastReviewAgo": "上次复盘 {{when}}",
+    "noMaterialShort": "没有新素材，会跳过",
+    "noteOverwrite": "还有未读留言（剩 {{rounds}} 轮），提交会覆盖",
+    "noNote": "没有待读留言",
+    "noteOf": "剩 {{rounds}} 轮 · {{note}}",
+    "doneFor": "{{name}}：{{message}}"
   },
   "model": {
     "title": "模型端点（BYOK）",
@@ -837,6 +867,7 @@
     "bindTitle": "谁用哪条",
     "usageChat": "对话·主模型",
     "usageChatLight": "对话·轻模型",
+    "usageTrader": "交易员·{{name}}",
     "chatMain": "对话 · 主模型",
     "chatMainHint": "研判对话的最终回答，以及对话里触发的深研判、行为分析都走它",
     "chatLight": "对话 · 轻模型",
@@ -846,7 +877,7 @@
     "noEndpoint": "（无可用端点）",
     "editInMyTrader": "在我的交易员里改",
     "noTrader": "还没有 AI 交易员，<0>去创建</0>时再选",
-    "traderHint": "「{{name}}」每次唤醒、每日复盘都烧这条",
+    "traderHint": "它每次唤醒、每日复盘都烧这条",
     "coach": "复盘教练",
     "coachValue": "每局开始前在回测页配置台现选，缺省用默认端点",
     "coachHint": "手动复盘里的 AI 盘面提示与结算后评估",

@@ -2,8 +2,7 @@
 # This is a different catalog from prompts/<lang>/trader.yml: that one holds the prompts fed to the
 # model (following the owner's user.lang), this one holds what the user reads (following X-Lang).
 trader:
-  notCreated: You have not created an AI Trader yet
-  alreadyExists: One AI Trader per account
+  limitReached: At most {{max}} AI Traders per account
   notFound: No such trader
   notOwner: You can only watch your own trader
   liquidatedRound: This round ended in liquidation - reset for a new round first
@@ -38,6 +37,7 @@ trader:
   # Entry validation for create / update config
   config:
     nameRequired: A name is required, up to 32 characters
+    nameTaken: You already have a trader with this name (case-insensitive) - pick another name
     badInterval: The heartbeat interval must be 15m, 1h or 4h
     windowNeverWakes: No {{interval}} candle closes inside that wake window, so it would never wake up. Widen the window or change the interval
     symbolRequired: Pick at least one coin to trade

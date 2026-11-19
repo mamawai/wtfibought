@@ -1,6 +1,6 @@
 # Agent Harness 阅读指南
 
-**这份文档解决一个问题**：`wiib-agent` 下有两万一千多行 Java（测试另有两万三千行、103 个测试类；再加两门语言的提示词词表约 2500 行、前端对话模块约 3200 行），从哪儿开始读、按什么顺序读、读到哪一段该停下来先补背景。
+**这份文档解决一个问题**：`wiib-agent` 下有两万七千多行 Java（测试另有两万八千行、115 个测试类；再加两门语言的提示词词表约 3900 行、前端对话模块约 3900 行），从哪儿开始读、按什么顺序读、读到哪一段该停下来先补背景。
 
 它不是 API 文档，也不重复 [architecture.md](./architecture.md) 已经讲过的架构。那份文档回答"这套东西是什么"，这份文档回答"**我该按什么顺序把它读懂**"。
 
@@ -20,7 +20,7 @@
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
-| **trader agent** | ReAct 循环（19 工具，开场白分两段） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 盯盘条件命中 / 手动 | `trader/`（现场流与轨迹见 5.7） |
+| **trader agent** | ReAct 循环（20 工具，开场白分两段） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 盯盘条件命中 / 手动 | `trader/`（现场流与轨迹见 5.7） |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | ✓ | 用户提问 | `chat/`（子运行在 `chat/run/`） |
 | **reviewer workflow** | 单次调用，无工具 | ✗ | 日线交接第二阶段 / 点播 | `learning/ReviewRunner` |
 | **behavior workflow** | 单次调用，无工具 | ✗ | 对话里的 `analyze_my_behavior` | `behavior/` |
@@ -50,11 +50,11 @@ flowchart LR
 
 ## 第 1 章 · 热身：两个小文件（20 分钟）
 
-目的是熟悉这个仓库的代码风格和注释密度，别一上来就啃几百上千行的大文件（最大的几个是 `TradeTools` 657 行、`ExperienceLedger` 652 行、`TraderWakeupRunner` 649 行）。
+目的是熟悉这个仓库的代码风格和注释密度，别一上来就啃几百上千行的大文件（最大的几个是 `TradeTools` 912 行、`ReviewMaterialAssembler` 841 行、`ExperienceLedger` 725 行）。
 
 | 文件 | 行数 | 读它干什么 |
 |---|---|---|
-| `chat/gate/ChatConcurrencyGate.java` | 61 | 全包最简单的一个类。看两件事：`tryAcquire` 为什么**先占用户位再占全局位**（反过来会让同一用户的第二次请求先拿走一个全局名额再被拒，中间那一瞬别人被无谓挡住）；为什么返回**枚举而不是 boolean**（拒因得由闸门自己给，让调用方去别处二次推断既是重新发明轮子又有竞态） |
+| `chat/gate/ChatConcurrencyGate.java` | 81 | 全包最简单的一个类。看两件事：`tryAcquire` 为什么**先占用户位再占全局位**（反过来会让同一用户的第二次请求先拿走一个全局名额再被拒，中间那一瞬别人被无谓挡住）；为什么返回**枚举而不是 boolean**（拒因得由闸门自己给，让调用方去别处二次推断既是重新发明轮子又有竞态） |
 | `chat/tools/ToolRunContext.java` | 25 | 会话号怎么到工具方法体：`ChatTurnRunner` 把它传给 `ReactLoop.run`，循环执行工具时放进 Spring AI 的 `ToolContext`，工具声明一个 `ToolContext` 参数就读得到（不进 schema，模型看不见）。闸门拿的是同一个会话号，见第 2 章站点 8 |
 
 读完这两个，你应该能感觉到：**这个仓库的注释讲"为什么"不讲"做了什么"**。看到一段费解的代码，先找它头上那句注释，多半解释了它为什么不能写成更直觉的样子。
@@ -121,14 +121,14 @@ POST /api/ai/workbench/chat
 
 `ChatAgentFactory.leavesFor` 的缓存策略与 `ChatModelFactory` 同款（LRU 32、锁外建）。键是 `leafKey` = **配置指纹 + 语言码 + 主模型端点的上下文窗口**：
 
-- **userId 进指纹不是为了缓存粒度，是数据隔离**：叶子里有按用户烤死的工具（主 agent 的 trader_* 工具读的是"这个人的 trader"，子运行按用户计上限），两人共用一份叶子就会看到别人的持仓。隔离要靠键本身，不能指望密文的随机性。
+- **userId 进指纹不是为了缓存粒度，是数据隔离**：叶子里有按用户烤死的工具（主 agent 的 trader_* 工具读的是"这个人名下的 trader"，子运行按用户计上限），两人共用一份叶子就会看到别人的持仓。隔离要靠键本身，不能指望密文的随机性。
 - **语言、上下文窗口只加在叶子这一层，不进模型指纹**：系统提示词与工具描述按语言烤进叶子里，窗口也带在叶子上（`Leaves.contextWindow`，计量条与整理线都按它算），变了叶子必须重建；但模型实例与这两样无关，不该为它们重建 SDK 客户端与连接池。
 
 `build()` 只造一个叶子——主 agent。worker 不缓存，`delegate` 每派一次 `newWorker` 现建一个（账本要独享，循环又是把模型绑死的，只能连循环一起新建）：
 
 | 叶子 | 模型 | 工具 | 特别之处 |
 |---|---|---|---|
-| `main`（主 agent） | 深 | 24 个（行情 4 + 指标 3 + `derivatives_history` + `news_search` + `econ_calendar` + `whale_positions` + `cross_asset_snapshot` + `fund_flows` + 深研判 + trader 只读 5 + trader 动作 3 + 行为分析 + `delegate`） | `streaming(true)`，带 HITL 闸门、保险丝两样；同批 tool_call 并发；trader 工具与子运行的 userId 建叶子时烤死；不强制 `tool_choice`（Opus 5.5 这类模型不收 any / required），"先取数再答"写在系统提示词里 |
+| `main`（主 agent） | 深 | 25 个（行情 4 + 指标 3 + `derivatives_history` + `news_search` + `econ_calendar` + `whale_positions` + `cross_asset_snapshot` + `fund_flows` + 深研判 + trader 只读 6 + trader 动作 3 + 行为分析 + `delegate`） | `streaming(true)`，带 HITL 闸门、保险丝两样；同批 tool_call 并发；trader 工具与子运行的 userId 建叶子时烤死；不强制 `tool_choice`（Opus 5.5 这类模型不收 any / required），"先取数再答"写在系统提示词里 |
 | worker `researcher` | 轻 | `news_search` + 服务端搜索许可（看浅模型那条端点） | 无闸门，任务书是它唯一的用户消息，看不到主对话 |
 | worker `analyst` | 轻 | 行情 4 + 指标 3（`klines` / `indicators` / `kline_structure`） | 同上 |
 
@@ -377,7 +377,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 同一条回复里的多个 tool_call 由 `ReactLoop` 在虚拟线程上**并发执行**，回执仍按 tool_call 顺序配对；批里出现 `TradeTools.SERIAL_TOOLS` 里的任一动作工具（开平仓、止损止盈、写计划、撤单），整批退回按原顺序串行——账户状态类调用不和同批别的调用交错。
 
-同一笔账还管着币种上限：`TraderService.MAX_SYMBOLS = 3`（一个币扎实求证约 3 次），在**保存配置**时就挡住，不在 `TradeGuard` 里；前端 `MyTrader.MAX_SYMBOLS` 是同一个数，改要一起改。
+同一笔账还管着币种上限：`TraderService.MAX_SYMBOLS = 3`（一个币扎实求证约 3 次），在**保存配置**时就挡住，不在 `TradeGuard` 里；前端 `components/arena/traderConfig.ts` 的 `MAX_SYMBOLS` 是同一个数，改要一起改。
 
 `BUST_OUT_FLOOR` 只是常量改了名（原 `LIQUIDATION_FLOOR`，类型也换成了 `BigDecimal`），**状态枚举仍是 `AiTrader.STATUS_LIQUIDATED`**、词表里仍写「爆仓」——别顺手一起改。
 
@@ -400,7 +400,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
   → 计划对账（TraderPlanStore.reconcile：逐份 LIVE 计划对 sim 持仓/挂单，出 Reconcile(live, events)；已平仓位懒取）
   → 组装系统提示词（promptAssembler.assemble）、第一段观察包（WakeObservation.assemble：事件 / 账户 / 上一轮结论 / 承诺）
   → 两段还是一段：非例行唤醒、有留言、有承诺要处置就分两段（stageOneInstruction，ReactLoop.stages 追加 stageTwoInstruction），否则 routineInstruction 一段
-  → LlmClient（系统提示 + 19 工具，主人开了联网搜索、端点也开了的多挂一个 web_search；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
+  → LlmClient（系统提示 + 20 工具，主人开了联网搜索、端点也开了的多挂一个 web_search；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
      + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
   → FutureTask 限时执行
   → finally：动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
@@ -440,7 +440,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ### 5.5 动手面
 
-`TradeTools` 8 个交易工具（`get_account` / `open_position` / `close_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`；平台在采的币都能布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）；条件可以带一个预案动作（`WatchAction`：移止损 / 平仓 / 撤单，指的仓位或挂单不必在这个币上，没有开仓）。止损必填、止盈可选：`open_position` 和 `set_take_profit` 的止盈是最多 3 档的 `TargetRung`（价位 + 平掉仓位的百分之几），计划里按同一个形状存。`set_stop_loss` 和预案的移止损两处改止损都走 `StopOrders.move`，只许收紧。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 19 个；行情类的可查任意 Binance USDT 永续。`market_snapshot` 只给各数据源的原始读数（`MarketReadings`），不打分、不贴行情标签；`news_search` 带关键词或小时数时查库里的历史快讯。主人在「我的 Trader」开了联网搜索（`ai_trader.web_search_enabled`）、所用端点也开了的 trader 另挂一个 `web_search`（两道都过才算开，见 `TraderModelFactory.webSearchEnabled`；`WebSearchTool`，单独发一次带搜索的请求，用量记在同一轮账上）；那次请求用 trader 自己的系统提示（`trader.wake.searchInstruction`：只留带日期和出处的事实，价格预测、别人的技术分析、喊单和营销不报）。例行轮看整盘的问题和波动警报的问题前面会多问一句本轮有没有要搜的（`trader.wake.searchQuestion`），盯盘命中和持仓事件的轮不问。
+`TradeTools` 9 个交易工具（`get_account` / `open_position` / `close_position` / `reverse_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`；平台在采的币都能布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）；条件可以带一个预案动作（`WatchAction`：移止损 / 平仓 / 撤单，指的仓位或挂单不必在这个币上，没有开仓）。止损必填、止盈可选：`open_position` 和 `set_take_profit` 的止盈是最多 3 档的 `TargetRung`（价位 + 平掉仓位的百分之几），计划里按同一个形状存。`set_stop_loss` 和预案的移止损两处改止损都走 `StopOrders.move`，只许收紧。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 20 个；行情类的可查任意 Binance USDT 永续。`market_snapshot` 只给各数据源的原始读数（`MarketReadings`），不打分、不贴行情标签；`news_search` 带关键词或小时数时查库里的历史快讯。主人在「我的 Trader」开了联网搜索（`ai_trader.web_search_enabled`）、所用端点也开了的 trader 另挂一个 `web_search`（两道都过才算开，见 `TraderModelFactory.webSearchEnabled`；`WebSearchTool`，单独发一次带搜索的请求，用量记在同一轮账上）；那次请求用 trader 自己的系统提示（`trader.wake.searchInstruction`：只留带日期和出处的事实，价格预测、别人的技术分析、喊单和营销不报）。例行轮看整盘的问题和波动警报的问题前面会多问一句本轮有没有要搜的（`trader.wake.searchQuestion`），盯盘命中和持仓事件的轮不问。
 
 三个设计点：
 
@@ -528,22 +528,22 @@ behavior、replay coach 和指令生成器的写稿人直接建 `LlmClient` 用�
 
 ## 第 8 章 · 前端（1.5 小时）
 
-对话模块约 3200 行，比后端好读得多，但比旧版复杂——排队/唤醒补答/后台子运行轨/中断/重新生成五件事都要在这里落地。
+对话模块约 3900 行，比后端好读得多，但比旧版复杂——排队/唤醒补答/后台子运行轨/中断/重新生成五件事都要在这里落地。
 
 > 行数会漂，下表只给量级，用来排读的先后。
 
 | 顺序 | 文件 | 行数 | 看什么 |
 |---|---|---|---|
-| 1 | `components/workbench/chatStore.ts` | 920 | **手写的外部 store，不是 zustand**（`subscribe`/`getSnapshot` + `useSyncExternalStore`）。状态与 SSE 消费脱离组件生命周期：切页只是面板卸载，流在这里继续收。`handleEvent` 是全部事件的唯一落点：`tool_calls`（主 agent 每批工具调用）落成过程条目，带 runId 的挂进对应子运行的内部；`child_start / child_progress / child_done` 落成子运行条目 |
+| 1 | `components/workbench/chatStore.ts` | 1112 | **手写的外部 store，不是 zustand**（`subscribe`/`getSnapshot` + `useSyncExternalStore`）。状态与 SSE 消费脱离组件生命周期：切页只是面板卸载，流在这里继续收。`handleEvent` 是全部事件的唯一落点：`tool_calls`（主 agent 每批工具调用）落成过程条目，带 runId 的挂进对应子运行的内部；`child_start / child_progress / child_done` 落成子运行条目 |
 | 2 | 同上，`settle()` / `runWake()` / `watchChildren()` | — | **唤醒由前端发起**，后端只标 pending 不偷跑。时机只有一条规则：本地没有轮在跑、排队消息也发完了。`wakePending` 只转抄后端 done / status 里的 pending，不自己推断。不欠但还有子运行亮着就轮询 status 盯着它们（那轮结束后它们的事件推不出来），见 pending 再走唤醒 |
 | 3 | 同上，`sendQueue` / `queuedId` | — | 后端占线（2203）时消息先上屏排队，本轮结束自动真发。`queuedId` 是气泡与队列条目共用的身份——靠下标对应的话，流式插条目/回放重建/重生成砍尾任一处都会错位 |
-| 4 | `components/workbench/chatView.ts` | 42 | 过程条目（进度/工具调用/搜索/后台子运行）归并成"工作过程"块，折叠状态用 `rid` 当键而不是下标（同上，下标会错位）；派发类工具的条目本身不画（屏上另有子运行条目/确认卡/表单卡） |
-| 5 | `components/workbench/ChatPanel.tsx` | 465 | 渲染主体：消息流、历史栏、全屏；哪条过程块算"正在跑"（`liveRailKey`）、什么时候出"分析问题中"那行都在这儿定 |
-| 6 | `ChatMessages.tsx` / `ChatComposer.tsx` | 516 / 336 | 过程块（工具行、搜索行、可展开的子运行块）、气泡与输入区（排队态、中断按钮、重新生成入口都在这儿） |
-| 7 | `ChatDock.tsx` | 592 | 浮球 + 可拖拽面板。`DRAG_THRESHOLD` / `CLICK_SWALLOW_MS` 两个常量的注释解释了"点了没反应"是怎么来的 |
-| 8 | `TraderFormCards.tsx` | 267 | 三张表单卡——模型只弹卡，按下按钮打 REST 的是用户 |
-| 9 | `BehaviorReportCard.tsx` | 209 | `analyze_my_behavior` 的渲染出口——行为画像报告在对话里长什么样 |
-| 10 | `SessionHistory.tsx` | 143 | 会话列表与切换 |
+| 4 | `components/workbench/chatView.ts` | 40 | 过程条目（进度/工具调用/搜索/后台子运行）归并成"工作过程"块，折叠状态用 `rid` 当键而不是下标（同上，下标会错位）；派发类工具的条目本身不画（屏上另有子运行条目/确认卡/表单卡） |
+| 5 | `components/workbench/ChatPanel.tsx` | 423 | 渲染主体：消息流、历史栏、全屏；哪条过程块算"正在跑"（`liveRailKey`）、什么时候出"分析问题中"那行都在这儿定 |
+| 6 | `ChatMessages.tsx` / `ChatComposer.tsx` | 395 / 275 | 过程块（工具行、搜索行、可展开的子运行块）、气泡与输入区（排队态、中断按钮、重新生成入口都在这儿） |
+| 7 | `ChatDock.tsx` | 593 | 浮球 + 可拖拽面板。`DRAG_THRESHOLD` / `CLICK_SWALLOW_MS` 两个常量的注释解释了"点了没反应"是怎么来的 |
+| 8 | `TraderFormCards.tsx` | 320 | 三张表单卡——模型只弹卡，按下按钮打 REST 的是用户 |
+| 9 | `BehaviorReportCard.tsx` | 139 | `analyze_my_behavior` 的渲染出口——行为画像报告在对话里长什么样 |
+| 10 | `SessionHistory.tsx` | 101 | 会话列表与切换 |
 | 11 | `LlmEndpointForm.tsx` / `LlmEndpointSelect.tsx` | — | trader / 对话 / 复盘教练**共用**的端点表单 |
 
 ### 一条值得专门跟一遍的链
@@ -559,8 +559,8 @@ behavior、replay coach 和指令生成器的写稿人直接建 `LlmClient` 用�
 
 trader 那条链的前端另在两处：
 
-- `pages/MyTrader.tsx`（631 行）：trader 配置 + 动作面板 + 提示词预览。预览用的就是后端那份 `closingFormat`，看到的与真喂的一致；`MAX_SYMBOLS` 与后端 `TraderService.MAX_SYMBOLS` 是同一个 3。
-- `pages/ArenaDetail.tsx`（489 行）+ `components/arena/`（12 个件，共 1070 行）：记分头 → 六格 `.strip` → 左主栏（净值曲线 / 现场 / 决策时间线）‖ 右侧栏（持仓 / 计划 / 经验账本）。**现场只给主人的门控在这一层**（见 5.7），`LiveRunCard.tsx` + `WakeTraceView.tsx` + `hooks/useTraderLive.ts` 是 5.7 那条链的前端一侧。
+- `pages/MyTrader.tsx`（905 行）：一个 trader 一页（`/my-trader/:id`，新建是 `/my-trader/new`），页顶切换条在名下几个之间切；trader 配置 + 动作面板 + 提示词预览。预览用的就是后端那份 `closingFormat`，看到的与真喂的一致；`MAX_SYMBOLS` 与后端 `TraderService.MAX_SYMBOLS` 是同一个 3，`MAX_TRADERS` 与 `TraderService.MAX_PER_USER` 也是同一个 3。
+- `pages/ArenaDetail.tsx`（535 行）+ `components/arena/`（20 个件，共 2044 行）：记分头 → 六格 `.strip` → 左主栏（净值曲线 / 现场 / 决策时间线）‖ 右侧栏（持仓 / 计划 / 经验账本）。**现场只给主人的门控在这一层**（见 5.7），`LiveRunCard.tsx` + `WakeTraceView.tsx` + `hooks/useTraderLive.ts` 是 5.7 那条链的前端一侧。
 
 ---
 

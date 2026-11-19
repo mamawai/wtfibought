@@ -2,7 +2,9 @@ package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
@@ -58,6 +60,7 @@ class ChatWorkbenchAdmissionTest {
                 approvals, ChatTestEndpoints.PROMPTS);
         ChatContextStore contextStore = mock(ChatContextStore.class);
         return new ChatWorkbenchController(factory, llmConfigService, approvals,
+                mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class),
                 runRegistry, ChatTestEndpoints.childRuns(contextStore), ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor);

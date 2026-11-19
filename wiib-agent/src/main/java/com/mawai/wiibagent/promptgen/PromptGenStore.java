@@ -31,11 +31,16 @@ public class PromptGenStore {
         return sessionMapper.selectById(userId);
     }
 
-    /** 开新对话：整行覆盖，版本不动 */
-    public void open(long userId, long endpointId, AgentLang outputLang, List<Message> messages) {
+    /**
+     * 开新对话：整行覆盖，版本不动
+     *
+     * @param traderId 为哪个 trader 写，null=没有 trader
+     */
+    public void open(long userId, long endpointId, Long traderId, AgentLang outputLang, List<Message> messages) {
         PromptGenSession session = new PromptGenSession();
         session.setUserId(userId);
         session.setEndpointId(endpointId);
+        session.setTraderId(traderId);
         session.setOutputLang(outputLang.code());
         session.setState(ChatContextCodec.write(messages));
         sessionMapper.upsert(session);

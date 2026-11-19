@@ -25,7 +25,7 @@ import { Prediction } from './pages/Prediction';
 import { AiAgent } from './pages/AiAgent';
 import { Arena } from './pages/Arena';
 import { ArenaDetail } from './pages/ArenaDetail';
-import { MyTrader } from './pages/MyTrader';
+import { MyTrader, MyTraderHome, MyTraderRoute } from './pages/MyTrader';
 import { Strategies } from './pages/Strategies';
 import { Backtest } from './pages/Backtest';
 import { TestnetMonitor } from './pages/TestnetMonitor';
@@ -150,7 +150,10 @@ function App() {
                   <Route path="/me" element={<Me />} />
                   <Route path="/prediction" element={<Prediction />} />
                   <Route path="/ai" element={<AiAgent />} />
-                  <Route path="/my-trader" element={<MyTrader />} />
+                  {/* /my-trader 跳到名下第一个，一个都没有跳新建 */}
+                  <Route path="/my-trader" element={<MyTraderHome />} />
+                  <Route path="/my-trader/new" element={<MyTrader traderId={null} />} />
+                  <Route path="/my-trader/:id" element={<MyTraderRoute />} />
                   <Route path="/prompt-gen" element={<Suspense fallback={pageLoading}><PromptGen /></Suspense>} />
                   <Route path="/strategies" element={<Strategies />} />
                   <Route path="/backtest" element={<Backtest />} />

@@ -21,7 +21,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *   <li>运行状态：切页/刷新回来后前端查 status 得知"AI 还在后台跑"（不随 SSE 断连中止）</li>
  *   <li>事件总线：主 agent 与子 agent 每批工具调用、主 agent 每次调完模型的上下文用量、子运行的开始/进度/结束、
  *       行为分析的阶段进度经此推给 SSE 通道；
- *       trader 动作类工具经此推表单卡，把执行权交回用户点击。没轮在跑时推不出去（返回 false），
+ *       trader 动作类工具经此推表单卡，把执行权交回用户点击；查询工具定不到 trader 时经此推选择卡。没轮在跑时推不出去（返回 false），
  *       子运行的事件丢了也不要紧，前端本地空闲时轮询 status 的 children/pending 补</li>
  *   <li>中断：/cancel 完成那轮的信号，轮在下一个检查点收尾</li>
  * </ul>
@@ -67,6 +67,14 @@ public class WorkbenchRunRegistry {
         return true;
     }
 
+    /** 这一轮被叫停时跑 action（已经叫停了就马上跑）；没轮在跑什么都不做 */
+    public void onCancel(String sessionId, Runnable action) {
+        Run run = runs.get(sessionId);
+        if (run != null) {
+            run.cancel().thenRun(action);
+        }
+    }
+
     /** 工具侧：推一条阶段进度。data 字段名 {@code text} 是既有前端契约，别改。 */
     public void publishProgress(String sessionId, String text) {
         publish(sessionId, "progress", MAPPER.createObjectNode().put("text", text));
@@ -92,6 +100,18 @@ public class WorkbenchRunRegistry {
             data.set("prefill", prefill);
         }
         return publish(sessionId, "form_request", data);
+    }
+
+    /**
+     * 工具侧：请前端弹一张选 trader 的卡，倒计时 seconds 秒。返回值同 {@link #publishForm}：推不出去调用方就别等了。
+     *
+     * @param traders 卡上的候选，每个带 id/名字/状态/本局收益率
+     */
+    public boolean publishTraderPick(String sessionId, String requestId, int seconds,
+                                     List<TraderPickRegistry.Candidate> traders) {
+        ObjectNode data = MAPPER.createObjectNode().put("requestId", requestId).put("seconds", seconds);
+        data.set("traders", MAPPER.valueToTree(traders));
+        return publish(sessionId, "trader_pick", data);
     }
 
     /**

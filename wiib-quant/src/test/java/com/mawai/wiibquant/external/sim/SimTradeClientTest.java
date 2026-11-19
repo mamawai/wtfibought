@@ -112,10 +112,10 @@ class SimTradeClientTest {
     @Test
     void deleteAccount_POST查询参数_业务失败拆壳抛异常() {
         responseJson = "{\"code\":0,\"msg\":\"成功\",\"data\":null}";
-        client.deleteAccount("ai_trader_1_r1");
+        client.deleteAccount("ai_trader_t1_r1");
         assertThat(lastMethod).isEqualTo("POST");
         assertThat(lastUri.getPath()).isEqualTo("/internal/futures/delete-account");
-        assertThat(lastUri.getQuery()).contains("username=ai_trader_1_r1");
+        assertThat(lastUri.getQuery()).contains("username=ai_trader_t1_r1");
 
         // 护栏拒删（比如误传 quant-FIBO）走 Result.fail，必须抛出来而不是静默当成功
         responseJson = "{\"code\":500,\"msg\":\"仅允许删除 ai_trader 量化子账户\",\"data\":null}";

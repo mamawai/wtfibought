@@ -2,8 +2,7 @@
 # 与 prompts/<语言>/trader.yml 是两份词表：那边装喂给模型的提示词（跟 trader 主人的 user.lang），
 # 这边装给用户看的话（跟当次请求的 X-Lang 头）。
 trader:
-  notCreated: 尚未创建 AI Trader
-  alreadyExists: 每个用户只能创建一个 AI Trader
+  limitReached: 每个用户最多 {{max}} 个 AI Trader
   notFound: trader 不存在
   notOwner: 只能看自己 trader 的工作流程
   liquidatedRound: 本局已爆仓终局，请先重置开新一局
@@ -38,6 +37,7 @@ trader:
   # 创建 / 改配置的入口校验
   config:
     nameRequired: 名字必填且不超过32字符
+    nameTaken: 你名下已经有叫这个名字的 trader 了（不分大小写），换一个名字
     badInterval: 心跳周期仅支持 15m/1h/4h
     windowNeverWakes: 唤醒时段内没有任何一根 {{interval}} K线收盘，等于永远不会醒；请放宽时段或换档位
     symbolRequired: 至少选择一个交易币种

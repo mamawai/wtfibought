@@ -1,18 +1,25 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.run.WorkbenchPrefService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
+import com.mawai.wiibagent.chat.tools.SessionTraderLocator;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
+import com.mawai.wiibagent.trader.TraderChatService;
+import com.mawai.wiibagent.trader.TraderService;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -80,6 +87,13 @@ public final class ChatTestEndpoints {
     /** 整理器的真实现，线在窗口的 90%：测试里那点历史够不着，等于不整理 */
     public static ContextCompactor compactor() {
         return new ContextCompactor(PROMPTS, 0.9);
+    }
+
+    /** 这个用户名下只有这一个 trader：查询工具直接用它，不看名字、不弹卡 */
+    public static SessionTraderLocator oneTrader(long userId, AiTrader trader, TraderChatService chat) {
+        TraderService traders = mock(TraderService.class);
+        when(traders.listMine(userId)).thenReturn(List.of(trader));
+        return new SessionTraderLocator(traders, chat, mock(TraderPickRegistry.class));
     }
 
     public static UserLlmEndpoint endpoint(String model) {

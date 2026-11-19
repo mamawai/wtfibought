@@ -45,7 +45,7 @@ const PANELS = [
     num: 'HARNESS 01',
     title: { zh: 'trader agent', en: 'trader agent' },
     sub: { zh: '唯一会动真账本的 · 配套每日复盘', en: 'touches the real ledger · with daily review' },
-    w: 1180, h: 684,
+    w: 1180, h: 700,
     legend: { x: 16, y: 528, w: 170, h: 124 },
     lanes: [
       { x: 216, y: 34, t: { zh: '一次唤醒 · ONE WAKEUP', en: 'ONE WAKEUP' } },
@@ -127,16 +127,16 @@ const PANELS = [
           { id: 'veto', t: { zh: '止损必填 · 越界即拒', en: 'SL required · veto' } }
         ],
         detail: { zh: '开仓入口一票否决：币种白名单、杠杆区间、保证金占比、同币杠杆一致、单仓模式、禁对冲都来自主人的设定；止损必填且方向要对，止盈可以不设、设了最多分 3 档且每档都在有利一侧，限价偏离现价不超过 5%。越界一律拒绝而不是悄悄截断——平台把数字改小模型不知道，后面的止损计算全是错的。拒因原样返回，还把能用的数量区间算好给它，模型改了就能重试；所有调用（含被拒的）都记入动作轨迹。盯盘条件也在这里过一道：每币向上、向下、到时刻各最多一条，类型要认得、价格类要给正价位，触及类的价位已经被现价越过就拒（布下去会立刻触发）。', en: 'A veto at the open: symbol whitelist, leverage range, margin share, same-symbol leverage, single-position mode and no-hedge all come from the owner; a stop-loss is required and must sit on the right side, a take-profit is optional — up to 3 rungs, each on the profit side — and a limit price may not stray more than 5% from mark. Out-of-range orders are rejected, never silently clamped — a size the model didn’t choose poisons every stop calculation after it. The reason goes back verbatim with the allowed quantity range worked out, so the model can fix and retry; every call, rejected ones included, lands in the action trace. Watch conditions pass here too: at most one upward, one downward and one timed per symbol, a known kind, a positive level for price kinds, and a touch level the price has already crossed is refused (it would fire at once).' } },
-      { id: 'trade', x: 888, y: 384, w: 180, h: 192, tag: 'TOOLS', icon: 'wrench',
-        title: { zh: '交易工具 ×8', en: 'Trade tools ×8' },
+      { id: 'trade', x: 888, y: 384, w: 180, h: 208, tag: 'TOOLS', icon: 'wrench',
+        title: { zh: '交易工具 ×9', en: 'Trade tools ×9' },
         rows: [
           { id: 'acct', t: 'get_account' }, { id: 'open', t: 'open_position' },
-          { id: 'close', t: 'close_position' }, { id: 'sl', t: 'set_stop_loss' },
+          { id: 'close', t: 'close_position' }, { id: 'reverse', t: 'reverse_position' }, { id: 'sl', t: 'set_stop_loss' },
           { id: 'tp', t: 'set_take_profit' }, { id: 'plan', t: 'write_plan' },
           { id: 'cancel', t: 'cancel_order' }, { id: 'watch', t: 'set_watch' }
         ],
         detail: { zh: '非 Spring bean：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与币种白名单。开仓要带止损、论点标签、数据引用和失效条件，计划随开仓落库、之后不可改；止盈可以不设，也可以分最多 3 档各平一部分。回执报这笔的往返手续费、止损是几倍 ATR、风险占权益多少，设了止盈的再给扣费后的盈亏比，只报数不评价。止损只许收紧不许放宽；止盈可以往近挪、往远挪或撤掉。write_plan 只给没有计划的持仓补立；set_watch 给一个币布盯盘条件，一次整组替换，条件上可以挂预案。平仓要写一句理由。什么时候退出由模型自己判断，主人的交易指令里有要求的按主人的。', en: 'Not Spring beans: constructed fresh per wakeup, bound to this trader’s sim sub-account and symbol whitelist. An open carries its stop, thesis tag, data citation and invalidation; the plan is stored with the position and never edited; a take-profit is optional and may be split into up to 3 rungs, each closing part. The receipt reports round-trip fees, the stop in ATR multiples and the share of equity at risk, plus reward-to-risk after fees when a take-profit is set — facts, no verdict. Stops can only be tightened, never loosened; a take-profit may move nearer, farther, or be removed. write_plan only backfills a position that has none; set_watch arms a symbol’s watch conditions, replacing the whole set at once, and a condition may carry a standing order. A close needs a one-line reason. When to exit is the model’s own judgement, within whatever the owner’s instructions require.' } },
-      { id: 'sim', x: 888, y: 592, w: 180, h: 76, tag: 'SIM', icon: 'server',
+      { id: 'sim', x: 888, y: 608, w: 180, h: 76, tag: 'SIM', icon: 'server',
         title: { zh: 'wiib-sim 子账户', en: 'wiib-sim account' },
         sub: { zh: '模拟盘账本 · 唯一事实源', en: 'the ledger of record' },
         detail: { zh: '真实开平仓落在 wiib-sim 的子账户上，与真人、量化策略走同一套账本规则：真实档位杠杆、真实资金费、自动强平。', en: 'Real opens and closes land on a wiib-sim sub-account under the same ledger rules as humans and quant strategies: real leverage tiers, real funding, automatic liquidation.' } },
@@ -172,7 +172,7 @@ const PANELS = [
       { id: 'ag-guard', from: 'agent', to: 'guard', pts: [[848, 164], [868, 164], [868, 320], [888, 320]] },
       { id: 'ag-trade', from: 'agent', to: 'trade', pts: [[848, 164], [868, 164], [868, 440], [888, 440]] },
       { id: 'guard-trade', from: 'guard', to: 'trade', pts: [[978, 368], [978, 384]] },
-      { id: 'trade-sim', from: 'trade', to: 'sim', pts: [[978, 576], [978, 592]] },
+      { id: 'trade-sim', from: 'trade', to: 'sim', pts: [[978, 592], [978, 608]] },
       { id: 'ag-dec', from: 'agent', to: 'dec', pts: [[758, 188], [758, 246]] },
       { id: 'dec-rev', from: 'dec', to: 'rev', pts: [[758, 364], [758, 522], [416, 522]] },
       { id: 'notes-asm', from: 'rev', to: 'asm', cls: 'back', pts: [[316, 460], [316, 412], [540, 412], [540, 210]] }
@@ -210,7 +210,7 @@ const PANELS = [
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 8 },
         // 顺序按正好排满三行定的
         chips: [
-          { id: 'cmk', t: 'market ×4' }, { id: 'cin', t: 'indicators ×3' }, { id: 'ctr', t: 'trader_* ×5' },
+          { id: 'cmk', t: 'market ×4' }, { id: 'cin', t: 'indicators ×3' }, { id: 'ctr', t: 'trader_* ×6' },
           { id: 'cfm', t: 'wake / review / note' }, { id: 'cbh', t: 'analyze_my_behavior' },
           { id: 'cnw', t: 'news_search' }, { id: 'cda', t: 'run_deep_analysis' }, { id: 'cdg', t: 'delegate' }
         ],
@@ -220,7 +220,7 @@ const PANELS = [
           { id: 'ws', t: { zh: '服务端搜索 · 端点勾选才有', en: 'server search · if the endpoint allows' } }
         ],
         stream: 3,
-        detail: { zh: '一轮只有这一个 agent：深模型 + 24 个工具的 ReactLoop，流式作答。取什么数它自己定，同一批 tool_call 在虚拟线程上并发、回执按原顺序接回；不强制 tool_choice（Opus 5.5 这类模型不收强制），「先取数再答」写在系统提示词里。用户自己的 trader 由它直接查：五个只读工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸，批准后转后台子运行；读得多的活用 delegate 派给后台 worker。每次调模型前先把收件箱里到的子运行报告排进上下文。', en: 'The only agent in a turn: a ReactLoop on the deep model with 24 tools, streaming its answer. It decides what to fetch; tool calls in one batch run in parallel on virtual threads and their results are paired back in order. tool_choice is never forced (models like Opus 5.5 reject it); “fetch first, then answer” lives in the system prompt. It reads the user’s own trader directly through five read-only tools baked to the userId inside the leaf — which is why userId must be part of the cache fingerprint. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money at once, so it passes the HITL gate and then runs as a background child run; heavy reading goes to background workers via delegate. Before every model call, the inbox of arrived child-run reports is appended to the context.' } },
+        detail: { zh: '一轮只有这一个 agent：深模型 + 25 个工具的 ReactLoop，流式作答。取什么数它自己定，同一批 tool_call 在虚拟线程上并发、回执按原顺序接回；不强制 tool_choice（Opus 5.5 这类模型不收强制），「先取数再答」写在系统提示词里。用户自己名下的 trader 由它直接查：六个只读工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。一个人最多 3 个 trader，trader_list 列名单，查询能按名字点；没点名、本会话也没记住的，当场弹一张选择卡等用户选，30 秒没选或点了停止就结束这一轮。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户，名下有几个时先选是哪个；run_deep_analysis 当场烧钱，走 HITL 闸，批准后转后台子运行；读得多的活用 delegate 派给后台 worker。每次调模型前先把收件箱里到的子运行报告排进上下文。', en: 'The only agent in a turn: a ReactLoop on the deep model with 25 tools, streaming its answer. It decides what to fetch; tool calls in one batch run in parallel on virtual threads and their results are paired back in order. tool_choice is never forced (models like Opus 5.5 reject it); “fetch first, then answer” lives in the system prompt. It reads the user’s own traders directly through six read-only tools baked to the userId inside the leaf — which is why userId must be part of the cache fingerprint. A user can have up to 3 traders: trader_list gives the roster and queries can name one; with no name and none remembered for the session, a pick card pops up on the spot, and 30 seconds without a pick, or a stop, ends the turn. The three trader actions merely push a form into the chat (the user presses the button, picking which trader first when there are several); run_deep_analysis burns money at once, so it passes the HITL gate and then runs as a background child run; heavy reading goes to background workers via delegate. Before every model call, the inbox of arrived child-run reports is appended to the context.' } },
       { id: 'cr', x: 556, y: 40, w: 230, h: 150, tag: 'CHILD RUNS', icon: 'layers',
         title: 'ChildRunRegistry',
         rows: [

@@ -10,6 +10,7 @@ import com.mawai.wiibagent.chat.run.WorkerKind;
 import com.mawai.wiibagent.chat.tools.BehaviorToolkit;
 import com.mawai.wiibagent.chat.tools.DeepAnalysisToolkit;
 import com.mawai.wiibagent.chat.tools.DelegateToolkit;
+import com.mawai.wiibagent.chat.tools.SessionTraderLocator;
 import com.mawai.wiibagent.chat.tools.TraderActionToolkit;
 import com.mawai.wiibagent.chat.tools.TraderQueryToolkit;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
@@ -92,6 +93,8 @@ public class ChatAgentFactory {
     private final BehaviorAnalysisService behaviorAnalysisService;
     /** 对话轨读写 trader 的唯一入口；两条 agent 链路只经它与 DB 打交道，从不互相对话 */
     private final TraderChatService traderChatService;
+    /** 查询工具按会话规则定位 trader（点名、记住的、弹选择卡） */
+    private final SessionTraderLocator traderLocator;
     private final WorkbenchRunRegistry runRegistry;
     /** 后台子运行（深研判、delegate）从这里派，报告经它回灌会话 */
     private final ChildRunRegistry childRuns;
@@ -140,6 +143,7 @@ public class ChatAgentFactory {
                             DeepAnalysisService deepAnalysisService,
                             BehaviorAnalysisService behaviorAnalysisService,
                             TraderChatService traderChatService,
+                            SessionTraderLocator traderLocator,
                             WorkbenchRunRegistry runRegistry,
                             ChildRunRegistry childRuns,
                             ApprovalRegistry approvalRegistry,
@@ -159,6 +163,7 @@ public class ChatAgentFactory {
         this.deepAnalysisService = deepAnalysisService;
         this.behaviorAnalysisService = behaviorAnalysisService;
         this.traderChatService = traderChatService;
+        this.traderLocator = traderLocator;
         this.runRegistry = runRegistry;
         this.childRuns = childRuns;
         this.approvalRegistry = approvalRegistry;
@@ -277,7 +282,7 @@ public class ChatAgentFactory {
                 .maxAttempts(3).initialDelay(500).maxDelay(4000);
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         toolsWithSearch(client, endpoint, deep, lang,
-                // 行情 ×4 / K线与指标 ×3 / 衍生品序列 / 新闻 / 财经日历 / 大户持仓 / 跨资产快照 / 资金流 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
+                // 行情 ×4 / K线与指标 ×3 / 衍生品序列 / 新闻 / 财经日历 / 大户持仓 / 跨资产快照 / 资金流 / 深研判 / trader 只读 ×6 / trader 动作表单 ×3 / 行为分析 / 派子 agent
                 marketToolkit,
                 indicatorToolkit,
                 derivativesToolkit,
@@ -287,7 +292,7 @@ public class ChatAgentFactory {
                 crossAssetToolkit,
                 fundFlowToolkit,
                 new DeepAnalysisToolkit(deepBase, deepAnalysisService, childRuns, prompts, userId, lang),
-                new TraderQueryToolkit(traderChatService, userId, lang),
+                new TraderQueryToolkit(traderChatService, userId, lang, traderLocator.of(userId, lang)),
                 new TraderActionToolkit(runRegistry, userId, prompts, lang),
                 new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),
                 new DelegateToolkit(childRuns, workers, prompts, userId, lang));

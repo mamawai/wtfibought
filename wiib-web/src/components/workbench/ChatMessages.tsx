@@ -18,7 +18,7 @@ type ChildItem = Extract<ChatItem, { kind: 'child' }>;
 const TOOL_ICON: Record<string, LucideIcon> = {
   klines: ChartCandlestick, kline_structure: ChartCandlestick, indicators: Activity, market_snapshot: Gauge,
   option_iv: Waves, funding_history: Percent, orderbook_depth: Layers, news_search: Newspaper, web_search: Globe,
-  trader_overview: Bot, trader_positions: Bot, trader_trades: Bot, trader_plans: Bot, trader_decisions: Bot,
+  trader_list: Bot, trader_overview: Bot, trader_positions: Bot, trader_trades: Bot, trader_plans: Bot, trader_decisions: Bot,
   trader_play_stats: Bot, analyze_my_behavior: UserSearch,
 };
 /** 子运行按种类取图标：派出去的 worker 是星星，深研判是天平 */

@@ -5,6 +5,7 @@ agent:
     sessionNotFound: 会话不存在或无权限
     sessionRunning: 这个会话还在运行或有补答未落地，等它结束再删
     approvalExpired: 该确认请求已失效，请重新发起
+    pickExpired: 这张选择卡已失效（超时了，或这一轮已经结束）
     untitled: （无标题）
 
   # BYOK 端点库（/ai 模型配置页）：校验与探测的返回文案。{{reason}} 是上游端点原样返回的报错，不翻

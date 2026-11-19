@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
@@ -23,6 +24,8 @@ import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
+import com.mawai.wiibagent.trader.TraderService;
+import com.mawai.wiibagent.chat.tools.SessionTraderLocator;
 import com.mawai.wiibagent.mapper.WorkbenchChatContextMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -144,7 +147,7 @@ class ChatWorkbenchHitlTest {
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
                 mock(CrossAssetToolkit.class), mock(FundFlowToolkit.class), deepAnalysisService, mock(BehaviorAnalysisService.class),
-                mock(TraderChatService.class), mock(WorkbenchRunRegistry.class), childRuns,
+                mock(TraderChatService.class), mock(SessionTraderLocator.class), mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 PRODUCTION_LIMIT, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
@@ -170,7 +173,8 @@ class ChatWorkbenchHitlTest {
         ChatHistoryService history = mock(ChatHistoryService.class);
         streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, registry, ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),
-                registry, history, contextStore, streamer, mock(ChatTurnRewinder.class),
+                registry, mock(TraderPickRegistry.class), mock(TraderService.class),
+                history, contextStore, streamer, mock(ChatTurnRewinder.class),
                 runRegistry, childRuns, ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());
     }

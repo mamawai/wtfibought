@@ -36,6 +36,15 @@
   .p-home .tmeta b{display:block;margin-top:2px;font-size:15px;font-weight:500;color:#fff}
   .p-home .tlast{margin-top:auto;padding-top:14px;font-size:12.5px;line-height:1.55;color:rgb(255 255 255 / .62)}
   .p-home .tlast a{margin-left:6px;color:#fff;white-space:nowrap;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgb(255 255 255 / .4);transition:text-decoration-color var(--t) var(--ease-control)}
+  /* 好几个 trader 轮播：几张战报叠在同一格里只露当前那张，块高取最高那张，切的时候不跳 */
+  .p-home .tdeck{display:grid;flex:1}
+  .p-home .tcard{grid-area:1/1;display:flex;flex-direction:column;min-width:0}
+  .p-home .tcard:not(.on){visibility:hidden}
+  /* 底下一排圆点，当前那颗拉长变白；::before 把点的范围撑大好点 */
+  .p-home .tdots{display:flex;justify-content:center;gap:8px;padding-top:14px}
+  .p-home .tdots button{position:relative;width:6px;height:6px;border-radius:999px;background:rgb(255 255 255 / .28);transition:width var(--t) var(--ease-control),background-color var(--t) var(--ease-control)}
+  .p-home .tdots button::before{content:"";position:absolute;inset:-7px -4px}
+  .p-home .tdots button.on{width:18px;background:#fff}
   /* 还没有 Trader：同一块黑，换成三步说明和入口 */
   .p-home .tempty > b{display:block;margin-top:14px;font-size:20px;font-weight:600;line-height:1.35;letter-spacing:-.01em}
   .p-home .tempty ol{margin-top:14px;font-size:12.5px;line-height:1.9;color:rgb(255 255 255 / .62)}
@@ -119,6 +128,7 @@
   @media (hover:hover){
     .p-home .hello a:hover{color:var(--color-foreground)}
     .p-home .tlast a:hover{text-decoration-color:#fff}
+    .p-home .tdots button:not(.on):hover{background:rgb(255 255 255 / .6)}
     .p-home .trader .btn:hover{background:#e9e9ed}
     .p-home .trader .btn.dim:hover{background:rgb(255 255 255 / .2)}
     .p-home .ent a:hover{background:var(--color-fill)}
@@ -149,7 +159,7 @@
     .p-home .liq .ratio{margin-left:0;max-width:none}
   }
   @media (prefers-reduced-motion:reduce){
-    .p-home .hello a,.p-home .tlast a,.p-home .ent a,.p-home .ent .ib0,.p-home .q::before,.p-home .nw a h3,
+    .p-home .hello a,.p-home .tlast a,.p-home .tdots button,.p-home .ent a,.p-home .ent .ib0,.p-home .q::before,.p-home .nw a h3,
     .p-home .liq .rb i,.p-home .fq > button,.p-home .fq > button .ic{transition:none}
     .p-home .trader .st.run i{animation:none}
   }

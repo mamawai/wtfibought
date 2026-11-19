@@ -82,6 +82,21 @@
   .ccard .rounds{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--color-muted-foreground)}
   .ccard .done{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;color:var(--color-muted-foreground)}
   .ccard .done .ic{width:14px;height:14px}
+  /* 选 trader：一行一个白块，名字和状态一行、说明一行；被拦的淡掉，AI 点了名的描一圈橙 */
+  .cpick{margin-top:12px}
+  .cpick .hd{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--color-muted-foreground)}
+  .cpick .hd b{min-width:0;font-weight:500;color:var(--color-foreground)}
+  .cpick .hd .ck{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-variant-numeric:tabular-nums}
+  .cpick .hd .ck .ic{width:13px;height:13px}
+  .cpick .rows{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .cpick .row{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;padding:9px 12px;border-radius:12px;background:var(--ctl);text-align:left;transition:background-color var(--t) var(--ease-control),opacity var(--t)}
+  .cpick .row.hl{box-shadow:inset 0 0 0 1.5px var(--color-primary)}
+  .cpick .row:disabled{opacity:.55;cursor:not-allowed}
+  .cpick .nm{display:flex;flex-wrap:wrap;align-items:center;gap:6px;max-width:100%;font-size:13.5px}
+  .cpick .nm b{min-width:0;font-weight:500;overflow-wrap:anywhere}
+  .cpick .nm .ic{width:14px;height:14px;color:var(--color-muted-foreground)}
+  .cpick .dt{font-size:12px;line-height:1.5;color:var(--color-muted-foreground)}
+  .cpick .dt.bad{color:var(--color-loss)}
   /* 行为报告：两个大数、资产分布条、走势；下面一类一节 */
   .cbr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px;margin-top:12px}
   .cbr > div > span{display:block;font-size:12px;color:var(--color-muted-foreground)}
@@ -105,9 +120,10 @@
     .cact button:hover{background:var(--color-fill);color:var(--color-foreground)}
     .crail:hover{background:var(--color-fill);color:var(--color-foreground)}
     .csites a:hover{color:var(--color-foreground)}
+    .cpick .row:not(:disabled):hover{background:var(--ctl-h)}
   }
   @media (prefers-reduced-motion:reduce){
     .crail .pd,.cface.think::before,.cface.think::after{animation:none}
-    .cact,.crail,.crail .ic,.cact button,.csrc a,.csrc button,.cstep em .ic,.csites a{transition:none}
+    .cact,.crail,.crail .ic,.cact button,.csrc a,.csrc button,.cstep em .ic,.csites a,.cpick .row{transition:none}
   }
 }

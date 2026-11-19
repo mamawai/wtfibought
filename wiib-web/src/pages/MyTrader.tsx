@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import {
   ArrowRight, ChevronLeft, ChevronRight, CircleHelp, Info, Loader2, Lock, MessageCircle, NotebookPen,
-  RotateCcw, Sparkles, Trash2, TriangleAlert, Zap,
+  Plus, RotateCcw, Sparkles, Trash2, TriangleAlert, Zap,
 } from 'lucide-react';
 import { llmEndpointApi, traderApi } from '../api';
 import { CoinStage } from '../components/arena/CoinStage';
@@ -13,7 +13,7 @@ import { PnlPct } from '../components/arena/PnlPct';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { RangeRail, Slider, SwitchRow, WakeRuler } from '../components/arena/TraderControls';
 import {
-  ALERT_BASE, ALERT_INTERVALS, BASE_EQUITY, beatsPerDay, INTERVALS, MAX_SYMBOLS, minToHm, parseWindow, posOf,
+  ALERT_BASE, ALERT_INTERVALS, BASE_EQUITY, beatsPerDay, INTERVALS, MAX_SYMBOLS, MAX_TRADERS, minToHm, parseWindow, posOf,
   TRADER_SYMBOLS, valueAt, windowText, type WakeWin,
 } from '../components/arena/traderConfig';
 import { DATA_TOOLS, TRADE_TOOLS, toolName } from '../components/arena/traderTools';
@@ -137,14 +137,41 @@ function fmtPct(v: number) {
 
 const symbolsOf = (s: string) => s.split(',').filter(Boolean);
 
+/** /my-trader：有 trader 就进第一个，一个都没有进新建 */
+export function MyTraderHome() {
+  const { t } = useTranslation('common');
+  const navigate = useNavigate();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    traderApi.mine()
+      .then(list => navigate(list.length ? `/my-trader/${list[0].pub.id}` : '/my-trader/new', { replace: true }))
+      .catch(() => setFailed(true));
+  }, [navigate]);
+  return (
+    <div className="page-shell p-mt">
+      <div className="empty">{failed ? t('loadFailed') : <Loader2 className="ic animate-spin" />}</div>
+    </div>
+  );
+}
+
+/** /my-trader/:id：换一个 trader 整页重来；id 不是正整数直接回 /my-trader，一个请求都不发 */
+export function MyTraderRoute() {
+  const { id } = useParams<{ id: string }>();
+  if (!/^[1-9]\d*$/.test(id ?? '')) return <Navigate to="/my-trader" replace />;
+  return <MyTrader key={id} traderId={Number(id)} />;
+}
+
 /**
- * 我的 Trader 配置台（样式见 MyTrader.css）：页头（直接改名）→ 心跳条 + 一排动作 → 左侧分节索引 ‖ 经验账本、币种、心跳与时段、
- * 仓位规格、警报与复盘、模型、交易指令、工具箱、危险区 → 有改动才从底边升起来的保存条。
+ * 我的 Trader 配置台（样式见 MyTrader.css）：页顶切换条 → 页头（直接改名）→ 心跳条 + 一排动作 → 左侧分节索引 ‖ 经验账本、币种、
+ * 心跳与时段、仓位规格、警报与复盘、模型、交易指令、工具箱、危险区 → 有改动才从底边升起来的保存条。
  * 模型从 AI 页「模型配置」的端点库里选，不在这里填 key；提示词存库即热生效，下一根心跳就按新的来
+ *
+ * @param traderId 这页配的是哪个 trader；null=新建页
  */
-export function MyTrader() {
+export function MyTrader({ traderId }: { traderId: number | null }) {
   const { toast } = useToast();
   const { t } = useTranslation(['ai', 'common']);
+  const navigate = useNavigate();
   const kindLabel = useKindLabel();
   /**
    * 配置引导：讲清楚"这是什么 + 配大配小会怎样 + 和别的字段怎么互相咬"。
@@ -163,7 +190,9 @@ export function MyTrader() {
     { target: 'save', title: t('tour.save.title'), body: t('tour.save.body') },
   ], [t]);
 
-  const [mine, setMine] = useState<TraderOwnerView | null>(null);
+  // 名下全部 trader：切换条用它，这页配的那个也从里面挑
+  const [list, setList] = useState<TraderOwnerView[]>([]);
+  const mine = list.find(x => x.pub.id === traderId) ?? null;
   const [loaded, setLoaded] = useState(false);
   const [form, setForm] = useState<TraderUpsertRequest>(EMPTY_FORM);
   // 上次存下的那份：改动按它比，放弃改动回到它
@@ -184,9 +213,9 @@ export function MyTrader() {
 
   /** 只刷状态（运行与否、上次唤醒、留言），表单里没存的改动不动 */
   const refreshOwner = useCallback(() => {
-    traderApi.mine().then(v => setMine(v)).catch(() => {});
-    traderApi.actionPanel().then(setPanel).catch(() => setPanel(null));
-  }, []);
+    traderApi.mine().then(setList).catch(() => {});
+    if (traderId != null) traderApi.actionPanel(traderId).then(setPanel).catch(() => setPanel(null));
+  }, [traderId]);
   useEffect(() => {
     const timer = setInterval(refreshOwner, PANEL_REFRESH_MS);
     return () => clearInterval(timer);
@@ -194,30 +223,36 @@ export function MyTrader() {
 
   /** 整页重载：表单回到存下的那份 */
   const load = useCallback(() => {
-    traderApi.mine().then(v => {
-      setMine(v);
+    traderApi.mine().then(l => {
+      setList(l);
+      const v = l.find(x => x.pub.id === traderId);
       const f = v ? formOf(v) : EMPTY_FORM;
       setForm(f);
       setBase(f);
       const w = parseWindow(f.wakeWindow);
       if (w) setLastWin(w);
     }).finally(() => setLoaded(true));
-    traderApi.actionPanel().then(setPanel).catch(() => setPanel(null));
-  }, []);
+    if (traderId != null) traderApi.actionPanel(traderId).then(setPanel).catch(() => setPanel(null));
+  }, [traderId]);
   useEffect(() => { load(); }, [load]);
+
+  // 地址里的 trader 不在名下（删了、别人的、乱填的）：回 /my-trader 重新挑
+  useEffect(() => {
+    if (loaded && traderId != null && !mine) navigate('/my-trader', { replace: true });
+  }, [loaded, traderId, mine, navigate]);
 
   // 平台默认交易指令按主人的 agent 语言取（与模板预览同一门），不跟界面语言
   const [defaultInstructions, setDefaultInstructions] = useState('');
   useEffect(() => {
     traderApi.defaultInstructions().then(setDefaultInstructions).catch(() => setDefaultInstructions(''));
   }, []);
-  // 新建态：指令框还空着就预填平台默认，可改可删
+  // 新建页：指令框还空着就预填平台默认，可改可删
   useEffect(() => {
-    if (loaded && !mine && defaultInstructions) {
+    if (loaded && traderId == null && defaultInstructions) {
       setForm(f => f.customPrompt ? f : { ...f, customPrompt: defaultInstructions });
       setBase(f => f.customPrompt ? f : { ...f, customPrompt: defaultInstructions });
     }
-  }, [loaded, mine, defaultInstructions]);
+  }, [loaded, traderId, defaultInstructions]);
 
   // 首次进入自动跑一遍引导；标记落 localStorage，之后靠按钮重放
   useEffect(() => {
@@ -245,12 +280,12 @@ export function MyTrader() {
     return () => window.removeEventListener('scroll', spy);
   }, [loaded]);
 
-  const run = useCallback(async (name: string, action: () => Promise<unknown>, okMsg: string | null, after: () => void) => {
+  const run = useCallback(async (name: string, action: () => Promise<unknown>, okMsg: string | null, after?: () => void) => {
     setBusy(name);
     try {
       await action();
       if (okMsg) toast(okMsg, 'success');
-      after();
+      after?.();
     } catch (e) {
       toast((e as Error).message || t('toast.actionFailed'), 'error');
     } finally {
@@ -312,11 +347,16 @@ export function MyTrader() {
       goSection(err[0]);
       return;
     }
-    void run('save', () => exists ? traderApi.updateConfig(form) : traderApi.create(form),
-      exists ? t('toast.saved') : t('toast.created'), load);
+    if (mine) {
+      void run('save', () => traderApi.updateConfig(mine.pub.id, form), t('toast.saved'), load);
+    } else {
+      // 建好了进它自己那页
+      void run('save', () => traderApi.create(form).then(id => navigate(`/my-trader/${id}`, { replace: true })), t('toast.created'));
+    }
   };
 
-  if (!loaded) {
+  // 还没加载完，或地址里的 trader 不在名下（马上跳走），先转圈
+  if (!loaded || (traderId != null && !mine)) {
     return <div className="page-shell p-mt"><div className="empty"><Loader2 className="ic animate-spin" /></div></div>;
   }
 
@@ -326,8 +366,10 @@ export function MyTrader() {
   const todayN = todayWakes.reduce((s, [, n]) => s + n, 0);
   // 运行开关：爆仓了拨不动，有动作在跑也先等它
   const power = (v: string) => {
-    if (busy != null || status === 'LIQUIDATED') return false;
-    void run('power', v === 'RUN' ? traderApi.start : traderApi.pause, v === 'RUN' ? t('toast.started') : t('status.paused'), refreshOwner);
+    if (!mine || busy != null || status === 'LIQUIDATED') return false;
+    const id = mine.pub.id;
+    void run('power', () => v === 'RUN' ? traderApi.start(id) : traderApi.pause(id),
+      v === 'RUN' ? t('toast.started') : t('status.paused'), refreshOwner);
   };
   const toggleNote = () => {
     if (!noteOpen) {
@@ -340,6 +382,31 @@ export function MyTrader() {
   return (
     <div className="page-shell p-mt">
       <GuidedTour steps={tourSteps} open={tour} onClose={closeTour} />
+
+      {/* 切换条：名下的 trader（名字 + 状态点）和新建；满了新建点不动，悬停说上限 */}
+      {list.length > 0 && (
+        <nav className="mswitch" aria-label={t('my.switch.aria')}>
+          {list.map(x => {
+            const s = STATUS_META[x.pub.status] ?? STATUS_META.PAUSED;
+            const on = x.pub.id === traderId;
+            return (
+              <Link key={x.pub.id} to={`/my-trader/${x.pub.id}`} className={cn(on && 'on')} aria-current={on ? 'page' : undefined}
+                    title={t(s.labelKey)}>
+                <i className={cn(s.tone, x.pub.status === 'RUNNING' && 'live')} /><span>{x.pub.name}</span>
+              </Link>
+            );
+          })}
+          {list.length >= MAX_TRADERS ? (
+            <span className="add dis" aria-disabled="true" title={t('my.switch.full', { max: MAX_TRADERS })}>
+              <Plus className="ic" />{t('my.switch.new')}
+            </span>
+          ) : (
+            <Link to="/my-trader/new" className={cn('add', traderId == null && 'on')} aria-current={traderId == null ? 'page' : undefined}>
+              <Plus className="ic" />{t('my.switch.new')}
+            </Link>
+          )}
+        </nav>
+      )}
 
       {/* 页头：名字就是个输入框，直接点着改；右边是本局收益 */}
       <section id={secId('name')} className="trhd">
@@ -398,7 +465,7 @@ export function MyTrader() {
                    { value: 'PAUSE', label: t('my.act.pause') },
                  ]} />
             <button type="button" className={cn('btn', busy === 'wake' && 'busy')} disabled={busy != null || !!panel?.wakeBlockedReason}
-                    title={panel?.wakeBlockedReason ?? undefined} onClick={() => runAction('wake', traderApi.wake)}>
+                    title={panel?.wakeBlockedReason ?? undefined} onClick={() => runAction('wake', () => traderApi.wake(mine.pub.id))}>
               <Zap className="ic" /><span>{t('term.manualWake')}</span>
             </button>
             {/* 有一条留言还没念完时按钮是墨色的 */}
@@ -406,7 +473,7 @@ export function MyTrader() {
               <MessageCircle className="ic" />{t('my.act.note')}
             </button>
             <button type="button" className={cn('btn', busy === 'review' && 'busy')} disabled={busy != null || !!panel?.reviewBlockedReason}
-                    title={panel?.reviewBlockedReason ?? undefined} onClick={() => runAction('review', traderApi.review)}>
+                    title={panel?.reviewBlockedReason ?? undefined} onClick={() => runAction('review', () => traderApi.review(mine.pub.id))}>
               <NotebookPen className="ic" /><span>{t('term.reviewNow')}</span>
             </button>
             <span className="sp" />
@@ -432,10 +499,10 @@ export function MyTrader() {
                     <span>{t('my.note.wakes')}</span>
                     {panel.note && (
                       <button type="button" className="btn" disabled={busy != null}
-                              onClick={() => { setNoteOpen(false); runAction('note', traderApi.clearNote); }}>{t('my.note.clear')}</button>
+                              onClick={() => { setNoteOpen(false); runAction('note', () => traderApi.clearNote(mine.pub.id)); }}>{t('my.note.clear')}</button>
                     )}
                     <button type="button" className="btn ink" disabled={busy != null || !noteText.trim()}
-                            onClick={() => { setNoteOpen(false); runAction('note', () => traderApi.saveNote(noteText.trim(), noteRounds)); }}>
+                            onClick={() => { setNoteOpen(false); runAction('note', () => traderApi.saveNote(mine.pub.id, noteText.trim(), noteRounds)); }}>
                       {t('my.act.note')}
                     </button>
                   </div>
@@ -465,7 +532,7 @@ export function MyTrader() {
         </nav>
 
         <div className="mmain">
-          {exists && <ExperienceLedgerSection id={secId('ledger')} />}
+          {exists && <ExperienceLedgerSection id={secId('ledger')} traderId={mine.pub.id} />}
 
           <section id={secId('coins')} className="msec" data-tour="symbols">
             <SecHead no="01" title={t('my.idx.coins')} desc={t('my.coins.desc', { n: TRADER_SYMBOLS.length, max: MAX_SYMBOLS })} />
@@ -591,14 +658,16 @@ export function MyTrader() {
             )}
           </section>
 
-          <PromptSection form={form} set={set} defaultInstructions={defaultInstructions} />
+          <PromptSection form={form} set={set} defaultInstructions={defaultInstructions} traderId={traderId} />
 
           <Toolbox />
 
+          {/* 删掉后回 /my-trader：剩下的第一个，一个不剩就新建 */}
           {exists && (
             <DangerZone mine={mine} busy={busy != null}
-                        onReset={carry => void run('reset', () => traderApi.reset(carry), t('toast.reset'), load)}
-                        onDelete={name => void run('delete', () => traderApi.remove(name), t('toast.deleted'), load)} />
+                        onReset={carry => void run('reset', () => traderApi.reset(mine.pub.id, carry), t('toast.reset'), load)}
+                        onDelete={name => void run('delete', () => traderApi.remove(mine.pub.id, name), t('toast.deleted'),
+                          () => navigate('/my-trader', { replace: true }))} />
           )}
         </div>
       </div>
@@ -632,9 +701,10 @@ function SecHead({ no, title, desc, children }: { no?: string; title: string; de
   );
 }
 
-/** 交易指令 + 平台系统提示词预览（跟着上面的配置实时变，变了的行闪一下） */
-function PromptSection({ form, set, defaultInstructions }: {
+/** 交易指令 + 平台系统提示词预览（跟着上面的配置实时变，变了的行闪一下）；traderId 是这页的 trader，新建页为 null */
+function PromptSection({ form, set, defaultInstructions, traderId }: {
   form: TraderUpsertRequest; set: (patch: Partial<TraderUpsertRequest>) => void; defaultInstructions: string;
+  traderId: number | null;
 }) {
   const { t } = useTranslation('ai');
   const [template, setTemplate] = useState<string[]>([]);
@@ -693,8 +763,10 @@ function PromptSection({ form, set, defaultInstructions }: {
                       onConfirm={() => set({ customPrompt: defaultInstructions })}>
             <RotateCcw className="ic" />{t('cfg.resetDefaultPrompt')}
           </SureButton>
-          {/* 提示词生成：对话式写出交易指令，写完复制回这个框 */}
-          <Link to="/prompt-gen" className="btn sm"><Sparkles className="ic" />{t('cfg.genPrompt')}</Link>
+          {/* 提示词生成：对话式写出交易指令，写完复制回这个框；带上是为哪个 trader 写的 */}
+          <Link to={traderId == null ? '/prompt-gen' : `/prompt-gen?trader=${traderId}`} className="btn sm">
+            <Sparkles className="ic" />{t('cfg.genPrompt')}
+          </Link>
         </span>
       </div>
       <label className="inp ta">

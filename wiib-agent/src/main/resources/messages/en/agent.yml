@@ -5,6 +5,7 @@ agent:
     sessionNotFound: That session does not exist or is not yours
     sessionRunning: This session is still running or has a follow-up pending - delete it once it finishes
     approvalExpired: That approval request has expired - start it again
+    pickExpired: This picker has expired (it timed out, or the turn is already over)
     untitled: (untitled)
 
   # BYOK endpoint library (the /ai model-config page): validation and probe wording. {{reason}} is the upstream error verbatim, untranslated

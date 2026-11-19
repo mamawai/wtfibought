@@ -3,9 +3,11 @@ package com.mawai.wiibagent.llm;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibcommon.constant.AiProtocols;
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.UserLlmBindingMapper;
 import com.mawai.wiibagent.mapper.UserLlmEndpointMapper;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +19,7 @@ import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -31,7 +34,7 @@ import java.util.Set;
  * 三条不变量：
  * <ul>
  *   <li>一人只要还有端点，就<b>恰有一条</b>默认（首条自动默认；删默认时最早的一条顶上）；</li>
- *   <li>绑定行永远指向活着的端点：删端点连带删它的绑定，受影响的用途回落默认；</li>
+ *   <li>绑定行和 trader 选的端点永远指向活着的端点：删端点连带删它的绑定、清掉选了它的 trader，受影响的都回落默认；</li>
  *   <li>勾着联网搜索的端点，新增时、改动里刚勾上搜索或改了协议/地址/模型/key/思考档位/Antigravity 来源时，保存前先探测，
  *       连得上且支持搜索才入库；其余保存不发上游请求。
  *       测什么就是接下来真跑什么——探测走 {@link ByokModelBuilder} 的生产建模路径，见 {@link #probe}。</li>
@@ -54,7 +57,7 @@ public class LlmEndpointService {
     static final int MIN_CONTEXT_WINDOW = 128_000;
     static final int MAX_CONTEXT_WINDOW = 1_000_000;
 
-    private static final Set<String> PURPOSES = Set.of(UserLlmBinding.CHAT_MAIN, UserLlmBinding.CHAT_LIGHT, UserLlmBinding.TRADER);
+    private static final Set<String> PURPOSES = Set.of(UserLlmBinding.CHAT_MAIN, UserLlmBinding.CHAT_LIGHT);
 
     /** 探 Antigravity 来源的搜索时问的：要当天的信息，模型才会真去搜 */
     private static final String SEARCH_PROBE_QUERY = "What is the latest Bitcoin news today?";
@@ -75,6 +78,8 @@ public class LlmEndpointService {
 
     private final UserLlmEndpointMapper endpointMapper;
     private final UserLlmBindingMapper bindingMapper;
+    /** 删端点时清掉选了它的 trader */
+    private final AiTraderMapper traderMapper;
     private final ApiKeyCrypto apiKeyCrypto;
     private final BaseUrlGuard baseUrlGuard;
     private final ByokModelBuilder modelBuilder;
@@ -121,7 +126,7 @@ public class LlmEndpointService {
     }
 
     /** 某用途实际用哪条：显式绑定优先，否则默认；一条端点都没有 → null */
-    public UserLlmEndpoint resolve(long userId, String purpose) {
+    private UserLlmEndpoint resolve(long userId, String purpose) {
         UserLlmBinding b = binding(userId, purpose);
         if (b != null) {
             UserLlmEndpoint e = get(userId, b.getEndpointId());
@@ -148,37 +153,34 @@ public class LlmEndpointService {
     }
 
     /**
-     * 批量解析多个用户同一用途的端点（竞技场列表要给每个 trader 标模型名）：两条查询而不是 N×2 条。
-     * 结果不含没有端点的用户。
+     * 批量解析一批 trader 各自用的端点（竞技场列表要给每个 trader 标模型名），规则同 TraderModelFactory.endpointFor：
+     * 选了的那条还在就用它，否则主人的默认端点。主人们的端点一条查询取齐，不逐个查。
+     * 结果 traderId → 端点，不含主人一条端点都没有的。
      */
-    public Map<Long, UserLlmEndpoint> resolveForUsers(Collection<Long> userIds, String purpose) {
+    public Map<Long, UserLlmEndpoint> resolveForTraders(Collection<AiTrader> traders) {
         Map<Long, UserLlmEndpoint> out = new HashMap<>();
-        if (userIds.isEmpty()) {
+        if (traders.isEmpty()) {
             return out;
-        }
-        Map<Long, Long> bound = new HashMap<>();
-        for (UserLlmBinding b : bindingMapper.selectList(new LambdaQueryWrapper<UserLlmBinding>()
-                .in(UserLlmBinding::getUserId, userIds).eq(UserLlmBinding::getPurpose, purpose))) {
-            bound.put(b.getUserId(), b.getEndpointId());
         }
         Map<Long, UserLlmEndpoint> byId = new HashMap<>();
         Map<Long, UserLlmEndpoint> defaults = new HashMap<>();
         Map<Long, UserLlmEndpoint> oldest = new HashMap<>();
         for (UserLlmEndpoint e : endpointMapper.selectList(new LambdaQueryWrapper<UserLlmEndpoint>()
-                .in(UserLlmEndpoint::getUserId, userIds).orderByAsc(UserLlmEndpoint::getId))) {
+                .in(UserLlmEndpoint::getUserId, traders.stream().map(AiTrader::getUserId).distinct().toList())
+                .orderByAsc(UserLlmEndpoint::getId))) {
             byId.put(e.getId(), e);
             if (Boolean.TRUE.equals(e.getIsDefault())) {
                 defaults.put(e.getUserId(), e);
             }
             oldest.putIfAbsent(e.getUserId(), e);
         }
-        for (Long uid : userIds) {
-            UserLlmEndpoint e = bound.containsKey(uid) ? byId.get(bound.get(uid)) : null;
+        for (AiTrader t : traders) {
+            UserLlmEndpoint e = t.getLlmEndpointId() == null ? null : byId.get(t.getLlmEndpointId());
             if (e == null) {
-                e = defaults.getOrDefault(uid, oldest.get(uid));
+                e = defaults.getOrDefault(t.getUserId(), oldest.get(t.getUserId()));
             }
             if (e != null) {
-                out.put(uid, e);
+                out.put(t.getId(), e);
             }
         }
         return out;
@@ -232,7 +234,7 @@ public class LlmEndpointService {
         return null;
     }
 
-    /** 删端点：连带删它的绑定（回落默认）；删的是默认就把最早的一条顶上 */
+    /** 删端点：连带删它的绑定、清掉选了它的 trader（都回落默认）；删的是默认就把最早的一条顶上 */
     public String delete(long userId, long id) {
         UserLlmEndpoint cur = get(userId, id);
         if (cur == null) {
@@ -241,6 +243,10 @@ public class LlmEndpointService {
         endpointMapper.deleteById(id);
         bindingMapper.delete(new LambdaQueryWrapper<UserLlmBinding>()
                 .eq(UserLlmBinding::getUserId, userId).eq(UserLlmBinding::getEndpointId, id));
+        traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
+                .eq(AiTrader::getUserId, userId).eq(AiTrader::getLlmEndpointId, id)
+                .set(AiTrader::getLlmEndpointId, null)
+                .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
         if (Boolean.TRUE.equals(cur.getIsDefault())) {
             List<UserLlmEndpoint> rest = list(userId);
             if (!rest.isEmpty()) {

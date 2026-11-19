@@ -455,7 +455,7 @@ const getSse = async <E,>(url: string, onEvent: (e: E) => void, signal?: AbortSi
 export const workbenchApi = {
   /**
    * 工作台 SSE：POST /ai/workbench/chat，事件 session/token/progress/tool_calls/search/child_start/child_progress/child_done
-   * /hitl_request/form_request/behavior_report/done/error。
+   * /hitl_request/form_request/trader_pick/behavior_report/done/error。
    * intent 只有功能按钮直发时带（后端据此在收尾指令里钉死本轮必须调的工具）
    */
   chat: (sessionId: string | null, message: string, onEvent: (e: WorkbenchEvent) => void,
@@ -482,6 +482,9 @@ export const workbenchApi = {
   /** requestId 从 hitl_request 事件原样回传：卡片被新请求覆盖后点它，服务端会拒掉 */
   approve: (sessionId: string, approved: boolean, requestId: string) =>
     api.post<unknown, void>('/ai/workbench/approve', { sessionId, approved, requestId }),
+  /** 选 trader 卡的回执：requestId 从 trader_pick 事件原样回传；卡已超时或这一轮已结束会被拒 */
+  pickTrader: (sessionId: string, requestId: string, traderId: number) =>
+    api.post<unknown, void>('/ai/workbench/pick-trader', { sessionId, requestId, traderId }),
   /** 历史会话列表（标题=首条提问，按最后活跃倒序） */
   sessions: () => api.get<unknown, WorkbenchSessionSummary[]>('/ai/workbench/sessions'),
   /** 用户占不占线（不分会话）：本地没有流、又要等那轮跑完时轮询它 */
@@ -646,22 +649,25 @@ export const quantApi = {
 };
 
 // ========== AI Trader 竞技场 ==========
+// 主人操作都带 trader id；不是自己的 id 后端一律回"trader 不存在"
 export const traderApi = {
-  mine: () => api.get<unknown, TraderOwnerView | null>('/ai/trader/mine'),
+  /** 我名下的全部 trader，按 id 升序，可能为空 */
+  mine: () => api.get<unknown, TraderOwnerView[]>('/ai/trader/mine'),
   /** 平台系统提示词预览（与唤醒组装同一份文本）：规格项多，走 POST 带 body */
   promptTemplate: (intervalCode: string, symbols: string, spec: TraderSpec, wakeWindow: string | null) =>
     api.post<unknown, string>('/ai/trader/prompt-template', { intervalCode, symbols, spec, wakeWindow }),
   /** 平台默认交易指令（按用户的 agent 语言），新建时预填进指令框 */
   defaultInstructions: () => api.get<unknown, string>('/ai/trader/default-instructions'),
-  create: (req: TraderUpsertRequest) => api.post<unknown, void>('/ai/trader', req),
-  updateConfig: (req: TraderUpsertRequest) => api.put<unknown, void>('/ai/trader/config', req),
-  start: () => api.post<unknown, void>('/ai/trader/start'),
-  pause: () => api.post<unknown, void>('/ai/trader/pause'),
+  /** 回新 trader 的 id；名下满 3 个、或和名下别的 trader 重名（不分大小写）会被拒 */
+  create: (req: TraderUpsertRequest) => api.post<unknown, number>('/ai/trader', req),
+  updateConfig: (id: number, req: TraderUpsertRequest) => api.put<unknown, void>(`/ai/trader/${id}/config`, req),
+  start: (id: number) => api.post<unknown, void>(`/ai/trader/${id}/start`),
+  pause: (id: number) => api.post<unknown, void>(`/ai/trader/${id}/pause`),
   /** carryNotes=false 不带入经验账本（只清生效版本，历届存档保留） */
-  reset: (carryNotes: boolean) => api.post<unknown, void>('/ai/trader/reset', { carryNotes }),
+  reset: (id: number, carryNotes: boolean) => api.post<unknown, void>(`/ai/trader/${id}/reset`, { carryNotes }),
   /** 删 trader：决策/计划/每局 sim 子账户全物理删除，不可逆；confirmName 要与 trader 名字一字不差 */
-  remove: (confirmName: string) =>
-    api.delete<unknown, void>('/ai/trader', { params: { confirmName } }),
+  remove: (id: number, confirmName: string) =>
+    api.delete<unknown, void>(`/ai/trader/${id}`, { params: { confirmName } }),
   arena: () => api.get<unknown, TraderPublicView[]>('/ai/trader/arena'),
   detail: (id: number) => api.get<unknown, TraderDetailView>(`/ai/trader/${id}`),
   /**
@@ -678,13 +684,16 @@ export const traderApi = {
   /** 已了结交易（只有当前局：每局独立子账户，历史局的子账户查不回来） */
   trades: (id: number) => api.get<unknown, TradeRecordView[]>(`/ai/trader/${id}/trades`),
   /** 标记/取消忽略一笔已了结交易（仅本人、仅CLOSED）：AI 统计与复盘不再参考，公开记录不变 */
-  setPlanStale: (planId: number, stale: boolean) => api.post<unknown, void>(`/ai/trader/plan/${planId}/stale`, { stale }),
-  // 经验账本（主人管理）：本局全部条目；钉住/退役/恢复/删除
-  experiences: () => api.get<unknown, TraderExperience[]>('/ai/trader/mine/experiences'),
-  pinExperience: (id: number, pinned: boolean) => api.post<unknown, void>(`/ai/trader/experience/${id}/pin`, { pinned }),
-  retireExperience: (id: number, reason: string) => api.post<unknown, void>(`/ai/trader/experience/${id}/retire`, { reason }),
-  reviveExperience: (id: number) => api.post<unknown, void>(`/ai/trader/experience/${id}/revive`),
-  deleteExperience: (id: number) => api.delete<unknown, void>(`/ai/trader/experience/${id}`),
+  setPlanStale: (id: number, planId: number, stale: boolean) =>
+    api.post<unknown, void>(`/ai/trader/${id}/plan/${planId}/stale`, { stale }),
+  // 经验账本（仅主人）：本局全部条目；钉住/退役/恢复/删除。eid 是经验条目的 id
+  experiences: (id: number) => api.get<unknown, TraderExperience[]>(`/ai/trader/${id}/experiences`),
+  pinExperience: (id: number, eid: number, pinned: boolean) =>
+    api.post<unknown, void>(`/ai/trader/${id}/experience/${eid}/pin`, { pinned }),
+  retireExperience: (id: number, eid: number, reason: string) =>
+    api.post<unknown, void>(`/ai/trader/${id}/experience/${eid}/retire`, { reason }),
+  reviveExperience: (id: number, eid: number) => api.post<unknown, void>(`/ai/trader/${id}/experience/${eid}/revive`),
+  deleteExperience: (id: number, eid: number) => api.delete<unknown, void>(`/ai/trader/${id}/experience/${eid}`),
 
   // ---- 唤醒过程实时流：只有主人连得进来，非主人后端直接拒 ----
   /**
@@ -699,15 +708,15 @@ export const traderApi = {
 
   // ---- 动作面板：三个动作的唯一执行入口，对话轨只负责把表单卡弹出来 ----
   /** 三张卡的状态一次取齐；每张卡挂载且未落地时拉一次 */
-  actionPanel: () => api.get<unknown, TraderActionPanel>('/ai/trader/action-panel'),
+  actionPanel: (id: number) => api.get<unknown, TraderActionPanel>(`/ai/trader/${id}/action-panel`),
   /** 留言：覆盖未读的那条；rounds 空=1 轮，越界由后端钳到 1~24 */
-  saveNote: (note: string, rounds?: number) =>
-    api.post<unknown, TraderActionResult>('/ai/trader/note', { note, rounds }),
-  clearNote: () => api.delete<unknown, TraderActionResult>('/ai/trader/note'),
+  saveNote: (id: number, note: string, rounds?: number) =>
+    api.post<unknown, TraderActionResult>(`/ai/trader/${id}/note`, { note, rounds }),
+  clearNote: (id: number) => api.delete<unknown, TraderActionResult>(`/ai/trader/${id}/note`),
   /** 手动唤醒：真实执行一次决策，可能开/平仓 */
-  wake: () => api.post<unknown, TraderActionResult>('/ai/trader/wake'),
+  wake: (id: number) => api.post<unknown, TraderActionResult>(`/ai/trader/${id}/wake`),
   /** 点播复盘：异步跑；无新素材时后端跳过且不消耗模型调用（仍返回 ok） */
-  review: () => api.post<unknown, TraderActionResult>('/ai/trader/review'),
+  review: (id: number) => api.post<unknown, TraderActionResult>(`/ai/trader/${id}/review`),
 };
 
 // ========== 策略账户监控 ==========
@@ -768,8 +777,11 @@ export const backtestApi = {
 export const promptGenApi = {
   /** 当前对话 + 最近 3 版；进页面和每轮结束都拉它 */
   session: () => api.get<unknown, PromptGenView>('/ai/prompt-gen/session'),
-  /** 开新对话（覆盖旧对话，版本保留）并跑第一轮。outputLang 是指令正文语言，对话跟 agent 语言 */
-  start: (body: { endpointId: number; outputLang: Lang },
+  /**
+   * 开新对话（覆盖旧对话，版本保留）并跑第一轮。traderId 是为哪个 trader 写（null=没有 trader，按平台默认规格），
+   * 不归自己的后端当没带；outputLang 是指令正文语言，对话跟 agent 语言
+   */
+  start: (body: { endpointId: number; traderId: number | null; outputLang: Lang },
           onEvent: (e: PromptGenEvent) => void, signal?: AbortSignal) =>
     postSse<PromptGenEvent>('/api/ai/prompt-gen/start', body, onEvent, signal),
   /** 回答题卡、跳过当前题（还没答的必问项不能跳）、或直接说要改哪里 */

@@ -688,7 +688,7 @@ CREATE INDEX IF NOT EXISTS idx_ledger_user_biz ON user_ledger(user_id, biz_type,
 -- ============================================
 CREATE TABLE IF NOT EXISTS ai_trader (
     id              BIGSERIAL PRIMARY KEY,
-    user_id         BIGINT NOT NULL UNIQUE,
+    user_id         BIGINT NOT NULL,
     name            VARCHAR(32) NOT NULL,
     status          VARCHAR(16) NOT NULL DEFAULT 'PAUSED',
     paused_reason   TEXT,
@@ -713,11 +713,13 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     alert_threshold_mult NUMERIC(4,2) NOT NULL DEFAULT 1.0,
     web_search_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     wake_window     VARCHAR(11),
+    llm_endpoint_id BIGINT,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE ai_trader IS 'AI Trader：用户BYOK自主交易代理（每用户1个，独立sim子账户，公开竞技场）';
+CREATE INDEX IF NOT EXISTS idx_ai_trader_user ON ai_trader(user_id);
+COMMENT ON TABLE ai_trader IS 'AI Trader：用户BYOK自主交易代理（每用户最多3个，各自独立sim子账户，公开竞技场）';
 COMMENT ON COLUMN ai_trader.status IS 'PAUSED/RUNNING/LIQUIDATED';
 COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分隔（须在agent的binance.symbols+crypto-futures-symbols范围内）';
 COMMENT ON COLUMN ai_trader.interval_code IS '心跳周期 15m/1h/4h：每根该级别K线收盘例行唤醒一次定期复查；两次心跳之间由止损止盈、盯盘条件命中、持仓事件、波动警报叫醒。5m已下线（存量迁15m）';
@@ -728,6 +730,7 @@ COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4
 COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/BNB0.6/ETH0.7/SOL0.9/DOGE0.9/XRP0.9/HYPE1.2/ZEC1.6%)×本系数，校准方法见VolatilitySentinel';
 COMMENT ON COLUMN ai_trader.web_search_enabled IS '主人开关：联网搜索。开了且所用端点也开了联网搜索(user_llm_endpoint.web_search)，唤醒时才挂web_search工具、例行轮和波动警报轮才多问一句要不要搜；保存时所用端点没开搜索的存FALSE';
 COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
+COMMENT ON COLUMN ai_trader.llm_endpoint_id IS '这个trader用的端点(user_llm_endpoint.id)，NULL=跟随用户默认端点；端点删除时清空';
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：reviewer每日复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
 COMMENT ON COLUMN ai_trader.owner_note_rounds IS '留言剩余注入轮次，0=无待读留言。1即"念一次就清"，上限24（15m档≈6小时）。递减走条件SQL(正文匹配作前置+原子递减)：唤醒读的是调度时刻的快照，以正文匹配保证只递减自己注入的那条';
@@ -955,7 +958,7 @@ CREATE TABLE IF NOT EXISTS user_llm_binding (
     endpoint_id BIGINT      NOT NULL,
     UNIQUE (user_id, purpose)
 );
-COMMENT ON TABLE  user_llm_binding IS '用途→端点绑定：CHAT_MAIN 对话主模型 / CHAT_LIGHT 对话轻模型 / TRADER 交易员；无行=跟随默认端点。端点删除时其绑定连带删';
+COMMENT ON TABLE  user_llm_binding IS '用途→端点绑定：CHAT_MAIN 对话主模型 / CHAT_LIGHT 对话轻模型；无行=跟随默认端点。端点删除时其绑定连带删';
 
 -- ============================================
 -- 34. Hyperliquid 大户持仓（纯展示 + 落库，不进 trader；方案见 docs/hyperliquid-whale.md）
@@ -1053,11 +1056,13 @@ COMMENT ON COLUMN user_workbench_pref.sub_agent_limit IS '同时在跑的子运�
 CREATE TABLE IF NOT EXISTS prompt_gen_session (
     user_id     BIGINT      PRIMARY KEY,
     endpoint_id BIGINT      NOT NULL,
+    trader_id   BIGINT,
     output_lang VARCHAR(8)  NOT NULL,
     state       BYTEA       NOT NULL,
     updated_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 COMMENT ON TABLE  prompt_gen_session IS '交易指令生成器的当前对话：一人一行，开新对话整行覆盖';
+COMMENT ON COLUMN prompt_gen_session.trader_id IS '这段对话为哪个 trader 写，开新对话时定，回退版本不改；空=没有 trader，按平台默认规格';
 COMMENT ON COLUMN prompt_gen_session.output_lang IS '指令正文语言 zh/en；对话本身跟 agent 语言';
 COMMENT ON COLUMN prompt_gen_session.state IS '序列化后的完整消息历史（ChatContextCodec），续聊与页面恢复都从它推';
 

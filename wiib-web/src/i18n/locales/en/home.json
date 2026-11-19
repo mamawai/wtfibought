@@ -49,7 +49,8 @@
     "step2": "2. Pick symbols and a wake cadence (5m to 4h)",
     "step3": "3. Start — each trader takes 10,000U into the arena",
     "create": "Create my trader",
-    "seeOthers": "See what others run"
+    "seeOthers": "See what others run",
+    "switchAria": "Switch trader"
   },
   "market": {
     "title": "Markets",

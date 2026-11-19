@@ -83,8 +83,8 @@ class BankruptcyServiceImplTest {
         human.setUsername("alice");
         User robot = user("0", "0");
         robot.setId(8L);
-        robot.setUsername("ai_trader_7_r1");
-        robot.setLinuxDoId("internal:ai_trader_7_r1");
+        robot.setUsername("ai_trader_t7_r1");
+        robot.setLinuxDoId("internal:ai_trader_t7_r1");
         when(userService.list(ArgumentMatchers.<Wrapper<User>>any())).thenReturn(List.of(human, robot));
 
         service.resetBankruptUsers(LocalDate.now());

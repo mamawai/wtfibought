@@ -21,14 +21,14 @@ class RankingTraderRoundTest {
         return user(username, "internal:" + username);
     }
 
-    /** 同一个 trader 留局号最大的；真人不动，名字像子账户的真人也不动 */
+    /** 同一个 trader 留局号最大的，不同 trader 各留各的；真人不动，名字像子账户的真人也不动 */
     @Test
     void keepsLatestRoundPerTrader() {
         User alice = user("alice", "10086");
-        User lookalike = user("ai_trader_3_r1", "10087");
-        User r2 = subAccount("ai_trader_3_r2");
-        User r10 = subAccount("ai_trader_3_r10");
-        User other = subAccount("ai_trader_4_r1");
+        User lookalike = user("ai_trader_t3_r1", "10087");
+        User r2 = subAccount("ai_trader_t3_r2");
+        User r10 = subAccount("ai_trader_t3_r10");
+        User other = subAccount("ai_trader_t4_r1");
 
         assertThat(RankingService.currentRoundOnly(List.of(alice, lookalike, r2, r10, other)))
                 .containsExactly(alice, lookalike, r10, other);

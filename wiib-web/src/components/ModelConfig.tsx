@@ -23,20 +23,19 @@ const EMPTY: LlmEndpointValue = {
 interface Usage { label: string; viaDefault: boolean; }
 
 /**
- * 计算每条端点的用途标签。绑定优先，没绑的用途落到默认端点；
+ * 计算每条端点的用途标签。对话按用途绑定、trader 按各自选的端点，没指定的落到默认端点；
  * 复盘教练不落库（复盘配置台每局现选），默认端点上标一条"复盘教练"提示它是缺省项。
  * 标签在函数体里现查词表：存模块级常量的话切语言后它不会变。
  */
-function usagesOf(e: LlmEndpointView, bindings: LlmBindings, hasTrader: boolean): Usage[] {
+function usagesOf(e: LlmEndpointView, bindings: LlmBindings, traders: TraderOwnerView[]): Usage[] {
   const out: Usage[] = [];
-  const hit = (purpose: LlmPurpose, label: string, fallbackToDefault: boolean) => {
-    const bound = bindings[purpose];
-    if (bound === e.id) out.push({ label, viaDefault: false });
-    else if (bound == null && fallbackToDefault && e.isDefault) out.push({ label, viaDefault: true });
+  const hit = (chosen: number | null | undefined, label: string, fallbackToDefault: boolean) => {
+    if (chosen === e.id) out.push({ label, viaDefault: false });
+    else if (chosen == null && fallbackToDefault && e.isDefault) out.push({ label, viaDefault: true });
   };
-  hit('CHAT_MAIN', i18n.t('ai:model.usageChat'), true);
-  hit('CHAT_LIGHT', i18n.t('ai:model.usageChatLight'), false);   // 轻模型不绑=复用主模型，不算落到默认
-  if (hasTrader) hit('TRADER', i18n.t('ai:term.trader'), true);
+  hit(bindings.CHAT_MAIN, i18n.t('ai:model.usageChat'), true);
+  hit(bindings.CHAT_LIGHT, i18n.t('ai:model.usageChatLight'), false);   // 轻模型不绑=复用主模型，不算落到默认
+  for (const tr of traders) hit(tr.llmEndpointId, i18n.t('ai:model.usageTrader', { name: tr.pub.name }), true);
   if (e.isDefault) out.push({ label: i18n.t('ai:model.coach'), viaDefault: true });
   return out;
 }
@@ -53,7 +52,7 @@ export function ModelConfig() {
   const { t } = useTranslation(['ai', 'common']);
   const [endpoints, setEndpoints] = useState<LlmEndpointView[]>([]);
   const [bindings, setBindings] = useState<LlmBindings>({});
-  const [trader, setTrader] = useState<TraderOwnerView | null>(null);
+  const [traders, setTraders] = useState<TraderOwnerView[]>([]);
   const [prefs, setPrefs] = useState<WorkbenchPrefs | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -69,12 +68,12 @@ export function ModelConfig() {
     Promise.all([
       llmEndpointApi.list().catch(() => [] as LlmEndpointView[]),
       llmEndpointApi.bindings().catch(() => ({} as LlmBindings)),
-      traderApi.mine().catch(() => null),
+      traderApi.mine().catch(() => [] as TraderOwnerView[]),
       workbenchApi.prefs().catch(() => null),
-    ]).then(([eps, b, t, p]) => {
+    ]).then(([eps, b, trs, p]) => {
       setEndpoints(eps);
       setBindings(b);
-      setTrader(t);
+      setTraders(trs);
       setPrefs(p);
     }).finally(() => setLoaded(true));
   }, []);
@@ -141,7 +140,7 @@ export function ModelConfig() {
 
   /** 删除点第一下：说清删的是哪条；正被用着的再说一句会回落到默认端点 */
   const warnRemove = (e: LlmEndpointView) => {
-    const used = usagesOf(e, bindings, trader != null).map(u => u.label);
+    const used = usagesOf(e, bindings, traders).map(u => u.label);
     toast(t('model.removeConfirm', { name: e.name, model: e.model }), 'info',
       used.length ? { description: t('model.removeWarn', { used: used.join(' / ') }) } : undefined);
   };
@@ -160,9 +159,6 @@ export function ModelConfig() {
   };
 
   const dft = endpoints.find(e => e.isDefault);
-  const traderEndpoint = trader
-    ? (bindings.TRADER != null ? endpoints.find(e => e.id === bindings.TRADER) : dft)
-    : null;
   /** 对话主模型实际用的那条（显式绑定或默认），轻模型下拉的"同主模型"要说清同的是谁 */
   const chatMain = bindings.CHAT_MAIN != null ? endpoints.find(e => e.id === bindings.CHAT_MAIN) : dft;
 
@@ -207,7 +203,7 @@ export function ModelConfig() {
           )}
 
           {endpoints.map(e => {
-            const usages = usagesOf(e, bindings, trader != null);
+            const usages = usagesOf(e, bindings, traders);
             const isEditing = editing?.id === e.id;
             return (
               <div key={e.id} className={cn('blk', isEditing && 'edit')}>
@@ -276,21 +272,28 @@ export function ModelConfig() {
                                      ? t('model.sameAsMain', { name: chatMain.name, model: chatMain.model })
                                      : t('model.sameAsMainPlain')} />
               </div>
-              <div>
-                <div className="k">
-                  <b>{t('term.trader')}</b>
-                  <span>{t('model.traderHint', { name: trader?.pub.name ?? t('term.trader') })}</span>
+              {/* 交易员：每个 trader 一行，端点是在它自己的配置台里选的 */}
+              {traders.length === 0 ? (
+                <div>
+                  <div className="k"><b>{t('term.trader')}</b></div>
+                  <div className="v"><Trans ns="ai" i18nKey="model.noTrader" components={[<Link to="/my-trader/new" className="linkb" />]} /></div>
                 </div>
-                {trader ? (
-                  <div className="v">
-                    {traderEndpoint ? `${traderEndpoint.name} · ${traderEndpoint.model}` : t('model.noEndpoint')}
-                    {bindings.TRADER == null && traderEndpoint ? t('model.viaDefault') : ''}
-                    {' '}<Link to="/my-trader" className="linkb whitespace-nowrap">{t('model.editInMyTrader')}</Link>
+              ) : traders.map(tr => {
+                const used = tr.llmEndpointId != null ? endpoints.find(e => e.id === tr.llmEndpointId) : dft;
+                return (
+                  <div key={tr.pub.id}>
+                    <div className="k">
+                      <b>{t('model.usageTrader', { name: tr.pub.name })}</b>
+                      <span>{t('model.traderHint')}</span>
+                    </div>
+                    <div className="v">
+                      {used ? `${used.name} · ${used.model}` : t('model.noEndpoint')}
+                      {tr.llmEndpointId == null && used ? t('model.viaDefault') : ''}
+                      {' '}<Link to={`/my-trader/${tr.pub.id}`} className="linkb whitespace-nowrap">{t('model.editInMyTrader')}</Link>
+                    </div>
                   </div>
-                ) : (
-                  <div className="v"><Trans ns="ai" i18nKey="model.noTrader" components={[<Link to="/my-trader" className="linkb" />]} /></div>
-                )}
-              </div>
+                );
+              })}
               <div>
                 <div className="k"><b>{t('model.coach')}</b><span>{t('model.coachHint')}</span></div>
                 <div className="v">{t('model.coachValue')}</div>

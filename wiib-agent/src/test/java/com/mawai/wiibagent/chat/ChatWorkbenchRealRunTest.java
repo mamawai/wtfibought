@@ -1,9 +1,11 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.trader.TraderChatService;
+import com.mawai.wiibagent.trader.TraderService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.slf4j.Logger;
@@ -12,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.math.RoundingMode;
+import java.util.List;
 import java.util.UUID;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -57,6 +60,9 @@ class ChatWorkbenchRealRunTest {
     @Autowired
     private TraderChatService traderChatService;
 
+    @Autowired
+    private TraderService traderService;
+
     private String ask(ChatAgentFactory.Leaves leaves, String question) {
         String sessionId = "wb-1-realrun-" + UUID.randomUUID();
         StringBuilder answer = new StringBuilder();
@@ -84,6 +90,7 @@ class ChatWorkbenchRealRunTest {
 
     /**
      * "我的交易员表现如何"：主 agent 自己调 trader 只读工具，答案里要有库里的权益数字。
+     * 提问里点了名：名下有几个时不点名会弹选择卡，这一跑没有前端去点。
      * <p>
      * <b>只有真跑验得到</b>：真模型肯不肯在 auto 下调这几个工具、回执形态它认不认，
      * 单测的 ChatModel 是 mock、照剧本吐字，对这些完全无感。
@@ -94,18 +101,19 @@ class ChatWorkbenchRealRunTest {
     void trader表现提问真跑答出权益() {
         ChatEndpoints llmConfig = endpointService.chatEndpoints(ADMIN_USER_ID);
         assertThat(llmConfig).as("先用管理员账号在 AI 页「模型配置」加一条 BYOK 端点再跑").isNotNull();
+        List<AiTrader> mine = traderService.listMine(ADMIN_USER_ID);
+        assertThat(mine).as("这一跑要有一个真 trader 才有意义").isNotEmpty();
+        AiTrader trader = mine.getFirst();
         // 期望值取自库里那份真数据，不在测试里另造一份：造了就变成"自己写的自己验"
-        String overview = traderChatService.overview(ADMIN_USER_ID, AgentLang.ZH);
-        assertThat(overview).as("这一跑要有一个真 trader 才有意义").contains("\"hasTrader\":true");
-        String equityBefore = equityDigits(overview);
+        String equityBefore = equityDigits(traderChatService.overview(trader, AgentLang.ZH));
         ChatAgentFactory.Leaves leaves = chatAgentFactory.leavesFor(llmConfig, AgentLang.ZH);
 
-        String answer = ask(leaves, "我的 AI 交易员最近表现如何？");
+        String answer = ask(leaves, "我的 AI 交易员「" + trader.getName() + "」最近表现如何？");
 
         // 库里那个权益数字出现在回答里，才算 trader_overview 真被调了、数据真进了回答。
         // 不锚 status：库里存 RUNNING、模型多半写"运行中"，锚它是在考措辞不是考链路。
         // 前后各读一次取并集：权益随唤醒（5m 一次）落库刷新，单值会偶发红
-        String equityAfter = equityDigits(traderChatService.overview(ADMIN_USER_ID, AgentLang.ZH));
+        String equityAfter = equityDigits(traderChatService.overview(trader, AgentLang.ZH));
         assertThat(answer.replace(",", ""))
                 .as("主 agent 没有拿到 trader 数据（看日志里有没有调 trader_overview）")
                 .containsAnyOf(equityBefore, equityAfter);

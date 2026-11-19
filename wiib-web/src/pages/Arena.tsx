@@ -65,7 +65,7 @@ export function Arena() {
         <span className="ib0"><Bot className="ic" /></span>
         <b>{t('arena.empty')}</b>
         <span>{t('arena.emptyHint')}</span>
-        <Link className="btn ink" to="/my-trader">{t('arena.create')}</Link>
+        <Link className="btn ink" to="/my-trader/new">{t('arena.create')}</Link>
       </div>
     );
   } else {
@@ -112,7 +112,7 @@ export function Arena() {
               </div>
             ))}
           </div>
-          <div className="cta-row"><Link className="btn ink lg" to="/my-trader">{t('arena.create')}</Link></div>
+          <div className="cta-row"><Link className="btn ink lg" to="/my-trader/new">{t('arena.create')}</Link></div>
         </section>
       )}
     </div>

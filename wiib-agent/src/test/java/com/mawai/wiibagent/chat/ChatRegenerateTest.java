@@ -6,7 +6,9 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.chat.store.ChatRowKind;
@@ -112,7 +114,8 @@ class ChatRegenerateTest {
                 approvals, ChatTestEndpoints.PROMPTS);
         ChatTurnRewinder rewinder = new ChatTurnRewinder(history, contextStore, ChatTestEndpoints.PROMPTS);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService,
-                approvals, history, contextStore, streamer, rewinder, runRegistry,
+                approvals, mock(TraderPickRegistry.class), mock(TraderService.class),
+                history, contextStore, streamer, rewinder, runRegistry,
                 ChatTestEndpoints.childRuns(contextStore), ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
                 Executors.newVirtualThreadPerTaskExecutor());

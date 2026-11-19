@@ -16,6 +16,7 @@ import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.trader.TraderChatService;
+import com.mawai.wiibagent.chat.tools.SessionTraderLocator;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -34,7 +35,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -79,7 +79,8 @@ class MainLeafTest {
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
                 mock(CrossAssetToolkit.class), mock(FundFlowToolkit.class), deepAnalysisService, mock(BehaviorAnalysisService.class),
-                traderChatService, runRegistry, ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
+                traderChatService, mock(SessionTraderLocator.class), runRegistry,
+                ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, limit, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
     }
@@ -108,7 +109,7 @@ class MainLeafTest {
 
         consume(leaves(8), List.of(new UserMessage("叫醒交易员")), new ArrayList<>());
 
-        verify(runRegistry).publishForm(eq(SESSION), eq("wake"), isNull());
+        verify(runRegistry).publishForm(eq(SESSION), eq("wake"), any());
     }
 
     /**

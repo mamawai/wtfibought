@@ -1,10 +1,13 @@
 package com.mawai.wiibagent.llm;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
+import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.UserLlmBindingMapper;
 import com.mawai.wiibagent.mapper.UserLlmEndpointMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -22,6 +25,7 @@ import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,9 +38,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 端点库的三条不变量：首条自动默认；删默认时最早的一条顶上、绑定连带删；
+ * 端点库的三条不变量：首条自动默认；删默认时最早的一条顶上、绑定连带删、选了它的 trader 清空；
  * 对话轻模型绑到主模型同一条等于没绑。校验口径：协议/档位脏值抹平，档位不限白名单只挡列宽。
- * 勾了联网搜索的保存与测试连通性都要探一次搜索。
+ * 勾了联网搜索的保存与测试连通性都要探一次搜索。竞技场按 trader 批量解析端点。
  */
 class LlmEndpointServiceTest {
 
@@ -44,14 +48,16 @@ class LlmEndpointServiceTest {
     static void initTableInfoCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), UserLlmEndpoint.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), UserLlmBinding.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTrader.class);
     }
 
     private final UserLlmEndpointMapper endpointMapper = mock(UserLlmEndpointMapper.class);
     private final UserLlmBindingMapper bindingMapper = mock(UserLlmBindingMapper.class);
+    private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final ApiKeyCrypto crypto = mock(ApiKeyCrypto.class);
     private final ByokModelBuilder builder = mock(ByokModelBuilder.class);
-    private final LlmEndpointService service =
-            new LlmEndpointService(endpointMapper, bindingMapper, crypto, new BaseUrlGuard("", new MessageCatalog()), builder, new MessageCatalog());
+    private final LlmEndpointService service = new LlmEndpointService(endpointMapper, bindingMapper, traderMapper,
+            crypto, new BaseUrlGuard("", new MessageCatalog()), builder, new MessageCatalog());
 
     private static UserLlmEndpoint ep(long id, boolean dft) {
         UserLlmEndpoint e = new UserLlmEndpoint();
@@ -306,7 +312,7 @@ class LlmEndpointServiceTest {
     }
 
     @Test
-    void 删默认端点时最早的一条顶上并连带删绑定() {
+    void 删默认端点时最早的一条顶上并连带删绑定和清trader() {
         UserLlmEndpoint dft = ep(1, true);
         when(endpointMapper.selectById(1L)).thenReturn(dft);
         when(endpointMapper.selectList(any())).thenReturn(List.of(ep(2, false), ep(3, false)));   // 删完剩下的
@@ -316,6 +322,37 @@ class LlmEndpointServiceTest {
         verify(endpointMapper).deleteById(1L);
         verify(bindingMapper).delete(any());                       // 指向它的绑定回落默认
         verify(endpointMapper, times(2)).update(isNull(), any());  // 先全清再置 id=2 为默认
+        // 选了它的 trader 端点列清空，回落默认
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cleared = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(traderMapper).update(isNull(), cleared.capture());
+        assertThat(cleared.getValue().getSqlSet()).contains("llm_endpoint_id=");
+        assertThat(cleared.getValue().getSqlSegment()).contains("user_id", "llm_endpoint_id");
+    }
+
+    /**
+     * 竞技场按 trader 批量解析：选了的那条在就用它；没选、选的那条被删了都用主人的默认端点；
+     * 主人一条端点都没有的不出现。主人们的端点一条查询取齐
+     */
+    @Test
+    void 按trader批量解析端点() {
+        UserLlmEndpoint dft = ep(1, true);
+        UserLlmEndpoint other = ep(2, false);
+        when(endpointMapper.selectList(any())).thenReturn(List.of(dft, other));
+
+        Map<Long, UserLlmEndpoint> out = service.resolveForTraders(List.of(
+                trader(10, 1L, 2L), trader(11, 1L, null), trader(12, 1L, 9L), trader(14, 5L, null)));
+
+        assertThat(out).containsExactlyInAnyOrderEntriesOf(Map.of(10L, other, 11L, dft, 12L, dft));
+        verify(endpointMapper, times(1)).selectList(any());
+    }
+
+    private static AiTrader trader(long id, long userId, Long endpointId) {
+        AiTrader t = new AiTrader();
+        t.setId(id);
+        t.setUserId(userId);
+        t.setLlmEndpointId(endpointId);
+        return t;
     }
 
     @Test
@@ -326,7 +363,7 @@ class LlmEndpointServiceTest {
 
         assertThat(service.get(1L, 9L)).isNull();
         assertThat(service.delete(1L, 9L)).isEqualTo("端点不存在");
-        assertThat(service.bind(1L, UserLlmBinding.TRADER, 9L)).isEqualTo("端点不存在");
+        assertThat(service.bind(1L, UserLlmBinding.CHAT_MAIN, 9L)).isEqualTo("端点不存在");
         verify(endpointMapper, never()).deleteById(any(Long.class));
     }
 
@@ -356,7 +393,6 @@ class LlmEndpointServiceTest {
         when(endpointMapper.selectList(any())).thenReturn(List.of());
 
         assertThat(service.chatEndpoints(1L)).isNull();
-        assertThat(service.resolve(1L, UserLlmBinding.TRADER)).isNull();
     }
 
     @Test

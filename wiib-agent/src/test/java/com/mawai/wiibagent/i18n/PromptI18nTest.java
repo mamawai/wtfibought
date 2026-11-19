@@ -141,14 +141,15 @@ class PromptI18nTest {
                 "chat.traderQuery.wakeWindowAllDay", "chat.traderQuery.memoryNote",
                 "chat.traderQuery.kindNote",
                 "chat.traderQuery.planNote", "chat.traderQuery.tradeNote", "chat.traderQuery.noTrader",
+                "chat.traderQuery.listNote", "chat.traderQuery.notPicked",
                 "llm.callLimit.notExecuted",
                 "tool.run_deep_analysis", "tool.news_search", "tool.web_search",
                 // 已搬进词表的工具描述：英文侧不许混中文
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
                 "tool.klines", "tool.indicators", "tool.kline_structure", "tool.derivatives_history",
                 "tool.econ_calendar", "tool.whale_positions", "tool.cross_asset_snapshot", "tool.fund_flows",
-                "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions", "tool.trader_plans",
-                "tool.trader_trades",
+                "tool.trader_list", "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions",
+                "tool.trader_plans", "tool.trader_trades",
                 "tool.wake_trader", "tool.review_trader_now", "tool.leave_note_to_trader",
                 "tool.get_account", "tool.open_position", "tool.close_position",
                 "tool.set_stop_loss", "tool.set_take_profit", "tool.write_plan", "tool.cancel_order")) {
@@ -187,6 +188,10 @@ class PromptI18nTest {
                 Map.of("min", 3, "max", 20)));
         assertNoCjk("英文 kind 参数说明", prompts.get(AgentLang.EN, "chat.traderQuery.unknownKind",
                 Map.of("kind", "RETRO")));
+        assertNoCjk("英文点名不中", prompts.get(AgentLang.EN, "chat.traderQuery.unknownName",
+                Map.of("name", "Gamma")));
+        assertNoCjk("英文只能查它", prompts.get(AgentLang.EN, "chat.traderQuery.onlyThis",
+                Map.of("name", "Alpha")));
         assertNoCjk("英文加仓覆盖留痕", prompts.get(AgentLang.EN, "trader.revise.addOnNote",
                 Map.of("playType", "BREAKOUT", "invalidation", "loses 99000")));
     }
@@ -349,8 +354,8 @@ class PromptI18nTest {
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
                 "tool.klines", "tool.indicators", "tool.kline_structure", "tool.derivatives_history",
                 "tool.econ_calendar", "tool.whale_positions", "tool.cross_asset_snapshot", "tool.fund_flows",
-                "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions", "tool.trader_plans",
-                "tool.trader_trades",
+                "tool.trader_list", "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions",
+                "tool.trader_plans", "tool.trader_trades",
                 "tool.wake_trader", "tool.review_trader_now", "tool.leave_note_to_trader",
                 "tool.get_account", "tool.open_position", "tool.close_position",
                 "tool.set_stop_loss", "tool.set_take_profit", "tool.write_plan", "tool.cancel_order",
@@ -387,6 +392,7 @@ class PromptI18nTest {
                 .as("④ 看不清是例外").contains("不是回避表态的出口")
                 .as("⑤ 深研判要明说才调").contains("仅当用户明确说出").contains("run_deep_analysis")
                 .as("⑥-查 trader 只读工具").contains("trader_overview").contains("trader_decisions").contains("trader_trades")
+                .as("⑥-多个 trader：先看名单，用户说了是哪个才点名").contains("trader_list").contains("只有用户在话里说了是哪一个才传")
                 .as("⑥-动 三个动作工具只弹表单").contains("绝不能说已经唤醒了／已经复盘了／留言已记下")
                 .as("⑦ 行为分析").contains("analyze_my_behavior")
                 .as("⑧ 派子 agent 是条件式的，派了不等").contains("delegate").contains("简单问题").contains("不要等待、不要轮询");

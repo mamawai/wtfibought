@@ -1,6 +1,18 @@
 /* Trader 配置台：页头直接改名 → 心跳条 → 一排动作 → 左边分节索引 + 右边一节一节的表单 → 有改动才升起来的保存条 */
 @layer components {
   .p-mt{padding-bottom:96px}
+  /* 切换条：名下的 trader 一个一片，当前那片墨色；状态点的颜色跟 .tag 的 g/w/r 一套；满了「新建」淡掉 */
+  .p-mt .mswitch{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:24px}
+  .p-mt .mswitch a,.p-mt .mswitch .add{display:inline-flex;align-items:center;gap:8px;max-width:240px;height:32px;padding:0 13px;border-radius:999px;background:var(--color-fill);font-size:13.5px;color:var(--color-muted-foreground);white-space:nowrap;transition:background-color var(--t) var(--ease-control),color var(--t) var(--ease-control)}
+  .p-mt .mswitch a span{overflow:hidden;text-overflow:ellipsis}
+  .p-mt .mswitch a.on{background:var(--color-foreground);color:var(--color-on-ink)}
+  .p-mt .mswitch i{flex:none;width:6px;height:6px;border-radius:50%;background:var(--color-line2)}
+  .p-mt .mswitch i.g{background:var(--color-gain)}
+  .p-mt .mswitch i.w{background:var(--color-warning)}
+  .p-mt .mswitch i.r{background:var(--color-loss)}
+  .p-mt .mswitch i.live{animation:wiib-blink 1.6s ease-in-out infinite}
+  .p-mt .mswitch .add .ic{width:14px;height:14px}
+  .p-mt .mswitch .add.dis{opacity:.45;cursor:not-allowed}
   /* 页头：跟工作台共用的那份在 components/arena/traderHead.css，这里只写这页自己的 */
   .p-mt .eye{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--color-muted-foreground)}
   .p-mt .nmrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:8px}
@@ -242,6 +254,7 @@
   .p-mt .msave .btn:disabled{opacity:.4}
 
   @media (hover:hover){
+    .p-mt .mswitch a:not(.on):hover{background:var(--color-fill2);color:var(--color-foreground)}
     .p-mt .mname input:hover:not(:focus){border-color:var(--color-line2)}
     .p-mt .midx a:hover{background:var(--color-fill);color:var(--color-foreground)}
     .p-mt .tile:hover:not(.locked){transform:translateY(-3px)}
@@ -282,9 +295,9 @@
   }
   @media (prefers-reduced-motion:reduce){
     .p-mt .tile,.p-mt .tile *,.p-mt .wm b{transition:none!important;animation:none!important}
-    .p-mt .mname input,.p-mt .midx a,.p-mt .midx a i,.p-mt .sw-row,.p-mt .rg .kn,.p-mt .msl .kn,
+    .p-mt .mswitch a,.p-mt .mname input,.p-mt .midx a,.p-mt .midx a i,.p-mt .sw-row,.p-mt .rg .kn,.p-mt .msl .kn,
     .p-mt .msl.glide .kn,.p-mt .msl.glide .fi,.p-mt .msl .ticks button,.p-mt .asub,.p-mt .meter i b,.p-mt .pv-h .chev,.p-mt .pips i,
     .p-mt .hold::before,.p-mt .hold > span,.p-mt .msave{transition:none}
-    .p-mt .macts .seg button i.on,.p-mt .pv-l.flash,.p-mt .pv-l.flash2{animation:none}
+    .p-mt .mswitch i.live,.p-mt .macts .seg button i.on,.p-mt .pv-l.flash,.p-mt .pv-l.flash2{animation:none}
   }
 }

@@ -239,17 +239,24 @@ tool:
     source line.
 
   # ---- The trader read-only profile tools (held by the chat main agent; userId baked in at leaf build) ----
+  trader_list: |-
+    List all of the current user's AI traders in brief: name, status (RUNNING/PAUSED/LIQUIDATED),
+    return of the current round (pnlPct, %), heartbeat interval, traded symbols and the model it runs on.
+    Returns hasTrader=false when the user has not created a trader yet.
+
   trader_overview: |-
     Get the current user's AI trader profile: status (RUNNING/PAUSED/LIQUIDATED and why),
     equity vs initial balance, round number, traded symbols, wake interval, risk spec,
     last / next wake-up time and why it cannot be woken right now (null when it can),
     and the FULL review memory notes (what it has learned so far).
     Returns hasTrader=false when the user has not created a trader yet.
+    The optional trader is a trader name (see trader_list, case-insensitive); trader in the result names the trader this data belongs to.
 
   trader_positions: |-
     Get the current open positions of the user's AI trader: symbol, side, quantity,
     entry price, leverage, unrealized PnL and the currently active stop-loss/take-profit orders.
     Returns hasTrader=false when the user has not created a trader yet.
+    The optional trader is a trader name (see trader_list, case-insensitive); trader in the result names the trader this data belongs to.
 
   trader_decisions: |-
     Get the recent decision timeline of the user's AI trader, newest first. Each entry has
@@ -258,11 +265,13 @@ tool:
     carries its outcome in brackets after the tool name, e.g. open_position(rejected), close_position(not_attempted).
     Can be narrowed to one kind.
     Use this to answer "why did it do that trade" - the reasoning text is the answer.
+    The optional trader is a trader name (see trader_list, case-insensitive); trader in the result names the trader this data belongs to.
 
   trader_plans: |-
     Get the trading plans of the user's AI trader: all live plans plus the recently closed ones.
     Each plan carries the thesis (playType), the data it cited (signalsUsed), the invalidation
     condition, entry/stop/target prices and the revision history of stop-loss moves.
+    The optional trader is a trader name (see trader_list, case-insensitive); trader in the result names the trader this data belongs to.
 
   trader_trades: |-
     Get the closed trades of the user's AI trader, newest first: symbol, side, leverage, entry and
@@ -270,6 +279,7 @@ tool:
     manual / liquidated), the plan behind it (playType, signalsUsed, invalidation condition, original
     stop and target) and, for a manual close, the close reason it wrote. Also count, wins and total
     realized PnL over the returned trades. Returns hasTrader=false when the user has not created a trader yet.
+    The optional trader is a trader name (see trader_list, case-insensitive); trader in the result names the trader this data belongs to.
 
   # ---- The three form tools that act on the trader (held by the chat main agent; they only open a form) ----
   wake_trader: |-
@@ -278,12 +288,14 @@ tool:
     Waking is EXPENSIVE AND REAL (burns their model budget, MAY OPEN OR CLOSE POSITIONS) - that is exactly
     why the trigger belongs to the user, not to you.
     Never say the trader has been woken; say the form is open and waiting for them to confirm.
+    Takes an optional trader (a name): the card highlights that trader, and the user still picks which trader it acts on.
 
   review_trader_now: |-
     Open the "run retrospective now" form for the user. IMPORTANT: this does NOT run the retrospective.
     It only shows a card with the last retrospective time, whether there is new material, and a button
     the user presses themselves. Running it costs one deep-model call.
     Never say the retrospective has run or claim to know what it says; say the form is open.
+    Takes an optional trader (a name): the card highlights that trader, and the user still picks which trader it acts on.
 
   leave_note_to_trader: |-
     Open the "leave a note" form, pre-filled with the note you drafted from the user's own words.
@@ -292,6 +304,7 @@ tool:
     A note is a passing remark carried by the next N wake-ups then erased; standing rules belong in the
     trader's trading instructions on its config page, not here.
     Never say the note has been saved; say the form is open with your draft in it.
+    Takes an optional trader (a name): the card highlights that trader, and the user still picks which trader gets the note.
 
   # ---- Wake-up trading tools (the trader's action tools; guards are enforced server-side, the description is the manual) ----
   # States what comes back and nothing more: the system prompt already says the account state is

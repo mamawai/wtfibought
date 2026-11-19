@@ -588,8 +588,10 @@ export type WorkbenchEvent =
   // requestId：这张卡的唯一标识，点同意/拒绝时原样回传，服务端据此确认"点的是哪张卡"
   | { type: 'hitl_request'; sessionId: string; symbol: string; reason: string; requestId: string; resumeMessage: string }
   // 模型请求给用户弹一张待填的表单卡；执行权在用户点击，模型只能开卡不能动手。
-  // prefill 是模型草拟的初值（留言正文与轮次），可能整个缺席
+  // prefill 是模型草拟的初值（留言正文与轮次、点了名的 trader），可能整个缺席
   | { type: 'form_request'; form: TraderFormKind; prefill?: Record<string, unknown> }
+  // 查询工具定不到 trader：后端原地等用户在卡上选，最多 seconds 秒；选了经 pickTrader 回执，requestId 原样回传
+  | { type: 'trader_pick'; requestId: string; seconds: number; traders: TraderPickCandidate[] }
   // 行为分析报告：整份结构化数据只走这条通道给前端渲染成卡片，模型手里是裁剪版
   //（少了 overview.trend 那 30 天逐日快照——对模型是噪音，对卡片是那条资产曲线）
   | { type: 'behavior_report'; report: BehaviorAnalysisReport }
@@ -614,11 +616,18 @@ export type ChatIntent = 'BEHAVIOR';
 /** trader 动作面板的三张卡 */
 export type TraderFormKind = 'note' | 'wake' | 'review';
 
-/** 动作面板一次取齐的状态：三张卡显示什么、按钮点不点得动，全看它 */
+/** 选 trader 卡上的一行：pnlPct 是本局收益率（%） */
+export interface TraderPickCandidate {
+  id: number;
+  name: string;
+  status: TraderPublicView['status'];
+  pnlPct: number;
+}
+
+/** 一个 trader 的动作面板状态，一次取齐：三张卡显示什么、按钮点不点得动，全看它 */
 export interface TraderActionPanel {
-  hasTrader: boolean;
-  name: string | null;
-  status: string | null;
+  name: string;
+  status: string;
   pausedReason: string | null;
   /** 上次唤醒的真实时刻（决策行落库时间，不是 K 线边界） */
   lastWakeAt: number | null;
@@ -779,8 +788,8 @@ export interface LlmEndpointSaveRequest {
   contextWindow: number;
 }
 
-/** 用途 → 端点 id；缺的用途 = 跟随默认端点 */
-export type LlmPurpose = 'CHAT_MAIN' | 'CHAT_LIGHT' | 'TRADER';
+/** 用途 → 端点 id；缺的用途 = 跟随默认端点。trader 的端点记在各自的 TraderOwnerView.llmEndpointId 上 */
+export type LlmPurpose = 'CHAT_MAIN' | 'CHAT_LIGHT';
 export type LlmBindings = Partial<Record<LlmPurpose, number>>;
 
 
@@ -821,7 +830,7 @@ export interface TraderPublicView {
 /** 主人视图：公开视图 + 配置回显（key 只回尾4位） */
 export interface TraderOwnerView {
   pub: TraderPublicView;
-  /** 显式绑定的端点 id，null=跟随默认端点 */
+  /** 这个 trader 选的端点 id，null=跟随默认端点 */
   llmEndpointId: number | null;
   customPrompt: string | null;
   spec: TraderSpec;
@@ -1142,7 +1151,7 @@ export type TraderLiveEvent =
   // 决策行已落库后发
   | { type: 'run_end'; status: 'OK' | 'ERROR'; error: string | null; equity: number; latencyMs: number; modelCalls: number; totalTokens: number | null; decisionId: number };
 
-/** 创建/改配置入参（apiKey 改配置时传空=不换） */
+/** 创建/改配置入参 */
 export interface TraderUpsertRequest {
   name: string;
   symbols: string;
@@ -1465,6 +1474,9 @@ export interface PromptGenVersion {
 export interface PromptGenView {
   active: boolean;
   endpointId: number | null;
+  /** 这段对话为哪个 trader 写；没有 trader、或那个 trader 已经删了都是 null */
+  traderId: number | null;
+  traderName: string | null;
   outputLang: string | null;
   items: PromptGenItem[];
   /** 还在等回答的那道题 */

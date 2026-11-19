@@ -67,8 +67,8 @@ class AuthServiceUsernameTest {
 
         assertThat(service.linuxDoUsername("alice", null)).isEqualTo("alice");
         assertThat(service.linuxDoUsername("alice2", old)).isEqualTo("alice2");
-        assertThat(service.linuxDoUsername("ai_trader_7_r2", null)).isEqualTo("user");
-        assertThat(service.linuxDoUsername("ai_trader_7_r2", old)).isEqualTo("bob");
+        assertThat(service.linuxDoUsername("ai_trader_t7_r2", null)).isEqualTo("user");
+        assertThat(service.linuxDoUsername("ai_trader_t7_r2", old)).isEqualTo("bob");
     }
 
     @Test
@@ -76,7 +76,7 @@ class AuthServiceUsernameTest {
         ReflectionTestUtils.setField(service, "passwordLoginEnabled", true);
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
         try {
-            assertThatThrownBy(() -> service.register("ai_trader_7_r2", "123456", "CODE")).isInstanceOf(BizException.class);
+            assertThatThrownBy(() -> service.register("ai_trader_t7_r2", "123456", "CODE")).isInstanceOf(BizException.class);
             verify(inviteCodes, never()).consume(any());
         } finally {
             RequestContextHolder.resetRequestAttributes();

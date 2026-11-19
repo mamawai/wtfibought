@@ -7,8 +7,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * AI Trader：用户 BYOK 自主交易代理（每用户 1 个，独立 sim 子账户，公开竞技场）。
- * api_key_enc 是 AES-GCM 密文，只在构建 ChatModel 的瞬间解密，绝不进日志。
+ * AI Trader：用户 BYOK 自主交易代理（每用户最多 3 个，各自独立 sim 子账户，公开竞技场）。
  */
 @Data
 @TableName("ai_trader")
@@ -91,8 +90,8 @@ public class AiTrader {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String wakeWindow;
 
-    // BYOK 四件套（协议/URL/模型/key）已迁到 user_llm_endpoint：trader 按 UserLlmBinding.TRADER 绑定选端点，
-    // 没绑定就用该用户的默认端点，见 LlmEndpointService.resolve
+    /** 用的端点（user_llm_endpoint.id），null=跟随用户默认端点；解析见 TraderModelFactory.endpointFor */
+    private Long llmEndpointId;
 
     /** 当前局 sim 子账户 userId（每局一个独立子账户，重置开新局） */
     private Long simUserId;

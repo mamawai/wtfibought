@@ -19,6 +19,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <b>它们只开表单，不执行</b>：每个工具都只往 SSE 推一张待填的卡，用户在卡上按下按钮才真动手，
  * 执行走 REST 打到 TraderActionService。所以模型没有能力唤醒、复盘或落库留言——
  * 这正是这层存在的意义，误触最多是多弹一张卡。
+ * 带了 trader（名字）也只是让卡上先高亮那个，对哪个 trader 动手仍由用户在卡上选。
  * <p>
  * 与 {@link TraderQueryToolkit} 并列挂在主 agent 上：查归那边、动手归这边。
  * <p>
@@ -29,6 +30,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  */
 @Slf4j
 public class TraderActionToolkit {
+
+    /** 三个工具共用的 trader 参数说明 */
+    private static final String TRADER_PARAM = "Name of the user's trader this is meant for, as listed by trader_list. "
+            + "The form highlights it; the user still picks the trader it runs on";
 
     private final WorkbenchRunRegistry runRegistry;
     private final long userId;
@@ -46,13 +51,17 @@ public class TraderActionToolkit {
 
     // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
     @Tool(name = "wake_trader")
-    public String wakeTrader(ToolContext context) {
-        return openForm(ToolRunContext.sessionId(context), "wake", null, "chat.form.wake");
+    public String wakeTrader(@ToolParam(required = false, description = TRADER_PARAM) String trader,
+                             ToolContext context) {
+        return openForm(ToolRunContext.sessionId(context), "wake", named(MAPPER.createObjectNode(), trader),
+                "chat.form.wake");
     }
 
     @Tool(name = "review_trader_now")
-    public String reviewTraderNow(ToolContext context) {
-        return openForm(ToolRunContext.sessionId(context), "review", null, "chat.form.review");
+    public String reviewTraderNow(@ToolParam(required = false, description = TRADER_PARAM) String trader,
+                                  ToolContext context) {
+        return openForm(ToolRunContext.sessionId(context), "review", named(MAPPER.createObjectNode(), trader),
+                "chat.form.review");
     }
 
     @Tool(name = "leave_note_to_trader")
@@ -63,12 +72,21 @@ public class TraderActionToolkit {
             @ToolParam(required = false, description =
                     "How many upcoming wake-ups should carry this note, 1-24. Omit for 1 (a one-off remark).")
             Integer rounds,
+            @ToolParam(required = false, description = TRADER_PARAM) String trader,
             ToolContext context) {
         ObjectNode prefill = MAPPER.createObjectNode().put("note", note);
         if (rounds != null) {
             prefill.put("rounds", rounds);
         }
-        return openForm(ToolRunContext.sessionId(context), "note", prefill, "chat.form.note");
+        return openForm(ToolRunContext.sessionId(context), "note", named(prefill, trader), "chat.form.note");
+    }
+
+    /** 点了名就放进预填，卡上先高亮那个 */
+    private static ObjectNode named(ObjectNode prefill, String trader) {
+        if (trader != null && !trader.isBlank()) {
+            prefill.put("trader", trader.trim());
+        }
+        return prefill;
     }
 
     /**

@@ -37,7 +37,7 @@ const TRADERS = [
     id: 3, name: 'Basilisk', model: 'gemini-3-pro', status: 'PAUSED',
     pausedReason: '连续 3 轮端点报错，已自动暂停',
     symbols: 'SOLUSDT', intervalCode: '15m', roundNo: 2,
-    equity: 9572.0, pnlPct: -4.28, mine: false, wakeWindow: null,
+    equity: 9572.0, pnlPct: -4.28, mine: true, wakeWindow: null,
   },
   {
     id: 4, name: 'Icarus', model: null, status: 'LIQUIDATED', pausedReason: '爆仓，等待下一局注资',
@@ -1054,18 +1054,21 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         if (path === '/api/futures/live') return ok(res, futuresLive());
         if (path === '/api/futures/force-orders') return ok(res, forceOrders());
         if (path === '/api/ai/quant/news') return ok(res, news());
+        // 我名下的：排行里标了 mine 的那几个，按 id 升序；1 号选了端点 12，别的跟随默认
         if (path === '/api/ai/trader/mine') {
-          return ok(res, {
-            pub: TRADERS[0],
-            llmEndpointId: 12, customPrompt: null,
+          return ok(res, TRADERS.filter(tr => tr.mine).sort((a, b) => a.id - b.id).map(tr => ({
+            pub: tr,
+            llmEndpointId: tr.id === 1 ? 12 : null, customPrompt: null,
             spec: { leverageMin: 2, leverageMax: 10, marginPctMax: 25, allowMultiPosition: true, allowHedge: false },
             alertEnabled: true, alertThresholdMult: 1,
-            reviewEnabled: true, wakeWindow: null,
-          });
+            reviewEnabled: true, wakeWindow: tr.wakeWindow,
+          })));
         }
-        if (path === '/api/ai/trader/action-panel') {
+        const panelMatch = path.match(/^\/api\/ai\/trader\/(\d+)\/action-panel$/);
+        if (panelMatch) {
+          const tr = TRADERS.find(x => x.id === Number(panelMatch[1])) ?? TRADERS[0];
           return ok(res, {
-            hasTrader: true, name: 'Kairos', status: 'RUNNING', pausedReason: null,
+            name: tr.name, status: tr.status, pausedReason: tr.pausedReason,
             lastWakeAt: now() - 12 * MIN, nextWakeAt: nextWake(), wakeBlockedReason: null,
             lastReviewAt: now() - 14 * HOUR, lastReviewStatus: 'OK',
             hasReviewMaterial: true, reviewBlockedReason: null,
@@ -1075,7 +1078,7 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         // ---- 配置台 / AI 页：模型端点、经验账本、平台默认指令、系统提示词预览 ----
         if (path === '/api/ai/llm-endpoints') return ok(res, ENDPOINTS);
         if (path === '/api/ai/llm-endpoints/bindings') return ok(res, { CHAT_MAIN: 12, CHAT_LIGHT: 13 });
-        if (path === '/api/ai/trader/mine/experiences') return ok(res, EXPERIENCES);
+        if (/^\/api\/ai\/trader\/\d+\/experiences$/.test(path)) return ok(res, EXPERIENCES);
         if (path === '/api/ai/trader/default-instructions') return ok(res, DEFAULT_INSTRUCTIONS);
         if (path === '/api/ai/trader/prompt-template') return ok(res, SYSTEM_PROMPT);
         if (path === '/api/ai/workbench/prefs') return ok(res, { subAgentsEnabled: true, subAgentLimit: 2, maxLimit: 4 });
@@ -1253,8 +1256,10 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
           return res.end(JSON.stringify(rows));
         }
 
-        // ---- 写操作：一律成功，不改内存状态；两个要读返回值的给最小形状 ----
+        // ---- 写操作：一律成功，不改内存状态；几个要读返回值的给最小形状 ----
         if (req.method !== 'GET') {
+          // 新建回新 trader 的 id；不存状态，回 1 号让页面落到一个有数据的 trader 上
+          if (path === '/api/ai/trader') return ok(res, 1);
           if (path === '/api/futures/close-all') return ok(res, { closedCount: POSITIONS.length, failures: [] });
           const reverseMatch = path.match(/^\/api\/futures\/reverse\/(\d+)$/);
           if (reverseMatch) {

@@ -12,7 +12,7 @@ chat:
 
   # ---- Main agent: the only chat agent; market data, news, the trader, deep analysis and behaviour analysis are all its tools. {{newsRule}} is the news-clause slot ----
   main: |-
-    You are the analyst of a crypto research workbench. Market data, news and the user's own AI trader
+    You are the analyst of a crypto research workbench. Market data, news and the user's own AI traders
     you all look up yourself with your tools, then write the final answer from that. Never mention tool
     names or any internal process.
     Use the tools to the full: if a tool might help with the question, call it once and see, rather than
@@ -49,7 +49,10 @@ chat:
        call it again — you will be woken with the report to add the verdict. Ordinary questions like
        "what do you make of the trend" must not trigger it, and never pitch it unprompted — just answer
        from the tool data
-    6. The user's own AI trader is yours, both reading and acting:
+    6. The user's own AI traders are yours, both reading and acting:
+       · The user may have several traders (up to 3), each with a name. Before comparing them, or before
+         naming a particular one, call trader_list for the roster; the read and action tools all take
+         trader (a name) — pass it only when the user has said which one, otherwise leave it out
        · Read-only questions go straight to the read tools — pick by question, several at once is fine:
          how is it doing / up or down / what has it learned / when does it wake next → trader_overview;
          what is it holding → trader_positions; why did it make that trade / what has it done lately /
@@ -167,6 +170,10 @@ chat:
     tradeNote: "closeManner is how the position ended: stopLoss=stopped out takeProfit=hit the target manual=it closed it itself with a tool liquidated=force-liquidated UNKNOWN=could not tell; count/wins/totalClosedPnl cover only the trades returned here"
     unknownKind: "kind must be one of TRADE / ALERT / MANUAL / EVENT / WATCH / REVIEW, got {{kind}}; omit kind for all of them"
     noTrader: "This user has not created an AI Trader yet; one can be created on the \"My Trader\" page"
+    listNote: "pnlPct is the return of the current round (%, against the round's starting balance); intervalCode is the heartbeat - how often it wakes"
+    unknownName: "The user has no trader named \"{{name}}\" (names match case-insensitively); their traders are listed in traders"
+    notPicked: "The user did not pick a trader on the picker card; this turn has ended"
+    onlyThis: "Only the trader \"{{name}}\" can be looked up here"
 
   # ---- Text shown to the user (saved to the display history or pushed over SSE) ----
   cancelledNote: (stopped)

@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.promptgen;
 
 import com.mawai.wiibagent.chat.ChatModelFactory;
+import com.mawai.wiibagent.chat.tools.TraderLocator;
 import com.mawai.wiibagent.chat.tools.TraderQueryToolkit;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -118,12 +119,18 @@ public class PromptGenService {
         if (session == null) {
             return PromptGenView.empty(busy, failure, versions);
         }
+        AiTrader trader = trader(session);
         List<PromptGenHistory.Step> steps = PromptGenHistory.steps(PromptGenStore.messages(session.getState()));
-        return PromptGenView.of(session, steps, required(userId, steps), busy, failure, versions);
+        return PromptGenView.of(session, trader, steps, required(trader, steps), busy, failure, versions);
     }
 
-    private Set<String> required(long userId, List<PromptGenHistory.Step> steps) {
-        return PromptGenFacts.required(traderService.mine(userId), PromptGenHistory.lastDraft(steps) != null);
+    private static Set<String> required(AiTrader trader, List<PromptGenHistory.Step> steps) {
+        return PromptGenFacts.required(trader, PromptGenHistory.lastDraft(steps) != null);
+    }
+
+    /** 这段对话为哪个 trader 写；没记、或那个 trader 已经删了，都按还没有 trader 处理 */
+    private AiTrader trader(PromptGenSession session) {
+        return session.getTraderId() == null ? null : traderService.owned(session.getUserId(), session.getTraderId());
     }
 
     /** 叫停这个用户在跑的那一轮；没在跑返回 false */
@@ -148,11 +155,17 @@ public class PromptGenService {
         return view(userId);
     }
 
-    /** 开新对话（旧对话整个覆盖，版本保留）并跑第一轮 */
-    public void start(SseChannel channel, long userId, ChatModel model, long endpointId, AgentLang outputLang) {
+    /**
+     * 开新对话（旧对话整个覆盖，版本保留）并跑第一轮
+     *
+     * @param traderId 页面带来的 trader，null=没有 trader；不归这个人的当没带
+     */
+    public void start(SseChannel channel, long userId, ChatModel model, long endpointId, Long traderId,
+                      AgentLang outputLang) {
+        AiTrader trader = traderId == null ? null : traderService.owned(userId, traderId);
         List<Message> history = List.of(new UserMessage(prompts.get(userLangResolver.of(userId), "promptgen.kickoff")));
-        round(channel, userId, model, outputLang, history, null,
-                () -> store.open(userId, endpointId, outputLang, history));
+        round(channel, userId, model, outputLang, trader, history, null,
+                () -> store.open(userId, endpointId, trader == null ? null : trader.getId(), outputLang, history));
     }
 
     /** 这一轮的起跑历史：当前对话 + 用户这句（回答、跳过、或直接说要改哪里）；还没答的必问项不让跳 */
@@ -161,7 +174,7 @@ public class PromptGenService {
         if (skip) {
             List<PromptGenHistory.Step> steps = PromptGenHistory.steps(history);
             PromptGenHistory.Ask pending = PromptGenHistory.pending(steps);
-            if (pending != null && PromptGenHistory.missing(steps, required(userId, steps)).contains(pending.key())) {
+            if (pending != null && PromptGenHistory.missing(steps, required(trader(session), steps)).contains(pending.key())) {
                 throw new BizException(ErrorCode.PARAM_ERROR);
             }
         }
@@ -173,15 +186,16 @@ public class PromptGenService {
                       List<Message> history) {
         String prefix = PromptGenStore.prefix(session.getState());
         // 用户这句先落库：这一轮在后台跑时刷新进来也看得到
-        round(channel, userId, model, AgentLang.of(session.getOutputLang()), history, prefix,
+        round(channel, userId, model, AgentLang.of(session.getOutputLang()), trader(session), history, prefix,
                 () -> store.saveState(userId, history, prefix));
     }
 
     /**
+     * @param trader 这段对话为哪个 trader 写，可空：规格事实、必问项、读数据的工具都固定用它
      * @param prefix 起跑历史是在哪套系统提示词与工具下跑出来的，新对话为 null
      * @param open   起跑历史落库；在标上 running 之后做，/session 读到新对话时一定也读到 running
      */
-    private void round(SseChannel channel, long userId, ChatModel model, AgentLang outputLang,
+    private void round(SseChannel channel, long userId, ChatModel model, AgentLang outputLang, AiTrader trader,
                        List<Message> history, String prefix, Runnable open) {
         AgentLang lang = userLangResolver.of(userId);
         PromptGenRun run = null;
@@ -193,7 +207,6 @@ public class PromptGenService {
         failures.remove(userId);
         try {
             open.run();
-            AiTrader trader = traderService.mine(userId);
             boolean drafted = PromptGenHistory.lastDraft(PromptGenHistory.steps(history)) != null;
             PromptGenFacts.Prompts system = facts.prompts(trader, drafted, lang, outputLang);
             run = new PromptGenRun(userId, lang, outputLang, trader, history, channel::send, cancel, store);
@@ -206,7 +219,8 @@ public class PromptGenService {
                     .model(model)
                     .systemPrompt(system.agent())
                     .tools(localizedTools.of(lang,
-                            new TraderQueryToolkit(traderChatService, userId, lang),
+                            new TraderQueryToolkit(traderChatService, userId, lang,
+                                    TraderLocator.fixed(trader, traderChatService, lang)),
                             new PromptGenToolkit(run, writer, playStats, prompts)))
                     .maxAttempts(3).initialDelay(500).maxDelay(4000)
                     .build();

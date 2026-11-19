@@ -74,7 +74,7 @@ class AgentMessageParityTest {
     void 三个模块的域文件确实都装上了() {
         assertThat(MESSAGES.get(AgentLang.ZH)).containsKeys(
                 "agent.chat.sessionNotFound", "agent.endpoint.notFound",  // wiib-agent: agent.yml
-                "trader.notCreated", "trader.wake.paused",                // wiib-agent: trader.yml
+                "trader.notFound", "trader.wake.paused",                  // wiib-agent: trader.yml
                 "quant.backtest.rangeInvalid", "quant.testnet.adminOnly", // wiib-quant: quant.yml
                 "common.symbolFormat",                                    // wiib-common: common.yml
                 "error.unauthorized");                                    // wiib-common: error.yml

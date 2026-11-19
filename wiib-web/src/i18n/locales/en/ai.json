@@ -394,6 +394,11 @@
       "notCreated": "Not created",
       "metaNew": "Fill in the name and the sections below; creating tests the model endpoint first"
     },
+    "switch": {
+      "aria": "Switch trader",
+      "new": "New",
+      "full": "Up to {{max}} traders per account - delete one to create another"
+    },
     "hb": {
       "stopped": "Paused; switch to Run and it wakes from the next close",
       "today": "Wakes today",
@@ -738,6 +743,7 @@
       "orderbook_depth": "Read order book depth",
       "news_search": "Read news flashes",
       "web_search": "Web search",
+      "trader_list": "List my traders",
       "trader_overview": "Check trader overview",
       "trader_positions": "Check trader positions",
       "trader_trades": "Check trader trades",
@@ -753,6 +759,19 @@
     "approve": "Approve",
     "approved": "Approved · deep analysis continues",
     "rejected": "Rejected · deep analysis skipped this time"
+  },
+  "pick": {
+    "title": "Pick a trader",
+    "hint": "You have several traders — which one should I look at?",
+    "left_one": "{{count}}s left",
+    "left_other": "{{count}}s left",
+    "timeUp": "Time's up",
+    "collapse": "Back",
+    "aiNamed": "Named by AI",
+    "roundPnl": "This round {{pnl}}",
+    "picked": "Picked {{name}}",
+    "expired": "Timed out — this turn has ended",
+    "cancelled": "Cancelled"
   },
   "history": {
     "title": "Chat history",
@@ -846,7 +865,19 @@
     "no": "No",
     "skipHint": "Clicking skips it — no model call is spent",
     "reviewAdvice": "1~2 a day is plenty: a review feeds on closed trades — no new trades, nothing new to write",
-    "reviewAction": "Start review"
+    "reviewAction": "Start review",
+    "multiHint": "You have several traders — press the button, then pick which one",
+    "chooseNote": "Which trader gets the note",
+    "chooseWake": "Which trader to wake",
+    "chooseReview": "Which trader to review",
+    "chooseClear": "Withdraw the note from which trader",
+    "lastWakeAgo": "Last woke {{when}}",
+    "lastReviewAgo": "Last reviewed {{when}}",
+    "noMaterialShort": "no new material, it will be skipped",
+    "noteOverwrite": "Unread note pending ({{rounds}} rounds left) — submitting overwrites it",
+    "noNote": "No unread note",
+    "noteOf": "{{rounds}} rounds left · {{note}}",
+    "doneFor": "{{name}}: {{message}}"
   },
   "model": {
     "title": "Model endpoints (BYOK)",
@@ -869,6 +900,7 @@
     "bindTitle": "Who uses which",
     "usageChat": "Chat · main",
     "usageChatLight": "Chat · light",
+    "usageTrader": "Trader · {{name}}",
     "chatMain": "Chat · Main model",
     "chatMainHint": "Final answers in the analysis chat, plus any deep analysis or behavior analysis triggered from it, run on this",
     "chatLight": "Chat · Light model",
@@ -878,7 +910,7 @@
     "noEndpoint": "(no endpoint available)",
     "editInMyTrader": "Change it in My Trader",
     "noTrader": "No AI trader yet — pick one when you <0>create</0> it",
-    "traderHint": "Every wake-up and daily review of “{{name}}” burns this one",
+    "traderHint": "Every wake-up and daily review of this trader burns this one",
     "coach": "Review coach",
     "coachValue": "Chosen in the backtest console before each round, defaults to the default endpoint",
     "coachHint": "AI chart hints during a manual review and the post-settlement assessment",

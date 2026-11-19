@@ -1,5 +1,5 @@
 import { ApiError, workbenchApi } from '../../api';
-import type { BehaviorAnalysisReport, ChatIntent, ChildRunKind, ChildRunStatus, ChildRunStepView, ChildRunView, ContextUsage, SearchSource, TraderFormKind, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
+import type { BehaviorAnalysisReport, ChatIntent, ChildRunKind, ChildRunStatus, ChildRunStepView, ChildRunView, ContextUsage, SearchSource, TraderFormKind, TraderPickCandidate, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
 
 /** 与后端 ErrorCode 对齐：2200 段是研判工作台（1600 段是 Crypto，别复用） */
 export const CHAT_ERROR = {
@@ -66,6 +66,12 @@ export type ChatItem =
   | { kind: 'hitl'; symbol: string; reason: string; requestId: string; resumeMessage: string; status: 'pending' | 'approved' | 'rejected' }
   // trader 动作表单卡：模型只有弹卡的权，执行权归用户点击。纯前端态不落历史，id 本地发
   | { kind: 'form'; id: string; form: TraderFormKind; prefill?: Record<string, unknown>; status: 'pending' | 'done'; result?: string }
+  // 选 trader 的卡：查询工具定不到 trader，后端原地等用户点，deadline 是本地截止时刻。
+  // picked=选了 pickedId；expired=没选、这一轮已经结束；cancelled=用户点了停止。error 是回执被拒的原话。不落历史
+  | {
+      kind: 'pick'; requestId: string; traders: TraderPickCandidate[]; deadline: number;
+      status: 'pending' | 'picked' | 'expired' | 'cancelled'; pickedId?: number; error?: string;
+    }
   // 行为分析报告卡：模型调 analyze_my_behavior 后随 SSE 到。同样不落历史——
   // 报告在服务端缓存 30 分钟，刷新后想再看一眼再问一句就是了，不值得为它开一张表
   | { kind: 'behavior'; report: BehaviorAnalysisReport }
@@ -282,6 +288,13 @@ const settlePhases = (items: ChatItem[]) =>
 const settleSearches = (items: ChatItem[]) =>
   settleWhere(items, (it): it is LitItem => it.kind === 'search' && it.active);
 
+/** 还在等选的选 trader 卡收场成 status */
+function settlePicks(items: ChatItem[], status: 'expired' | 'cancelled'): ChatItem[] {
+  return items.some(it => it.kind === 'pick' && it.status === 'pending')
+    ? items.map(it => (it.kind === 'pick' && it.status === 'pending' ? { ...it, status } : it))
+    : items;
+}
+
 /** 子运行内部亮着的步熄灭 */
 function settleChildSteps(steps: ChildStep[]): ChildStep[] {
   return steps.some(s => s.active) ? steps.map(s => (s.active ? { ...s, active: false } : s)) : steps;
@@ -487,6 +500,13 @@ function handleEvent(e: WorkbenchEvent) {
         kind: 'form', id: nextFormId(), form: e.form, prefill: e.prefill, status: 'pending',
       }));
       break;
+    case 'trader_pick':
+      // 后端停在这儿等用户选：卡排在答案前面，选完答案接着往下写；要查的工具还在等，过程条目不熄
+      updateItems(prev => appendBeforeAnswer(prev, {
+        kind: 'pick', requestId: e.requestId, traders: e.traders, deadline: Date.now() + e.seconds * 1000,
+        status: 'pending',
+      }));
+      break;
     case 'behavior_report':
       // 报告卡先上屏，模型紧接着会就着它讲两句——卡是数据、答案是解读，两者互补不重复
       updateItems(prev => appendBeforeAnswer(settlePhases(prev), { kind: 'behavior', report: e.report }));
@@ -499,7 +519,8 @@ function handleEvent(e: WorkbenchEvent) {
       updateItems(prev => {
         // 本轮出过答案流＝还挂着一个流式中的答案气泡（排队气泡也是 user 项，不能按"最后一条提问之后"找）
         const streamed = prev.some(it => it.kind === 'assistant' && it.streaming);
-        const next = settleSearches(settleSteps(prev)).map(it => {
+        // 这一轮结束时还没选的卡算超时（点停止且 /cancel 先回来的，cancelRun 已标成取消）
+        const next = settlePicks(settleSearches(settleSteps(prev)), 'expired').map(it => {
           // 读数与来源随 done 一起到：本轮不用等刷新就能显示端点/耗时/token 和答案底部的来源。
           // 中断的那条要整段用服务端定稿覆盖——"（已中断）"这个尾标只在服务端拼一次，
           // 前端复刻一份的话两处措辞迟早对不上，刷新前后看到的就不是同一段文字
@@ -521,8 +542,8 @@ function handleEvent(e: WorkbenchEvent) {
       });
       break;
     case 'error':
-      // 后端发完 error 就收口，不会再来 done：流式中的条目在这里收尾
-      updateItems(prev => appendTail(endStreaming(prev), { kind: 'error', message: e.message }));
+      // 后端发完 error 就收口，不会再来 done：流式中的条目、还没选的卡在这里收尾
+      updateItems(prev => appendTail(settlePicks(endStreaming(prev), 'expired'), { kind: 'error', message: e.message }));
       break;
     default:
       // 后端日后加新事件类型时不至于静默吞掉；不上屏，排查看控制台
@@ -885,11 +906,15 @@ async function regenerate() {
 async function cancelRun(): Promise<boolean> {
   const sid = state.sessionId;
   if (!sid || !state.loading) return false;
+  let stopped: boolean;
   try {
-    return await workbenchApi.cancel(sid);
+    stopped = await workbenchApi.cancel(sid);
   } catch {
     return false;   // 网络抖动或那轮刚好结束，都按"点晚了"处理
   }
+  // 停下来了：还在等选的卡标成取消；done 先到、已经标成超时的以 done 为准
+  if (stopped) updateItems(prev => settlePicks(prev, 'cancelled'));
+  return stopped;
 }
 
 /**
@@ -980,6 +1005,23 @@ async function openSession(sid: string) {
   else settle();
 }
 
+/**
+ * 选 trader 卡上点了一个：回执给后端，在等的查询拿到它接着跑。
+ * 成了就标已选（这一轮可能已经先收尾把卡标成超时了，以回执为准）；被拒把原话挂在卡上。
+ */
+async function pickTrader(requestId: string, traderId: number) {
+  const sid = state.sessionId;
+  if (!sid) return;
+  const mark = (patch: Partial<Extract<ChatItem, { kind: 'pick' }>>) => updateItems(prev => prev.map(it =>
+    it.kind === 'pick' && it.requestId === requestId ? { ...it, ...patch } : it));
+  try {
+    await workbenchApi.pickTrader(sid, requestId, traderId);
+    mark({ status: 'picked', pickedId: traderId, error: undefined });
+  } catch (err) {
+    mark({ error: (err as Error).message });
+  }
+}
+
 /** HITL 决策：批准→登记授权→自动补发 resumeMessage 恢复执行；拒绝→仅登记。 */
 async function hitlDecide(requestId: string, approved: boolean) {
   // 按 requestId 认卡而不是下标：条目会插到 items 中间，其后所有条目下标整体错位
@@ -1034,6 +1076,7 @@ export const chatStore = {
   cancelRun,
   openSession,
   hitlDecide,
+  pickTrader,
   newSession,
   /** 入口按钮直接弹卡：跟模型弹的卡走同一条 items 通路，不经后端 */
   openForm(form: TraderFormKind, prefill?: Record<string, unknown>) {

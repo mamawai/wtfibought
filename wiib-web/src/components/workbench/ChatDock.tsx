@@ -327,6 +327,16 @@ export function ChatDock() {
     setOpenBoth(next);
   }, [setOpenBoth, checkConfig]);
 
+  // 面板关着时来了选 trader 的卡：后端停在那儿等用户点，自己展开
+  useEffect(() => {
+    let prev = false;
+    return chatStore.subscribe(() => {
+      const now = chatStore.getSnapshot().items.some(it => it.kind === 'pick' && it.status === 'pending');
+      if (now && !prev && !openRef.current) toggle();
+      prev = now;
+    });
+  }, [toggle]);
+
   // ESC 一级一级退：全屏时先回浮窗，浮窗态再按才关面板。不走原生全屏之后浏览器不再帮忙收场，这条得自己接
   useEffect(() => {
     if (!open) return;

@@ -11,7 +11,6 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
-import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -29,6 +28,9 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
@@ -37,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -49,7 +52,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** trader 创建/改配置的校验与端点选择，以及重置开新局的归档/清理。 */
+/** trader 创建/改配置的校验与端点选择、名额与重名、归属，以及重置开新局的归档/清理。 */
 class TraderServiceTest {
 
     @BeforeAll
@@ -72,15 +75,32 @@ class TraderServiceTest {
     private final TraderScheduler scheduler = mock(TraderScheduler.class);
     private final TraderLiveHub hub = mock(TraderLiveHub.class);
     private final ExperienceLedger ledger = mock(ExperienceLedger.class);
+    /** 创建用的事务：看它收到 commit 还是 rollback */
+    private final PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
 
     private final TraderService service = new TraderService(
             traderMapper, decisionMapper, modelFactory, endpointService,
             simTradeClient, binanceProperties, planStore, watchStore, scheduler, hub,
-            new PromptCatalog(), langResolver, new MessageCatalog(), ledger);
+            new PromptCatalog(), langResolver, new MessageCatalog(), ledger, new TransactionTemplate(txManager));
 
     {
         // 重置要占 trader 的位子，默认占得到
         when(scheduler.tryOccupy(anyLong())).thenReturn(true);
+        // 插行时库发 id
+        when(traderMapper.insert(any(AiTrader.class))).thenAnswer(inv -> {
+            inv.<AiTrader>getArgument(0).setId(7L);
+            return 1;
+        });
+    }
+
+    /** 名下的一个 trader：主人是 1 号 */
+    private static AiTrader named(long id, String name) {
+        AiTrader t = new AiTrader();
+        t.setId(id);
+        t.setUserId(1L);
+        t.setName(name);
+        t.setRoundNo(1);
+        return t;
     }
 
     /** 端点库里的一条 */
@@ -108,13 +128,12 @@ class TraderServiceTest {
     @Test
     void rejectsMoreThanThreeSymbols() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
         String four = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT", "15m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null)).error();
         String three = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT", "15m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null)).error();
 
         assertThat(four).isEqualTo(new MessageCatalog().get("trader.config.tooManySymbols", Map.of("max", 3)));
         assertThat(three).doesNotContain("最多").contains("模型端点");
@@ -124,9 +143,8 @@ class TraderServiceTest {
     @Test
     void alertMultBelowOneRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
 
-        String err = service.create(1L, req(null, null, null, null, null, true, new java.math.BigDecimal("0.5")));
+        String err = service.create(1L, req(null, null, null, null, null, true, new java.math.BigDecimal("0.5"))).error();
 
         assertThat(err).contains("不能低于 1.0");
     }
@@ -135,9 +153,8 @@ class TraderServiceTest {
     @Test
     void leverageBeyondHardMaxRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
 
-        String err = service.create(1L, req(null, 50, 200, null, null, null, null));
+        String err = service.create(1L, req(null, 50, 200, null, null, null, null)).error();
 
         assertThat(err).contains("杠杆区间");
     }
@@ -146,9 +163,8 @@ class TraderServiceTest {
     @Test
     void invertedLeverageRangeRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
 
-        String err = service.create(1L, req(null, 100, 50, null, null, null, null));
+        String err = service.create(1L, req(null, 100, 50, null, null, null, null)).error();
 
         assertThat(err).contains("下界不能大于上界");
     }
@@ -157,9 +173,8 @@ class TraderServiceTest {
     @Test
     void hedgeWithSinglePositionRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
 
-        String err = service.create(1L, req(null, null, null, false, true, null, null));
+        String err = service.create(1L, req(null, null, null, false, true, null, null)).error();
 
         assertThat(err).contains("多空双开");
     }
@@ -168,43 +183,94 @@ class TraderServiceTest {
     @Test
     void createWithoutAnyEndpointRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
-        String err = service.create(1L, req(null, null, null, null, null, null, null));
+        String err = service.create(1L, req(null, null, null, null, null, null, null)).error();
 
         assertThat(err).contains("模型端点");
         verify(modelFactory, never()).testConnection(any());
         verify(traderMapper, never()).insert(any(AiTrader.class));
     }
 
-    /** 创建：显式选的端点要连通性测试；通过后入库并把 TRADER 用途绑到它 */
+    /**
+     * 创建：显式选的端点要连通性测试，端点 id 记在行上；
+     * 一个事务里先插行拿 id，再按 traderId 开 sim 子账户，最后回写 sim_user_id 并提交；回给调用方新 trader 的 id
+     */
     @Test
-    void createTestsChosenEndpointAndBinds() {
+    void createInsertsRowThenOpensAccountByTraderId() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
         UserLlmEndpoint chosen = endpoint(5, "deepseek-chat");
         when(endpointService.get(1L, 5L)).thenReturn(chosen);
         when(modelFactory.testConnection(chosen)).thenReturn(null);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
+        TraderService.CreateResult r = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
                 null, null, null, null, null, null, null, null, null, null, null));
 
-        assertThat(err).isNull();
+        assertThat(r.error()).isNull();
+        assertThat(r.id()).isEqualTo(7L);
         verify(modelFactory).testConnection(chosen);
+        ArgumentCaptor<AiTrader> inserted = ArgumentCaptor.forClass(AiTrader.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> simUpdate = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        InOrder order = inOrder(traderMapper, simTradeClient, txManager);
+        order.verify(traderMapper).insert(inserted.capture());
+        order.verify(simTradeClient).ensureAccount("ai_trader_t7_r1", TraderService.INITIAL_BALANCE);
+        order.verify(traderMapper).update(isNull(), simUpdate.capture());
+        order.verify(txManager).commit(any());
+        assertThat(inserted.getValue().getLlmEndpointId()).isEqualTo(5L);
+        assertThat(simUpdate.getValue().getSqlSet()).contains("sim_user_id=");
+        assertThat(simUpdate.getValue().getParamNameValuePairs()).containsValue(99L);
+    }
+
+    /** 开 sim 子账户失败：异常照抛、事务回滚，插的那行不留，sim_user_id 也不回写 */
+    @Test
+    void createRollsBackWhenOpeningAccountFails() {
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(endpointService.defaultOf(1L)).thenReturn(endpoint(5, "deepseek-chat"));
+        when(simTradeClient.ensureAccount(any(), any())).thenThrow(new IllegalStateException("sim down"));
+
+        assertThatThrownBy(() -> service.create(1L, req(null, null, null, null, null, null, null)))
+                .hasMessageContaining("sim down");
+
         verify(traderMapper).insert(any(AiTrader.class));
-        verify(endpointService).bind(1L, UserLlmBinding.TRADER, 5L);
+        verify(txManager).rollback(any());
+        verify(txManager, never()).commit(any());
+        verify(traderMapper, never()).update(any(), any());
+    }
+
+    /** 名下满 3 个：直接拒，不测连通、不入库 */
+    @Test
+    void createRejectedWhenLimitReached() {
+        when(traderMapper.selectList(any())).thenReturn(List.of(named(1L, "a"), named(2L, "b"), named(3L, "c")));
+
+        String err = service.create(1L, req(null, null, null, null, null, null, null)).error();
+
+        assertThat(err).isEqualTo(new MessageCatalog().get("trader.limitReached", Map.of("max", 3)));
+        verify(modelFactory, never()).testConnection(any());
+        verify(traderMapper, never()).insert(any(AiTrader.class));
+    }
+
+    /** 名下重名：去首尾空格、不分大小写比 */
+    @Test
+    void createRejectedWhenNameTaken() {
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(traderMapper.selectList(any())).thenReturn(List.of(named(8L, "Alpha")));
+
+        String err = service.create(1L, new TraderService.UpsertReq(" alpha ", "BTCUSDT", "15m", null, null,
+                null, null, null, null, null, null, null, null, null, null, null)).error();
+
+        assertThat(err).isEqualTo(new MessageCatalog().get("trader.config.nameTaken"));
+        verify(traderMapper, never()).insert(any(AiTrader.class));
     }
 
     /** 时段格式错直接回消息 */
     @Test
     void wakeWindowBadFormatRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, null,
-                null, null, null, null, null, null, null, null, null, null, "21:03-08:30"));
+                null, null, null, null, null, null, null, null, null, null, "21:03-08:30")).error();
 
         assertThat(err).contains("0/5");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -214,10 +280,9 @@ class TraderServiceTest {
     @Test
     void wakeWindowWithoutAnyBoundaryRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "4h", null, null,
-                null, null, null, null, null, null, null, null, null, null, "21:00-23:00"));
+                null, null, null, null, null, null, null, null, null, null, "21:00-23:00")).error();
 
         assertThat(err).contains("永远不会醒");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -227,14 +292,13 @@ class TraderServiceTest {
     @Test
     void wakeWindowPersistedNormalized() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
         UserLlmEndpoint chosen = endpoint(5, "deepseek-chat");
         when(endpointService.get(1L, 5L)).thenReturn(chosen);
         when(modelFactory.testConnection(chosen)).thenReturn(null);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
-                null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 "));
+                null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 ")).error();
 
         assertThat(err).isNull();
         ArgumentCaptor<AiTrader> captor = ArgumentCaptor.forClass(AiTrader.class);
@@ -246,7 +310,6 @@ class TraderServiceTest {
     @Test
     void webSearchSwitchNeedsEndpointSearch() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
         UserLlmEndpoint searching = endpoint(5, "grok-4");
         searching.setApiProtocol("responses");
         searching.setWebSearch(true);
@@ -265,20 +328,19 @@ class TraderServiceTest {
         assertThat(captor.getAllValues().get(1).getWebSearchEnabled()).isFalse();
     }
 
-    /** 连通性测试不过：不入库、不绑定 */
+    /** 连通性测试不过：不入库、不开账户 */
     @Test
     void createRejectedWhenEndpointUnreachable() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
-        when(traderMapper.selectOne(any())).thenReturn(null);
         UserLlmEndpoint chosen = endpoint(5, "deepseek-chat");
         when(endpointService.defaultOf(1L)).thenReturn(chosen);
         when(modelFactory.testConnection(chosen)).thenReturn("401");
 
-        String err = service.create(1L, req(null, null, null, null, null, null, null));
+        String err = service.create(1L, req(null, null, null, null, null, null, null)).error();
 
         assertThat(err).contains("连通性测试失败");
         verify(traderMapper, never()).insert(any(AiTrader.class));
-        verify(endpointService, never()).bind(any(Long.class), any(), any());
+        verify(simTradeClient, never()).ensureAccount(any(), any());
     }
 
     /**
@@ -291,10 +353,10 @@ class TraderServiceTest {
         t.setId(7L);
         t.setUserId(1L);
         t.setRoundNo(3);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        assertThat(service.reset(1L, true)).isNull();
+        assertThat(service.reset(1L, 7L, true)).isNull();
 
         verify(planStore).archiveRound(eq(7L), eq(3), org.mockito.ArgumentMatchers.anyLong());
         verify(watchStore).archiveRound(7L, 3);
@@ -311,10 +373,10 @@ class TraderServiceTest {
         t.setId(7L);
         t.setUserId(1L);
         t.setRoundNo(3);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(scheduler.tryOccupy(7L)).thenReturn(false);
 
-        assertThat(service.reset(1L, true)).contains("等这一轮跑完再重置");
+        assertThat(service.reset(1L, 7L, true)).contains("等这一轮跑完再重置");
 
         verify(simTradeClient, never()).ensureAccount(any(), any());
         verify(planStore, never()).archiveRound(anyLong(), anyInt(), anyLong());
@@ -329,7 +391,7 @@ class TraderServiceTest {
         t.setUserId(1L);
         t.setRoundNo(3);
         t.setSimUserId(88L);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         FuturesOrderResponse pending = new FuturesOrderResponse();
         pending.setOrderId(600L);
         when(simTradeClient.getPendingOrders(88L, null)).thenReturn(List.of(pending));
@@ -338,13 +400,13 @@ class TraderServiceTest {
         when(simTradeClient.getAllPositions(88L)).thenReturn(List.of(position));
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        assertThat(service.reset(1L, true)).isNull();
+        assertThat(service.reset(1L, 7L, true)).isNull();
 
         var calls = inOrder(simTradeClient, scheduler);
         calls.verify(simTradeClient).cancelOrder(88L, 600L);
         ArgumentCaptor<FuturesCloseRequest> close = ArgumentCaptor.forClass(FuturesCloseRequest.class);
         calls.verify(simTradeClient).closePosition(eq(88L), close.capture());
-        calls.verify(simTradeClient).ensureAccount("ai_trader_1_r4", TraderService.INITIAL_BALANCE);
+        calls.verify(simTradeClient).ensureAccount("ai_trader_t7_r4", TraderService.INITIAL_BALANCE);
         calls.verify(scheduler).release(7L);
         assertThat(close.getValue().getPositionId()).isEqualTo(5L);
         assertThat(close.getValue().getOrderType()).isEqualTo("MARKET");
@@ -359,35 +421,35 @@ class TraderServiceTest {
         t.setUserId(1L);
         t.setRoundNo(3);
         t.setSimUserId(88L);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         FuturesPositionDTO position = new FuturesPositionDTO();
         position.setId(5L);
         when(simTradeClient.getAllPositions(88L)).thenReturn(List.of(position));
         when(simTradeClient.closePosition(eq(88L), any())).thenThrow(new IllegalStateException("仓位在强平中"));
 
-        assertThat(service.reset(1L, true)).contains("这次没有重置").contains("仓位在强平中");
+        assertThat(service.reset(1L, 7L, true)).contains("这次没有重置").contains("仓位在强平中");
 
         verify(simTradeClient, never()).ensureAccount(any(), any());
         verify(traderMapper, never()).update(any(), any());
         verify(scheduler).release(7L);
     }
 
-    /** 保留窗口 10 局：开 R11 时 R1 整局清除——两表 roundNo≤1 删 + sim 子账户 ai_trader_1_r1 销户 */
+    /** 保留窗口 10 局：开 R11 时 R1 整局清除——两表 roundNo≤1 删 + sim 子账户 ai_trader_t7_r1 销户 */
     @Test
     void resetBeyondWindowPurgesOldestRound() {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
         t.setRoundNo(10);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        assertThat(service.reset(1L, true)).isNull();
+        assertThat(service.reset(1L, 7L, true)).isNull();
 
         verify(decisionMapper).delete(any());
         verify(planStore).purgeRounds(7L, 1);
         verify(watchStore).purgeRounds(7L, 1);
-        verify(simTradeClient).deleteAccount("ai_trader_1_r1");
+        verify(simTradeClient).deleteAccount("ai_trader_t7_r1");
     }
 
     /** sim 销户失败不阻断开新局：新局账户已就绪，孤儿账户无业务引用留 warn 即可 */
@@ -397,12 +459,12 @@ class TraderServiceTest {
         t.setId(7L);
         t.setUserId(1L);
         t.setRoundNo(10);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
         org.mockito.Mockito.doThrow(new IllegalStateException("sim down"))
                 .when(simTradeClient).deleteAccount(any());
 
-        assertThat(service.reset(1L, true)).isNull();
+        assertThat(service.reset(1L, 7L, true)).isNull();
 
         verify(planStore).purgeRounds(7L, 1);   // quant 三表照删
     }
@@ -414,29 +476,27 @@ class TraderServiceTest {
         t.setUserId(1L);
         t.setName("alpha");
         t.setRoundNo(3);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         return t;
     }
 
     /**
-     * 删 trader：两表全轮次清、每一局的 sim 子账户逐个销、TRADER 绑定解开，
+     * 删 trader：两表全轮次清、每一局的 sim 子账户逐个销，
      * 三处进程内记账（模型缓存/调度器/现场 hub）跟着摘干净。
      */
     @Test
     void deleteWipesEveryRoundAndForgetsRuntimeState() {
         deletable();
 
-        assertThat(service.delete(1L, "alpha")).isNull();
+        assertThat(service.delete(1L, 7L, "alpha")).isNull();
 
         verify(decisionMapper).delete(any());
         verify(planStore).purgeAll(7L);
         verify(traderMapper).deleteById(7L);
-        // 端点本身不删，只解开 TRADER 用途的绑定
-        verify(endpointService).bind(1L, UserLlmBinding.TRADER, null);
-        // 每局一个子账户，R1~R3 一个不落
-        verify(simTradeClient).deleteAccount("ai_trader_1_r1");
-        verify(simTradeClient).deleteAccount("ai_trader_1_r2");
-        verify(simTradeClient).deleteAccount("ai_trader_1_r3");
+        // 每局一个子账户，按 traderId 命名，R1~R3 一个不落
+        verify(simTradeClient).deleteAccount("ai_trader_t7_r1");
+        verify(simTradeClient).deleteAccount("ai_trader_t7_r2");
+        verify(simTradeClient).deleteAccount("ai_trader_t7_r3");
         verify(modelFactory).evict(7L);
         verify(scheduler).forget(7L);
         verify(hub).forget(7L);
@@ -447,7 +507,7 @@ class TraderServiceTest {
     void deleteRejectsNameMismatch() {
         deletable();
 
-        assertThat(service.delete(1L, "alpha2")).contains("名字对不上");
+        assertThat(service.delete(1L, 7L, "alpha2")).contains("名字对不上");
 
         verify(traderMapper, never()).deleteById(org.mockito.ArgumentMatchers.anyLong());
         verify(planStore, never()).purgeAll(org.mockito.ArgumentMatchers.anyLong());
@@ -463,7 +523,7 @@ class TraderServiceTest {
         deletable();
         when(scheduler.isBusy(7L)).thenReturn(true);
 
-        assertThat(service.delete(1L, "alpha")).contains("正在唤醒中");
+        assertThat(service.delete(1L, 7L, "alpha")).contains("正在唤醒中");
 
         verify(traderMapper, never()).deleteById(org.mockito.ArgumentMatchers.anyLong());
         verify(decisionMapper, never()).delete(any());
@@ -475,12 +535,12 @@ class TraderServiceTest {
     void deleteSurvivesSimFailure() {
         deletable();
         org.mockito.Mockito.doThrow(new IllegalStateException("sim down"))
-                .when(simTradeClient).deleteAccount("ai_trader_1_r2");
+                .when(simTradeClient).deleteAccount("ai_trader_t7_r2");
 
-        assertThat(service.delete(1L, "alpha")).isNull();
+        assertThat(service.delete(1L, 7L, "alpha")).isNull();
 
         // 中间那局炸了，后面那局照删
-        verify(simTradeClient).deleteAccount("ai_trader_1_r3");
+        verify(simTradeClient).deleteAccount("ai_trader_t7_r3");
         verify(traderMapper).deleteById(7L);
         verify(hub).forget(7L);
     }
@@ -493,18 +553,17 @@ class TraderServiceTest {
      */
     @Test
     void updateConfigWritesConfigColumnsOnly() {
-        AiTrader t = new AiTrader();
-        t.setId(7L);
-        t.setUserId(1L);
-        t.setRoundNo(1);
+        AiTrader t = named(7L, "小虎");
         t.setStatus(AiTrader.STATUS_RUNNING);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
+        // 名下列表里有它自己，名字没改不算重名
+        when(traderMapper.selectList(any())).thenReturn(List.of(t));
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         UserLlmEndpoint current = endpoint(5, "deepseek-chat");
         when(endpointService.defaultOf(1L)).thenReturn(current);
         when(modelFactory.endpointFor(t)).thenReturn(current);
 
-        String err = service.updateConfig(1L, req("稳一点", null, null, null, null, null, null));
+        String err = service.updateConfig(1L, 7L, req("稳一点", null, null, null, null, null, null));
 
         assertThat(err).isNull();
         verify(modelFactory, never()).testConnection(any());
@@ -518,30 +577,66 @@ class TraderServiceTest {
         assertThat(sqlSet).contains("wake_window");
         assertThat(sqlSet).contains("web_search_enabled");
         assertThat(sqlSet).doesNotContain("status").doesNotContain("consecutive_failures").doesNotContain("api_key");
-        verify(endpointService).bind(1L, UserLlmBinding.TRADER, null);   // 跟随默认 = 解绑
+        // 跟随默认：端点列写 null，不把眼下的默认端点 5 钉死在行上
+        assertThat(sqlSet).contains("llm_endpoint_id=");
+        assertThat(cap.getValue().getParamNameValuePairs()).doesNotContainValue(5L);
     }
 
-    /** 换到另一条端点：先测连通，通过后绑定并逐出模型缓存 */
+    /** 换到另一条端点：先测连通，通过后把端点 id 写进行里并逐出模型缓存 */
     @Test
     void updateConfigWithNewEndpointTestsAndEvicts() {
-        AiTrader t = new AiTrader();
-        t.setId(7L);
-        t.setUserId(1L);
-        t.setRoundNo(1);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        AiTrader t = named(7L, "小虎");
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(modelFactory.endpointFor(t)).thenReturn(endpoint(5, "deepseek-chat"));
         UserLlmEndpoint next = endpoint(6, "deepseek-reasoner");
         when(endpointService.get(1L, 6L)).thenReturn(next);
         when(modelFactory.testConnection(next)).thenReturn(null);
 
-        String err = service.updateConfig(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 6L,
+        String err = service.updateConfig(1L, 7L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 6L,
                 null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();
         verify(modelFactory).testConnection(next);
-        verify(endpointService).bind(1L, UserLlmBinding.TRADER, 6L);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(traderMapper).update(isNull(), cap.capture());
+        assertThat(cap.getValue().getParamNameValuePairs()).containsValue(6L);
         verify(modelFactory).evict(7L);
+    }
+
+    /** 改名撞上名下别的 trader 同样拒（不分大小写） */
+    @Test
+    void updateConfigRejectsNameOfAnotherTrader() {
+        AiTrader self = named(7L, "小虎");
+        when(traderMapper.selectById(7L)).thenReturn(self);
+        when(traderMapper.selectList(any())).thenReturn(List.of(self, named(8L, "Alpha")));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
+
+        String err = service.updateConfig(1L, 7L, new TraderService.UpsertReq("ALPHA", "BTCUSDT", "15m", null, null,
+                null, null, null, null, null, null, null, null, null, null, null));
+
+        assertThat(err).isEqualTo(new MessageCatalog().get("trader.config.nameTaken"));
+        verify(traderMapper, never()).update(any(), any());
+    }
+
+    /** 别人的 traderId 一律当不存在：取不到，也动不了 */
+    @Test
+    void othersTraderIdTreatedAsMissing() {
+        AiTrader others = named(7L, "小虎");
+        others.setUserId(2L);
+        when(traderMapper.selectById(7L)).thenReturn(others);
+
+        assertThat(service.owned(1L, 7L)).isNull();
+        assertThat(service.start(1L, 7L)).isEqualTo(new MessageCatalog().get("trader.notFound"));
+        verify(traderMapper, never()).update(any(), any());
+    }
+
+    /** 本局收益率：权益相对初始资金，留两位小数；竞技场和对话用的都是这一份 */
+    @Test
+    void pnlPctAgainstInitialBalance() {
+        assertThat(TraderService.pnlPct(new BigDecimal("10500"))).isEqualTo(new BigDecimal("5.00"));
+        assertThat(TraderService.pnlPct(new BigDecimal("9876.5"))).isEqualTo(new BigDecimal("-1.24"));
     }
 
     /** 不带入笔记的重置：memory 只清生效版本（历届存档在 REVIEW 决策行里，不动） */
@@ -551,10 +646,10 @@ class TraderServiceTest {
         t.setId(7L);
         t.setUserId(1L);
         t.setRoundNo(3);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        assertThat(service.reset(1L, false)).isNull();
+        assertThat(service.reset(1L, 7L, false)).isNull();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
@@ -570,13 +665,13 @@ class TraderServiceTest {
         t.setUserId(1L);
         t.setRoundNo(3);
         t.setLearnedRestrictionHold(true);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
         when(langResolver.of(1L)).thenReturn(AgentLang.ZH);
         when(ledger.carryOver(7L, 3, 4)).thenReturn(2);
         when(ledger.render(7L, 4, AgentLang.ZH)).thenReturn("【经验账本】\n#9 规律");
 
-        assertThat(service.reset(1L, true)).isNull();
+        assertThat(service.reset(1L, 7L, true)).isNull();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
@@ -592,10 +687,10 @@ class TraderServiceTest {
         t.setId(7L);
         t.setUserId(1L);
         t.setRoundNo(3);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        assertThat(service.reset(1L, true)).isNull();
+        assertThat(service.reset(1L, 7L, true)).isNull();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
@@ -609,7 +704,7 @@ class TraderServiceTest {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(langResolver.of(1L)).thenReturn(AgentLang.ZH);
         com.mawai.wiibcommon.entity.AiTraderPlan p = new com.mawai.wiibcommon.entity.AiTraderPlan();
         p.setId(9L);
@@ -617,7 +712,7 @@ class TraderServiceTest {
         p.setStatus(com.mawai.wiibcommon.entity.AiTraderPlan.STATUS_CLOSED);
         when(planStore.byId(9L)).thenReturn(p);
 
-        assertThat(service.setPlanStale(1L, 9L, true)).isNull();
+        assertThat(service.setPlanStale(1L, 7L, 9L, true)).isNull();
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(planStore, ledger);
         order.verify(planStore).setStale(9L, true);
@@ -630,14 +725,14 @@ class TraderServiceTest {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         com.mawai.wiibcommon.entity.AiTraderPlan p = new com.mawai.wiibcommon.entity.AiTraderPlan();
         p.setId(9L);
         p.setTraderId(8L);
         p.setStatus(com.mawai.wiibcommon.entity.AiTraderPlan.STATUS_CLOSED);
         when(planStore.byId(9L)).thenReturn(p);
 
-        assertThat(service.setPlanStale(1L, 9L, true)).isNotNull();
+        assertThat(service.setPlanStale(1L, 7L, 9L, true)).isNotNull();
 
         verify(planStore, never()).setStale(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyBoolean());
@@ -650,14 +745,14 @@ class TraderServiceTest {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         com.mawai.wiibcommon.entity.AiTraderPlan p = new com.mawai.wiibcommon.entity.AiTraderPlan();
         p.setId(9L);
         p.setTraderId(7L);
         p.setStatus(com.mawai.wiibcommon.entity.AiTraderPlan.STATUS_LIVE);
         when(planStore.byId(9L)).thenReturn(p);
 
-        assertThat(service.setPlanStale(1L, 9L, true)).isNotNull();
+        assertThat(service.setPlanStale(1L, 7L, 9L, true)).isNotNull();
 
         verify(planStore, never()).setStale(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyBoolean());
@@ -672,10 +767,10 @@ class TraderServiceTest {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setUserId(1L);
-        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(traderMapper.selectById(7L)).thenReturn(t);
         when(langResolver.of(1L)).thenReturn(AgentLang.EN);
 
-        assertThat(service.pause(1L)).isNull();
+        assertThat(service.pause(1L, 7L)).isNull();
 
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> captor = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
         verify(traderMapper).update(isNull(), captor.capture());

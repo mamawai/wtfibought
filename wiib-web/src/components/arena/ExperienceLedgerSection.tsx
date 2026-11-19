@@ -37,8 +37,10 @@ function stateOf(e: TraderExperience): string {
 /**
  * 配置台的「经验账本」一节（样式见 MyTrader.css .le / .lhelp）：三个页签（经验 / 给你的提醒 / 已停用）+ 一块能收起的说明。
  * 每日复盘后代码记账，这里只管不写——条目正文来自模型的复盘
+ *
+ * @param traderId 看的是哪个 trader 的账本（只有主人能看能改）
  */
-export function ExperienceLedgerSection({ id }: { id: string }) {
+export function ExperienceLedgerSection({ id, traderId }: { id: string; traderId: number }) {
   const { t } = useTranslation(['ai', 'common']);
   const { toast } = useToast();
   const [rows, setRows] = useState<TraderExperience[] | null>(null);
@@ -52,8 +54,8 @@ export function ExperienceLedgerSection({ id }: { id: string }) {
 
   const load = useCallback(() => {
     setLoadError(false);
-    traderApi.experiences().then(setRows).catch(() => setLoadError(true));
-  }, []);
+    traderApi.experiences(traderId).then(setRows).catch(() => setLoadError(true));
+  }, [traderId]);
   useEffect(() => { load(); }, [load]);
 
   const toggleHelp = () => {
@@ -80,7 +82,7 @@ export function ExperienceLedgerSection({ id }: { id: string }) {
   const confirmRetire = (e: TraderExperience) => {
     if (!reason.trim()) return;
     setRetiring(null);
-    void act(e.id, () => traderApi.retireExperience(e.id, reason.trim()));
+    void act(e.id, () => traderApi.retireExperience(traderId, e.id, reason.trim()));
   };
 
   const all = rows ?? [];
@@ -115,11 +117,11 @@ export function ExperienceLedgerSection({ id }: { id: string }) {
           {list.map(e => (
             <LedgerRow key={e.id} e={e} busy={busy === e.id}
                        retiring={retiring === e.id} reason={reason} onReason={setReason}
-                       onPin={() => void act(e.id, () => traderApi.pinExperience(e.id, !e.pinned))}
+                       onPin={() => void act(e.id, () => traderApi.pinExperience(traderId, e.id, !e.pinned))}
                        onRetire={() => startRetire(e)} onRetireOk={() => confirmRetire(e)}
                        onRetireCancel={() => setRetiring(null)}
-                       onRevive={() => void act(e.id, () => traderApi.reviveExperience(e.id))}
-                       onDelete={() => void act(e.id, () => traderApi.deleteExperience(e.id))} />
+                       onRevive={() => void act(e.id, () => traderApi.reviveExperience(traderId, e.id))}
+                       onDelete={() => void act(e.id, () => traderApi.deleteExperience(traderId, e.id))} />
           ))}
         </div>
       )}

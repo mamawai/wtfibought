@@ -3,6 +3,8 @@ package com.mawai.wiibagent.promptgen;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
+import com.mawai.wiibagent.trader.TraderService;
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.PromptGenSession;
 import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,8 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -49,14 +53,20 @@ class PromptGenRealRunTest {
     @Autowired
     private LlmEndpointService endpointService;
 
+    @Autowired
+    private TraderService traderService;
+
     @Test
     void 一路选推荐项直到交出第一版() {
         ChatEndpoints eps = endpointService.chatEndpoints(ADMIN_USER_ID);
         assertThat(eps).as("先用管理员账号在 AI 页「模型配置」加一条 BYOK 端点再跑").isNotNull();
         long endpointId = eps.deep().getId();
         ChatModel model = service.model(ADMIN_USER_ID, endpointId);
+        // 为名下第一个 trader 写；一个都没有就按平台默认规格
+        List<AiTrader> mine = traderService.listMine(ADMIN_USER_ID);
 
-        service.start(channel(), ADMIN_USER_ID, model, endpointId, AgentLang.ZH);
+        service.start(channel(), ADMIN_USER_ID, model, endpointId, mine.isEmpty() ? null : mine.getFirst().getId(),
+                AgentLang.ZH);
         PromptGenView view = service.view(ADMIN_USER_ID);
         for (int round = 0; round < MAX_ROUNDS && view.currentNo() == null; round++) {
             assertThat(view.question()).as("agent 这一轮既没出题也没写稿，看日志里它说了什么").isNotNull();

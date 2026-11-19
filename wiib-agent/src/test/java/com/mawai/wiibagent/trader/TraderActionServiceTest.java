@@ -55,11 +55,12 @@ import static org.mockito.Mockito.when;
  * 这里钉的是<b>准入</b>与<b>如实回报</b>：唤醒与复盘都是花钱且动真仓位的事，
  * 什么情况下不许做必须写死；做没做成也得一字不差地传回给用户，不能报"已唤醒"了事。
  * <p>
- * 归属（按 userId 取自己的 trader）与查询归 {@link TraderChatServiceTest}。
+ * 归属（traderId 归不归这个人）归 {@link TraderServiceTest}，查询归 {@link TraderChatServiceTest}。
  */
 class TraderActionServiceTest {
 
     private static final long ME = 1L;
+    private static final long TID = 7L;
 
     /**
      * Lambda 条件构造器要查 TableInfo：留言/撤回走 LambdaUpdateWrapper&lt;AiTrader&gt;，
@@ -101,7 +102,7 @@ class TraderActionServiceTest {
 
     private AiTrader running() {
         AiTrader t = new AiTrader();
-        t.setId(7L);
+        t.setId(TID);
         t.setUserId(ME);
         t.setName("测试员");
         t.setStatus(AiTrader.STATUS_RUNNING);
@@ -112,8 +113,9 @@ class TraderActionServiceTest {
         return t;
     }
 
-    private void mine(AiTrader t) {
-        when(traderService.mine(ME)).thenReturn(t);
+    /** 按 (ME, TID) 取到的 trader；null=不归我或不存在 */
+    private void owned(AiTrader t) {
+        when(traderService.owned(ME, TID)).thenReturn(t);
     }
 
     /** 唯一那次列级更新的条件构造器；落库了什么以它为准 */
@@ -138,17 +140,17 @@ class TraderActionServiceTest {
                 .findFirst().orElse(null);
     }
 
-    // ---------- 没有 trader ----------
+    // ---------- trader 不归我 ----------
 
-    /** 没有 trader 的用户去动作：要拿到"你还没有"，而不是 NPE，更不能真派活出去 */
+    /** traderId 不归我（或不存在）去动作：要拿到"trader 不存在"，而不是 NPE，更不能真派活出去 */
     @Test
-    void 没有trader时动作不炸() {
-        mine(null);
+    void trader不归我时动作不炸() {
+        owned(null);
 
-        assertThat(service.saveNote(ME, "随便说说", 1).ok()).isFalse();
-        assertThat(service.clearNote(ME).ok()).isFalse();
-        assertThat(service.wake(ME).ok()).isFalse();
-        assertThat(service.review(ME).ok()).isFalse();
+        assertThat(service.saveNote(ME, TID,"随便说说", 1).ok()).isFalse();
+        assertThat(service.clearNote(ME, TID).ok()).isFalse();
+        assertThat(service.wake(ME, TID).ok()).isFalse();
+        assertThat(service.review(ME, TID).ok()).isFalse();
 
         verify(scheduler, never()).tryManualWake(any());
         verify(reviewRunner, never()).review(any(), anyLong());
@@ -159,9 +161,9 @@ class TraderActionServiceTest {
 
     @Test
     void 留言落库并说明还剩几轮() {
-        mine(running());
+        owned(running());
 
-        ActionResult r = service.saveNote(ME, "  今晚有 CPI，仓位轻点  ", 3);
+        ActionResult r = service.saveNote(ME, TID,"  今晚有 CPI，仓位轻点  ", 3);
 
         assertThat(r.ok()).isTrue();
         assertThat(r.message()).contains("3");
@@ -180,9 +182,9 @@ class TraderActionServiceTest {
     @ParameterizedTest
     @CsvSource(value = {"0, 1", "-3, 1", "25, 24", "null, 1"}, nullValues = "null")
     void 留言轮次钳在1到24(Integer given, int expected) {
-        mine(running());
+        owned(running());
 
-        ActionResult r = service.saveNote(ME, "仓位轻点", given);
+        ActionResult r = service.saveNote(ME, TID,"仓位轻点", given);
 
         assertThat(writtenRounds(capturedUpdate())).isEqualTo(expected);
         assertThat(r.message()).contains(String.valueOf(expected));
@@ -191,10 +193,10 @@ class TraderActionServiceTest {
     /** 超长留言只截不拒——用户已经把话说了，拒收等于让他重写；但截了必须明说 */
     @Test
     void 超长留言截到上限且明说截掉了() {
-        mine(running());
+        owned(running());
         String tooLong = "啊".repeat(TraderActionService.MAX_NOTE_CHARS + 100);
 
-        ActionResult r = service.saveNote(ME, tooLong, 1);
+        ActionResult r = service.saveNote(ME, TID,tooLong, 1);
 
         assertThat(r.ok()).isTrue();
         assertThat(writtenNote(capturedUpdate())).hasSize(TraderActionService.MAX_NOTE_CHARS);
@@ -206,24 +208,24 @@ class TraderActionServiceTest {
     void 覆盖未读留言时提示() {
         AiTrader t = running();
         t.setOwnerNote("上一条还没被读走");
-        mine(t);
+        owned(t);
 
-        assertThat(service.saveNote(ME, "新的一条", 1).message()).contains("覆盖");
+        assertThat(service.saveNote(ME, TID,"新的一条", 1).message()).contains("覆盖");
     }
 
     /** 反过来，本来就没有旧留言还提"覆盖"，用户会以为自己刚弄丢了什么 */
     @Test
     void 没有未读留言时不提覆盖() {
-        mine(running());
+        owned(running());
 
-        assertThat(service.saveNote(ME, "新的一条", 1).message()).doesNotContain("覆盖");
+        assertThat(service.saveNote(ME, TID,"新的一条", 1).message()).doesNotContain("覆盖");
     }
 
     @Test
     void 空留言不落库() {
-        mine(running());
+        owned(running());
 
-        ActionResult r = service.saveNote(ME, "   ", 1);
+        ActionResult r = service.saveNote(ME, TID,"   ", 1);
 
         assertThat(r.ok()).isFalse();
         verify(traderMapper, never()).update(any(), any());
@@ -235,9 +237,9 @@ class TraderActionServiceTest {
         AiTrader t = running();
         t.setOwnerNote("说错了");
         t.setOwnerNoteRounds(5);
-        mine(t);
+        owned(t);
 
-        ActionResult r = service.clearNote(ME);
+        ActionResult r = service.clearNote(ME, TID);
 
         assertThat(r.ok()).isTrue();
         LambdaUpdateWrapper<AiTrader> w = capturedUpdate();
@@ -249,9 +251,9 @@ class TraderActionServiceTest {
     /** 没东西可撤是"本来就没有"，不是失败：面板不该为此红一下，库也不该白写一次 */
     @Test
     void 没有留言时撤回不写库且算成功() {
-        mine(running());
+        owned(running());
 
-        ActionResult r = service.clearNote(ME);
+        ActionResult r = service.clearNote(ME, TID);
 
         assertThat(r.ok()).isTrue();
         verify(traderMapper, never()).update(any(), any());
@@ -262,10 +264,10 @@ class TraderActionServiceTest {
     @Test
     void 唤醒触发调度器() {
         AiTrader t = running();
-        mine(t);
+        owned(t);
         when(scheduler.tryManualWake(t)).thenReturn(null);   // null=已触发
 
-        ActionResult r = service.wake(ME);
+        ActionResult r = service.wake(ME, TID);
 
         assertThat(r.ok()).isTrue();
         verify(scheduler).tryManualWake(t);
@@ -275,10 +277,10 @@ class TraderActionServiceTest {
     @Test
     void 调度器给出拒因时不触发唤醒() {
         AiTrader t = running();
-        mine(t);
+        owned(t);
         when(scheduler.manualWakeBlockedReason(eq(t), any())).thenReturn("距下一次例行唤醒不足30秒");
 
-        ActionResult r = service.wake(ME);
+        ActionResult r = service.wake(ME, TID);
 
         assertThat(r.ok()).isFalse();
         assertThat(r.message()).contains("距下一次例行唤醒不足30秒");
@@ -289,10 +291,10 @@ class TraderActionServiceTest {
     @Test
     void 抢占失败时如实回报() {
         AiTrader t = running();
-        mine(t);
+        owned(t);
         when(scheduler.tryManualWake(t)).thenReturn("上一轮唤醒还在跑");
 
-        ActionResult r = service.wake(ME);
+        ActionResult r = service.wake(ME, TID);
 
         assertThat(r.ok()).isFalse();
         assertThat(r.message()).contains("上一轮唤醒还在跑");
@@ -304,9 +306,9 @@ class TraderActionServiceTest {
         AiTrader t = running();
         t.setStatus(AiTrader.STATUS_PAUSED);
         t.setPausedReason("连续5次唤醒失败");
-        mine(t);
+        owned(t);
 
-        ActionResult r = service.wake(ME);
+        ActionResult r = service.wake(ME, TID);
 
         assertThat(r.ok()).isFalse();
         assertThat(r.message()).contains("暂停").contains("连续5次唤醒失败");
@@ -318,9 +320,9 @@ class TraderActionServiceTest {
     void 爆仓终局的trader不许被唤醒() {
         AiTrader t = running();
         t.setStatus(AiTrader.STATUS_LIQUIDATED);
-        mine(t);
+        owned(t);
 
-        ActionResult r = service.wake(ME);
+        ActionResult r = service.wake(ME, TID);
 
         assertThat(r.ok()).isFalse();
         assertThat(r.message()).contains("爆仓");
@@ -336,10 +338,10 @@ class TraderActionServiceTest {
     @Test
     void 有素材时异步开跑并当场答复() {
         AiTrader t = running();
-        mine(t);
+        owned(t);
         when(reviewRunner.hasMaterial(eq(t), anyLong())).thenReturn(true);
 
-        ActionResult r = service.review(ME);
+        ActionResult r = service.review(ME, TID);
 
         assertThat(r.ok()).isTrue();
         assertThat(r.message()).contains("时间线");
@@ -353,10 +355,10 @@ class TraderActionServiceTest {
     @Test
     void 无素材时算成功且不开跑() {
         AiTrader t = running();
-        mine(t);
+        owned(t);
         when(reviewRunner.hasMaterial(eq(t), anyLong())).thenReturn(false);
 
-        ActionResult r = service.review(ME);
+        ActionResult r = service.review(ME, TID);
 
         assertThat(r.ok()).isTrue();
         assertThat(r.message()).contains("跳过");
@@ -366,10 +368,10 @@ class TraderActionServiceTest {
     /** 停工窗口内点播会抢掉日线复盘的位子——连素材都不该去查 */
     @Test
     void 停工窗口内拒绝点播复盘() {
-        mine(running());
+        owned(running());
         when(scheduler.isHandoverActive()).thenReturn(true);
 
-        ActionResult r = service.review(ME);
+        ActionResult r = service.review(ME, TID);
 
         assertThat(r.ok()).isFalse();
         verify(reviewRunner, never()).hasMaterial(any(), anyLong());
@@ -385,7 +387,7 @@ class TraderActionServiceTest {
     @Test
     void 同一trader第二次点播被互斥拦下() throws Exception {
         AiTrader t = running();
-        mine(t);
+        owned(t);
         when(reviewRunner.hasMaterial(eq(t), anyLong())).thenReturn(true);
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -396,10 +398,10 @@ class TraderActionServiceTest {
         }).when(reviewRunner).review(eq(t), anyLong());
 
         try {
-            assertThat(service.review(ME).ok()).isTrue();
+            assertThat(service.review(ME, TID).ok()).isTrue();
             assertThat(started.await(5, TimeUnit.SECONDS)).as("第一次的异步复盘要先跑起来").isTrue();
 
-            ActionResult second = service.review(ME);
+            ActionResult second = service.review(ME, TID);
 
             assertThat(second.ok()).isFalse();
             assertThat(second.message()).contains("跑完再点");
@@ -411,20 +413,12 @@ class TraderActionServiceTest {
 
     // ---------- 面板 ----------
 
-    /** 没 trader 的用户打开面板：三张卡都是空的，且一次库都不查 */
+    /** traderId 不归我（或不存在）打开面板：给 null（接口回"trader 不存在"），且一次库都不查 */
     @Test
-    void 没有trader时面板是空壳() {
-        mine(null);
+    void trader不归我时面板给null() {
+        owned(null);
 
-        ActionPanel p = service.panel(ME);
-
-        assertThat(p.hasTrader()).isFalse();
-        assertThat(p.name()).isNull();
-        assertThat(p.note()).isNull();
-        assertThat(p.noteRounds()).isZero();
-        // 两个上限是前端画输入框的依据，没 trader 也得给
-        assertThat(p.noteMaxRounds()).isEqualTo(TraderActionService.MAX_NOTE_ROUNDS);
-        assertThat(p.noteMaxChars()).isEqualTo(TraderActionService.MAX_NOTE_CHARS);
+        assertThat(service.panel(ME, TID)).isNull();
         verify(decisionMapper, never()).selectOne(any());
     }
 
@@ -437,7 +431,7 @@ class TraderActionServiceTest {
         AiTrader t = running();
         t.setOwnerNote("今晚有 CPI");
         t.setOwnerNoteRounds(3);
-        mine(t);
+        owned(t);
         when(scheduler.manualWakeBlockedReason(eq(t), any())).thenReturn("距下一次例行唤醒不足30秒");
         when(scheduler.nextRoutineWakeAt(t)).thenReturn(1_700_000_000_000L);
         when(reviewRunner.hasMaterial(eq(t), anyLong())).thenReturn(true);
@@ -463,9 +457,8 @@ class TraderActionServiceTest {
                     Map.of("kind", AiTraderDecision.KIND_WATCH, "n", 1L));
         });
 
-        ActionPanel p = service.panel(ME);
+        ActionPanel p = service.panel(ME, TID);
 
-        assertThat(p.hasTrader()).isTrue();
         assertThat(p.name()).isEqualTo("测试员");
         assertThat(p.status()).isEqualTo(AiTrader.STATUS_RUNNING);
         assertThat(p.pausedReason()).isNull();
@@ -489,9 +482,9 @@ class TraderActionServiceTest {
         AiTrader t = running();
         t.setOwnerNote("有正文，轮次是空的");
         t.setOwnerNoteRounds(null);
-        mine(t);
+        owned(t);
 
-        assertThat(service.panel(ME).noteRounds()).isZero();
+        assertThat(service.panel(ME, TID).noteRounds()).isZero();
     }
 
     private static AiTraderDecision decision(LocalDateTime createdAt, String status) {

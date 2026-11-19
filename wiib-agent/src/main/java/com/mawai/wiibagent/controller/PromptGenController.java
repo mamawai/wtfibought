@@ -52,8 +52,11 @@ public class PromptGenController {
     /** 与工作台共用的虚拟线程执行器 */
     private final ExecutorService streamExecutor;
 
-    /** @param outputLang 指令正文语言 zh/en */
-    public record StartRequest(long endpointId, String outputLang) {
+    /**
+     * @param traderId   为哪个 trader 写（页面地址里的 ?trader），不带=没有 trader；不归这个人的当没带
+     * @param outputLang 指令正文语言 zh/en
+     */
+    public record StartRequest(long endpointId, Long traderId, String outputLang) {
     }
 
     /** text 与 skip 二选一：skip=跳过当前这题，回答时不带（缺了就是 false） */
@@ -78,7 +81,7 @@ public class PromptGenController {
         ChatModel model = service.model(userId, req.endpointId());
         // 旧对话在这一轮的任务里才覆盖，那时名额已经在手
         concurrencyGate.acquireOrThrow(userId, ChatConcurrencyGate.Owner.PROMPT_GEN);
-        return stream(userId, channel -> service.start(channel, userId, model, req.endpointId(), outputLang));
+        return stream(userId, channel -> service.start(channel, userId, model, req.endpointId(), req.traderId(), outputLang));
     }
 
     @PostMapping(value = "/reply", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

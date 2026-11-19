@@ -62,7 +62,7 @@ public class TraderActionService {
      * @param reviewBlockedReason null=可复盘（有没有素材另看 hasReviewMaterial）
      * @param noteRounds          当前留言剩余轮次，0=无待读留言
      */
-    public record ActionPanel(boolean hasTrader, String name, String status, String pausedReason,
+    public record ActionPanel(String name, String status, String pausedReason,
                               Long lastWakeAt, Long nextWakeAt, String wakeBlockedReason, Map<String, Long> todayWakes,
                               Long lastReviewAt, String lastReviewStatus,
                               boolean hasReviewMaterial, String reviewBlockedReason,
@@ -72,10 +72,10 @@ public class TraderActionService {
     // ========== 留言 ==========
 
     /** 写留言：覆盖式，同时只有一条待读。rounds 钳在 1~24 */
-    public ActionResult saveNote(long userId, String note, Integer rounds) {
-        AiTrader t = traderService.mine(userId);
+    public ActionResult saveNote(long userId, long traderId, String note, Integer rounds) {
+        AiTrader t = traderService.owned(userId, traderId);
         if (t == null) {
-            return new ActionResult(false, messages.get("trader.notCreated"));
+            return new ActionResult(false, messages.get("trader.notFound"));
         }
         if (note == null || note.isBlank()) {
             return new ActionResult(false, messages.get("trader.note.empty"));
@@ -99,10 +99,10 @@ public class TraderActionService {
     }
 
     /** 撤回未读留言 */
-    public ActionResult clearNote(long userId) {
-        AiTrader t = traderService.mine(userId);
+    public ActionResult clearNote(long userId, long traderId) {
+        AiTrader t = traderService.owned(userId, traderId);
         if (t == null) {
-            return new ActionResult(false, messages.get("trader.notCreated"));
+            return new ActionResult(false, messages.get("trader.notFound"));
         }
         if (t.getOwnerNote() == null) {
             return new ActionResult(true, messages.get("trader.note.none"));
@@ -124,10 +124,10 @@ public class TraderActionService {
      * 暂停状态不放行——手动唤醒要是能绕过暂停，"暂停"就成了摆设；连败自动暂停的
      * trader 更不该被一句话叫起来接着亏。
      */
-    public ActionResult wake(long userId) {
-        AiTrader t = traderService.mine(userId);
+    public ActionResult wake(long userId, long traderId) {
+        AiTrader t = traderService.owned(userId, traderId);
         if (t == null) {
-            return new ActionResult(false, messages.get("trader.notCreated"));
+            return new ActionResult(false, messages.get("trader.notFound"));
         }
         String blocked = wakeBlockedReason(t, RequestLang.current());
         if (blocked != null) {
@@ -175,10 +175,10 @@ public class TraderActionService {
      * 同步跑满就一秒不剩给回答。但"有没有新素材"留在同步侧当场答：
      * 那是用户唯一关心的"会不会白花钱"，推给时间线等于让他等几分钟再去扑空。
      */
-    public ActionResult review(long userId) {
-        AiTrader t = traderService.mine(userId);
+    public ActionResult review(long userId, long traderId) {
+        AiTrader t = traderService.owned(userId, traderId);
         if (t == null) {
-            return new ActionResult(false, messages.get("trader.notCreated"));
+            return new ActionResult(false, messages.get("trader.notFound"));
         }
         String blocked = reviewBlockedReason(t);
         if (blocked != null) {
@@ -200,7 +200,7 @@ public class TraderActionService {
             } catch (Exception e) {
                 // review() 自己兜住模型调用的失败并留 ERROR 行；这里兜的是它之前那几步库查询，
                 // 异步之后没人接得住，不打日志就彻底无声
-                log.warn("[TraderAction] 点播复盘异常逃逸 userId={} msg={}", userId, e.getMessage());
+                log.warn("[TraderAction] 点播复盘异常逃逸 traderId={} msg={}", t.getId(), e.getMessage());
             } finally {
                 scheduler.release(t.getId());
             }
@@ -223,19 +223,18 @@ public class TraderActionService {
 
     // ========== 面板状态 ==========
 
-    /** 三张卡的状态一次取齐 */
-    public ActionPanel panel(long userId) {
-        AiTrader t = traderService.mine(userId);
+    /** 三张卡的状态一次取齐；trader 不归这个人（或不存在）给 null */
+    public ActionPanel panel(long userId, long traderId) {
+        AiTrader t = traderService.owned(userId, traderId);
         if (t == null) {
-            return new ActionPanel(false, null, null, null, null, null, null, Map.of(), null, null,
-                    false, null, null, 0, MAX_NOTE_ROUNDS, MAX_NOTE_CHARS);
+            return null;
         }
         WakeState wake = wakeState(t, RequestLang.current());
         // 时刻取 created_at
         AiTraderDecision lastReview = latestDecision(t, List.of(AiTraderDecision.KIND_REVIEW));
         String reviewBlocked = reviewBlockedReason(t);
         return new ActionPanel(
-                true, t.getName(), t.getStatus(), t.getPausedReason(),
+                t.getName(), t.getStatus(), t.getPausedReason(),
                 wake.lastWakeAt(), wake.nextWakeAt(), wake.blockedReason(), todayWakes(t),
                 lastReview == null ? null : epochMs(lastReview.getCreatedAt()),
                 lastReview == null ? null : lastReview.getStatus(),

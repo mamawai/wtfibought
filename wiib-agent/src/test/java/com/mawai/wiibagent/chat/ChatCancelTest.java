@@ -16,6 +16,7 @@ import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
+import com.mawai.wiibagent.chat.tools.SessionTraderLocator;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -75,7 +76,7 @@ class ChatCancelTest {
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
                 mock(CrossAssetToolkit.class), mock(FundFlowToolkit.class),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
-                mock(WorkbenchRunRegistry.class), childRuns, registry,
+                mock(SessionTraderLocator.class), mock(WorkbenchRunRegistry.class), childRuns, registry,
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, LIMIT, "X")
                 .leavesFor(eps, AgentLang.ZH);
     }

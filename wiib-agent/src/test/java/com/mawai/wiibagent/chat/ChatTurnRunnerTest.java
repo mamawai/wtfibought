@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
@@ -66,6 +67,8 @@ class ChatTurnRunnerTest {
     private final ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
     private final NewsToolkit newsToolkit = ChatTestEndpoints.newsToolkit();
     private final TraderChatService traderChatService = mock(TraderChatService.class);
+    /** userId=1 名下唯一的 trader */
+    private final AiTrader mine = new AiTrader();
 
     /** 主 agent 每次收到的 Prompt：上下文到底喂进去了什么，只有它说得清 */
     private final List<Prompt> mainPrompts = new CopyOnWriteArrayList<>();
@@ -125,7 +128,7 @@ class ChatTurnRunnerTest {
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
                 mock(CrossAssetToolkit.class), mock(FundFlowToolkit.class),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
-                mock(WorkbenchRunRegistry.class), childRuns,
+                ChatTestEndpoints.oneTrader(1L, mine, traderChatService), mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 LIMIT, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
@@ -189,17 +192,17 @@ class ChatTurnRunnerTest {
 
     /**
      * 这条同时钉住两件容易各自坏掉的事：生产叶子的主 agent 上真挂着 {@link com.mawai.wiibagent.chat.tools.TraderQueryToolkit}、
-     * 以及 <b>userId 是建叶子时烤死的</b>——工具签名里没有用户参数，模型没有任何办法去读别人的 trader。
+     * 以及 <b>userId 是建叶子时烤死的</b>——工具签名里没有用户参数，查的只能是 userId=1 名下的 trader。
      */
     @Test
     void 主agent直接调trader只读工具且只读自己那份() {
         String overview = "{\"hasTrader\":true,\"status\":\"RUNNING\"}";
-        when(traderChatService.overview(1L, AgentLang.ZH)).thenReturn(overview);
+        when(traderChatService.overview(mine, AgentLang.ZH)).thenReturn(overview);
         mainCallsThenAnswers("trader_overview", "{}", "你的 trader 正在运行");
 
         turn("我的 trader 怎么样");
 
-        verify(traderChatService).overview(1L, AgentLang.ZH);
+        verify(traderChatService).overview(mine, AgentLang.ZH);
         // 工具回执进了主 agent 的上下文，第二次调用才写得出答案
         assertThat(toolResponses()).containsExactly(overview);
         assertThat(answer.toString()).isEqualTo("你的 trader 正在运行");
@@ -208,7 +211,7 @@ class ChatTurnRunnerTest {
     /** 前端的过程条目靠它：模型每批 tool_call 连名带参推出去，主 agent 自己的不带 runId */
     @Test
     void 主agent每批工具调用连名带参推给前端() {
-        when(traderChatService.decisions(1L, 3, "TRADE", AgentLang.ZH)).thenReturn("[]");
+        when(traderChatService.decisions(mine, 3, "TRADE", AgentLang.ZH)).thenReturn("[]");
         mainCallsThenAnswers("trader_decisions", "{\"limit\":3,\"kind\":\"TRADE\"}", "最近三笔都是顺势单");
 
         turn("它最近做了什么");

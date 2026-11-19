@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.controller;
 
 import com.mawai.wiibcommon.annotation.CurrentUserId;
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -11,6 +12,7 @@ import com.mawai.wiibagent.chat.ChatTurnRewinder;
 import com.mawai.wiibagent.chat.ChatTurnStreamer;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
@@ -22,6 +24,7 @@ import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
+import com.mawai.wiibagent.trader.TraderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
@@ -49,7 +52,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 研判工作台对话入口：SSE 流式暴露主 agent 的作答过程。
  * 事件协议：session(会话号) / token(答案流) / progress(长工具阶段进度) / search(服务端搜索过程)
  * / tool_calls(模型这一批要调的工具，带 runId 的是某个子运行里的) / child_start·child_progress·child_done(后台子运行) / hitl_request(贵操作确认卡)
- * / form_request(模型请求弹一张表单卡，执行权归用户点击) / behavior_report / done(带 pending：子运行报告到了还没答，前端空闲时经 /wake 发起唤醒轮) / error。
+ * / form_request(模型请求弹一张表单卡，执行权归用户点击) / trader_pick(查询定不到 trader，弹卡等用户选，回执走 /pick-trader)
+ * / behavior_report / done(带 pending：子运行报告到了还没答，前端空闲时经 /wake 发起唤醒轮) / error。
  * 续聊上下文按 sessionId 存在自建的 {@link ChatContextStore} 表里，带同一 sessionId 再发即续聊；
  * 断连不中止本轮：{@link ChatTurnStreamer} 跑完照样落历史，前端靠 status 接口+历史回放补答案。
  */
@@ -63,6 +67,10 @@ public class ChatWorkbenchController {
     private final ChatAgentFactory chatAgentFactory;
     private final LlmEndpointService endpointService;
     private final ApprovalRegistry approvalRegistry;
+    /** 选 trader 的卡：回执在这里收，删会话时清它记的当前 trader */
+    private final TraderPickRegistry traderPicks;
+    /** 回执里的 trader 要归这个用户 */
+    private final TraderService traderService;
     private final ChatHistoryService chatHistoryService;
     private final ChatContextStore contextStore;
     private final ChatTurnStreamer turnStreamer;
@@ -126,6 +134,14 @@ public class ChatWorkbenchController {
         private boolean approved;
         /** 从 hitl_request 事件原样回传，唯一标识"点的是哪张卡" */
         private String requestId;
+    }
+
+    @Data
+    public static class PickTraderRequest {
+        private String sessionId;
+        /** 从 trader_pick 事件原样回传 */
+        private String requestId;
+        private long traderId;
     }
 
     @Data
@@ -359,12 +375,13 @@ public class ChatWorkbenchController {
         return Result.ok(new DeleteAllResult(deleted, skipped));
     }
 
-    /** 展示记录与续聊上下文是两套存储，删会话得都清；在跑的子运行停掉，挂着的确认卡/授权一并清 */
+    /** 展示记录与续聊上下文是两套存储，删会话得都清；在跑的子运行停掉，挂着的确认卡/授权、记着的当前 trader 一并清 */
     private void purgeSession(String sessionId) {
         childRuns.purge(sessionId);
         chatHistoryService.deleteSession(sessionId);
         contextStore.purge(sessionId);
         approvalRegistry.purgeSession(sessionId);
+        traderPicks.purgeSession(sessionId);
     }
 
     /** HITL 确认回执：approve 后前端自动补发"请继续执行深度研判"，agent 重调工具时闸门放行。 */
@@ -382,5 +399,22 @@ public class ChatWorkbenchController {
                 ? approvalRegistry.approve(sessionId, request.getRequestId())
                 : approvalRegistry.reject(sessionId, request.getRequestId());
         return ok ? Result.ok(null) : Result.fail(messages.get("agent.chat.approvalExpired"));
+    }
+
+    /** 选 trader 的卡上点了一个：在等的查询工具拿到它接着跑，并记成本会话的当前 trader */
+    @PostMapping("/pick-trader")
+    @Operation(summary = "选择卡回执：这一轮要查的 trader")
+    public Result<Void> pickTrader(@CurrentUserId long userId, @RequestBody PickTraderRequest request) {
+        String sessionId = request.getSessionId();
+        if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
+            return Result.fail(messages.get("agent.chat.sessionNotFound"));
+        }
+        AiTrader trader = traderService.owned(userId, request.getTraderId());
+        if (trader == null) {
+            return Result.fail(messages.get("trader.notFound"));
+        }
+        // requestId 对不上，或卡已经超时、点了停止
+        return traderPicks.complete(sessionId, request.getRequestId(), trader)
+                ? Result.ok(null) : Result.fail(messages.get("agent.chat.pickExpired"));
     }
 }

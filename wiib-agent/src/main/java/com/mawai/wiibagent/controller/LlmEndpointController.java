@@ -82,7 +82,7 @@ public class LlmEndpointController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "删除端点（引用它的用途回落默认；删默认则最早一条顶上）")
+    @Operation(summary = "删除端点（引用它的用途和选了它的 trader 回落默认；删默认则最早一条顶上）")
     public Result<Void> delete(@CurrentUserId long userId, @PathVariable long id) {
         String err = service.delete(userId, id);
         return err == null ? Result.ok(null) : Result.fail(err);

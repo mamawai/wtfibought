@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowUp, Check, ChevronLeft, Copy, RotateCcw, Square } from 'lucide-react';
-import { llmEndpointApi, promptGenApi, userApi } from '../api';
+import { llmEndpointApi, promptGenApi, traderApi, userApi } from '../api';
 import { LlmEndpointSelect } from '../components/LlmEndpointSelect';
 import type { PopChunk } from '../components/Markdown';
 import { StreamText } from '../components/StreamText';
@@ -15,7 +15,7 @@ import type { RailStep } from '../components/workbench/chatView';
 import { popText, useStreamReveal } from '../hooks/useStreamReveal';
 import { cn } from '../lib/utils';
 import { SUPPORTED_LANGS, type Lang } from '../i18n';
-import type { LlmEndpointView, PromptGenEvent, PromptGenItem, PromptGenQuestion, PromptGenView } from '../types';
+import type { LlmEndpointView, PromptGenEvent, PromptGenItem, PromptGenQuestion, PromptGenView, TraderOwnerView } from '../types';
 import './PromptGen.css';
 
 /** 指令正文上限，与后端 TraderService.MAX_CUSTOM_PROMPT 同数 */
@@ -80,10 +80,18 @@ function settleCalls(live: LiveEntry[]): LiveEntry[] {
  * 提示词生成（样式见 PromptGen.css）：agent 先看 trader 数据，再一题一题问，信息够了写一版；用户提修改它接着问，直到它认为写完了。
  * 后端在 agent（/api/ai/prompt-gen），每轮走 SSE，轮结束重新拉一次 session；最近 3 版可以回到当时接着聊。
  * 左栏是对话（过程轨、题卡、输入框），右栏是正文；窄屏两栏切着看。
+ * <p>
+ * 为哪个 trader 写看地址里的 ?trader（我的 Trader 页带过来，新建页不带）：只在开新对话时用。
+ * 现有对话是为别的 trader 写的照常接着聊，页头说明是为谁写的，点「重新开始」才按地址里这个开。
  */
 export function PromptGen() {
   const { t } = useTranslation(['promptGen', 'ai']);
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
+  /** 地址里带来的 trader id；不带、乱填都是 null */
+  const wanted = Number(searchParams.get('trader')) || null;
+  /** 名下的 trader，用来认出地址里那个叫什么；null=还在取 */
+  const [mine, setMine] = useState<TraderOwnerView[] | null>(null);
 
   const [endpoints, setEndpoints] = useState<LlmEndpointView[]>([]);
   const [endpointId, setEndpointId] = useState<number | null>(null);
@@ -127,6 +135,10 @@ export function PromptGen() {
 
   const busy = stage !== null || background;
   const active = !!view?.active && !restarting;
+  /** 地址里那个 trader，在名下才算；开新对话就为它写 */
+  const target = mine?.find(x => x.pub.id === wanted) ?? null;
+  // 现有对话不是为地址里那个写的：照常显示，页头说一声点「重新开始」会换
+  const switching = active && mine != null && (target?.pub.id ?? null) !== view?.traderId;
 
   const apply = useCallback((v: PromptGenView) => {
     setView(v);
@@ -139,6 +151,7 @@ export function PromptGen() {
   }), [apply]);
 
   useEffect(() => { llmEndpointApi.list().then(setEndpoints).catch(() => setEndpoints([])); }, []);
+  useEffect(() => { traderApi.mine().then(setMine).catch(() => setMine([])); }, []);
   useEffect(() => () => abortRef.current?.abort(), []);
   // 有对话就接着上次的；没有的话指令语言默认跟 agent 语言
   useEffect(() => {
@@ -286,8 +299,11 @@ export function PromptGen() {
     if (id == null) return;
     setRestarting(false);
     setTab('chat');
-    setView(v => v && { ...v, active: true, items: [], question: null, currentNo: null, done: false });
-    void run((on, signal) => promptGenApi.start({ endpointId: id, outputLang }, on, signal), null);
+    setView(v => v && {
+      ...v, active: true, traderId: target?.pub.id ?? null, traderName: target?.pub.name ?? null,
+      items: [], question: null, currentNo: null, done: false,
+    });
+    void run((on, signal) => promptGenApi.start({ endpointId: id, traderId: wanted, outputLang }, on, signal), null);
   };
 
   const reply = (body: { text?: string; skip?: boolean }, said: string, restore?: () => void) =>
@@ -341,6 +357,8 @@ export function PromptGen() {
   const stageKey = background ? 'background'
     : stage ?? (!active ? 'idle' : view?.done ? 'done' : question ? 'asking' : 'yourTurn');
   const endpoint = endpoints.find(e => e.id === view?.endpointId);
+  // 返回：有对话回它为之写的那个，还没开对话回地址里那个
+  const backId = view?.active ? view.traderId : target?.pub.id ?? null;
   // 看的不是当前对话停着的那版：可以回到那版接着聊
   const canContinue = !!view?.active && !!shown && shown.no !== view.currentNo && !busy && draft == null;
 
@@ -475,9 +493,18 @@ export function PromptGen() {
       <div className="p-pg">
         <div className="phd">
           <div>
-            <Link className="back" to="/my-trader"><ChevronLeft className="ic" />{t('back')}</Link>
+            <Link className="back" to={backId != null ? `/my-trader/${backId}` : '/my-trader'}>
+              <ChevronLeft className="ic" />{t('back')}
+            </Link>
             <h1>{t('title')}</h1>
             <p>{t('desc')}</p>
+            {/* 为谁写：有对话说这段对话的，还没开说开始后的 */}
+            {active ? (
+              <p>{view?.traderName ? t('forTrader', { name: view.traderName }) : t('forNoTrader')}</p>
+            ) : mine && (
+              <p>{target ? t('willFor', { name: target.pub.name }) : t('willForNone')}</p>
+            )}
+            {switching && <p>{target ? t('switchTo', { name: target.pub.name }) : t('switchToNone')}</p>}
             {active && endpoint && <p>{endpoint.name} · {t(`lang.${view?.outputLang ?? outputLang}`)}</p>}
           </div>
           <span className={cn('stg', busy && 'on', stageKey === 'done' && 'ok')}><i /><span>{t(`stage.${stageKey}`)}</span></span>

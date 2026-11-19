@@ -9,6 +9,7 @@ import { groupBlocks, HUB_NAME } from './chatView';
 import { ChatComposer } from './ChatComposer';
 import { SessionHistory } from './SessionHistory';
 import { TraderFormCard } from './TraderFormCards';
+import { TraderPickCard } from './TraderPick';
 import { BehaviorReportCard } from './BehaviorReportCard';
 import type { ChatIntent, WorkbenchSessionSummary } from '../../types';
 
@@ -374,6 +375,11 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
                       onSettle={r => chatStore.settleForm(item.id, r)}
                       onCancel={() => chatStore.closeForm(item.id)}
                     />
+                  );
+                case 'pick':
+                  return (
+                    <TraderPickCard key={item.requestId} item={item}
+                                    onPick={id => chatStore.pickTrader(item.requestId, id)} />
                   );
                 case 'behavior':
                   return <BehaviorReportCard key={index} report={item.report} />;

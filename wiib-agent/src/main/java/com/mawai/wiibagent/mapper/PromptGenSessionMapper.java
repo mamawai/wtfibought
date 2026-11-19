@@ -12,10 +12,11 @@ public interface PromptGenSessionMapper extends BaseMapper<PromptGenSession> {
 
     /** 开新对话：整行覆盖 */
     @Insert("""
-            INSERT INTO prompt_gen_session (user_id, endpoint_id, output_lang, state, updated_at)
-            VALUES (#{userId}, #{endpointId}, #{outputLang}, #{state}, now())
+            INSERT INTO prompt_gen_session (user_id, endpoint_id, trader_id, output_lang, state, updated_at)
+            VALUES (#{userId}, #{endpointId}, #{traderId}, #{outputLang}, #{state}, now())
             ON CONFLICT (user_id) DO UPDATE SET
                 endpoint_id = EXCLUDED.endpoint_id,
+                trader_id   = EXCLUDED.trader_id,
                 output_lang = EXCLUDED.output_lang,
                 state       = EXCLUDED.state,
                 updated_at  = now()
@@ -26,7 +27,7 @@ public interface PromptGenSessionMapper extends BaseMapper<PromptGenSession> {
     @Update("UPDATE prompt_gen_session SET state = #{state}, updated_at = now() WHERE user_id = #{userId}")
     int updateState(@Param("userId") long userId, @Param("state") byte[] state);
 
-    /** 回退：对话历史和正文语言换成那一版当时的，端点不动 */
+    /** 回退：对话历史和正文语言换成那一版当时的，端点和 trader 不动 */
     @Update("""
             UPDATE prompt_gen_session SET state = #{state}, output_lang = #{outputLang}, updated_at = now()
             WHERE user_id = #{userId}

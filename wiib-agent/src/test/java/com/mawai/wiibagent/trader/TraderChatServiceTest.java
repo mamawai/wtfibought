@@ -3,6 +3,7 @@ package com.mawai.wiibagent.trader;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
@@ -27,7 +28,7 @@ import static org.mockito.Mockito.when;
 /**
  * 对话轨读 trader 的唯一入口：只查询、不动手。
  * <p>
- * 这里钉的核心是<b>归属</b>：工具签名里没有用户参数，谁的 trader 全靠这一层按 userId 取。
+ * 查询拿的是已经定位好的 trader，定位规则（谁的、哪一个）归 {@code SessionTraderLocatorTest}；
  * 动作（留言/唤醒/点播复盘）的准入与语义归 {@link TraderActionServiceTest}。
  */
 class TraderChatServiceTest {
@@ -73,32 +74,64 @@ class TraderChatServiceTest {
         return MAPPER.readTree(json);
     }
 
-    /**
-     * 每个查询都只按"当前是谁"取 trader。工具签名里没有用户参数，这一层再按 userId 取一次，
-     * 越权就无从谈起——而这条测试正是那句话的凭证。
-     */
+    /** 五个查询都带上 trader 名字：模型清楚看的是哪一个，下次能直接点名 */
     @ParameterizedTest
     @ValueSource(strings = {"overview", "positions", "decisions", "plans", "trades"})
-    void 查询只认自己的trader(String which) {
-        // 各查询依赖的列表 mock 默认就返回空集合，这里只关心"取的是谁的 trader"
-        when(traderService.mine(ME)).thenReturn(running());
-        when(traderService.mine(OTHERS)).thenReturn(null);
+    void 五个查询都带trader名字(String which) {
+        // 各查询依赖的列表 mock 默认就返回空集合
         when(traderService.latestEquity(any())).thenReturn(new BigDecimal("10500"));
         when(actionService.wakeState(any(), any())).thenReturn(wake(null, null, null));
 
-        assertThat(parse(call(which, ME)).path("hasTrader").asBoolean(false)).isTrue();
-        // 别人的 userId 拿不到任何东西，而不是拿到我的
-        assertThat(parse(call(which, OTHERS)).path("hasTrader").asBoolean(false)).isFalse();
+        JsonNode out = parse(switch (which) {
+            case "overview" -> service.overview(running(), AgentLang.ZH);
+            case "positions" -> service.positions(running(), AgentLang.ZH);
+            case "decisions" -> service.decisions(running(), null, null, AgentLang.ZH);
+            case "trades" -> service.trades(running(), null, AgentLang.ZH);
+            default -> service.plans(running(), AgentLang.ZH);
+        });
+
+        assertThat(out.path("hasTrader").asBoolean(false)).isTrue();
+        assertThat(out.path("trader").asString(null)).isEqualTo("测试员");
     }
 
-    private String call(String which, long userId) {
-        return switch (which) {
-            case "overview" -> service.overview(userId, AgentLang.ZH);
-            case "positions" -> service.positions(userId, AgentLang.ZH);
-            case "decisions" -> service.decisions(userId, null, null, AgentLang.ZH);
-            case "trades" -> service.trades(userId, null, AgentLang.ZH);
-            default -> service.plans(userId, AgentLang.ZH);
-        };
+    /** trader_list：名下每个一行（名字、状态、本局收益率、心跳、币种、模型）；名下没有就回"还没有" */
+    @Test
+    void trader_list列出名下全部() {
+        AiTrader beta = running();
+        beta.setId(8L);
+        beta.setName("Beta");
+        beta.setStatus(AiTrader.STATUS_PAUSED);
+        when(traderService.listMine(ME)).thenReturn(List.of(running(), beta));
+        when(traderService.listMine(OTHERS)).thenReturn(List.of());
+        when(traderService.latestEquity(any())).thenReturn(new BigDecimal("10500"));
+        UserLlmEndpoint endpoint = new UserLlmEndpoint();
+        endpoint.setModel("gpt-5");
+        when(modelFactory.endpointFor(any())).thenReturn(endpoint);
+
+        JsonNode rows = parse(service.list(ME, AgentLang.ZH)).get("traders");
+
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).path("name").asString(null)).isEqualTo("测试员");
+        assertThat(rows.get(0).path("pnlPct").decimalValue()).isEqualByComparingTo("5.00");
+        assertThat(rows.get(0).path("intervalCode").asString(null)).isEqualTo("1h");
+        assertThat(rows.get(0).path("symbols").asString(null)).isEqualTo("BTCUSDT");
+        assertThat(rows.get(0).path("model").asString(null)).isEqualTo("gpt-5");
+        assertThat(rows.get(1).path("status").asString(null)).isEqualTo(AiTrader.STATUS_PAUSED);
+        assertThat(parse(service.list(OTHERS, AgentLang.ZH)).path("hasTrader").asBoolean(true)).isFalse();
+    }
+
+    /** 点名点不中的回执：对话里把名下名单一并给回去；指令生成器里说清只能查哪一个 */
+    @Test
+    void 点名不中的回执带名字() {
+        AiTrader beta = running();
+        beta.setName("Beta");
+
+        JsonNode out = parse(service.unknownName("Gamma", List.of(running(), beta), AgentLang.ZH));
+        JsonNode only = parse(service.onlyThis(running(), AgentLang.ZH));
+
+        assertThat(out.path("error").asString(null)).contains("Gamma");
+        assertThat(out.get("traders")).extracting(JsonNode::asString).containsExactly("测试员", "Beta");
+        assertThat(only.path("error").asString(null)).contains("测试员");
     }
 
     /** overview 带唤醒三项，按工具语言取拦因；暂停的 trader 不给下次例行时刻（例行唤醒不会发生） */
@@ -106,10 +139,9 @@ class TraderChatServiceTest {
     void overview带上次下次唤醒与拦因_暂停不给下次时刻() {
         AiTrader paused = running();
         paused.setStatus(AiTrader.STATUS_PAUSED);
-        when(traderService.mine(ME)).thenReturn(paused);
         when(actionService.wakeState(paused, AgentLang.EN)).thenReturn(wake(1_000L, 2_000L, "paused"));
 
-        JsonNode out = parse(service.overview(ME, AgentLang.EN));
+        JsonNode out = parse(service.overview(paused, AgentLang.EN));
 
         assertThat(out.path("lastWakeAt").isString()).isTrue();
         assertThat(out.has("nextWakeAt")).isFalse();   // MAPPER 不序列化 null 字段
@@ -119,11 +151,9 @@ class TraderChatServiceTest {
     /** kind 过滤落到查询层，大小写不敏感；空=全部；不认识的值回说明而不是空名单 */
     @Test
     void decisions按kind过滤() {
-        when(traderService.mine(ME)).thenReturn(running());
-
-        service.decisions(ME, 3, "review", AgentLang.ZH);
-        service.decisions(ME, null, null, AgentLang.ZH);
-        JsonNode unknown = parse(service.decisions(ME, null, "RETRO", AgentLang.ZH));
+        service.decisions(running(), 3, "review", AgentLang.ZH);
+        service.decisions(running(), null, null, AgentLang.ZH);
+        JsonNode unknown = parse(service.decisions(running(), null, "RETRO", AgentLang.ZH));
 
         verify(traderService).decisions(7L, 3, null, null, null, null, "REVIEW");
         verify(traderService).decisions(7L, TraderChatService.DEFAULT_DECISIONS, null, null, null, null, null);
@@ -134,7 +164,6 @@ class TraderChatServiceTest {
     /** trades：stale 那笔不进教材；count/wins/totalClosedPnl 只算返回的几笔；主动平仓带它写的理由 */
     @Test
     void trades滤stale并汇总返回的几笔() {
-        when(traderService.mine(ME)).thenReturn(running());
         AiTraderPlan ignored = new AiTraderPlan();
         ignored.setStale(true);
         AiTraderPlan kept = new AiTraderPlan();
@@ -147,7 +176,7 @@ class TraderChatServiceTest {
                 trade(2L, "12.5", kept, close),
                 trade(3L, "-4", null, null)));
 
-        JsonNode out = parse(service.trades(ME, null, AgentLang.ZH));
+        JsonNode out = parse(service.trades(running(), null, AgentLang.ZH));
 
         assertThat(out.path("count").asInt()).isEqualTo(2);
         assertThat(out.path("wins").asInt()).isEqualTo(1);
@@ -182,7 +211,6 @@ class TraderChatServiceTest {
     /** decisions：新格式剔 stale 分段、错误格式落在 stale 生命期内整行剔——与复盘时间线同一套识别逻辑 */
     @Test
     void decisions剔stale分段与错误格式整轮() {
-        when(traderService.mine(ME)).thenReturn(running());
         AiTraderPlan stale = new AiTraderPlan();
         stale.setSymbol("BTCUSDT");
         stale.setSide("LONG");
@@ -203,7 +231,7 @@ class TraderChatServiceTest {
         when(traderService.decisions(eq(7L), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(List.of(segmented, unsegmentedClose));
 
-        JsonNode out = parse(service.decisions(ME, null, null, AgentLang.ZH)).get("decisions");
+        JsonNode out = parse(service.decisions(running(), null, null, AgentLang.ZH)).get("decisions");
 
         assertThat(out).hasSize(1);
         String reasoning = out.get(0).path("reasoning").asString(null);
@@ -214,7 +242,6 @@ class TraderChatServiceTest {
     /** 没做成的交易动作，工具名后面带状态：不带的话被拒的、没执行的看起来和做成的一样 */
     @Test
     void 没做成的动作工具名带状态() {
-        when(traderService.mine(ME)).thenReturn(running());
         when(planStore.listAll(7L, 1)).thenReturn(List.of());
         AiTraderDecision d = decision(2000L, "[本轮结论]\n动作：HOLD",
                 "[{\"tool\":\"klines\"},"
@@ -223,7 +250,7 @@ class TraderChatServiceTest {
                         + "{\"tool\":\"set_stop_loss\",\"args\":{\"positionId\":1},\"status\":\"not_attempted\"}]");
         when(traderService.decisions(eq(7L), anyInt(), any(), any(), any(), any(), any())).thenReturn(List.of(d));
 
-        JsonNode out = parse(service.decisions(ME, null, null, AgentLang.ZH)).get("decisions");
+        JsonNode out = parse(service.decisions(running(), null, null, AgentLang.ZH)).get("decisions");
 
         assertThat(out.get(0).get("tools")).extracting(JsonNode::asString).containsExactly(
                 "klines", "close_position", "open_position(rejected)", "set_stop_loss(not_attempted)");
@@ -254,7 +281,6 @@ class TraderChatServiceTest {
     /** plans：recentClosedPlans 滤 stale，宁缺不顶替 */
     @Test
     void plans滤掉stale的最近归档计划() {
-        when(traderService.mine(ME)).thenReturn(running());
         AiTraderPlan ignored = new AiTraderPlan();
         ignored.setSymbol("BTCUSDT");
         ignored.setSide("LONG");
@@ -268,7 +294,7 @@ class TraderChatServiceTest {
         kept.setOpenedWakeTime(2000L);
         when(planStore.recentClosed(7L, 1, 5)).thenReturn(List.of(ignored, kept));
 
-        JsonNode closed = parse(service.plans(ME, AgentLang.ZH)).get("recentClosedPlans");
+        JsonNode closed = parse(service.plans(running(), AgentLang.ZH)).get("recentClosedPlans");
 
         assertThat(closed).hasSize(1);
         assertThat(closed.get(0).path("symbol").asString(null)).isEqualTo("ETHUSDT");

@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.promptgen;
 
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.PromptGenSession;
 import com.mawai.wiibcommon.entity.PromptGenVersion;
 import tools.jackson.databind.JsonNode;
@@ -9,10 +10,11 @@ import java.util.Set;
 
 /**
  * 页面上的生成器状态：对话部分全部从历史推出来。
+ * traderId / traderName = 这段对话为哪个 trader 写，没有 trader、或那个 trader 已经删了都是 null；
  * running = 有一轮还没跑完，这时对话停在用户这一句；failure = 上一轮失败的原因，没有是 null
  */
-public record PromptGenView(boolean active, Long endpointId, String outputLang, List<Item> items,
-                            Question question, Integer currentNo, boolean done, boolean running,
+public record PromptGenView(boolean active, Long endpointId, Long traderId, String traderName, String outputLang,
+                            List<Item> items, Question question, Integer currentNo, boolean done, boolean running,
                             String failure, List<Version> versions) {
 
     /**
@@ -45,11 +47,12 @@ public record PromptGenView(boolean active, Long endpointId, String outputLang, 
 
     /** 还没开过对话：只有版本 */
     static PromptGenView empty(boolean running, String failure, List<Version> versions) {
-        return new PromptGenView(false, null, null, List.of(), null, null, false, running, failure, versions);
+        return new PromptGenView(false, null, null, null, null, List.of(), null, null, false, running, failure, versions);
     }
 
-    static PromptGenView of(PromptGenSession session, List<PromptGenHistory.Step> steps, Set<String> required,
-                            boolean running, String failure, List<Version> versions) {
+    /** @param trader 这段对话为哪个 trader 写，可空 */
+    static PromptGenView of(PromptGenSession session, AiTrader trader, List<PromptGenHistory.Step> steps,
+                            Set<String> required, boolean running, String failure, List<Version> versions) {
         Set<String> unanswered = Set.copyOf(PromptGenHistory.missing(steps, required));
         List<Item> items = steps.stream().map(step -> switch (step) {
             case PromptGenHistory.AgentText t -> new Item("agent", t.text(), null, null, null, null);
@@ -60,7 +63,9 @@ public record PromptGenView(boolean active, Long endpointId, String outputLang, 
         }).toList();
         PromptGenHistory.Ask pending = PromptGenHistory.pending(steps);
         PromptGenHistory.Drafted last = PromptGenHistory.lastDraft(steps);
-        return new PromptGenView(true, session.getEndpointId(), session.getOutputLang(), items,
+        return new PromptGenView(true, session.getEndpointId(),
+                trader == null ? null : trader.getId(), trader == null ? null : trader.getName(),
+                session.getOutputLang(), items,
                 pending == null ? null : Question.of(pending, unanswered),
                 last == null ? null : last.no(), PromptGenHistory.done(steps), running, failure, versions);
     }

@@ -18,6 +18,8 @@ public class PromptGenSession {
     @TableId(type = IdType.INPUT)
     private Long userId;
     private Long endpointId;
+    /** 这段对话为哪个 trader 写；空=没有 trader，按平台默认规格 */
+    private Long traderId;
     /** 指令正文用哪门语言（zh/en）；对话本身跟 agent 语言 */
     private String outputLang;
     private byte[] state;

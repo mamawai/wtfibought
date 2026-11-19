@@ -11,7 +11,7 @@ chat:
 
   # ---- 主 agent：唯一的对话 agent，行情/新闻/trader/深研判/行为分析全是它手里的工具。{{newsRule}} 是新闻条款槽位 ----
   main: |-
-    你是加密货币研判工作台的分析师。行情、新闻、用户自己那个 AI 交易员的数据都由你用工具现查，
+    你是加密货币研判工作台的分析师。行情、新闻、用户自己的 AI 交易员的数据都由你用工具现查，
     再据此写出最终回答。不要提及工具名或内部流程。
     工具尽量用足：觉得某个工具可能对这个问题有帮助，就调一次看看，不要先假设它没有数据；
     本地工具都查过还缺的，再用联网搜索补（端点开了联网搜索时）。
@@ -36,6 +36,8 @@ chat:
        不要等待也不要重复调用，报告到了你会被再次唤醒补充回答）；
        "怎么看走势"这类普通提问不要调它、也不要主动推销，直接按工具数据作答
     6. 用户自己的 AI 交易员，查与动都归你：
+       · 用户名下可能有几个交易员（最多 3 个），各有名字。要比较它们、或要按名字指定某一个之前，先调 trader_list 看名单；
+         查询和动作工具都能带 trader（名字），只有用户在话里说了是哪一个才传，没说就不传
        · 查询类问题直接调只读工具，按问题挑、一次可以调几个：它现在怎么样/赚了亏了/学到了什么/
          下次什么时候醒 → trader_overview；持了什么仓 → trader_positions；那笔为什么这么做/最近做了什么/
          复盘说了什么 → trader_decisions（问复盘传 kind=REVIEW；reasoning 原文就是答案，摘原文说，不要另编理由）；
@@ -120,6 +122,10 @@ chat:
     tradeNote: closeManner 是了结方式：stopLoss=止损带走 takeProfit=到目标位 manual=它自己调工具平的 liquidated=强平 UNKNOWN=判不出；count/wins/totalClosedPnl 只统计本次返回的这几笔
     unknownKind: "kind 只能是 TRADE / ALERT / MANUAL / EVENT / WATCH / REVIEW，收到的是 {{kind}}；不传 kind 就是全部"
     noTrader: 这位用户还没有创建 AI Trader，可以去「我的 Trader」页创建一个
+    listNote: pnlPct 是本局收益率（%，相对本局初始资金）；intervalCode 是心跳周期，即多久醒一次
+    unknownName: "名下没有叫「{{name}}」的交易员（按名字找，不分大小写）；名下的交易员都在 traders 里"
+    notPicked: 用户没在选择卡上选交易员，这一轮已结束
+    onlyThis: "这里只能查交易员「{{name}}」"
 
   # ---- 上屏文案（落展示历史或经 SSE 推给用户）----
   cancelledNote: （已中断）

@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -7,6 +8,7 @@ import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
@@ -25,6 +27,7 @@ import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.WhaleToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
+import com.mawai.wiibagent.trader.TraderService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -73,6 +76,8 @@ class ChatWakeTest {
     private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
     private final ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
     private final TraderChatService traderChatService = mock(TraderChatService.class);
+    /** userId=1 名下唯一的 trader */
+    private final AiTrader mine = new AiTrader();
     private final List<Prompt> mainPrompts = new CopyOnWriteArrayList<>();
     private final StringBuilder answer = new StringBuilder();
 
@@ -94,6 +99,7 @@ class ChatWakeTest {
                 mock(EconCalendarToolkit.class), mock(WhaleToolkit.class), mock(DerivativesToolkit.class),
                 mock(CrossAssetToolkit.class), mock(FundFlowToolkit.class),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
+                ChatTestEndpoints.oneTrader(1L, mine, traderChatService),
                 mock(WorkbenchRunRegistry.class), childRuns, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 8, "X")
                 .leavesFor(ChatTestEndpoints.eps(1L, "gpt-5"), AgentLang.ZH);
@@ -126,7 +132,7 @@ class ChatWakeTest {
     @Test
     void 轮进行中到的报告排进下一次模型调用() {
         // 工具执行期间报告到了：第二次调模型前它已经在收件箱里
-        when(traderChatService.overview(1L, AgentLang.ZH)).thenAnswer(inv -> {
+        when(traderChatService.overview(mine, AgentLang.ZH)).thenAnswer(inv -> {
             spawnAndDeliver("调研结论");
             return "{\"hasTrader\":true}";
         });
@@ -217,6 +223,7 @@ class ChatWakeTest {
                 .thenReturn(new ChatAgentFactory.Leaves("x", model, null, null, AgentLang.ZH, 256_000));
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService, registry,
+                mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class), mock(WorkbenchRunRegistry.class),
                 childRuns, ChatTestEndpoints.prefs(), gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS,
                 ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());

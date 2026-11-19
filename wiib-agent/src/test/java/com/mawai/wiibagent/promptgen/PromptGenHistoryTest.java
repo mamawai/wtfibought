@@ -176,8 +176,8 @@ class PromptGenHistoryTest {
     }
 
     private static boolean pendingRequired(List<Message> history) {
-        return PromptGenView.of(new PromptGenSession(), PromptGenHistory.steps(history), REQUIRED, false, null, List.of())
-                .question().required();
+        return PromptGenView.of(new PromptGenSession(), null, PromptGenHistory.steps(history), REQUIRED, false, null,
+                List.of()).question().required();
     }
 
     /** 一道展示成功的方向题：调用 + 回执 */
