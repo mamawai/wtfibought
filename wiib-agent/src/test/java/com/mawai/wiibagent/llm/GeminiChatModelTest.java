@@ -197,6 +197,7 @@ class GeminiChatModelTest {
         assertThat(body().get("tools")).hasSize(2);
     }
 
+    /** 同角色合并；紧跟工具回执的用户消息另起一条，中间垫一句 model 的话 */
     @Test
     void 请求侧_同角色合并_合成id不回传_真实id回传() {
         chunks = PLAIN;
@@ -210,7 +211,8 @@ class GeminiChatModelTest {
                 synthetic, syntheticResult, new UserMessage("子运行报告"))));
 
         JsonNode contents = body().get("contents");
-        assertThat(contents).hasSize(3);
+        assertThat(contents).extracting(c -> c.path("role").asString(null))
+                .containsExactly("user", "model", "user", "model", "user");
         assertThat(contents.get(0).get("parts")).extracting(p -> p.path("text").asString(null))
                 .containsExactly("问题", "补充");
         JsonNode call = contents.get(1).get("parts").get(0).get("functionCall");
@@ -219,13 +221,14 @@ class GeminiChatModelTest {
         assertThat(call.get("args").path("symbol").asString(null)).isEqualTo("BTC");
         assertThat(call.has("id")).isFalse();
         JsonNode userParts = contents.get(2).get("parts");
-        assertThat(contents.get(2).path("role").asString(null)).isEqualTo("user");
+        assertThat(userParts).hasSize(1);
         JsonNode response = userParts.get(0).get("functionResponse");
         assertThat(response.path("name").asString(null)).isEqualTo("get_price");
         assertThat(response.has("id")).isFalse();
         // 回执本身是 JSON 对象就直接用
         assertThat(response.get("response").path("price").asInt(0)).isEqualTo(60000);
-        assertThat(userParts.get(1).path("text").asString(null)).isEqualTo("子运行报告");
+        assertThat(contents.get(3).get("parts").get(0).path("text").asString(null)).isEqualTo(GeminiChatModel.TURN_FILLER);
+        assertThat(contents.get(4).get("parts").get(0).path("text").asString(null)).isEqualTo("子运行报告");
 
         // 上游给了 id 的原样带回；文本回执包一层
         AssistantMessage real = AssistantMessage.builder().content("").toolCalls(List.of(
@@ -242,7 +245,7 @@ class GeminiChatModelTest {
     }
 
     /**
-     * 请求体整串钉死：温度/档位、系统指令拼接、同角色合并、合成 id 不回传真实 id 回传、回执是对象直接用否则包 output、
+     * 请求体整串钉死：温度/档位、系统指令拼接、同角色合并、紧跟回执的用户消息前垫一句、合成 id 不回传真实 id 回传、回执是对象直接用否则包 output、
      * 有原始 parts 的原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、
      * 搜索和函数工具同一请求开 includeServerSideToolInvocations、转义与 emoji
      */
@@ -280,7 +283,8 @@ class GeminiChatModelTest {
                 + "{\"functionCall\":{\"name\":\"get_price\",\"args\":{\"qty\":1.50}}},{\"functionCall\":{\"name\":\"get_price\","
                 + "\"args\":{},\"id\":\"call_0\"}}]},{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"get_price\","
                 + "\"response\":{\"price\":60000.10,\"ok\":true}}},{\"functionResponse\":{\"name\":\"get_price\",\"response\":{\"output\":\"{坏的json\"},"
-                + "\"id\":\"call_0\"}},{\"text\":\"再问\"}]},{\"role\":\"model\",\"parts\":[{\"text\":\"想一下\",\"thought\":true,\"thoughtSignature\":\"c2ln/+=\"},"
+                + "\"id\":\"call_0\"}}]},{\"role\":\"model\",\"parts\":[{\"text\":\"OK.\"}]},{\"role\":\"user\",\"parts\":[{\"text\":\"再问\"}]},"
+                + "{\"role\":\"model\",\"parts\":[{\"text\":\"想一下\",\"thought\":true,\"thoughtSignature\":\"c2ln/+=\"},"
                 + "{\"functionCall\":{\"id\":\"call_real\",\"name\":\"get_price\",\"args\":{\"qty\":0.010,\"n\":3}},\"thoughtSignature\":\"c2ln2\"}]},"
                 + "{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"get_price\",\"response\":{\"output\":\"ERROR: 超时\\t重试\"},"
                 + "\"id\":\"call_real\"}}]}],\"tools\":[{\"functionDeclarations\":[{\"name\":\"get_price\",\"description\":\"查价格 <b>&\\\"引号\\\"\","

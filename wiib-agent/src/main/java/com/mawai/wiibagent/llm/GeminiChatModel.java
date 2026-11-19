@@ -41,13 +41,16 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 签名可能挂在 functionCall 上，也可能挂在最终答案那段文本上。没有原始 parts 的按文本 + functionCall 拼。
  * functionCall 不带 id 时自己合成一个（{@link #SYNTHETIC_ID_PREFIX} + 本次订阅的随机段 + 序号 + 名字，跨轮不重），
  * 回传 functionResponse 认出合成 id 就不带 id，按名字配。
- * 同角色连续消息合成一条多 part 消息（多轮要求 user/model 交替）。
+ * 同角色连续消息合成一条多 part 消息（多轮要求 user/model 交替）；紧跟工具回执的用户消息除外：
+ * 不并进回执那条，另起一条，中间垫一句 {@link #TURN_FILLER}。
  */
 public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
 
     /** 消息 metadata 键：本轮 model 原始 parts 数组的 JSON 串 */
     public static final String PARTS_KEY = "wiib_gemini_parts";
     static final String SYNTHETIC_ID_PREFIX = "wiib_fc_";
+    /** 垫在工具回执和紧跟其后的用户消息之间的那句 model 发言 */
+    static final String TURN_FILLER = "OK.";
 
     private static final Duration LIST_TIMEOUT = Duration.ofSeconds(30);
 
@@ -119,7 +122,12 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
                     }
                     system.append(message.getText());
                 }
-                case USER -> append(contents, "user", List.of(textPart(message.getText())));
+                case USER -> {
+                    if (endsWithFunctionResponse(contents)) {
+                        append(contents, "model", List.of(textPart(TURN_FILLER)));
+                    }
+                    append(contents, "user", List.of(textPart(message.getText())));
+                }
                 case ASSISTANT -> append(contents, "model", assistantParts((AssistantMessage) message));
                 case TOOL -> {
                     List<ObjectNode> parts = new ArrayList<>();
@@ -183,6 +191,16 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
             return;
         }
         contents.add(MAPPER.createObjectNode().put("role", role).set("parts", MAPPER.createArrayNode().addAll(parts)));
+    }
+
+    /** 最后一条是带工具回执的 user 消息 */
+    private static boolean endsWithFunctionResponse(ArrayNode contents) {
+        if (contents.isEmpty()) {
+            return false;
+        }
+        JsonNode last = contents.get(contents.size() - 1);
+        return "user".equals(last.path("role").asString(null))
+                && last.get("parts").valueStream().anyMatch(part -> part.has("functionResponse"));
     }
 
     private static ObjectNode textPart(String text) {
