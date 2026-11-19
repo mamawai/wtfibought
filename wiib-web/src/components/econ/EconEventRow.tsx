@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Equal } from 'lucide-react';
 import type { EconCalendarEvent } from '../../api';
 import { currentLang } from '../../i18n';
+import { CountryFlag } from '../CountryFlag';
 import { findEntry, type EconEntry } from '../../lib/econCatalog';
 import { expectation } from '../../lib/econValue';
 import { cn, fmtDateTime } from '../../lib/utils';
@@ -16,9 +17,9 @@ const EXP_TAG = {
 } as const;
 
 /**
- * 财经日历一行：时间 · 国家货币 · 指标名 · 实际/预测/前值 + 预期标签，点开看解读。首页日历块和日历页共用。
+ * 财经日历一行：时间 · 国旗 · 指标名 · 实际/预测/前值 + 预期标签，点开看解读。首页日历块和日历页共用。
  * 指标名：中文界面用核对清单里的中文名，英文界面照原标题；清单里查不到的打三角警告。
- * 美国事件的国家代码加深；下一条要公布的美国事件名字前闪一颗橙点。
+ * 下一条要公布的美国事件名字前闪一颗橙点。
  */
 export function EconEventRow({ event: r, bold, next, showDate = true, children }: {
   event: EconCalendarEvent;
@@ -40,12 +41,12 @@ export function EconEventRow({ event: r, bold, next, showDate = true, children }
   const vals = ([['actual', r.actual], ['forecast', r.forecast], ['previous', r.previous]] as const).filter(([, v]) => v);
 
   return (
-    <div className={cn('ev', r.country === 'US' && 'us', bold && 'first', !showDate && 'nodate')}>
+    <div className={cn('ev', bold && 'first', !showDate && 'nodate')}>
       <button type="button" aria-expanded={open} onClick={() => setOpen(v => !v)}>
         <time>{showDate && <><span>{date}</span>{' '}</>}<span>{time}</span></time>
         <span className="nm">
           {next && <i className="next" title={t('nextUs')} />}
-          <span className="cc">{r.country} / {r.currency}</span>
+          <CountryFlag code={r.country} title={`${r.country} / ${r.currency}`} className="self-center" />
           <span className="tt">{name}</span>
           {!entry && <span className="wn inline-flex self-center" title={t('unknownTip')}><AlertTriangle className="ic" /></span>}
           <ChevronRight className="ic chv" />

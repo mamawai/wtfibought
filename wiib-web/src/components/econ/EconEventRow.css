@@ -5,9 +5,6 @@
   .ev > button:active{opacity:.6;transition-duration:0s}
   .ev time{font-size:13px;color:var(--color-muted-foreground);white-space:nowrap}
   .ev .nm{display:flex;align-items:baseline;gap:8px;min-width:0}
-  .ev .cc{flex:none;font-size:12px;font-weight:500;color:var(--color-muted-foreground)}
-  /* 美国的事件：国家代码加深 */
-  .ev.us .cc{color:var(--color-foreground);font-weight:600}
   .ev .tt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* 最近要撞上的那一条 */
   .ev.first .tt{font-weight:500}

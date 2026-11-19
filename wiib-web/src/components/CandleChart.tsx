@@ -988,7 +988,7 @@ export function CandleChart({
       tip.innerHTML = events.map(e => {
         const nums = values(e);
         return '<div style="padding:6px 0;border-bottom:1px solid var(--color-border)">'
-          + `<div class="mute" style="font-weight:500;margin-bottom:2px">${fmtClock(e.eventTime)} · ${flagHtml(e.country)} ${escapeHtml(e.country)} / ${escapeHtml(e.currency)}</div>`
+          + `<div class="mute" style="font-weight:500;margin-bottom:2px">${fmtClock(e.eventTime)} · ${flagHtml(e.country)}</div>`
           + `<div style="font-weight:500;margin-bottom:2px">${escapeHtml(e.title)}</div>`
           + (nums ? `<div class="mute num">${nums}</div>` : '')
           + '</div>';
