@@ -108,7 +108,7 @@ export const userApi = {
   assetRealtime: () => api.get<unknown, AssetSnapshot>('/user/asset-realtime'),
   /** 指定月份逐日快照（首页月度盈亏网格）。month 形如 2026-07；快照只写到昨天，返回里没有今天 */
   assetDaily: (month: string) => api.get<unknown, AssetSnapshot[]>('/user/asset-daily', { params: { month } }),
-  categoryAverages: (days = 30) => api.get<unknown, CategoryAverages>('/user/category-averages', { params: { days } }),
+  categoryAverages: () => api.get<unknown, CategoryAverages>('/user/category-averages'),
   // 重置账户：清空交易与预测数据回到初始资金。活动期每周首次免费、之后每次扣 30 活动分；
   // 平时每周限 1 次。需逐字输入用户名确认
   resetAccount: (confirmUsername: string) =>

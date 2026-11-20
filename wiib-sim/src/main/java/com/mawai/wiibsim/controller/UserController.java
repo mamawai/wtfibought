@@ -77,9 +77,9 @@ public class UserController {
     }
 
     @GetMapping("/category-averages")
-    @Operation(summary = "获取各分类日收益排名百分比")
-    public Result<CategoryAveragesDTO> getCategoryAverages(@CurrentUserId Long userId, @RequestParam(defaultValue = "30") int days) {
-        return Result.ok(assetSnapshotService.getCategoryAverages(userId, days));
+    @Operation(summary = "各分类累计盈亏排名百分比")
+    public Result<CategoryAveragesDTO> getCategoryAverages(@CurrentUserId Long userId) {
+        return Result.ok(assetSnapshotService.getCategoryAverages(userId));
     }
 
     @Data

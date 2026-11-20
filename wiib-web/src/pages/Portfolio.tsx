@@ -98,7 +98,7 @@ export function Portfolio() {
 
   useEffect(() => {
     if (panel !== 'ability') return;
-    userApi.categoryAverages(30)
+    userApi.categoryAverages()
       .then(setCategoryAverages)
       .catch(() => setCategoryAverages(null));
   }, [panel]);

@@ -77,10 +77,10 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
             .maximumSize(2000)
             .expireAfterWrite(5, TimeUnit.MINUTES)
             .build();
-    private final LoadingCache<Integer, Map<Long, CategoryAveragesDTO>> categoryRankCache = Caffeine.newBuilder()
-            .maximumSize(16)
+    /** 全站分类排名只有一份，固定一个键 */
+    private final LoadingCache<String, Map<Long, CategoryAveragesDTO>> categoryRankCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES)
-            .build(this::buildCategoryRankMap);
+            .build(k -> buildCategoryRankMap());
 
     @Override
     public void snapshotAll() {
@@ -183,12 +183,12 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
     }
 
     @Override
-    public CategoryAveragesDTO getCategoryAverages(Long userId, int days) {
-        Map<Long, CategoryAveragesDTO> rankMap = categoryRankCache.get(days);
+    public CategoryAveragesDTO getCategoryAverages(Long userId) {
+        Map<Long, CategoryAveragesDTO> rankMap = categoryRankCache.get("all");
         return rankMap.getOrDefault(userId, new CategoryAveragesDTO());
     }
 
-    private Map<Long, CategoryAveragesDTO> buildCategoryRankMap(int days) {
+    private Map<Long, CategoryAveragesDTO> buildCategoryRankMap() {
         LocalDate today = LocalDate.now();
 
         List<User> users = userMapper.selectList(null);
