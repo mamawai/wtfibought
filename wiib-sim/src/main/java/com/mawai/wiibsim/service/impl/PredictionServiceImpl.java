@@ -246,7 +246,8 @@ public class PredictionServiceImpl implements PredictionService {
                     throw new BizException(ErrorCode.PREDICTION_PRICE_UNAVAILABLE);
                 }
 
-                BigDecimal sellContracts = contracts == null ? bet.getContracts() : contracts;
+                // 份数对齐库里的 4 位小数：前端浮点分摊带出的尾差（5.046799999999999）抹掉，卖光就走整笔卖出，不留 0 份零头
+                BigDecimal sellContracts = contracts == null ? bet.getContracts() : contracts.setScale(4, RoundingMode.HALF_UP);
                 if (sellContracts.compareTo(BigDecimal.ZERO) <= 0 || sellContracts.compareTo(bet.getContracts()) > 0) {
                     throw new BizException(ErrorCode.PARAM_ERROR);
                 }

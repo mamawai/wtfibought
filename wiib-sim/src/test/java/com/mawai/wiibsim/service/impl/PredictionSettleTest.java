@@ -306,6 +306,25 @@ class PredictionSettleTest {
         assertThat(sold.getValue().getBuyFee()).isEqualByComparingTo("0.0875");
     }
 
+    /** 前端浮点分摊带出尾差：要卖的其实就是全部，按整笔卖出，不留 0 份零头 */
+    @Test
+    void 卖出份数带浮点尾差按整笔卖出() {
+        when(redisLockUtil.executeWithLock(anyString(), anyLong(), anyLong(), any()))
+                .thenAnswer(inv -> inv.getArgument(3, Supplier.class).get());
+        when(betMapper.selectById(9L)).thenReturn(bet("ACTIVE", new BigDecimal("5.0468"), new BigDecimal("2.5234")));
+        long ws = windowAgo(0);
+        PredictionRound open = lockedRound(new BigDecimal("100"), ws);
+        open.setStatus("OPEN");
+        when(roundMapper.selectById(1L)).thenReturn(open);
+        when(cacheService.getPredictionBid(ws, "UP")).thenReturn(new BigDecimal("0.60"));
+        when(betMapper.casSell(eq(9L), any())).thenReturn(1);
+
+        service.sell(7L, 9L, new BigDecimal("5.046799999999999"));
+
+        verify(betMapper).casSell(eq(9L), any());
+        verify(betMapper, never()).casPartialSell(anyLong(), any(), any(), any());
+    }
+
     /** 个人盈亏同排行榜口径：已了结的扣买入手续费，持仓中的浮动盈亏也扣 */
     @Test
     void 个人盈亏扣买入手续费() {
