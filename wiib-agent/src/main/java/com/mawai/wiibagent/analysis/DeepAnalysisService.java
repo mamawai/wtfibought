@@ -164,7 +164,7 @@ public class DeepAnalysisService {
 
     private QuantDeepAnalysis toEntity(String symbol, long closeTime, String triggerSource,
                                        String newsContext, String bull, String bear, DeepAnalysisResponse r) {
-        // 情景分布归一化到 100（LLM 偶尔差 1-3）
+        // 情景分布归一化到 100
         ObjectNode scenarios = getScenarios(r);
 
         QuantDeepAnalysis entity = new QuantDeepAnalysis();
@@ -177,6 +177,7 @@ public class DeepAnalysisService {
         entity.setInvalidation(r.invalidation());
         entity.setBullArgument(bull);
         entity.setBearArgument(bear);
+    /** 三个概率按比例缩放到和为 100：涨、跌向下取整，余数给震荡；三项都是 0 时按缺省 33/34/33 */
         entity.setJudgeReasoning(r.judgeReasoning());
         entity.setNewsContext(newsContext);
         entity.setCreatedAt(LocalDateTime.now());
@@ -184,16 +185,15 @@ public class DeepAnalysisService {
     }
 
     private static @NonNull ObjectNode getScenarios(DeepAnalysisResponse r) {
-        int bullPct = r.bullPct() != null ? Math.max(0, r.bullPct()) : 33;
-        int rangePct = r.rangePct() != null ? Math.max(0, r.rangePct()) : 34;
-        int bearPct = r.bearPct() != null ? Math.max(0, r.bearPct()) : 33;
-        int sum = bullPct + rangePct + bearPct;
-        if (sum > 0 && sum != 100) {
-            rangePct += 100 - sum;
-        }
+        int bull = r.bullPct() != null ? Math.max(0, r.bullPct()) : 33;
+        int range = r.rangePct() != null ? Math.max(0, r.rangePct()) : 34;
+        int bear = r.bearPct() != null ? Math.max(0, r.bearPct()) : 33;
+        int sum = bull + range + bear;
+        int bullPct = sum > 0 ? bull * 100 / sum : 33;
+        int bearPct = sum > 0 ? bear * 100 / sum : 33;
         ObjectNode scenarios = MAPPER.createObjectNode();
         scenarios.put("bullPct", bullPct);
-        scenarios.put("rangePct", rangePct);
+        scenarios.put("rangePct", 100 - bullPct - bearPct);
         scenarios.put("bearPct", bearPct);
         return scenarios;
     }

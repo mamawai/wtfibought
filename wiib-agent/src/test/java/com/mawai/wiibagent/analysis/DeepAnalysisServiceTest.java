@@ -79,8 +79,8 @@ class DeepAnalysisServiceTest {
     @Test
     void judgeParsesAndNormalizesScenarios() {
         marketUnavailable();
-        // 故意给和=97 的分布，验证归一化到 100
-        when(model.call(any(Prompt.class))).thenReturn(responseOf(judgeJson(30, 30, 37, false)));
+        // 和=130 的大偏差：按比例缩到 100，涨跌向下取整、余数给震荡
+        when(model.call(any(Prompt.class))).thenReturn(responseOf(judgeJson(70, 20, 40, false)));
 
         QuantDeepAnalysis analysis = service.judge(model, "BTCUSDT", 123L, "cron_1h",
                 "无新闻上下文", "bull论据", "bear论据", AgentLang.ZH);
@@ -88,8 +88,9 @@ class DeepAnalysisServiceTest {
         assertThat(analysis).isNotNull();
         assertThat(analysis.getTriggerSource()).isEqualTo("cron_1h");
         JsonNode scenarios = MAPPER.readTree(analysis.getScenariosJson());
-        int sum = scenarios.path("bullPct").asInt(0) + scenarios.path("rangePct").asInt(0) + scenarios.path("bearPct").asInt(0);
-        assertThat(sum).isEqualTo(100);
+        assertThat(scenarios.path("bullPct").asInt(0)).isEqualTo(53);
+        assertThat(scenarios.path("rangePct").asInt(0)).isEqualTo(17);
+        assertThat(scenarios.path("bearPct").asInt(0)).isEqualTo(30);
         assertThat(analysis.getInvalidation()).contains("作废");
         assertThat(analysis.getNoDirection()).isFalse();
     }
