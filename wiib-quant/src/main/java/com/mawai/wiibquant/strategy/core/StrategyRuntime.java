@@ -82,12 +82,13 @@ public class StrategyRuntime {
         return prev != null ? prev : fresh;
     }
 
-    private void evaluate(String symbol, KlineBar eventBar) {
+    void evaluate(String symbol, KlineBar eventBar) {
         try {
             WindowedMarketView view = viewFor(symbol);
             synchronized (view) {
                 // 事件已携带收盘 bar（KlineStreamConsumer republish 时重建），不再回查进程内缓存
                 if (eventBar != null) {
+                    if (!fillGap(symbol, view, eventBar)) return;   // 补洞出错：本根不追加、不评估，下一根再补
                     view.append(eventBar);
                 }
                 for (TradingStrategySpi strategy : enabledStrategiesFor(symbol)) {
@@ -112,6 +113,27 @@ public class StrategyRuntime {
             }
         } catch (Exception e) {
             log.warn("[StrategyRuntime] evaluate失败 symbol={} msg={}", symbol, e.getMessage());
+        }
+    }
+
+    /**
+     * 事件 bar 跳过了视图末根（feed 漏收收盘）时，把中间的 bar 回补进库、再按顺序补进视图；
+     * 库里仍缺就照旧带洞。补洞出错返回 false。
+     */
+    private boolean fillGap(String symbol, WindowedMarketView view, KlineBar eventBar) {
+        List<KlineBar> last = view.closedBars(StrategyMarketView.BASE_INTERVAL_MILLIS, 1);
+        if (last.isEmpty()) return true;
+        long from = last.getFirst().openTime() + KlineHistoryStore.DEFAULT_BAR_MILLIS;
+        if (eventBar.openTime() <= from) return true;
+        try {
+            klineHistoryStore.backfillMissing(symbol, from, eventBar.openTime());
+            klineHistoryStore.load(symbol, KlineHistoryStore.DEFAULT_INTERVAL, from, eventBar.openTime())
+                    .forEach(view::append);
+            return true;
+        } catch (Exception e) {
+            log.warn("[StrategyRuntime] 补洞失败，本根跳过 symbol={} openTime={} msg={}",
+                    symbol, eventBar.openTime(), e.getMessage());
+            return false;
         }
     }
 
