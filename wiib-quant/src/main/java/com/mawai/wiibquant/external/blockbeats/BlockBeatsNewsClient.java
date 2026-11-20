@@ -72,7 +72,7 @@ public class BlockBeatsNewsClient extends BaseRestTemplateConfig {
             return null;
         }
         JsonNode arr = root.path("data").path("data");
-        if (!arr.isArray()) return List.of();
+        if (!arr.isArray()) return null;
         List<NewsFlash> out = new ArrayList<>(arr.size());
         for (JsonNode it : arr) {
             if (it.isNull()) continue;
