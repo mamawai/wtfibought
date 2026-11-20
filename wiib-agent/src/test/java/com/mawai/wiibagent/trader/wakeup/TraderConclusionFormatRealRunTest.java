@@ -116,6 +116,7 @@ class TraderConclusionFormatRealRunTest {
         pos.setSide("LONG");
         pos.setQuantity(new BigDecimal("0.01"));
         pos.setEntryPrice(new BigDecimal("99000"));
+        pos.setMarkPrice(new BigDecimal("100000"));
         pos.setUnrealizedPnl(new BigDecimal("10"));
         pos.setCreatedAt(LocalDateTime.now().minusHours(3));
 
