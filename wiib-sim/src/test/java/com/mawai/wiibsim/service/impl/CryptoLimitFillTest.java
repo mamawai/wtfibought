@@ -5,6 +5,8 @@ import com.mawai.wiibcommon.dto.CryptoOrderRequest;
 import com.mawai.wiibcommon.entity.CryptoOrder;
 import com.mawai.wiibcommon.entity.CryptoPosition;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
@@ -30,6 +32,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -37,6 +40,7 @@ import static org.mockito.Mockito.*;
  * 现货限价单：对面盘口在挂单价以内的量够整笔吃掉（没盘口看现价够不够得着）的挂上就能成交，
  * 当场按吃到的均价成交，不进挂单簿；不够整笔的照常挂着，被成交穿过按挂单价成交——不能拿限价单白躲滑点。
  * 现价 100；盘口卖一 100.5×0.5、卖二 101×10，买一 99.8×0.5、买二 99.5×10；手续费 0.1%。
+ * 盘口超过 30 秒没更新（feed 停了或币暂停交易）：买入、挂限价拒单，市价卖出照常按现价成交。
  */
 class CryptoLimitFillTest {
 
@@ -82,7 +86,7 @@ class CryptoLimitFillTest {
         service = new CryptoOrderServiceImpl(userService, positionService, new TradingConfig(),
                 mock(RedisLockUtil.class), mock(MarginAccountService.class), mock(CrossMarginService.class),
                 new LimitOrderIndex(cache), cache, mock(BStockService.class), mock(TradeFilterRegistry.class), tx, new LedgerTx(tx),
-                new BookFillPricer(depth, redis));
+                new BookFillPricer(depth, redis), depth);
         // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
     }
@@ -93,6 +97,14 @@ class CryptoLimitFillTest {
         req.setQuantity(BigDecimal.ONE);
         req.setOrderType("LIMIT");
         req.setLimitPrice(new BigDecimal(limitPrice));
+        return req;
+    }
+
+    private static CryptoOrderRequest market() {
+        CryptoOrderRequest req = new CryptoOrderRequest();
+        req.setSymbol(SYM);
+        req.setQuantity(BigDecimal.ONE);
+        req.setOrderType("MARKET");
         return req;
     }
 
@@ -150,11 +162,37 @@ class CryptoLimitFillTest {
 
     @Test
     void 没有新鲜盘口_按现价判_成交价用现价() {
-        when(depth.spotSnapshot(SYM)).thenReturn(null);
+        // 5 秒前的盘口：扫盘口嫌旧，行情还算活着
+        when(depth.spotSnapshot(SYM)).thenReturn(new DepthStreamCache.Snapshot(System.currentTimeMillis() - 5_000, BOOK));
 
         service.buy(UID, limit("100.2"));
 
         assertThat(inserted().getFilledPrice()).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void 盘口超过30秒没更新_市价买入拒单_钱不动() {
+        // 价停在最后一笔不动，不能按它成交
+        when(depth.spotSnapshot(SYM)).thenReturn(new DepthStreamCache.Snapshot(System.currentTimeMillis() - 31_000, BOOK));
+
+        assertThatThrownBy(() -> service.buy(UID, market()))
+                .isInstanceOf(BizException.class)
+                .extracting("code").isEqualTo(ErrorCode.CRYPTO_PRICE_UNAVAILABLE.getCode());
+        verify(mapper, never()).insert(any(CryptoOrder.class));
+        verify(userService, never()).updateBalance(anyLong(), any());
+    }
+
+    @Test
+    void 盘口超过30秒没更新_市价卖出照常按现价成交() {
+        // 暂停交易、下架的币也要能按最后价卖掉
+        when(depth.spotSnapshot(SYM)).thenReturn(new DepthStreamCache.Snapshot(System.currentTimeMillis() - 31_000, BOOK));
+
+        service.sell(UID, market());
+
+        CryptoOrder order = inserted();
+        assertThat(order.getStatus()).isEqualTo("FILLED");
+        assertThat(order.getFilledPrice()).isEqualByComparingTo("100");
+        verify(positionService).reducePosition(UID, SYM, BigDecimal.ONE);
     }
 
     @Test

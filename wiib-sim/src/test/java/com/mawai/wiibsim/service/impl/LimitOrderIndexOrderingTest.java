@@ -3,6 +3,7 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.CryptoOrder;
 import com.mawai.wiibcommon.entity.FuturesOrder;
+import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibcommon.market.TradeRecord;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
@@ -140,7 +141,7 @@ class LimitOrderIndexOrderingTest {
         CryptoOrderServiceImpl service = new CryptoOrderServiceImpl(mock(UserService.class),
                 mock(CryptoPositionService.class), mock(TradingConfig.class), lockUtil, mock(MarginAccountService.class),
                 mock(CrossMarginService.class), new LimitOrderIndex(cache), cache, mock(BStockService.class),
-                mock(TradeFilterRegistry.class), tx, new LedgerTx(tx), NoBookFillPricer.create());
+                mock(TradeFilterRegistry.class), tx, new LedgerTx(tx), NoBookFillPricer.create(), mock(DepthStreamCache.class));
         // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
         return service;

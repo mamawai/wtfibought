@@ -14,6 +14,7 @@ import com.mawai.wiibcommon.enums.OrderSide;
 import com.mawai.wiibcommon.enums.OrderStatus;
 import com.mawai.wiibcommon.enums.OrderType;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.Ledger;
@@ -66,10 +67,13 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final TransactionTemplate transactionTemplate;
     private final LedgerTx ledgerTx;
     private final BookFillPricer fillPricer;
+    private final DepthStreamCache depthCache;
 
     private static final int TRIGGERED_ORDER_BATCH_SIZE = 200;
     /** 订单列表单页封顶 */
     private static final int ORDER_PAGE_MAX = 100;
+    /** 市价买入、限价单只认 feed 这么久内收到过盘口快照的币 */
+    private static final long BOOK_MAX_AGE_MS = 30_000L;
 
     @PostConstruct
     void initLimitOrderZSets() {
@@ -82,6 +86,18 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         BigDecimal price = cacheService.getCryptoPrice(symbol);
         if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
         return price;
+    }
+
+    /**
+     * 市价买入、限价单判能不能当场成交用的价：同 getCryptoPrice，但 feed 超过 30 秒没收到这个币的盘口快照就当没价，拒单
+     * （feed 停了、币暂停交易时，价格停在最后一笔不动）。市价卖出不走这里：下架的币要能按最后价卖掉
+     */
+    private BigDecimal freshCryptoPrice(String symbol) {
+        DepthStreamCache.Snapshot snap = depthCache.spotSnapshot(symbol);
+        if (snap == null || System.currentTimeMillis() - snap.atMs() > BOOK_MAX_AGE_MS) {
+            throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
+        }
+        return getCryptoPrice(symbol);
     }
 
     // ==================== 买入 ====================
@@ -97,7 +113,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     public CryptoOrderResponse buy(Long userId, CryptoOrderRequest request) {
         validateRequest(request);
         User user = getAndValidateUser(userId);
-        BigDecimal price = getCryptoPrice(request.getSymbol());
+        BigDecimal price = freshCryptoPrice(request.getSymbol());
         boolean isMarketBuy = OrderType.MARKET.getCode().equals(request.getOrderType());
         // 市价按盘口扫出成交价，没盘口用最新价
         BigDecimal fillPrice = isMarketBuy ? fillPricer.spot(request.getSymbol(), true, request.getQuantity(), price) : null;
@@ -153,13 +169,13 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         // 卖出=减持：豁免最小名义额；部分卖查步长，全量卖豁免（尘埃持仓能清干净）
         tradeFilterRegistry.validateSpotSell(request.getSymbol(), request.getQuantity(), position.getQuantity());
 
-        BigDecimal price = getCryptoPrice(request.getSymbol());
-
         if (OrderType.MARKET.getCode().equals(request.getOrderType())) {
             // 市价按盘口扫出成交价，没盘口用最新价
+            BigDecimal price = getCryptoPrice(request.getSymbol());
             return sellNow(userId, request, fillPricer.spot(request.getSymbol(), false, request.getQuantity(), price), null);
         }
 
+        BigDecimal price = freshCryptoPrice(request.getSymbol());
         tradingConfig.validateLimitPrice(request.getLimitPrice(), price);
         // 买盘在挂单价以内的量够整笔卖掉（没盘口看现价够不够得着），挂上就能成交：当场成交，不进挂单簿
         BigDecimal takePrice = fillPricer.spotWithinLimit(request.getSymbol(), false, request.getQuantity(),

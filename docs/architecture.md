@@ -54,7 +54,7 @@ wiib-feed（上游进程）  交易所 WS → Redis
                             -> 只写 market:markprice:（带收到时刻，sim 市价开仓看它超 30 秒没更新就拒）/ market:futures-price:，不发 feed:price、不推前端
   -> forceOrder(全市场流)    -> 白名单过滤 -> force_order 表(DB, 天然跨进程)
   -> aggTrade（合约 / 现货）  -> Redis Stream(market:orderflow:<sym> / market:spot-trade:<sym>)，sim 按顺序读来判限价/止损/止盈，合约那条 agent 还读侧聚合订单流
-  -> depth20@100ms（合约 / 现货）-> Redis KV(market:depth: / market:spot-depth:, DepthStreamCache)，sim 市价成交扫它
+  -> depth20@100ms（合约 / 现货）-> Redis KV(market:depth: / market:spot-depth:, DepthStreamCache)，sim 市价成交扫它；现货那份的收到时刻也是现货买入、挂限价判行情活没活着的心跳
   -> K 线（6 条连接，都推前端；只有加密币 5m 往下游送）
        5m            加密币(symbols ∪ crypto-futures-symbols) -> 收盘 bar 落库(kline_history) + Redis Stream(stream:kline:closed)
        5m            非加密纯合约(commodity ∪ tradfi)          -> 只推前端
