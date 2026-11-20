@@ -77,10 +77,6 @@ public class LogAspect {
                             Cost: {}ms
                             =============================""",
                     httpMethod, url, ip, className, methodName, args, cost);
-            if (log.isDebugEnabled()) {
-                // 登录响应带 satoken，同样不许明文进日志
-                log.debug("Result: {}", maskSensitive(String.valueOf(result)));
-            }
 
             return result;
         } catch (Throwable e) {
