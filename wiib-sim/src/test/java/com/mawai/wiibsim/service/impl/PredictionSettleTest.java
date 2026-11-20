@@ -3,6 +3,7 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.PredictionBuyRequest;
+import com.mawai.wiibcommon.dto.PredictionPnlResponse;
 import com.mawai.wiibcommon.entity.PredictionBet;
 import com.mawai.wiibcommon.entity.PredictionRound;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -14,6 +15,7 @@ import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -23,6 +25,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.function.Supplier;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -237,8 +240,11 @@ class PredictionSettleTest {
         req.setAmount(new BigDecimal("10"));
         service.buy(7L, req);
 
-        // 20 份 @0.50：cost 10，fee = 20 × 0.07 × 0.5 × 0.5 = 0.35，扣 10.35
+        // 20 份 @0.50：cost 10，fee = 20 × 0.07 × 0.5 × 0.5 = 0.35，扣 10.35；手续费落在注单上
         verify(userService).updateGameBalance(eq(7L), argThat(v -> v.compareTo(new BigDecimal("-10.35")) == 0));
+        ArgumentCaptor<PredictionBet> bet = ArgumentCaptor.forClass(PredictionBet.class);
+        verify(betMapper).insert(bet.capture());
+        assertThat(bet.getValue().getBuyFee()).isEqualByComparingTo("0.35");
     }
 
     /** feed 跨窗停机，快照还停在上一回合：上一回合收官时的卖一不能拿来成交 */
@@ -272,6 +278,59 @@ class PredictionSettleTest {
 
         // 20 份 @0.60：revenue 12，fee = 20 × 0.07 × 0.6 × 0.4 = 0.336，到手 11.664
         verify(userService).updateGameBalance(eq(7L), argThat(v -> v.compareTo(new BigDecimal("11.664")) == 0));
+    }
+
+    /** 部分卖出：本金和买入手续费都按卖出份数拆到卖出那行 */
+    @Test
+    void 部分卖出按份数拆买入手续费() {
+        when(redisLockUtil.executeWithLock(anyString(), anyLong(), anyLong(), any()))
+                .thenAnswer(inv -> inv.getArgument(3, Supplier.class).get());
+        PredictionBet held = bet("ACTIVE", new BigDecimal("20"), new BigDecimal("10"));
+        held.setBuyFee(new BigDecimal("0.35"));
+        when(betMapper.selectById(9L)).thenReturn(held);
+        long ws = windowAgo(0);
+        PredictionRound open = lockedRound(new BigDecimal("100"), ws);
+        open.setStatus("OPEN");
+        when(roundMapper.selectById(1L)).thenReturn(open);
+        when(cacheService.getPredictionBid(ws, "UP")).thenReturn(new BigDecimal("0.60"));
+        when(betMapper.casPartialSell(eq(9L), any(), any(), any())).thenReturn(1);
+
+        service.sell(7L, 9L, new BigDecimal("5"));
+
+        // 卖 5 / 20 份：本金拆走 2.5，买入手续费拆走 0.0875
+        verify(betMapper).casPartialSell(eq(9L), argThat(c -> c.compareTo(new BigDecimal("5")) == 0),
+                argThat(c -> c.compareTo(new BigDecimal("2.5")) == 0),
+                argThat(f -> f.compareTo(new BigDecimal("0.0875")) == 0));
+        ArgumentCaptor<PredictionBet> sold = ArgumentCaptor.forClass(PredictionBet.class);
+        verify(betMapper).insert(sold.capture());
+        assertThat(sold.getValue().getBuyFee()).isEqualByComparingTo("0.0875");
+    }
+
+    /** 个人盈亏同排行榜口径：已了结的扣买入手续费，持仓中的浮动盈亏也扣 */
+    @Test
+    void 个人盈亏扣买入手续费() {
+        PredictionBet won = bet("WON", new BigDecimal("20"), new BigDecimal("10"));
+        won.setPayout(new BigDecimal("20"));
+        won.setBuyFee(new BigDecimal("0.35"));
+        PredictionBet draw = bet("DRAW", new BigDecimal("20"), new BigDecimal("10"));
+        draw.setPayout(new BigDecimal("10"));
+        draw.setBuyFee(new BigDecimal("0.35"));
+        // 破产取消的老注单 payout 是空
+        PredictionBet cancelled = bet("CANCELLED", new BigDecimal("4"), new BigDecimal("2"));
+        cancelled.setBuyFee(new BigDecimal("0.07"));
+        long ws = windowAgo(0);
+        PredictionBet active = bet("ACTIVE", new BigDecimal("10"), new BigDecimal("5"));
+        active.setWindowStart(ws);
+        active.setBuyFee(new BigDecimal("0.18"));
+        when(betMapper.selectList(any())).thenReturn(List.of(won, draw, cancelled, active));
+        when(cacheService.getPredictionBid(ws, "UP")).thenReturn(new BigDecimal("0.60"));
+
+        PredictionPnlResponse pnl = service.getUserPnl(7L);
+
+        // 赢的 20 − 10 − 0.35 = 9.65，退本金的亏手续费 0.35，破产取消的亏 2 + 0.07
+        assertThat(pnl.getRealizedPnl()).isEqualByComparingTo("7.23");
+        // 持仓市值 6 − 本金 5 − 买入手续费 0.18 = 0.82
+        assertThat(pnl.getTotalPnl()).isEqualByComparingTo("8.05");
     }
 
     @Test

@@ -278,6 +278,7 @@ CREATE TABLE IF NOT EXISTS prediction_bet (
     side VARCHAR(10) NOT NULL,
     contracts NUMERIC(20, 4) NOT NULL,
     cost NUMERIC(20, 4) NOT NULL,
+    buy_fee NUMERIC(20, 4) NOT NULL DEFAULT 0,
     avg_price NUMERIC(10, 4) NOT NULL,
     payout NUMERIC(20, 4),
     window_start BIGINT NOT NULL,
@@ -292,6 +293,7 @@ COMMENT ON COLUMN prediction_bet.round_id IS '回合ID';
 COMMENT ON COLUMN prediction_bet.side IS '方向：UP/DOWN';
 COMMENT ON COLUMN prediction_bet.contracts IS '合约数量';
 COMMENT ON COLUMN prediction_bet.cost IS '购买成本';
+COMMENT ON COLUMN prediction_bet.buy_fee IS '买入手续费，cost 之外另扣；部分卖出时按份数拆到卖出那行';
 COMMENT ON COLUMN prediction_bet.avg_price IS '平均买入价';
 COMMENT ON COLUMN prediction_bet.payout IS '结算赔付';
 COMMENT ON COLUMN prediction_bet.window_start IS '窗口起始时间戳(秒)';

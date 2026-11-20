@@ -203,6 +203,7 @@ public class PredictionServiceImpl implements PredictionService {
                 bet.setSide(side);
                 bet.setContracts(contracts);
                 bet.setCost(cost);
+                bet.setBuyFee(commission);
                 bet.setAvgPrice(price);
                 bet.setStatus("ACTIVE");
                 betMapper.insert(bet);
@@ -257,12 +258,16 @@ public class PredictionServiceImpl implements PredictionService {
                 boolean fullSell = sellContracts.compareTo(bet.getContracts()) == 0;
                 int affected;
                 BigDecimal soldCost = bet.getCost();
+                BigDecimal soldBuyFee = bet.getBuyFee();
                 if (fullSell) {
                     affected = betMapper.casSell(bet.getId(), netRevenue);
                 } else {
+                    // 本金和买入手续费都按卖出份数拆到卖出那行
                     soldCost = bet.getCost().multiply(sellContracts)
                             .divide(bet.getContracts(), 4, RoundingMode.HALF_UP);
-                    affected = betMapper.casPartialSell(bet.getId(), sellContracts, soldCost);
+                    soldBuyFee = bet.getBuyFee().multiply(sellContracts)
+                            .divide(bet.getContracts(), 4, RoundingMode.HALF_UP);
+                    affected = betMapper.casPartialSell(bet.getId(), sellContracts, soldCost, soldBuyFee);
                 }
                 if (affected == 0) {
                     throw new BizException(ErrorCode.PREDICTION_BET_NOT_FOUND);
@@ -277,6 +282,7 @@ public class PredictionServiceImpl implements PredictionService {
                     soldBet.setSide(bet.getSide());
                     soldBet.setContracts(sellContracts);
                     soldBet.setCost(soldCost);
+                    soldBet.setBuyFee(soldBuyFee);
                     soldBet.setAvgPrice(soldCost.divide(sellContracts, 4, RoundingMode.HALF_UP));
                     soldBet.setPayout(netRevenue);
                     soldBet.setStatus("SOLD");
@@ -357,40 +363,39 @@ public class PredictionServiceImpl implements PredictionService {
         BigDecimal totalCost = BigDecimal.ZERO;
         BigDecimal realizedPnl = BigDecimal.ZERO;
         BigDecimal activeCost = BigDecimal.ZERO;
+        BigDecimal activeBuyFee = BigDecimal.ZERO;
         BigDecimal activeValue = BigDecimal.ZERO;
         int settled = 0;
 
         for (PredictionBet bet : bets) {
             total++;
             totalCost = totalCost.add(bet.getCost());
+            if ("ACTIVE".equals(bet.getStatus())) {
+                active++;
+                activeCost = activeCost.add(bet.getCost());
+                activeBuyFee = activeBuyFee.add(bet.getBuyFee());
+                activeValue = activeValue.add(AssetValuationService.predictionBetValue(
+                        bet, cacheService.getPredictionBid(ws, bet.getSide()), ws).setScale(4, RoundingMode.HALF_UP));
+                continue;
+            }
+            // 已了结的：到手 − 本金 − 买入手续费，同 sumRealizedProfit；破产取消的老注单 payout 是空，按 0 算
+            BigDecimal payout = bet.getPayout() == null ? BigDecimal.ZERO : bet.getPayout();
+            realizedPnl = realizedPnl.add(payout.subtract(bet.getCost()).subtract(bet.getBuyFee()));
             switch (bet.getStatus()) {
                 case "WON" -> {
                     won++;
                     settled++;
-                    realizedPnl = realizedPnl.add(bet.getPayout().subtract(bet.getCost()));
                 }
                 case "LOST" -> {
                     lost++;
                     settled++;
-                    realizedPnl = realizedPnl.add(bet.getPayout().subtract(bet.getCost()));
                 }
-                case "DRAW" -> settled++;
-                case "SOLD" -> {
-                    settled++;
-                    realizedPnl = realizedPnl.add(bet.getPayout().subtract(bet.getCost()));
-                }
-                case "CANCELLED" -> realizedPnl = realizedPnl.subtract(bet.getCost());
-                case "ACTIVE" -> {
-                    active++;
-                    activeCost = activeCost.add(bet.getCost());
-                    activeValue = activeValue.add(AssetValuationService.predictionBetValue(
-                            bet, cacheService.getPredictionBid(ws, bet.getSide()), ws).setScale(4, RoundingMode.HALF_UP));
-                }
+                case "DRAW", "SOLD" -> settled++;
                 default -> { }
             }
         }
 
-        BigDecimal unrealizedPnl = activeValue.subtract(activeCost);
+        BigDecimal unrealizedPnl = activeValue.subtract(activeCost).subtract(activeBuyFee);
         BigDecimal totalPnl = realizedPnl.add(unrealizedPnl);
 
         BigDecimal winRate = BigDecimal.ZERO;

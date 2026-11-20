@@ -127,7 +127,7 @@ public class RankingService {
         // ────── 4. 交易盈利批量聚合（口径：交易净盈亏） ──────
         Map<Long, BigDecimal> futuresNetMap = toUserAmountMap(futuresOrderMapper.sumNetPnlAfterCommissionAll());
         Map<Long, BigDecimal> futuresFundingFeeMap = toUserAmountMap(futuresPositionMapper.sumFundingFeeTotalAll());
-        Map<Long, BigDecimal> predictionRealizedMap = toUserAmountMap(predictionBetMapper.sumRealizedProfitAfterBuyFeeAll());
+        Map<Long, BigDecimal> predictionRealizedMap = toUserAmountMap(predictionBetMapper.sumRealizedProfitAll());
         Map<Long, BigDecimal> cryptoBuyMap = toUserAmountMap(cryptoOrderMapper.sumBuyFilledAmountAll());
         Map<Long, BigDecimal> cryptoSellMap = toUserAmountMap(cryptoOrderMapper.sumSellFilledAmountAll());
 

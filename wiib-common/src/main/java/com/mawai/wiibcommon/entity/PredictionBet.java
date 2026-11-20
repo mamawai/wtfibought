@@ -26,6 +26,9 @@ public class PredictionBet {
 
     private BigDecimal cost;
 
+    /** 买入手续费，cost 之外另扣；部分卖出时按份数拆到卖出那行 */
+    private BigDecimal buyFee;
+
     private BigDecimal avgPrice;
 
     private BigDecimal payout;
