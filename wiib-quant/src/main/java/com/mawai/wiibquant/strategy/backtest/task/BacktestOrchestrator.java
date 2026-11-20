@@ -94,12 +94,13 @@ public class BacktestOrchestrator {
 
     /**
      * 装载数据并构建策略实例。[tradingStartMs, tradingEndMs) 为交易窗（含/不含口径同引擎），
-     * 预热段自动前推。数据缺口 → BacktestSetupException fail-fast。
+     * 预热段自动前推。交易窗里一根 K 线都没有、数据缺口 → BacktestSetupException fail-fast。
      */
     public Prepared prepare(String strategyId, String symbol, long tradingStartMs, long tradingEndMs) {
         List<KlineBar> bars = klineHistoryStore.load(
                 symbol, KlineHistoryStore.DEFAULT_INTERVAL, tradingStartMs - warmupMs(strategyId), tradingEndMs);
-        if (bars.isEmpty()) {
+        // 交易窗里有一根就照常跑；按收盘时间算，同引擎口径
+        if (bars.stream().noneMatch(b -> b.closeTime() >= tradingStartMs && b.closeTime() < tradingEndMs)) {
             throw new BacktestSetupException("quant.backtest.noKlineInRange", Map.of("symbol", symbol));
         }
         WindowedMarketView.firstBaseGapDescription(bars).ifPresent(gap -> {
