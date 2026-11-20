@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.node.ArrayNode;
 
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -205,6 +206,7 @@ class KlineFetcherTest {
         CountDownLatch startLine = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(threads);
         AtomicInteger calls = new AtomicInteger();
+        List<List<KlineBar>> results = new CopyOnWriteArrayList<>();
         when(client.getFuturesKlines(anyString(), anyString(), anyInt(), isNull())).thenAnswer(inv -> {
             calls.incrementAndGet();
             Thread.sleep(80);               // 撑开窗口，让后来者必然撞上在途请求
@@ -216,7 +218,7 @@ class KlineFetcherTest {
             Thread.startVirtualThread(() -> {
                 try {
                     startLine.await();
-                    assertThat(f.fetch("BTCUSDT", "5m", 192)).hasSize(192);
+                    results.add(f.fetch("BTCUSDT", "5m", 192));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } finally {
@@ -227,6 +229,7 @@ class KlineFetcherTest {
         startLine.countDown();
 
         assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(results).hasSize(threads).allSatisfy(bars -> assertThat(bars).hasSize(192));
         assertThat(calls.get()).isEqualTo(1);
     }
 

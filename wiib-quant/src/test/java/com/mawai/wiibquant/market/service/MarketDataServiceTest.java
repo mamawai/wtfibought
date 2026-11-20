@@ -103,12 +103,14 @@ class MarketDataServiceTest {
 
     @Test
     void refreshesWhenTtlExpired() {
+        stubCollectableSymbol();
         MarketDataService service = service(0); // ttl=0 → 每次都过期
+        service.nowMs = () -> T0;   // 离 5m 边界远：刚过边界 2s 内组装的 ttl=0 也会存 2s
 
-        MarketAssembly first = service.assemble("BTCUSDT");
-        MarketAssembly second = service.assemble("BTCUSDT");
+        service.assemble("BTCUSDT");
+        service.assemble("BTCUSDT");
 
-        assertThat(second).isNotSameAs(first);
+        verify(binanceRestClient, times(2)).getFutures24hTicker("BTCUSDT");
     }
 
     @Test
