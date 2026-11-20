@@ -93,6 +93,13 @@ class LlmErrorMessagesTest {
                 .contains("Base URL");
     }
 
+    /** 断流、挂死这类瞬时失败单独归类，不落到带类名的兜底 */
+    @Test
+    void 断流这类瞬时失败提示稍后重试() {
+        assertThat(zh(new TransientAiException("Responses SSE 断流：未收到收尾事件就结束了")))
+                .contains("中途断开").doesNotContain("TransientAiException");
+    }
+
     /** 真正的原因常被 SDK/框架包在 cause 里，外层 message 非空但泛泛，不能只看最外层 */
     @Test
     void 从因果链里认出真正的原因() {
@@ -142,7 +149,7 @@ class LlmErrorMessagesTest {
                 .doesNotContain("Zm9vYmFyMTIzNDU2");
     }
 
-    /** 英文用户不许收到一个中文字：六条归类各扫一遍 */
+    /** 英文用户不许收到一个中文字：七条归类各扫一遍 */
     @Test
     void 英文侧全部文案无中文() {
         for (Throwable t : new Throwable[]{
@@ -151,6 +158,7 @@ class LlmErrorMessagesTest {
                 new RuntimeException("web_search tool is not supported by this model"),
                 new RuntimeException("404 model 'gpt-9' not found"),
                 new java.net.ConnectException(""),
+                new TransientAiException("SSE 断流"),
                 new IllegalStateException("db down")}) {
             PromptI18nAssertions.assertNoCjk("英文 llm 错误文案",
                     LlmErrorMessages.classify(t, PROMPTS, AgentLang.EN));

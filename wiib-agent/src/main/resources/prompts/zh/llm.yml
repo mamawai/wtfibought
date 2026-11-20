@@ -13,6 +13,8 @@ llm:
     searchUnsupported: 端点不支持联网搜索，请到模型配置里关掉「联网搜索」
     modelNotFound: 端点不支持该模型，请重新选择模型
     unreachable: 端点无响应，请检查 Base URL 是否正确
+    # 断流、连接挂死、上游 5xx 这类瞬时失败
+    transient: 模型服务中途断开或临时出错，请稍后重试
     # type 是最深层 cause 的类名，语言无关；归类不到的形态靠它被发现
     unknown: 处理失败（{{type}}），请稍后重试
 

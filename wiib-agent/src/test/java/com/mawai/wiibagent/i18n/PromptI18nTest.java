@@ -367,7 +367,7 @@ class PromptI18nTest {
                 "chat.outputLanguage", "coach.label.outputLanguage",
                 // 上游异常归类后的那一句：chat 与 coach 共用，既上屏也喂回模型
                 "llm.error.unauthorized", "llm.error.quota", "llm.error.modelNotFound",
-                "llm.error.unreachable", "llm.error.fallback")) {
+                "llm.error.unreachable", "llm.error.transient", "llm.error.fallback")) {
             assertThat(prompts.find(AgentLang.EN, key))
                     .as("英文词表缺 %s，回落成中文了", key)
                     .isNotEqualTo(prompts.find(AgentLang.ZH, key));

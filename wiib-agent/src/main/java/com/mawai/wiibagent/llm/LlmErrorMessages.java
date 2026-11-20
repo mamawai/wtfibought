@@ -83,6 +83,10 @@ public final class LlmErrorMessages {
                 || lower.contains("connection refused") || lower.contains("unknownhost")) {
             return prompts.get(lang, "llm.error.unreachable");
         }
+        // 断流、连接挂死、上游 5xx 这类瞬时失败
+        if (transientFailure(t)) {
+            return prompts.get(lang, "llm.error.transient");
+        }
         // 类名取最深层 cause：最外层几乎总是 CompletionException 之类的包装（实测），拿它查不到病因
         Throwable root = root(t);
         // 归类不到的形态要能被发现，否则它永远只以兜底文案示人；但不重复打栈——
