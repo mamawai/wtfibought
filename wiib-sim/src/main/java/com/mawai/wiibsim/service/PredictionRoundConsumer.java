@@ -15,6 +15,7 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer.StreamMessageListenerContainerOptions;
+import org.springframework.data.redis.stream.StreamMessageListenerContainer.StreamReadRequest;
 import org.springframework.data.redis.stream.Subscription;
 import org.springframework.stereotype.Component;
 
@@ -64,10 +65,13 @@ public class PredictionRoundConsumer {
                         .errorHandler(this::handlePollError)
                         .build();
         container = StreamMessageListenerContainer.create(connectionFactory, options);
-        subscription = container.receiveAutoAck(
-                Consumer.from(PredictionStreamChannels.GROUP, consumerName),
-                StreamOffset.create(PredictionStreamChannels.ROUND_STREAM, ReadOffset.lastConsumed()),
-                this::onMessage);
+        StreamReadRequest<String> request = StreamReadRequest
+                .builder(StreamOffset.create(PredictionStreamChannels.ROUND_STREAM, ReadOffset.lastConsumed()))
+                .consumer(Consumer.from(PredictionStreamChannels.GROUP, consumerName))
+                .autoAcknowledge(true)
+                .cancelOnError(t -> false)   // 出错不退订，接着轮询
+                .build();
+        subscription = container.register(request, this::onMessage);
         container.start();
         log.info("[PredictionRound] 消费者启动 group={} consumer={} stream={}",
                 PredictionStreamChannels.GROUP, consumerName, PredictionStreamChannels.ROUND_STREAM);
@@ -113,12 +117,18 @@ public class PredictionRoundConsumer {
         }
     }
 
-    /** 轮询异常：停机期的连接中断是预期时序，降 debug；运行期异常保持 ERROR 可见。 */
+    /** 轮询异常：停机期的连接中断是预期时序，降 debug；运行期记 ERROR，歇 1 秒再接着轮询。 */
     private void handlePollError(Throwable e) {
         if (shuttingDown) {
             log.debug("[PredictionRound] 停机期轮询中断（预期）: {}", e.toString());
-        } else {
-            log.error("[PredictionRound] Stream 轮询异常", e);
+            return;
+        }
+        log.error("[PredictionRound] Stream 轮询异常", e);
+        // 跑在轮询线程上，歇 1 秒，Redis 停机时不空转刷日志
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
