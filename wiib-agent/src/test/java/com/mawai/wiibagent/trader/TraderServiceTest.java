@@ -769,6 +769,8 @@ class TraderServiceTest {
         t.setUserId(1L);
         when(traderMapper.selectById(7L)).thenReturn(t);
         when(langResolver.of(1L)).thenReturn(AgentLang.EN);
+        // 没爆仓，改到一行
+        when(traderMapper.update(any(), any())).thenReturn(1);
 
         assertThat(service.pause(1L, 7L)).isNull();
 

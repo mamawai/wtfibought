@@ -236,16 +236,15 @@ public class TraderService {
         if (t == null) {
             return messages.get("trader.notFound");
         }
-        if (AiTrader.STATUS_LIQUIDATED.equals(t.getStatus())) {
-            return messages.get("trader.liquidatedRound");
-        }
-        traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
+        // 爆仓是本局终态，只有重置能改：已是 LIQUIDATED 的改不到，回 0 行
+        int updated = traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
                 .eq(AiTrader::getId, t.getId())
+                .ne(AiTrader::getStatus, AiTrader.STATUS_LIQUIDATED)
                 .set(AiTrader::getStatus, AiTrader.STATUS_RUNNING)
                 .set(AiTrader::getPausedReason, null)
                 .set(AiTrader::getConsecutiveFailures, 0)
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
-        return null;
+        return updated == 0 ? messages.get("trader.liquidatedRound") : null;
     }
 
     public String pause(long userId, long traderId) {
@@ -253,12 +252,14 @@ public class TraderService {
         if (t == null) {
             return messages.get("trader.notFound");
         }
-        traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
+        // 同 start：已爆仓的改不到
+        int updated = traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
                 .eq(AiTrader::getId, t.getId())
+                .ne(AiTrader::getStatus, AiTrader.STATUS_LIQUIDATED)
                 .set(AiTrader::getStatus, AiTrader.STATUS_PAUSED)
                 .set(AiTrader::getPausedReason, prompts.get(langResolver.of(userId), "trader.pause.manual"))
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
-        return null;
+        return updated == 0 ? messages.get("trader.liquidatedRound") : null;
     }
 
     /**
