@@ -5,6 +5,8 @@ import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.connection.RedisStreamCommands.TrimOptions;
+import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -27,13 +29,15 @@ public class KlineStreamCache {
         // 调用方 KlineStreamHandler 已保证三参非空，这里只做大小写归一
         String normalizedSymbol = symbol.trim().toUpperCase();
         String normalizedInterval = interval.trim().toLowerCase();
-        if (KlineHistoryStore.DEFAULT_INTERVAL.equals(normalizedInterval)) {
-            // 异步落库，不占WS回调线程；下游隔着秒级的HTTP采集才读historyStore，无竞态
-            Thread.startVirtualThread(() -> persistDefaultInterval(normalizedSymbol, normalizedInterval, bar));
-        }
-        // 收盘 → Redis Stream（唯一实时通道）：agent 侧 KlineStreamConsumer 消费后 republish 本地事件，
-        // 触发策略信号 / 交易员唤醒 / 叙事对账
-        publishToStream(normalizedSymbol, normalizedInterval, bar);
+        // 另起虚拟线程，不占 WS 回调线程；先落库再发 Stream，下游收到事件时库里已有这根，落库失败也照发
+        Thread.startVirtualThread(() -> {
+            if (KlineHistoryStore.DEFAULT_INTERVAL.equals(normalizedInterval)) {
+                persistDefaultInterval(normalizedSymbol, normalizedInterval, bar);
+            }
+            // 收盘 → Redis Stream（唯一实时通道）：agent 侧 KlineStreamConsumer 消费后 republish 本地事件，
+            // 触发策略信号 / 交易员唤醒 / 叙事对账
+            publishToStream(normalizedSymbol, normalizedInterval, bar);
+        });
         log.info("[KlineWS] closed symbol={} interval={} closeTime={}", normalizedSymbol, normalizedInterval, bar.closeTime());
     }
 
@@ -46,8 +50,8 @@ public class KlineStreamCache {
     }
 
     /**
-     * 把收盘 bar 写入 Redis Stream——quant（含独立部署后）获取实时收盘的唯一通道。
-     * 失败仅 log error 不阻断：K线已落库（历史不丢），丢的仅本次实时触发，下一根 5m 后自然恢复。
+     * 把收盘 bar 写入 Redis Stream，写的时候顺带近似裁剪——agent 拿实时收盘只有这一条路。
+     * 失败只记 error：这一根的策略评估、交易员唤醒、叙事对账就没了；下一根照常触发，策略视图那时从库里补上漏掉的这根。
      * 字段契约（消费端 KlineStreamConsumer 按此重建 KlineBar）：
      * symbol/interval/openTime/closeTime/open/high/low/close/volume，全部 String。
      */
@@ -63,9 +67,8 @@ public class KlineStreamCache {
             fields.put("low", bar.low().toPlainString());
             fields.put("close", bar.close().toPlainString());
             fields.put("volume", bar.volume().toPlainString());
-            var ops = redisTemplate.opsForStream();
-            ops.add(StreamRecords.newRecord().in(MarketStreamChannels.KLINE_CLOSED_STREAM).ofMap(fields));
-            ops.trim(MarketStreamChannels.KLINE_CLOSED_STREAM, STREAM_MAXLEN, true);  // 近似裁剪，防 Stream 无限增长
+            redisTemplate.opsForStream().add(StreamRecords.newRecord().in(MarketStreamChannels.KLINE_CLOSED_STREAM).ofMap(fields),
+                    XAddOptions.trim(TrimOptions.maxLen(STREAM_MAXLEN).approximate()));
         } catch (Exception e) {
             log.error("[KlineStream] 写 Stream 失败 symbol={} closeTime={} msg={}", symbol, bar.closeTime(), e.toString());
         }

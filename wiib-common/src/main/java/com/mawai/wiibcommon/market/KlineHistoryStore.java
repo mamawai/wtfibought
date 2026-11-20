@@ -124,7 +124,7 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
     }
 
     /**
-     * 实时闭合 K 线落库；调用方先写库再发事件，下游才能读到最新 5m。
+     * 实时闭合 K 线落库。feed 的 KlineStreamCache 先调这里、再发收盘事件（落库失败也照发），下游收到事件时一般已能读到这根。
      */
     public void saveClosedBar(String symbol, String intervalCode, KlineBar bar) {
         if (bar == null) {

@@ -56,7 +56,7 @@ wiib-feed（上游进程）  交易所 WS → Redis
   -> aggTrade（合约 / 现货）  -> Redis Stream(market:orderflow:<sym> / market:spot-trade:<sym>)，sim 按顺序读来判限价/止损/止盈，合约那条 agent 还读侧聚合订单流
   -> depth20@100ms（合约 / 现货）-> Redis KV(market:depth: / market:spot-depth:, DepthStreamCache)，sim 市价成交扫它；现货那份的收到时刻也是现货买入、挂限价判行情活没活着的心跳
   -> K 线（6 条连接，都推前端；只有加密币 5m 往下游送）
-       5m            加密币(symbols ∪ crypto-futures-symbols) -> 收盘 bar 落库(kline_history) + Redis Stream(stream:kline:closed)
+       5m            加密币(symbols ∪ crypto-futures-symbols) -> 收盘 bar 先落库(kline_history) 再进 Redis Stream(stream:kline:closed)
        5m            非加密纯合约(commodity ∪ tradfi)          -> 只推前端
        15m/1h/4h/1d  全部合约标的，每个周期一条                -> 只推前端（合约蜡烛图各档；现货不推 K 线，前端用价格 tick 更新最后一根）
   -> 价格 tick（现货价 / 标记价 / 合约最新价）与 K 线 -> Redis Pub/Sub(ws:broadcast:*) -> sim WsBroadcastRelay -> STOMP /topic/**
