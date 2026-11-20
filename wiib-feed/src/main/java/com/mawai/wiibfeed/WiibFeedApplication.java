@@ -3,6 +3,7 @@ package com.mawai.wiibfeed;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * wiib-feed：数据流上游进程。
@@ -11,6 +12,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  */
 @SpringBootApplication(scanBasePackages = {"com.mawai.wiibfeed", "com.mawai.wiibcommon"})
 @MapperScan({"com.mawai.wiibcommon.mapper"})
+@EnableScheduling
 public class WiibFeedApplication {
     static void main(String[] args) {
         SpringApplication.run(WiibFeedApplication.class, args);
