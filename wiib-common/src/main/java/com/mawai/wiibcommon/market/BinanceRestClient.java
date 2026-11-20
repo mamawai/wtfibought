@@ -373,7 +373,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
 
     public String getFuturesKlines(String symbol, String interval, int limit, Long endTime) {
         String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return getKlines(symbol, interval, limit, endTime);
+        if (baseUrl == null || baseUrl.isBlank()) return null;
         UriComponentsBuilder builder = UriComponentsBuilder
                 .fromUriString(baseUrl + "/fapi/v1/klines")
                 .queryParam("symbol", symbol)
@@ -389,7 +389,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
 
     public String getFutures24hTicker(String symbol) {
         String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return get24hTicker(symbol);
+        if (baseUrl == null || baseUrl.isBlank()) return null;
         URI uri = UriComponentsBuilder
                 .fromUriString(baseUrl + "/fapi/v1/ticker/24hr")
                 .queryParam("symbol", symbol)
@@ -400,7 +400,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
 
     public String getFuturesOrderbook(String symbol, int limit) {
         String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return getOrderbook(symbol, limit);
+        if (baseUrl == null || baseUrl.isBlank()) return null;
         URI uri = UriComponentsBuilder
                 .fromUriString(baseUrl + "/fapi/v1/depth")
                 .queryParam("symbol", symbol)
