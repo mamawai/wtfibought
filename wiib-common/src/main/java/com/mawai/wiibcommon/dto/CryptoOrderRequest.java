@@ -17,6 +17,6 @@ public class CryptoOrderRequest {
 
     private BigDecimal limitPrice;
 
-    /** 杠杆倍数 1-10 */
+    /** 杠杆倍数，上限是配置 trading.margin.max-leverage（默认 50） */
     private Integer leverageMultiple;
 }

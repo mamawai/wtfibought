@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
-/** 功能位→LLM配置指针。quant 负责种子/管理，sim 只读自己的功能位 */
+/** 功能位→LLM配置指针。只有 agent 在用：刷新时补种子，Admin 页管理 */
 @Mapper
 public interface AiModelAssignmentMapper extends BaseMapper<AiModelAssignment> {
 

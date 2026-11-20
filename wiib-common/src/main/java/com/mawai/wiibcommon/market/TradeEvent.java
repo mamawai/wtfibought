@@ -9,7 +9,7 @@ import java.math.BigDecimal;
  *
  * @param userId   sim 用户 id，trader 的子账户就是 ai_trader.sim_user_id
  * @param quantity 这一次平掉 / 成交的量；全仓爆仓时是爆掉的仓位数
- * @param pnl      平仓盈亏（手续费前），成交事件为空
+ * @param pnl      平仓净盈亏（已扣手续费，强平再扣清算费）；全仓爆仓为整次结算额；限价成交为空
  * @param at       发生时刻 ms
  */
 public record TradeEvent(String type, long userId, Long positionId, Long orderId, String symbol, String side,

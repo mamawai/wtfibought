@@ -24,7 +24,7 @@ public class ForceOrder {
 
     private BigDecimal quantity;
 
-    /** price * quantity */
+    /** avgPrice * quantity */
     private BigDecimal amount;
 
     /** FILLED / NEW / ... */

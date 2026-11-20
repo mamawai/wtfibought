@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 
 /**
  * bStock 代币化美股（静态信息）。
- * 真实行情/价格走 feed→Redis，本表只存标的身份与公司基本面，独立于虚拟 {@link Stock}/{@link Company}。
+ * 真实行情/价格走 feed→Redis，本表只存标的身份与公司基本面。
  */
 @Data
 @TableName("bstock")

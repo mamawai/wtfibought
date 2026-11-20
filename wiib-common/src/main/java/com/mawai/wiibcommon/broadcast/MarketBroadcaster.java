@@ -52,7 +52,7 @@ public class MarketBroadcaster {
         publish(PREDICTION_CHANNEL, topic, message);
     }
 
-    /** feed WS 流健康全量快照（JSON 数组）：某条流状态一变就推，前端整表替换。code 固定 "streams"，复用 code|json 中继。 */
+    /** feed WS 流健康全量快照（feed 的 StreamHealthSnapshot，JSON 对象）：某条流状态一变就推，前端整表替换。code 固定 "streams"，复用 code|json 中继。 */
     public void broadcastStreamHealth(String snapshotJson) {
         publish(STREAM_HEALTH_CHANNEL, "streams", snapshotJson);
     }

@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  * 工作台对话历史（展示用）：user/assistant 消息按会话落库，支撑历史会话列表与回看。
  * <p>
  * 续聊上下文不靠它——那是 workbench_chat_context（模型侧完整消息历史）的事，sessionId 同值；
- * 本表只为前端展示，所以 agent 调度/HITL 过程事件不存。
+ * 本表只为前端展示，过程事件随 assistant 行存在 steps 列。
  */
 @Data
 @TableName(value = "workbench_chat_message", autoResultMap = true)

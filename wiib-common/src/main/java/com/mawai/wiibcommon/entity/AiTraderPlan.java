@@ -73,7 +73,7 @@ public class AiTraderPlan {
 
     /**
      * LIVE=仓位/挂单存活 CLOSED=已了结归档。归档不删：论点→结局的配对数据是
-     * reviewer 复盘的原料（结局按 symbol/side/时间窗 join sim 已平仓位）。
+     * reviewer 复盘的原料（和 sim 已平仓位先按 positionId 配对，没有 id 的按开仓时间就近兜底）。
      */
     private String status;
 

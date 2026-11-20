@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
-/** LLM 配置（一条=一个具体LLM：key+baseUrl+model）。quant/sim 共享，Admin 页统一管理 */
+/** LLM 配置（一条=一个具体LLM：key+baseUrl+model）。只有 agent 在用，Admin 页统一管理 */
 @Mapper
 public interface AiRuntimeConfigMapper extends BaseMapper<AiRuntimeConfig> {
 

@@ -54,7 +54,7 @@ public class FuturesOrder {
     @TableField(typeHandler = FuturesTakeProfitListTypeHandler.class)
     private List<FuturesTakeProfit> takeProfits; // 止盈
 
-    private String status; // PENDING待触发 TRIGGERED已触发 PROCESSING处理中 FILLED已成交 CANCELLED已取消 LIQUIDATED强平
+    private String status; // PENDING待触发 TRIGGERED已触发 PROCESSING处理中 FILLED已成交 CANCELLED已取消 LIQUIDATED强平 STOP_LOSS止损成交 TAKE_PROFIT止盈成交
 
     private String groupId;
     private String cancelReason;

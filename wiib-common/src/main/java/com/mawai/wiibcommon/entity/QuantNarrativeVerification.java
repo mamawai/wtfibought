@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 
 /**
  * 叙事对账行：一条深研判（Judge 三情景概率）到期后的对账结果。
- * 实际情景用挂靠快照 H12 腿的 lowCut 档界判定（PIT，禁止对账时重算）；
+ * 实际情景的判定界是研判时点前 90 天 |H12 收益| 的下三分位，对账时从 K 线现算，只用 closeTime 前的数据；
  * 评分是三分类 Brier（均匀瞎猜基线 2/3，越低越好）+ 最高概率情景命中。
  */
 @Data
@@ -38,7 +38,7 @@ public class QuantNarrativeVerification {
     /** Judge 当时是否自认看不清（此类行单独归组统计） */
     private Boolean noDirection;
 
-    /** RANGE/方向 的判定界（bps）：挂靠快照 H12 腿 lowCut */
+    /** RANGE/方向 的判定界（bps）：研判时点前 90 天 |H12 收益| 的下三分位 */
     private Integer rangeCutBps;
 
     /** 到期实际对数收益（bps，带符号） */

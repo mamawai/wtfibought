@@ -120,7 +120,7 @@ public abstract class BaseSaTokenConfig implements WebMvcConfigurer {
 
     /**
      * 游客可读的接口：只放 GET，同一路径上的 POST/PUT/DELETE 照样要登录。
-     * 写精确路径或单段 *，别用 **，否则会把下面挂着的写接口一起放出去
+     * 写精确路径或单段 *，别用 **，否则会把下面挂着的、要登录的 GET 接口一起放出去
      */
     protected List<String> getAnonymousGetPaths() {
         return List.of();

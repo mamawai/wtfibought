@@ -8,8 +8,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 每次唤醒落一行，只增不改：这轮想了什么（reasoning）、调了什么工具做了什么（actionsJson）、
- * 当时权益多少。wake_time 就是那次唤醒的K线边界。
+ * 每次唤醒落一行：这轮想了什么（reasoning）、调了什么工具做了什么（actionsJson）、
+ * 当时权益多少。落库后只有复盘行还会改：正文末尾补代码写的追加段，memory_after 补记忆快照。
  * <p>
  * kind 三类：TRADE/ALERT/MANUAL/EVENT/WATCH 是唤醒（例行K线/波动警报/主人手动叫醒/持仓事件/盯盘条件命中），有权益；
  * REVIEW 是复盘，reasoning 装的是复盘全文，没权益；
@@ -44,7 +44,7 @@ public class AiTraderDecision {
 
     private Integer roundNo;
 
-    /** 触发本次唤醒的K线边界时刻(ms)；ALERT/EVENT/WATCH 行是真正醒来的时刻，非边界 */
+    /** 触发本次唤醒的K线边界时刻(ms)；MANUAL/ALERT/EVENT/WATCH 行是真正醒来的时刻，PRESET 行是命中时刻，都不是边界 */
     private Long wakeTime;
 
     private String intervalCode;
