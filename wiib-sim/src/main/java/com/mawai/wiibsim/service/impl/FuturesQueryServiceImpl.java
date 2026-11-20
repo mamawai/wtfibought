@@ -18,7 +18,6 @@ import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesPrices;
 import com.mawai.wiibsim.service.FuturesQueryService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -31,7 +30,6 @@ import java.util.Map;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.buildOrderResponse;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.calculatePnl;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FuturesQueryServiceImpl implements FuturesQueryService {
@@ -70,14 +68,10 @@ public class FuturesQueryServiceImpl implements FuturesQueryService {
         Map<Long, BigDecimal> realizedMap = sumRealizedByPosition(positions);
 
         for (FuturesPosition pos : positions) {
-            try {
-                BigDecimal markPrice = prices.mark(pos.getSymbol());
-                FuturesPositionDTO dto = buildPositionDTO(pos, markPrice, crossAccount);
-                dto.setRealizedPnl(realizedMap.getOrDefault(pos.getId(), BigDecimal.ZERO));
-                result.add(dto);
-            } catch (Exception e) {
-                log.warn("查询仓位价格失败 posId={}", pos.getId(), e);
-            }
+            BigDecimal markPrice = prices.mark(pos.getSymbol());
+            FuturesPositionDTO dto = buildPositionDTO(pos, markPrice, crossAccount);
+            dto.setRealizedPnl(realizedMap.getOrDefault(pos.getId(), BigDecimal.ZERO));
+            result.add(dto);
         }
 
         return result;
