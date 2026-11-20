@@ -73,7 +73,7 @@ wiib-sim / wiib-agent（消费进程）  从 Redis 消费 feed 写入的行情
 
 ```text
 Polymarket live-data -> Chainlink BTC 60s TWAP -> /topic/prediction/price（官网当前价：价格线 + 涨跌）
-Polymarket CLOB      -> UP/DOWN bid/ask（首条 book 快照种价，买一 0 / 卖一 1 是空档，删掉）-> /topic/prediction/market
+Polymarket CLOB      -> UP/DOWN bid/ask（首条 book 快照种价，买一 0 / 卖一 1 是空档，记为空）-> Redis 盘口快照(prediction:quote) + /topic/prediction/market
 5min window rotation -> 回合事件(lock/create/syncopen/settle)走 Redis Stream 保 FIFO
                      -> sim 锁上轮 -> 取开/收盘价 -> 结算下注
 ```
@@ -84,7 +84,7 @@ Polymarket CLOB      -> UP/DOWN bid/ask（首条 book 快照种价，买一 0 / 
 
 手续费按 Polymarket 吃单费公式（`PredictionFee`）：`fee = 份数 × 0.07 × p × (1 − p)`，买卖都按吃单算。
 
-feed 收到盘口消息只记内存，每 50ms 一拍：先看要不要换回合，再把有变化的盘口写 Redis、推给页面；每秒补推一次当前盘口。按消息自带时间戳，CLOB 盘口落后 3 秒、TWAP 落后 5 秒就换一条连接。
+feed 收到盘口消息只记内存，每 50ms 一拍：先看要不要换回合，再把有变化的盘口写进 Redis 盘口快照、推给页面；每秒补推一次当前盘口，CLOB 连着时顺带整份重写快照当心跳。快照是一个键（所属回合 + UP/DOWN 买一卖一，一次写入，TTL 10 秒），回合跟着 token 一起换；sim 买卖和估值只认当前回合的快照，过期了或还是上一回合的都当没有报价。按消息自带时间戳，CLOB 盘口落后 3 秒、TWAP 落后 5 秒就换一条连接。
 
 ### 资金费率
 

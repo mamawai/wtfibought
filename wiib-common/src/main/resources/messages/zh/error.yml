@@ -65,7 +65,7 @@ error:
   predictionRoundLocked: 回合已锁定
   predictionRoundNotFound: 回合不存在
   predictionBetNotFound: 下注不存在
-  predictionPriceUnavailable: 无法获取BTC价格
+  predictionPriceUnavailable: 暂时拿不到这一回合的 UP/DOWN 报价，请稍后再试
   predictionAmountInvalid: 金额无效
   # 钱包错误码 1950+
   gameBalanceNotEnough: 游戏钱包余额不足

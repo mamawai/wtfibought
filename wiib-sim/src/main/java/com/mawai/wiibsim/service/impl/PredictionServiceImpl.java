@@ -131,7 +131,7 @@ public class PredictionServiceImpl implements PredictionService {
 
         // 当前价值 = 现在卖掉拿多少，只有本回合的注单有
         if ("ACTIVE".equals(bet.getStatus()) && bet.getWindowStart() == currentWindowStart()) {
-            BigDecimal valPrice = cacheService.getPredictionBid(bet.getSide());
+            BigDecimal valPrice = cacheService.getPredictionBid(bet.getWindowStart(), bet.getSide());
             if (valPrice != null) {
                 resp.setCurrentValue(bet.getContracts().multiply(valPrice).setScale(4, RoundingMode.HALF_UP));
             }
@@ -167,17 +167,13 @@ public class PredictionServiceImpl implements PredictionService {
             throw new BizException(ErrorCode.PREDICTION_AMOUNT_INVALID);
         }
 
-        int remaining = remainingSeconds();
-        if (remaining <= 0) {
-            throw new BizException(ErrorCode.PREDICTION_ROUND_LOCKED);
-        }
-
-        BigDecimal price = cacheService.getPredictionAsk(side);
+        long ws = currentWindowStart();
+        // 只认这一回合的卖一：快照没了、还是上一回合的，都算没有报价
+        BigDecimal price = cacheService.getPredictionAsk(ws, side);
         if (price == null) {
             throw new BizException(ErrorCode.PREDICTION_PRICE_UNAVAILABLE);
         }
 
-        long ws = currentWindowStart();
         String lockKey = "prediction:buy:" + ws + ":" + userId;
 
         // 广播刻意留在事务外——发出去就撤不回，事务回滚了广播已经出去就是假消息
@@ -237,15 +233,14 @@ public class PredictionServiceImpl implements PredictionService {
                     throw new BizException(ErrorCode.PREDICTION_BET_NOT_FOUND);
                 }
 
-                // 卖价取的是全局当前盘口（不分回合），所以只卖得掉当前窗口这一回合的注单：
-                // 巡检还没扫到的那几分钟里，卡在 OPEN 的旧回合结果早已定死，不挡就是照今天的价卖已知结果
+                // 只卖得掉当前窗口这一回合的注单：巡检还没扫到的那几分钟里，卡在 OPEN 的旧回合结果早已定死
                 PredictionRound round = roundMapper.selectById(bet.getRoundId());
                 if (round == null || !"OPEN".equals(round.getStatus())
                         || round.getWindowStart() != currentWindowStart()) {
                     throw new BizException(ErrorCode.PREDICTION_ROUND_LOCKED);
                 }
 
-                BigDecimal currentPrice = cacheService.getPredictionBid(bet.getSide());
+                BigDecimal currentPrice = cacheService.getPredictionBid(round.getWindowStart(), bet.getSide());
                 if (currentPrice == null) {
                     throw new BizException(ErrorCode.PREDICTION_PRICE_UNAVAILABLE);
                 }
@@ -389,7 +384,7 @@ public class PredictionServiceImpl implements PredictionService {
                     active++;
                     activeCost = activeCost.add(bet.getCost());
                     activeValue = activeValue.add(AssetValuationService.predictionBetValue(
-                            bet, cacheService.getPredictionBid(bet.getSide()), ws).setScale(4, RoundingMode.HALF_UP));
+                            bet, cacheService.getPredictionBid(ws, bet.getSide()), ws).setScale(4, RoundingMode.HALF_UP));
                 }
                 default -> { }
             }
@@ -526,7 +521,7 @@ public class PredictionServiceImpl implements PredictionService {
                                             BigDecimal startPrice, BigDecimal endPrice) {
         // 【事务粒度：整个回合一个事务，不是每个用户一个】
         // 这里不是"一批互相独立的任务"，而是一件事：回合定盘 + 全部注单改状态 + 全部派彩。
-        // 注单状态是 settleDraw/settleWon/settleLost 三条批量 UPDATE 一次刷完的，
+        // 注单状态是 settleWon/settleLost 两条批量 UPDATE 一次刷完的，
         // 拆成按用户提交的话，状态先落地、派彩后失败 = 有人标了 WON 却没拿到钱，
         // 而 casSettleRound 已把回合置 SETTLED，这笔钱静默丢掉。
         // 失败整批回滚回 LOCKED，回合留给 sweepStuckRounds 每 5 分钟重跑；

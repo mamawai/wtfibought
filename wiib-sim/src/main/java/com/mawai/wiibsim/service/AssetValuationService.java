@@ -91,7 +91,7 @@ public class AssetValuationService {
         return predictionMarketValue(bets, new java.util.HashMap<>());
     }
 
-    /** 批量场景复用：bidBySide 作为跨用户的 side→bid 缓存(可含 null 值)，缺的内部补查。 */
+    /** 批量场景复用：bidBySide 作为跨用户的 side→当前回合买一 缓存(可含 null 值)，缺的内部补查。 */
     public BigDecimal predictionMarketValue(List<PredictionBet> bets, Map<String, BigDecimal> bidBySide) {
         if (bets == null || bets.isEmpty()) {
             return BigDecimal.ZERO;
@@ -101,7 +101,7 @@ public class AssetValuationService {
         for (PredictionBet bet : bets) {
             String side = bet.getSide();
             if (!bidBySide.containsKey(side)) {
-                bidBySide.put(side, cacheService.getPredictionBid(side));
+                bidBySide.put(side, cacheService.getPredictionBid(ws, side));
             }
             total = total.add(predictionBetValue(bet, bidBySide.get(side), ws));
         }

@@ -37,14 +37,16 @@ class CacheServiceTest {
         ValueOperations<String, String> valueOps = mock(ValueOperations.class);
         CacheService cache = withRedis(valueOps);
 
-        cache.putPredictionAsk("UP", new BigDecimal("0.55"));
-        verify(valueOps).set(eq("prediction:UP:ask"), eq("0.55"), any(Duration.class));
+        cache.putPredictionQuote(new CacheService.PredictionQuote(1700000000L,
+                new BigDecimal("0.54"), new BigDecimal("0.55"), null, new BigDecimal("0.46")));
+        ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
+        verify(valueOps).set(eq("prediction:quote"), json.capture(), any(Duration.class));
 
-        when(valueOps.get("prediction:UP:ask")).thenReturn("0.55");
-        assertThat(cache.getPredictionAsk("UP")).isEqualByComparingTo("0.55");
-
-        when(valueOps.get("prediction:DOWN:bid")).thenReturn(null);
-        assertThat(cache.getPredictionBid("DOWN")).isNull();
+        when(valueOps.get("prediction:quote")).thenReturn(json.getValue());
+        assertThat(cache.getPredictionAsk(1700000000L, "UP")).isEqualByComparingTo("0.55");
+        assertThat(cache.getPredictionBid(1700000000L, "DOWN")).isNull();
+        // 快照是上一回合的，这一回合两边都没有报价
+        assertThat(cache.getPredictionAsk(1700000300L, "UP")).isNull();
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.PredictionBuyRequest;
 import com.mawai.wiibcommon.entity.PredictionBet;
 import com.mawai.wiibcommon.entity.PredictionRound;
+import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.PolymarketPriceClient;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
@@ -220,13 +221,14 @@ class PredictionSettleTest {
         verify(roundMapper).casSettleRound(1L, new BigDecimal("110"), "UP");
     }
 
-    /** 买入：份数 = 金额 ÷ 卖价，手续费在金额之外另扣，扣的是 cost + fee */
+    /** 买入：份数 = 金额 ÷ 本回合卖一，手续费在金额之外另扣，扣的是 cost + fee */
     @Test
     void 买入按官方公式在金额之外另扣手续费() {
         when(redisLockUtil.executeWithLock(anyString(), anyLong(), anyLong(), any()))
                 .thenAnswer(inv -> inv.getArgument(3, Supplier.class).get());
-        when(cacheService.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.50"));
-        PredictionRound open = lockedRound(new BigDecimal("100"), windowAgo(0));
+        long ws = windowAgo(0);
+        when(cacheService.getPredictionAsk(ws, "UP")).thenReturn(new BigDecimal("0.50"));
+        PredictionRound open = lockedRound(new BigDecimal("100"), ws);
         open.setStatus("OPEN");
         when(roundMapper.selectOne(any())).thenReturn(open);
 
@@ -239,16 +241,31 @@ class PredictionSettleTest {
         verify(userService).updateGameBalance(eq(7L), argThat(v -> v.compareTo(new BigDecimal("-10.35")) == 0));
     }
 
-    /** 卖出：到手 = 份数 × 买价 − 手续费 */
+    /** feed 跨窗停机，快照还停在上一回合：上一回合收官时的卖一不能拿来成交 */
+    @Test
+    void 只有上一回合的报价时拒绝买入() {
+        when(cacheService.getPredictionAsk(windowAgo(1), "UP")).thenReturn(new BigDecimal("0.01"));
+
+        PredictionBuyRequest req = new PredictionBuyRequest();
+        req.setSide("UP");
+        req.setAmount(new BigDecimal("10"));
+        assertThatThrownBy(() -> service.buy(7L, req))
+                .isInstanceOf(BizException.class)
+                .extracting("code").isEqualTo(ErrorCode.PREDICTION_PRICE_UNAVAILABLE.getCode());
+        verifyNoInteractions(userService);
+    }
+
+    /** 卖出：到手 = 份数 × 本回合买一 − 手续费 */
     @Test
     void 卖出到手额扣掉官方公式的手续费() {
         when(redisLockUtil.executeWithLock(anyString(), anyLong(), anyLong(), any()))
                 .thenAnswer(inv -> inv.getArgument(3, Supplier.class).get());
         when(betMapper.selectById(9L)).thenReturn(bet("ACTIVE", new BigDecimal("20"), new BigDecimal("10")));
-        PredictionRound open = lockedRound(new BigDecimal("100"), windowAgo(0));
+        long ws = windowAgo(0);
+        PredictionRound open = lockedRound(new BigDecimal("100"), ws);
         open.setStatus("OPEN");
         when(roundMapper.selectById(1L)).thenReturn(open);
-        when(cacheService.getPredictionBid("UP")).thenReturn(new BigDecimal("0.60"));
+        when(cacheService.getPredictionBid(ws, "UP")).thenReturn(new BigDecimal("0.60"));
         when(betMapper.casSell(eq(9L), any())).thenReturn(1);
 
         service.sell(7L, 9L, null);

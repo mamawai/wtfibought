@@ -30,7 +30,7 @@ public class CacheService {
     private final Cache<String, BigDecimal> cryptoPriceCache = Caffeine.newBuilder()
             .maximumSize(50).expireAfterWrite(Duration.ofSeconds(1)).build();
 
-    // prediction 缓存改 Redis 后端（feed 写 sim 读跨进程），窗口/盘口数据靠 TTL 自动清理
+    // prediction 缓存走 Redis（feed 写 sim 读跨进程），开收盘价、官方窗口靠 TTL 自动清理
     private static final Duration PREDICTION_TTL = Duration.ofMinutes(20);
 
 
@@ -103,39 +103,39 @@ public class CacheService {
         return result;
     }
 
-    // ==================== Polymarket UP/DOWN 价格 ====================
+    // ==================== Polymarket UP/DOWN 盘口快照 ====================
 
-    /** null = 这一边没有买一，删掉 */
-    public void putPredictionBid(String side, BigDecimal bid) {
-        putOrDelete("prediction:" + side + ":bid", bid);
+    /** 一个回合 UP/DOWN 的买一卖一，null = 这一档空 */
+    public record PredictionQuote(long windowStart, BigDecimal upBid, BigDecimal upAsk,
+                                  BigDecimal downBid, BigDecimal downAsk) {}
+
+    private static final String PREDICTION_QUOTE_KEY = "prediction:quote";
+    // feed 盘口一变就写、CLOB 连着时每秒重写一次；停写 10 秒就没了
+    private static final Duration PREDICTION_QUOTE_TTL = Duration.ofSeconds(10);
+
+    public void putPredictionQuote(PredictionQuote quote) {
+        stringRedisTemplate.opsForValue().set(PREDICTION_QUOTE_KEY, MAPPER.writeValueAsString(quote), PREDICTION_QUOTE_TTL);
     }
 
-    public BigDecimal getPredictionBid(String side) {
-        String v = stringRedisTemplate.opsForValue().get("prediction:" + side + ":bid");
-        return v != null ? new BigDecimal(v) : null;
+    /** 这个回合 side 那边的买一；快照没了、是别的回合、这一档空都回 null */
+    public BigDecimal getPredictionBid(long windowStart, String side) {
+        PredictionQuote q = getPredictionQuote(windowStart);
+        if (q == null) return null;
+        return "UP".equals(side) ? q.upBid() : q.downBid();
     }
 
-    /** null = 这一边没有卖一，删掉 */
-    public void putPredictionAsk(String side, BigDecimal ask) {
-        putOrDelete("prediction:" + side + ":ask", ask);
+    /** 这个回合 side 那边的卖一；快照没了、是别的回合、这一档空都回 null */
+    public BigDecimal getPredictionAsk(long windowStart, String side) {
+        PredictionQuote q = getPredictionQuote(windowStart);
+        if (q == null) return null;
+        return "UP".equals(side) ? q.upAsk() : q.downAsk();
     }
 
-    private void putOrDelete(String key, BigDecimal price) {
-        if (price == null) {
-            stringRedisTemplate.delete(key);
-        } else {
-            stringRedisTemplate.opsForValue().set(key, price.toPlainString(), PREDICTION_TTL);
-        }
-    }
-
-    public BigDecimal getPredictionAsk(String side) {
-        String v = stringRedisTemplate.opsForValue().get("prediction:" + side + ":ask");
-        return v != null ? new BigDecimal(v) : null;
-    }
-
-    public void clearPredictionPrices() {
-        stringRedisTemplate.delete(java.util.List.of(
-                "prediction:UP:bid", "prediction:UP:ask", "prediction:DOWN:bid", "prediction:DOWN:ask"));
+    private PredictionQuote getPredictionQuote(long windowStart) {
+        String v = stringRedisTemplate.opsForValue().get(PREDICTION_QUOTE_KEY);
+        if (v == null) return null;
+        PredictionQuote q = MAPPER.readValue(v, PredictionQuote.class);
+        return q.windowStart() == windowStart ? q : null;
     }
 
     // ==================== 加密货币价格 ====================

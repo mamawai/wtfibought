@@ -8,6 +8,8 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.data.redis.connection.RedisStreamCommands.TrimOptions;
+import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -36,7 +38,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * Polymarket WS 客户端
  * <p>
- * 1. live-data WS: Chainlink BTC 60 秒 TWAP（官网显示的当前价）+ BTC 现货<br/>
+ * 1. live-data WS: Chainlink BTC 60 秒 TWAP（官网显示的当前价）<br/>
  * 2. CLOB WS: UP/DOWN 实时盘口价格 + 实时成交动态
  * <p>
  * 我们透传这些真实数据到前端展示，模拟交易按 Polymarket 实时价格成交。
@@ -67,8 +69,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *     </li>
  *     <li>
  *         {@link #init()} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
- *         再 {@link #flushBook()} 把有变化的盘口写 Redis、广播 {@code /topic/prediction/market}；
- *         每秒一次 {@link #repushBook()}，给刚打开页面的人补推一次当前盘口。
+ *         再 {@link #flushBook()} 把有变化的盘口写进 Redis 盘口快照（带回合）、广播 {@code /topic/prediction/market}；
+ *         每秒一次 {@link #repushBook()}，给刚打开页面的人补推一次当前盘口，CLOB 连着时顺带整份重写快照当心跳。
  *     </li>
  *     <li>
  *         {@link #init()} 启动虚拟线程执行 {@link #prepareCurrentMarket(long)}。
@@ -82,9 +84,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *         从 {@code outcomes} 与 {@code clobTokenIds} 的相同下标解析出 UP/DOWN token。
  *     </li>
  *     <li>
- *         {@link #refreshMarketAssets(long)} 拿到 UP/DOWN token 后写入
- *         {@code currentUpAssetId/currentDownAssetId}，再调用 {@link #maybeConnectClobWs()}。
- *         只有两个 token 都存在且 CLOB 未连接时，才真正执行 {@code clobWs.connect()}。
+ *         {@link #refreshMarketAssets(long)} 拿到 UP/DOWN token 后连同窗口起点一起换进 {@code round}，
+ *         再调用 {@link #maybeConnectClobWs()}。
+ *         只有 token 已就绪且 CLOB 未连接时，才真正执行 {@code clobWs.connect()}。
  *     </li>
  *     <li>
  *         CLOB 连接成功后回调 {@link #onClobConnected(WebSocket)}。
@@ -135,8 +137,8 @@ public class PolymarketWsClient implements SmartLifecycle {
 
     // 当前回合
     private volatile String lastSubscribedSlug;
-    private volatile String currentUpAssetId;
-    private volatile String currentDownAssetId;
+    /** 当前回合的窗口起点和 UP/DOWN token，一起换；盘口快照的窗口取自它。token 还没取到时是 null */
+    private volatile Round round;
     /** 盘口最近一次变化的时刻，取消息自带的 timestamp（Polymarket 那边的时间）：推送落后几秒它就旧几秒，CLOB 判落后用 */
     private volatile long bookUpdatedAtMs;
     /** 盘口内存最新值，按 token 存：WS 每条消息只改这里，每拍再写 Redis、推给页面 */
@@ -150,6 +152,8 @@ public class PolymarketWsClient implements SmartLifecycle {
     private record Top(BigDecimal bid, BigDecimal ask) {
         static final Top EMPTY = new Top(null, null);
     }
+
+    private record Round(long windowStart, String upId, String downId) {}
 
     private static final String LIVE_DATA_URL = "wss://ws-live-data.polymarket.com/";
     private static final String CLOB_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
@@ -210,23 +214,31 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
-    /** 盘口有变化就写 Redis、推给页面 */
+    /** 盘口有变化就写 Redis 快照、推给页面 */
     private void flushBook() {
         if (!bookDirty) return;
         bookDirty = false;
-        Top up = top(currentUpAssetId);
-        Top down = top(currentDownAssetId);
-        cacheService.putPredictionBid("UP", up.bid());
-        cacheService.putPredictionAsk("UP", up.ask());
-        cacheService.putPredictionBid("DOWN", down.bid());
-        cacheService.putPredictionAsk("DOWN", down.ask());
+        Round r = round;
+        if (r == null) return;
+        Top up = top(r.upId());
+        Top down = top(r.downId());
+        putQuote(r, up, down);
         broadcastBook(up, down);
     }
 
-    /** 给刚打开页面的人补推一次当前盘口；这一回合还没收到过盘口不推 */
+    /** 给刚打开页面的人补推一次当前盘口，CLOB 连着时整份重写 Redis 快照兼作心跳；这一回合还没收到过盘口不推 */
     private void repushBook() {
-        if (bookUpdatedAtMs <= 0) return;
-        broadcastBook(top(currentUpAssetId), top(currentDownAssetId));
+        Round r = round;
+        if (r == null || bookUpdatedAtMs <= 0) return;
+        Top up = top(r.upId());
+        Top down = top(r.downId());
+        if (clobWs.isConnected()) putQuote(r, up, down);
+        broadcastBook(up, down);
+    }
+
+    private void putQuote(Round r, Top up, Top down) {
+        cacheService.putPredictionQuote(new CacheService.PredictionQuote(
+                r.windowStart(), up.bid(), up.ask(), down.bid(), down.ask()));
     }
 
     /** 连接活够 10 秒、数据还旧过 maxLagMs，就立即重连换一条；重连失败走 WsConnection 自己的退避 */
@@ -242,8 +254,7 @@ public class PolymarketWsClient implements SmartLifecycle {
     }
 
     private Top top(String assetId) {
-        Top t = assetId == null ? null : tops.get(assetId);
-        return t != null ? t : Top.EMPTY;
+        return tops.getOrDefault(assetId, Top.EMPTY);
     }
 
     @Override
@@ -267,16 +278,15 @@ public class PolymarketWsClient implements SmartLifecycle {
     }
 
     private void onClobConnected(WebSocket ws) {
-        String upId = currentUpAssetId;
-        String downId = currentDownAssetId;
-        if (upId == null || downId == null) { clobWs.close(); return; }
+        Round r = round;
+        if (r == null) { clobWs.close(); return; }
 
         ObjectNode msg = MAPPER.createObjectNode();
-        msg.putArray("assets_ids").add(upId).add(downId);
+        msg.putArray("assets_ids").add(r.upId()).add(r.downId());
         msg.put("type", "market");
         msg.put("custom_feature_enabled", true);
         ws.sendText(MAPPER.writeValueAsString(msg), true);
-        log.info("已订阅CLOB market: upAssetId={}, downAssetId={}", upId, downId);
+        log.info("已订阅CLOB market: upAssetId={}, downAssetId={}", r.upId(), r.downId());
     }
 
     private void sendWsPing(WsConnection connection) {
@@ -310,17 +320,15 @@ public class PolymarketWsClient implements SmartLifecycle {
 
             lastSubscribedSlug = newSlug;
             long prevWindowStart = windowStart - WINDOW_SECONDS;
-            currentUpAssetId = null;
-            currentDownAssetId = null;
+            round = null;
 
             // 发事件：锁定上一轮 OPEN→LOCKED，禁止sell（sim 消费触发）
             publishRoundEvent("lock", prevWindowStart);
 
-            // 关闭旧的 CLOB WS，清除旧盘口价格并通知前端
+            // 关闭旧的 CLOB WS，清掉内存里的旧盘口并通知前端（Redis 快照带着窗口，不用清）
             clobWs.close();
             tops.clear();
             bookUpdatedAtMs = 0;
-            cacheService.clearPredictionPrices();
             broadcastBook(Top.EMPTY, Top.EMPTY);
 
             // 发事件：创建新回合（startPrice可能为null，等openPrice回填）
@@ -336,36 +344,36 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
-    /** 回合事件发 Redis Stream（feed→sim）。顺序敏感(lock→create→settle)，Stream 保 FIFO；sim 侧 PredictionRoundConsumer 消费触发账本。 */
+    /** 回合事件发 Redis Stream（feed→sim），写的时候顺带近似裁剪。顺序敏感(lock→create→settle)，Stream 保 FIFO；sim 侧 PredictionRoundConsumer 消费触发账本。 */
     private void publishRoundEvent(String type, long windowStart) {
         try {
             Map<String, String> fields = new LinkedHashMap<>();
             fields.put("type", type);
             fields.put("windowStart", Long.toString(windowStart));
-            var ops = redisTemplate.opsForStream();
-            ops.add(StreamRecords.newRecord().in(PredictionStreamChannels.ROUND_STREAM).ofMap(fields));
-            ops.trim(PredictionStreamChannels.ROUND_STREAM, ROUND_STREAM_MAXLEN, true);  // 近似裁剪，防无限增长
+            redisTemplate.opsForStream().add(StreamRecords.newRecord().in(PredictionStreamChannels.ROUND_STREAM).ofMap(fields),
+                    XAddOptions.trim(TrimOptions.maxLen(ROUND_STREAM_MAXLEN).approximate()));
         } catch (Exception e) {
             log.error("[PredictionRound] 写 Stream 失败 type={} windowStart={} msg={}", type, windowStart, e.toString());
         }
     }
 
     private void prepareCurrentMarket(long windowStart) {
-        try {
-            if (windowStart == currentWindowStart()) {
-                lastSubscribedSlug = eventSlug(windowStart);
-            }
-            publishRoundEvent("create", windowStart);
-            Thread.startVirtualThread(() -> pollOpenPrice(windowStart));
-            pollMarketAssets(windowStart);
-        } catch (Exception e) {
-            log.warn("初始化当前预测市场失败: windowStart={}, err={}", windowStart, e.getMessage());
+        if (windowStart == currentWindowStart()) {
+            lastSubscribedSlug = eventSlug(windowStart);
         }
+        publishRoundEvent("create", windowStart);
+        Thread.startVirtualThread(() -> pollOpenPrice(windowStart));
+        pollMarketAssets(windowStart);
     }
 
     private void pollMarketAssets(long windowStart) {
         while (!shutdown.get() && windowStart == currentWindowStart()) {
-            if (refreshMarketAssets(windowStart)) return;
+            try {
+                if (refreshMarketAssets(windowStart)) return;
+            } catch (Exception e) {
+                // 这次没取到，2 秒后再试
+                log.warn("CLOB token获取出错: slug={}, err={}", eventSlug(windowStart), e.getMessage());
+            }
             try { Thread.sleep(2_000); } catch (InterruptedException e) { return; }
         }
         log.warn("当前回合CLOB token获取失败: slug={}", eventSlug(windowStart));
@@ -407,9 +415,9 @@ public class PolymarketWsClient implements SmartLifecycle {
         if (upId == null || downId == null) return false;
         if (windowStart != currentWindowStart()) return false;
 
-        boolean changed = !upId.equals(currentUpAssetId) || !downId.equals(currentDownAssetId);
-        currentUpAssetId = upId;
-        currentDownAssetId = downId;
+        Round next = new Round(windowStart, upId, downId);
+        boolean changed = !next.equals(round);
+        round = next;
         if (changed && clobWs.isConnected()) {
             clobWs.close();
         }
@@ -568,7 +576,7 @@ public class PolymarketWsClient implements SmartLifecycle {
     // ==================== CLOB WS ====================
 
     private void maybeConnectClobWs() {
-        if (currentUpAssetId == null || currentDownAssetId == null || clobWs.isConnected()) return;
+        if (round == null || clobWs.isConnected()) return;
         clobWs.connect();
     }
 
@@ -653,9 +661,10 @@ public class PolymarketWsClient implements SmartLifecycle {
     }
 
     private String sideForAsset(String assetId) {
-        if (assetId == null) return null;
-        if (assetId.equals(currentUpAssetId)) return "UP";
-        if (assetId.equals(currentDownAssetId)) return "DOWN";
+        Round r = round;
+        if (assetId == null || r == null) return null;
+        if (assetId.equals(r.upId())) return "UP";
+        if (assetId.equals(r.downId())) return "DOWN";
         return null;
     }
 
