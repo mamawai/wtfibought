@@ -388,7 +388,7 @@ public class TraderScheduler {
         drainTriggers(traderId);
     }
 
-    /** trader 已删：摘掉两份 traderId 记账。inFlight 不用摘——删除前已用 {@link #isBusy} 拦掉在途 */
+    /** trader 已删：摘掉两份 traderId 记账。inFlight 不在这摘——删除那边全程 {@link #tryOccupy} 占着位子，删完在 finally 里 {@link #release} */
     public void forget(long traderId) {
         firedBoundary.remove(traderId);
         pendingTriggers.remove(traderId);

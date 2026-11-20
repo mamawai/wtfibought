@@ -14,7 +14,7 @@ trader:
   # Deleting a trader: irreversible, name must match, refused mid-wake
   delete:
     nameMismatch: The name does not match - type this trader's name exactly
-    busy: It is waking up right now - delete once this round finishes
+    busy: It is waking up or being reviewed right now - delete once that finishes
 
   # Resetting into a new round: refused mid-wake or mid-review, and when the old account cannot be closed out
   reset:

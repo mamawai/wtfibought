@@ -84,7 +84,7 @@ class TraderServiceTest {
             new PromptCatalog(), langResolver, new MessageCatalog(), ledger, new TransactionTemplate(txManager));
 
     {
-        // 重置要占 trader 的位子，默认占得到
+        // 重置、删除要占 trader 的位子，默认占得到
         when(scheduler.tryOccupy(anyLong())).thenReturn(true);
         // 插行时库发 id
         when(traderMapper.insert(any(AiTrader.class))).thenAnswer(inv -> {
@@ -521,9 +521,9 @@ class TraderServiceTest {
     @Test
     void deleteRefusedWhileWaking() {
         deletable();
-        when(scheduler.isBusy(7L)).thenReturn(true);
+        when(scheduler.tryOccupy(7L)).thenReturn(false);
 
-        assertThat(service.delete(1L, 7L, "alpha")).contains("正在唤醒中");
+        assertThat(service.delete(1L, 7L, "alpha")).contains("正在唤醒或复盘中");
 
         verify(traderMapper, never()).deleteById(org.mockito.ArgumentMatchers.anyLong());
         verify(decisionMapper, never()).delete(any());

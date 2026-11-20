@@ -372,28 +372,33 @@ public class TraderService {
         if (!t.getName().equals(confirmName)) {
             return messages.get("trader.delete.nameMismatch");
         }
-        if (scheduler.isBusy(t.getId())) {
+        // 占住这个 trader 的位子：有唤醒或复盘在跑就拒，删除期间新的也进不来
+        if (!scheduler.tryOccupy(t.getId())) {
             return messages.get("trader.delete.busy");
         }
-        // 本地先清干净：ai_trader 行没了调度器就找不到它，之后销 sim 账户不会跟在途交易撞上
-        decisionMapper.delete(new LambdaQueryWrapper<AiTraderDecision>()
-                .eq(AiTraderDecision::getTraderId, t.getId()));
-        planStore.purgeAll(t.getId());
-        watchStore.purgeAll(t.getId());
-        ledger.purgeAll(t.getId());
-        traderMapper.deleteById(t.getId());
-        modelFactory.evict(t.getId());
-        scheduler.forget(t.getId());
-        hub.forget(t.getId());
-        // 每局一个子账户，从 r1 扫一遍：出保留窗口的那些 purgeExpiredRounds 早清过，
-        // sim 侧销户幂等删不存在的不报错，顺带把历史漏删的孤儿一并收走。
-        // 单局失败不阻断——本地已经删净，剩下的孤儿账户无业务引用，同 purgeExpiredRounds 口径
-        for (int round = 1; round <= t.getRoundNo(); round++) {
-            try {
-                simTradeClient.deleteAccount(accountName(t.getId(), round));
-            } catch (Exception e) {
-                log.warn("[Trader] 删除时 sim 子账户销户失败 traderId={} round={}", t.getId(), round, e);
+        try {
+            // 本地先清干净：ai_trader 行没了调度器就找不到它，之后销 sim 账户不会跟在途交易撞上
+            decisionMapper.delete(new LambdaQueryWrapper<AiTraderDecision>()
+                    .eq(AiTraderDecision::getTraderId, t.getId()));
+            planStore.purgeAll(t.getId());
+            watchStore.purgeAll(t.getId());
+            ledger.purgeAll(t.getId());
+            traderMapper.deleteById(t.getId());
+            modelFactory.evict(t.getId());
+            scheduler.forget(t.getId());
+            hub.forget(t.getId());
+            // 每局一个子账户，从 r1 扫一遍：出保留窗口的那些 purgeExpiredRounds 早清过，
+            // sim 侧销户幂等删不存在的不报错，顺带把历史漏删的孤儿一并收走。
+            // 单局失败不阻断——本地已经删净，剩下的孤儿账户无业务引用，同 purgeExpiredRounds 口径
+            for (int round = 1; round <= t.getRoundNo(); round++) {
+                try {
+                    simTradeClient.deleteAccount(accountName(t.getId(), round));
+                } catch (Exception e) {
+                    log.warn("[Trader] 删除时 sim 子账户销户失败 traderId={} round={}", t.getId(), round, e);
+                }
             }
+        } finally {
+            scheduler.release(t.getId());
         }
         log.info("[Trader] 删除 traderId={} userId={} rounds={}", t.getId(), userId, t.getRoundNo());
         return null;
