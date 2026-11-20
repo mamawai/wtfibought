@@ -55,7 +55,7 @@ public class MarketDataService {
 
     /**
      * 两个缓存都得有上限：入口是宽松归一（{@link QuantConstants#normalizeSymbolLenient}），
-     * <b>不校验白名单</b>——模型问哪个币就存哪个，采集失败的 unavailable 也照样进缓存。
+     * <b>不校验白名单</b>——模型问哪个币就存哪个。
      * 裸 Map 只增不减，等于把"存什么"的决定权交给了模型。
      * <p>
      * 整装快照给 32：一条里装着各周期 K 线原文加全套特征，是这里最占地方的东西，

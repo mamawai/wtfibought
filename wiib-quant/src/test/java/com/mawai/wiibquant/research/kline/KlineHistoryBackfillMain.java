@@ -25,7 +25,7 @@ import java.util.Locale;
 /**
  * 手动本地 K 线补齐入口。
  *
- * <p>默认补：ETHUSDT 合约 5m，北京时间 [2026-06-17 12:00:00, 2026-06-23 13:00:00)。</p>
+ * <p>补合约 5m；不传参时补哪些币、哪段时间（北京时间）看 {@code Settings.from} 里的默认值。</p>
  *
  * <p>IDEA 直接运行 main 即可；也可用 VM options 覆盖：</p>
  * <pre>

@@ -29,7 +29,7 @@ public interface TradingOperations {
                         String memo);
 
     /**
-     * 结果型开仓。默认复用旧字符串接口并尽量解析 positionId，老实现无需立即改动。
+     * 结果型开仓。默认复用字符串接口，只判成败，positionId 为 null。
      */
     default OpenResult openPositionWithResult(String side, BigDecimal quantity, Integer leverage,
                                               String orderType, BigDecimal limitPrice,

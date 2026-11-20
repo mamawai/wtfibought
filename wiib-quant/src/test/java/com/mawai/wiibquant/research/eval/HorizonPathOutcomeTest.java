@@ -1,9 +1,7 @@
 package com.mawai.wiibquant.research.eval;
 
-import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,13 +23,5 @@ class HorizonPathOutcomeTest {
         assertThat(summary.avgDirectionalChangeBps()).isCloseTo(150.0, within(1e-9));
         assertThat(summary.avgMaxFavorableBps()).isCloseTo(350.0, within(1e-9));
         assertThat(summary.avgMaxAdverseBps()).isCloseTo(35.0, within(1e-9));
-    }
-
-    private static KlineBar bar(String open, String high, String low, String close) {
-        return new KlineBar(0L, 0L, bd(open), bd(high), bd(low), bd(close), BigDecimal.ONE);
-    }
-
-    private static BigDecimal bd(String value) {
-        return new BigDecimal(value);
     }
 }

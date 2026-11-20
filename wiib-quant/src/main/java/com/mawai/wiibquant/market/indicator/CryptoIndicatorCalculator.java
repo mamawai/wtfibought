@@ -913,8 +913,8 @@ public class CryptoIndicatorCalculator {
      * [5] OpenTime  [6] CloseTime
      * </pre>
      *
-     * <p>注意：{@link #calcAll} 的指标计算只用前 4 个字段（H/L/C/V），时间字段仅用于
-     * MaSlope 退出端按闭合 K 线计数；TakerBuy 字段由 {@link #takerBuyRatio} 单独消费。</p>
+     * <p>注意：{@link #calcAll} 的指标计算只用前 4 个字段（H/L/C/V）；收盘时间给
+     * BuildFeaturesBuilder 剔掉还在走的末根；TakerBuy 字段由 {@link #takerBuyRatio} 单独消费。</p>
      */
     public static List<BigDecimal[]> parseKlines(String json) {
         if (json == null || json.isBlank()) return List.of();

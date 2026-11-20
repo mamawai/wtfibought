@@ -96,12 +96,12 @@ class KlineStructureCalculatorTest {
     void swingsFindLocalExtremesOnly() {
         List<Map<String, Object>> swings = list(compute(zigzag()), "swings");
 
-        // window=6 时窗口不完整（13 根 < 6*2+1），换成手动指定的 3
+        // 默认 window=6：13 = 6×2+1，只有第 6 根左右各凑得齐 6 根，换成手动指定的 3
         Map<String, Object> out = KlineStructureCalculator.compute(zigzag(),
                 new KlineStructureCalculator.Params(3, 3, 5, 2, 3, List.of(20, 60), 14, 8, 4, 5));
         List<Map<String, Object>> s3 = list(out, "swings");
 
-        assertThat(swings).isEmpty();          // 半窗 6 装不下 13 根，一个都出不来
+        assertThat(swings).isEmpty();          // 半窗 6 只判第 6 根，它不是极值
         assertThat(s3).hasSize(2);
         assertThat(s3.getFirst()).containsEntry("idx", 3).containsEntry("type", "H");
         assertThat(s3.get(1)).containsEntry("idx", 7).containsEntry("type", "L");

@@ -69,26 +69,26 @@ public class ResearchEvalService {
      * 纯核心（无 DB，可单测）：聚合→walk-forward 取样本外→逐决策点装配 point-in-time 特征→
      * 每预测器模拟收益+指标→buy&hold 基准算一次→多策略同框报告。
      */
-    public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
+    public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> baseBars,
                                                 List<Forecaster> forecasters, EvalParams params) {
-        return evaluateBars(symbol, horizon, oneMin, List.of(), forecasters, params);
+        return evaluateBars(symbol, horizon, baseBars, List.of(), forecasters, params);
     }
 
-    /** 同上；benchmarkOneMin 用于残差动量，传空则残差腿中性。 */
-    public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
-                                                List<KlineBar> benchmarkOneMin,
+    /** 同上；benchmarkBaseBars 用于残差动量，传空则残差腿中性。 */
+    public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> baseBars,
+                                                List<KlineBar> benchmarkBaseBars,
                                                 List<Forecaster> forecasters, EvalParams params) {
-        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, forecasters, params,
+        return evaluateBars(symbol, horizon, baseBars, benchmarkBaseBars, forecasters, params,
                 FEATURE_LOOKBACK_BARS, FEATURE_BAR_MILLIS);
     }
 
     /** 同上；回看窗 W 与决策 bar 粒度可注入，decisionBarMillis 只允许 5m/15m，horizon 仍固定为未来 6/12/24h。 */
-    static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
-                                         List<KlineBar> benchmarkOneMin,
+    static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> baseBars,
+                                         List<KlineBar> benchmarkBaseBars,
                                          List<Forecaster> forecasters, EvalParams params,
                                          int featureLookbackBars, long decisionBarMillis) {
         try {
-            AssembledPoints assembled = assemblePoints(horizon, oneMin, benchmarkOneMin,
+            AssembledPoints assembled = assemblePoints(horizon, baseBars, benchmarkBaseBars,
                     params, featureLookbackBars, decisionBarMillis);
             return evaluateAssembled(symbol, horizon, assembled, forecasters, params);
         } finally {
@@ -156,19 +156,19 @@ public class ResearchEvalService {
      * 逐决策点 point-in-time 装配（单/多输出评估共用，保证同一份无泄漏口径）：
      * 基础 K 线 → 5m/15m feature bars；按 horizon 间隔采决策点；每点 continuous 因子（绝不含未来）+ 未来路径目标。
      */
-    static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> oneMin,
-                                          List<KlineBar> benchmarkOneMin,
+    static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> baseBars,
+                                          List<KlineBar> benchmarkBaseBars,
                                           EvalParams params, int featureLookbackBars) {
-        return assemblePoints(horizon, oneMin, benchmarkOneMin, params, featureLookbackBars, FEATURE_BAR_MILLIS);
+        return assemblePoints(horizon, baseBars, benchmarkBaseBars, params, featureLookbackBars, FEATURE_BAR_MILLIS);
     }
 
-    static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> oneMin,
-                                          List<KlineBar> benchmarkOneMin,
+    static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> baseBars,
+                                          List<KlineBar> benchmarkBaseBars,
                                           EvalParams params, int featureLookbackBars,
                                           long decisionBarMillis) {
         validateDecisionBarMillis(decisionBarMillis);
-        List<KlineBar> featureBars = KlineAggregator.aggregate(oneMin, decisionBarMillis);
-        List<KlineBar> benchmarkFeatureBars = KlineAggregator.aggregate(benchmarkOneMin, decisionBarMillis);
+        List<KlineBar> featureBars = KlineAggregator.aggregate(baseBars, decisionBarMillis);
+        List<KlineBar> benchmarkFeatureBars = KlineAggregator.aggregate(benchmarkBaseBars, decisionBarMillis);
         int horizonFeatureBars = horizonDecisionBars(horizon, decisionBarMillis);
         List<Integer> decisionFeatureIndexes = decisionFeatureIndexes(featureBars.size(), horizonFeatureBars);
         int points = decisionFeatureIndexes.size();
@@ -204,17 +204,17 @@ public class ResearchEvalService {
                     VolatilityEstimator.ewmaVolatility(assetReturns, featureIndex + 1,
                             featureLookbackBars, params.lambda()), features, horizon);
             baselineSigmaByPoint[point] = sigma;
-            while (pathStartCursor < oneMin.size() && oneMin.get(pathStartCursor).openTime() <= ti) {
+            while (pathStartCursor < baseBars.size() && baseBars.get(pathStartCursor).openTime() <= ti) {
                 pathStartCursor++;
             }
             if (pathEndCursor < pathStartCursor) {
                 pathEndCursor = pathStartCursor;
             }
             long pathEndTime = ti + horizon.millis();
-            while (pathEndCursor < oneMin.size() && oneMin.get(pathEndCursor).openTime() <= pathEndTime) {
+            while (pathEndCursor < baseBars.size() && baseBars.get(pathEndCursor).openTime() <= pathEndTime) {
                 pathEndCursor++;
             }
-            PathStats path = pathStats(oneMin, pathStartCursor, pathEndCursor, entry, exitBar.close(), params.k(), sigma);
+            PathStats path = pathStats(baseBars, pathStartCursor, pathEndCursor, entry, exitBar.close(), params.k(), sigma);
             BigDecimal longReturn = longReturn(entry, path.fallbackClose(), path.label(), params.k(), sigma);
             HorizonPathOutcome pathOutcome = path.outcome();
             double realizedForwardReturn = FactorMath.logReturn(exitBar.close().doubleValue(), entry.doubleValue());
@@ -329,7 +329,7 @@ public class ResearchEvalService {
     }
 
     /**
-     * 单遍扫描 1m 路径同时产出 三隔栏标签 + 路径极值 + regime 标签（性能内联，长历史不三次扫路径）。
+     * 单遍扫描 5m 路径同时产出 三隔栏标签 + 路径极值 + regime 标签（性能内联，长历史不三次扫路径）。
      * 语义铁律：栏位判定必须与 {@link TripleBarrierLabeler#label}、regime 判定必须与 {@link RegimeLabeler#label}
      * 完全一致——改任何一边都要同步另一边（有分叉就是标签口径漂移）。
      */

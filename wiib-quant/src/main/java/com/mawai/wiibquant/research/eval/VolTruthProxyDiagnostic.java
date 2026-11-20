@@ -17,9 +17,9 @@ import java.util.Map;
 
 /**
  * vol 真值代理诊断：同一套 vol 预测(EWMA/HAR-GK)，在三种"已实现方差真值"下并排算 QLIKE + Diebold-Mariano。
- * - singleR2 ：现状真值=单根 (horizon 收益)²，1 个观测、最噪。
+ * - singleR2 ：单根 (horizon 收益)²，1 个观测、最噪。
  * - pathRvClose：horizon 路径内 Σ 5m close-to-close r²，72/144/288 个观测。
- * - pathRvGk ：horizon 路径内 Σ Garman-Klass 单 bar 方差（用上 OHLC 高低价）。
+ * - pathRvGk ：horizon 路径内 Σ Garman-Klass 单 bar 方差（用上 OHLC 高低价），MultiOutputEvalService 评估 vol 用的就是它。
  * 验"vol 弱 edge"是否只是真值太噪测不出：真值越准、DM 检验功效越高（Patton 2011 proxy-robust）。
  * 只读价格(barsUpToNow)，逐点无状态预测，天然 OOS 无泄漏。
  */

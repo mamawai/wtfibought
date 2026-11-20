@@ -12,7 +12,7 @@ import java.math.BigDecimal;
  *   MARKET         需要 quantity
  *   STOP_MARKET    需要 stopPrice + quantity（或 closePosition=true）
  *   TAKE_PROFIT_MARKET 同上
- * 校验放在 Client 层，本类只承载数据。
+ * 这些组合交给 Binance 服务端校验，本类只承载数据。
  */
 @Data
 @Builder

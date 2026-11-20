@@ -31,7 +31,7 @@ class IndicatorAdapterTest {
                 .containsKeys("ma_alignment", "rsi14", "macd_hist", "macd_hist_trend",
                         "boll_pb", "atr14", "atr_spike_ratio", "adx", "plus_di", "minus_di")
                 .doesNotContainKeys("kdj_k", "obv", "volume_ratio");
-        // atr 收盘三件套只在 research 路径产出(calcAll 的 MaSlope 残留已删)，不参与与全量的漂移比对
+        // atr 收盘三件套只在 research 路径产出，不参与与全量的漂移比对
         List<String> researchOnly = List.of("atr14_closed", "atr_mean_30_closed", "atr_spike_ratio");
         for (String key : light.keySet()) {
             if (researchOnly.contains(key)) continue;
