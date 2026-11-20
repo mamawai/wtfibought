@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.promptgen;
 
+import com.mawai.wiibagent.chat.ChatAgentFactory;
 import com.mawai.wiibagent.chat.ChatModelFactory;
 import com.mawai.wiibagent.chat.tools.TraderLocator;
 import com.mawai.wiibagent.chat.tools.TraderQueryToolkit;
@@ -52,8 +53,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *   ask_user   推题卡，这一轮就收工（ReactLoop.stopWhen）
  *   write_draft 写稿人流式写正文，回执进历史时连快照存成一版（只留最近 3 版）
  * </pre>
- * 对话连同 agent 系统提示词与工具的指纹一起存：每轮开跑前比一下，变了就把起跑历史里的原始内容按文本重建——
- * Anthropic 的思考块和这段前缀绑死，照旧回放强制校验的组织会 400。
+ * 对话连同 agent 系统提示词、工具与端点身份的指纹一起存：每轮开跑前比一下，变了就把起跑历史里的原始内容按文本重建——
+ * Anthropic 的思考块和这段前缀绑死，照旧回放强制校验的组织会 400；Responses 的加密推理和组织绑死，换了 key 回放会被拒。
  */
 @Slf4j
 @Component
@@ -164,7 +165,7 @@ public class PromptGenService {
                       AgentLang outputLang) {
         AiTrader trader = traderId == null ? null : traderService.owned(userId, traderId);
         List<Message> history = List.of(new UserMessage(prompts.get(userLangResolver.of(userId), "promptgen.kickoff")));
-        round(channel, userId, model, outputLang, trader, history, null,
+        round(channel, userId, model, endpointId, outputLang, trader, history, null,
                 () -> store.open(userId, endpointId, trader == null ? null : trader.getId(), outputLang, history));
     }
 
@@ -186,17 +187,18 @@ public class PromptGenService {
                       List<Message> history) {
         String prefix = PromptGenStore.prefix(session.getState());
         // 用户这句先落库：这一轮在后台跑时刷新进来也看得到
-        round(channel, userId, model, AgentLang.of(session.getOutputLang()), trader(session), history, prefix,
-                () -> store.saveState(userId, history, prefix));
+        round(channel, userId, model, session.getEndpointId(), AgentLang.of(session.getOutputLang()), trader(session),
+                history, prefix, () -> store.saveState(userId, history, prefix));
     }
 
     /**
-     * @param trader 这段对话为哪个 trader 写，可空：规格事实、必问项、读数据的工具都固定用它
-     * @param prefix 起跑历史是在哪套系统提示词与工具下跑出来的，新对话为 null
-     * @param open   起跑历史落库；在标上 running 之后做，/session 读到新对话时一定也读到 running
+     * @param endpointId model 是拿哪条端点建的：端点身份进 agent 的前缀指纹
+     * @param trader     这段对话为哪个 trader 写，可空：规格事实、必问项、读数据的工具都固定用它
+     * @param prefix     起跑历史是在哪套系统提示词、工具与端点下跑出来的，新对话为 null
+     * @param open       起跑历史落库；在标上 running 之后做，/session 读到新对话时一定也读到 running
      */
-    private void round(SseChannel channel, long userId, ChatModel model, AgentLang outputLang, AiTrader trader,
-                       List<Message> history, String prefix, Runnable open) {
+    private void round(SseChannel channel, long userId, ChatModel model, long endpointId, AgentLang outputLang,
+                       AiTrader trader, List<Message> history, String prefix, Runnable open) {
         AgentLang lang = userLangResolver.of(userId);
         PromptGenRun run = null;
         String failure = null;
@@ -218,6 +220,7 @@ public class PromptGenService {
             LlmClient agent = LlmClient.builder()
                     .model(model)
                     .systemPrompt(system.agent())
+                    .origin(ChatAgentFactory.origin(endpointService.get(userId, endpointId)))
                     .tools(localizedTools.of(lang,
                             new TraderQueryToolkit(traderChatService, userId, lang,
                                     TraderLocator.fixed(trader, traderChatService, lang)),
@@ -234,7 +237,8 @@ public class PromptGenService {
                     // 真推出了题卡才收工；被拒的提问让 agent 接着按回执办
                     .stopWhen(run::asked)
                     .build();
-            // 系统提示词或工具跟上一轮不一样（写出了第一稿、改了 trader、改了提示词）：以前的思考块对不上了，按文本重建
+            // 系统提示词、工具或端点跟上一轮不一样（写出了第一稿、改了 trader、改了提示词、端点改了 key/地址/模型）：
+            // 以前的思考块、加密推理对不上了，按文本重建
             if (!agent.fingerprint().equals(prefix)) {
                 run.plainHistory();
                 prefix = agent.fingerprint();

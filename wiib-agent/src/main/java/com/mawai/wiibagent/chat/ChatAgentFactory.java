@@ -265,6 +265,15 @@ public class ChatAgentFactory {
 
     /**
      * 主 agent 调模型的客户端：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
+    /**
+     * 端点身份：协议、地址、模型、key 密文，进 agent 的前缀指纹（{@link LlmClient.Builder#origin}）。
+     * 工作台主 agent 和指令生成器都用它，换了端点，历史里旧端点的原始内容块就按文本重建
+     */
+    public static String origin(UserLlmEndpoint endpoint) {
+        return String.join("\0", endpoint.getApiProtocol(), endpoint.getBaseUrl(), endpoint.getModel(),
+                endpoint.getApiKeyEnc());
+    }
+
      *
      * @param deepBase 裸深模型，给深研判子运行：它每次自己包账本，不走主轮那本
      * @param userId   trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
@@ -277,8 +286,7 @@ public class ChatAgentFactory {
         LlmClient.Builder client = LlmClient.builder()
                 .model(deep)
                 .systemPrompt(mainInstruction(lang, LlmEndpointService.searches(endpoint)))
-                .origin(String.join("\0", endpoint.getApiProtocol(), endpoint.getBaseUrl(), endpoint.getModel(),
-                        endpoint.getApiKeyEnc()))
+                .origin(origin(endpoint))
                 .maxAttempts(3).initialDelay(500).maxDelay(4000);
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         toolsWithSearch(client, endpoint, deep, lang,

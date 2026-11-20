@@ -36,6 +36,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
@@ -51,8 +52,9 @@ class PromptGenServiceTest {
     private final PromptGenStore store = mock(PromptGenStore.class);
     private final PromptGenFacts facts = mock(PromptGenFacts.class);
     private final TraderService traderService = mock(TraderService.class);
+    private final LlmEndpointService endpointService = mock(LlmEndpointService.class);
     private final ChatModel model = mock(ChatModel.class);
-    private final PromptGenService service = new PromptGenService(store, facts, mock(LlmEndpointService.class),
+    private final PromptGenService service = new PromptGenService(store, facts, endpointService,
             mock(ChatModelFactory.class), traderService, mock(TraderChatService.class),
             mock(PlayStatsAssembler.class), ChatTestEndpoints.TOOLS, ChatTestEndpoints.PROMPTS,
             ChatTestEndpoints.zhLang());
@@ -64,7 +66,7 @@ class PromptGenServiceTest {
         service.stop();
     }
 
-    /** 模型每次都只回一句话，系统提示词随便给一份 */
+    /** 模型每次都只回一句话，系统提示词随便给一份，端点固定一条 */
     private void modelSaysOk() {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
@@ -73,6 +75,7 @@ class PromptGenServiceTest {
         });
         when(facts.prompts(any(), anyBoolean(), any(), any()))
                 .thenReturn(new PromptGenFacts.Prompts("你是指令生成助手", "写稿"));
+        when(endpointService.get(eq(1L), anyLong())).thenReturn(ChatTestEndpoints.endpoint("gpt-5"));
     }
 
     /** 没挂到页面上的通道：只看落库和调用 */
@@ -85,6 +88,7 @@ class PromptGenServiceTest {
     private static PromptGenSession session(Long traderId, List<Message> history, String prefix) {
         PromptGenSession session = new PromptGenSession();
         session.setUserId(1L);
+        session.setEndpointId(3L);
         session.setTraderId(traderId);
         session.setOutputLang("zh");
         session.setState(ChatContextCodec.write(new ChatContextStore.State(history, null, prefix)));
@@ -138,6 +142,18 @@ class PromptGenServiceTest {
 
         reply(prefix);
         assertThat(replayed().getMetadata()).containsKey(AnthropicChatModel.BLOCKS_KEY);
+    }
+
+    /** 会话长期留着，续答用的是会话里记的端点：端点改了 key、地址或模型，上一轮的原始内容块不再原样回放 */
+    @Test
+    void 同会话换端点后原始内容块被剥掉() {
+        modelSaysOk();
+        String prefix = reply("旧指纹");
+        when(endpointService.get(1L, 3L)).thenReturn(ChatTestEndpoints.endpoint("gpt-5", "另一把key"));
+
+        reply(prefix);
+
+        assertThat(replayed().getMetadata()).doesNotContainKey(AnthropicChatModel.BLOCKS_KEY);
     }
 
     /** 页面、必问项、这一轮的规格事实都按会话记的 trader 取 */
