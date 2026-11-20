@@ -203,16 +203,18 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 叶子的缓存键 = 模型配置指纹 + 语言 + 上下文窗口 + 主/轻两条端点的 Antigravity 来源。语言变则整套系统提示词与工具描述变，
-     * 叶子须重建；窗口烤在叶子里，改了也得换一套；Antigravity 来源决定搜索走原生还是 web_search，工具表跟着变。
+     * 叶子的缓存键 = 模型配置指纹 + 语言 + 上下文窗口 + 主/轻两条端点的 Antigravity 来源 + 主模型端点名。语言变则整套系统提示词与工具描述变，
+     * 叶子须重建；窗口烤在叶子里，改了也得换一套；Antigravity 来源决定搜索走原生还是 web_search，工具表跟着变；
+     * 端点名烤在展示用的模型标签里（{@link #modelLabel}），改了名也得换一套。
      * <p>
      * 这几样只加在这一层，不进 {@link ChatModelFactory#fingerprint}：模型实例与它们无关，
-     * 切语言、改窗口、切 Antigravity 都不重建 SDK 客户端与连接池。
+     * 切语言、改窗口、切 Antigravity、改端点名都不重建 SDK 客户端与连接池。
      */
     static String leafKey(ChatEndpoints eps, AgentLang lang) {
-        // 指纹是十六进制串，用冒号接后面几样不会与它的任何取值相撞
+        // 指纹是十六进制串，用冒号接后面几样不会与它的任何取值相撞；端点名是用户随手填的，只能接在最后
         return ChatModelFactory.fingerprint(eps) + ':' + lang.code() + ':' + eps.deep().getContextWindow()
-                + ':' + eps.deep().getAntigravity() + ':' + eps.lightOrDeep().getAntigravity();
+                + ':' + eps.deep().getAntigravity() + ':' + eps.lightOrDeep().getAntigravity()
+                + ':' + eps.deep().getName();
     }
 
     /**
@@ -264,8 +266,6 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 主 agent 调模型的客户端：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
-    /**
      * 端点身份：协议、地址、模型、key 密文，进 agent 的前缀指纹（{@link LlmClient.Builder#origin}）。
      * 工作台主 agent 和指令生成器都用它，换了端点，历史里旧端点的原始内容块就按文本重建
      */
@@ -274,6 +274,8 @@ public class ChatAgentFactory {
                 endpoint.getApiKeyEnc());
     }
 
+    /**
+     * 主 agent 调模型的客户端：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
      *
      * @param deepBase 裸深模型，给深研判子运行：它每次自己包账本，不走主轮那本
      * @param userId   trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
