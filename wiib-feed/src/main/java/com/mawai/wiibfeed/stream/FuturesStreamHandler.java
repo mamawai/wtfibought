@@ -59,6 +59,12 @@ public class FuturesStreamHandler implements StreamHandler {
         tracker.publishGap();
     }
 
+    /** 丢的标记价里可能有穿过强平价的：按这段发空窗补漏 */
+    @Override
+    public void onDropped(long fromMs, long toMs) {
+        tracker.publishGap(fromMs, toMs);
+    }
+
     @Override
     public void onDisconnected() {
         broadcastFuturesDisconnected();
@@ -112,8 +118,8 @@ public class FuturesStreamHandler implements StreamHandler {
         String symbol = tick.symbol();
         String price = tick.price();
         if (tick.markPrice()) {
-            // 标记价连写入时刻一起落：markPrice@1s 每秒必推，sim 市价开仓按它判这个币的行情停没停
-            cacheService.setMarkPrice(symbol, price, System.currentTimeMillis());
+            // 标记价连主连接这帧的收到时刻一起落：markPrice@1s 每秒必推，sim 市价开仓按它判这个币的行情停没停
+            cacheService.setMarkPrice(symbol, price, conn.frameReceivedAt());
 
             broadcastService.broadcastFuturesQuote(symbol, "{\"mp\":\"" + price + "\",\"fws\":" + isFuturesConnected() + "}");
 

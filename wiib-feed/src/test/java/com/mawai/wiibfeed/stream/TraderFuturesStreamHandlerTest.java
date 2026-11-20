@@ -20,7 +20,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 交易员的币的行情：两种帧只写价格键（标记价连当期费率和下次结算时刻；最新价带写入时刻）；
+ * 交易员的币的行情：两种帧只写价格键（标记价带收到时刻，连当期费率和下次结算时刻；最新价）；
  * 集合变了两条连接都换地址重连，没变不动，空了地址为空（连接闲置）。
  */
 class TraderFuturesStreamHandlerTest {
@@ -47,13 +47,14 @@ class TraderFuturesStreamHandlerTest {
     }
 
     @Test
-    void 只写价格键_标记价带写入时刻连费率_最新价() {
+    void 只写价格键_标记价带收到时刻连费率_最新价() {
+        when(conn.frameReceivedAt()).thenReturn(1700000000150L);
         handler.handle("{\"stream\":\"pepeusdt@markPrice@1s\",\"data\":{\"e\":\"markPriceUpdate\",\"E\":1700000000000,"
                 + "\"s\":\"PEPEUSDT\",\"p\":\"0.00001234\",\"i\":\"0.00001230\",\"P\":\"0.00001235\",\"r\":\"0.00010000\",\"T\":1700004800000}}");
         handler.handle("{\"stream\":\"pepeusdt@miniTicker\",\"data\":{\"e\":\"24hrMiniTicker\",\"E\":1700000000500,"
                 + "\"s\":\"PEPEUSDT\",\"c\":\"0.00001233\",\"o\":\"0.00001200\",\"h\":\"0.00001300\",\"l\":\"0.00001100\",\"v\":\"1000\",\"q\":\"0.0123\"}}");
 
-        verify(cacheService).setMarkPrice(eq("PEPEUSDT"), eq("0.00001234"), anyLong());
+        verify(cacheService).setMarkPrice("PEPEUSDT", "0.00001234", 1700000000150L);
         verify(cacheService).putFundingRate(eq("PEPEUSDT"), eq(new BigDecimal("0.00010000")), eq(1700004800000L), anyLong());
         verify(cacheService).setFuturesPrice("PEPEUSDT", "0.00001233");
         verifyNoMoreInteractions(cacheService);

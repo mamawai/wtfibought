@@ -125,7 +125,7 @@ class TraderSymbolTradeFlowTest {
                 .containsExactly(tuple("OPEN_LONG", "FILLED"), tuple("CLOSE_LONG", "FILLED"));
     }
 
-    /** feed 写价：最新价、标记价和标记价的写入时刻 */
+    /** feed 写价：最新价、标记价和标记价的收到时刻 */
     private void feedWrites(String price, long atMs) {
         redis.put("market:futures-price:" + SYM, price);
         redis.put("market:markprice:" + SYM, price);

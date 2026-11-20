@@ -184,10 +184,10 @@ public class CacheService {
         cryptoPriceCache.put("spot:" + symbol, price);
     }
 
-    /** feed 每帧写：标记价和写入时刻一次 MSET 落 Redis（feed 自己不读合约价，不进 L1）。写入时刻是 sim 市价开仓判行情活没活着的心跳 */
-    public void setMarkPrice(String symbol, String price, long nowMs) {
+    /** feed 每帧写：标记价和这帧的收到时刻一次 MSET 落 Redis（feed 自己不读合约价，不进 L1）。收到时刻是 sim 市价开仓判行情活没活着的心跳 */
+    public void setMarkPrice(String symbol, String price, long receivedAtMs) {
         stringRedisTemplate.opsForValue().multiSet(Map.of("market:markprice:" + symbol, price,
-                "market:markprice-at:" + symbol, Long.toString(nowMs)));
+                "market:markprice-at:" + symbol, Long.toString(receivedAtMs)));
     }
 
     /** feed 每帧写：最新价落 Redis */
@@ -195,7 +195,7 @@ public class CacheService {
         stringRedisTemplate.opsForValue().set("market:futures-price:" + symbol, price);
     }
 
-    /** 标记价上次写入的时刻（毫秒）；没写过回 null */
+    /** 最近一帧标记价 feed 收到的时刻（毫秒）；没写过回 null */
     public Long getMarkPriceAt(String symbol) {
         String v = stringRedisTemplate.opsForValue().get("market:markprice-at:" + symbol);
         return v == null ? null : Long.parseLong(v);

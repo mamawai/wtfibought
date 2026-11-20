@@ -16,7 +16,7 @@ import java.util.List;
  * 交易员的币的合约行情：sim 把"非 feed 币的未平仓位所在的币 ∪ 交易员登记的币"维护成 Redis set futures:trader:symbols，
  * 本 handler 照 {@link FuturesStreamHandler} 的样子再开两条连接（markPrice@1s 走本连接，miniTicker 走 {@link TraderMiniTickStreamHandler}），
  * 地址按集合拼。每 10 秒读一次集合：变了两条连接都换地址重连，空了地址为空、连接闲置。
- * 只写标记价、最新价和写入时刻、当期费率和下次结算时刻；不发撮合价格频道、不写成交 Stream、不推前端、不记空窗：
+ * 只写标记价（带收到时刻）、最新价、当期费率和下次结算时刻；不发撮合价格频道、不写成交 Stream、不推前端、不记空窗：
  * sim 的成交触发和空窗补漏只管 feed 配置里那些币，交易员的币上的限价单、止损止盈、强平靠 sim 30 秒一次的兜底巡检。
  */
 @Slf4j
@@ -79,7 +79,7 @@ public class TraderFuturesStreamHandler implements StreamHandler {
         FuturesStreamHandler.Tick tick = FuturesStreamHandler.parse(raw);
         if (tick == null) return;
         if (tick.markPrice()) {
-            cacheService.setMarkPrice(tick.symbol(), tick.price(), System.currentTimeMillis());
+            cacheService.setMarkPrice(tick.symbol(), tick.price(), conn.frameReceivedAt());
             fundingRateWriter.write(tick.symbol(), tick.rate(), tick.nextTime());
         } else {
             cacheService.setFuturesPrice(tick.symbol(), tick.price());

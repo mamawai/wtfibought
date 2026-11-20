@@ -46,12 +46,12 @@ flowchart TD
 wiib-feed（上游进程）  交易所 WS → Redis
   （订阅范围：现货各流订 symbols ∪ stock-symbols；合约各流订 symbols ∪ commodity / tradfi / crypto-futures 三组纯合约；K 线另见下）
   -> spot miniTicker        -> Redis 价格 KV(market:price:)
-  -> futures markPrice@1s   -> Redis mark KV(market:markprice: + 写入时刻 market:markprice-at:) + Pub/Sub(feed:price, type=markprice)
+  -> futures markPrice@1s   -> Redis mark KV(market:markprice: + 收到时刻 market:markprice-at:) + Pub/Sub(feed:price, type=markprice)
   -> futures miniTicker     -> Redis 合约最新价 KV(market:futures-price:) + Pub/Sub(feed:price, type=futures)
                                ↑ 独立物理连接：Binance 端点拆分后 markPrice 与 miniTicker 不能同连
   -> 名单外的币 markPrice@1s / miniTicker（代码里叫"交易员的币"，另两条连接，订阅集合 = Redis set futures:trader:symbols：
                                交易员（wiib-alpha）登记要下单的币 ∪ 不在 feed 配置里的未平仓位，sim 维护，feed 每 10 秒看一次、变了重连）
-                            -> 只写 market:markprice:（带写入时刻，sim 市价开仓看它超 30 秒没更新就拒）/ market:futures-price:，不发 feed:price、不推前端
+                            -> 只写 market:markprice:（带收到时刻，sim 市价开仓看它超 30 秒没更新就拒）/ market:futures-price:，不发 feed:price、不推前端
   -> forceOrder(全市场流)    -> 白名单过滤 -> force_order 表(DB, 天然跨进程)
   -> aggTrade（合约 / 现货）  -> Redis Stream(market:orderflow:<sym> / market:spot-trade:<sym>)，sim 按顺序读来判限价/止损/止盈，合约那条 agent 还读侧聚合订单流
   -> depth20@100ms（合约 / 现货）-> Redis KV(market:depth: / market:spot-depth:, DepthStreamCache)，sim 市价成交扫它
