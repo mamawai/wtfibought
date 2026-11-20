@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 
 /**
- * 事实表的路径指标：多空两向、到目标 25%/50% 用时、第一次收回入场价、出场后最有利价与是否到过目标；
+ * 事实表的路径指标：多空两向、到 +0.5R/+1R 用时、第一次收回入场价、出场后最有利价与是否到过目标；
  * 没 K 线时全空；分组排序与案例选择。
  */
 class CaseFileBuilderTest {

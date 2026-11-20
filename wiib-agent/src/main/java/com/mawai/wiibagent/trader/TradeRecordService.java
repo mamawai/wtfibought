@@ -37,7 +37,7 @@ public class TradeRecordService {
 
     /** 竞技场一页最多展示的已了结笔数（sim 按 updatedAt 倒序返回，取前 N 即最近 N 笔） */
     static final int LIMIT = 50;
-    /** 平仓决策候选窗口向前放宽的量：手动唤醒的 wake_time 是当前边界，可能早于仓位创建至多一个档位（最大 4h） */
+    /** 平仓决策候选窗口向前放宽的量：例行唤醒的 wake_time 是 K 线边界，比同一轮里才开出的仓位早，至多一个档位（最大 4h） */
     private static final long CLOSE_LOOKBACK_MS = 14_400_000L;
 
     private final SimTradeClient simTradeClient;
@@ -89,7 +89,7 @@ public class TradeRecordService {
 
     /**
      * 开仓决策：plan.openedWakeTime 精确命中那一轮（ALERT/MANUAL 轮的 wake_time 与 WakeCtx.wakeTime 同源）。
-     * 同一边界可能既有例行轮又有手动轮（手动唤醒的 wake_time 就是当前边界）：开了仓的那条才是"论点"所在。
+     * 同一 wake_time 撞上多行时，开了仓的那条才是"论点"所在。
      * write_plan 补立的计划 openedWakeTime 是仓位创建时刻而非任何边界，天然配不到，openDecision 留空。
      */
     public Map<Long, AiTraderDecision> openDecisions(AiTrader t, Collection<AiTraderPlan> plans) {

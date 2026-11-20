@@ -102,7 +102,7 @@ public class BehaviorAnalysisReport {
     public boolean isValid() {
         if (overview == null || overview.getDistribution() == null
                 || overview.getTotalAssets() == null || overview.getTotalProfitPct() == null) return false;
-        // 只校验现役维度（crypto/futures/prediction）——已下线维度的硬校验会逼模型瞎编，见 BehaviorReportValidityTest
+        // 只校验现役维度（crypto/bstock/futures/prediction）——已下线维度的硬校验会逼模型瞎编，见 BehaviorReportValidityTest
         if (tradeBehavior == null) return false;
         if (tradeBehavior.getCrypto() == null
                 || tradeBehavior.getCrypto().getTotalBuyAmount() == null

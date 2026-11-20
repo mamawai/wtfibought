@@ -29,8 +29,7 @@ import java.util.stream.Collectors;
 public class AiAgentRuntimeManager {
 
     // 管理口径（种子/Admin白名单/配置删除保护）：只列本进程要建模型的功能位，refresh()按名建。
-    // quant/quant-light/chat 随对话轨 BYOK 化删除、behavior 随行为分析进对话轨删除，
-    // sim 是 wiib-sim 自读 DB 的位；这些名字在 ai_model_assignment 里的残行是孤儿，无害——
+    // ai_model_assignment 里别的名字（quant、quant-light、chat、behavior、sim 等）是没人用的残行，无害——
     // 种子、白名单、删除保护都只认这个常量
     private static final List<String> MANAGED_FUNCTIONS =
             List.of(AiFunctions.NEWS_TRANSLATION, AiFunctions.NEWS_TRANSLATION_FALLBACK);

@@ -146,7 +146,7 @@ class TradeRecordServiceTest {
         assertThat(r.closeDecision().reasoning()).isEqualTo("走人");
     }
 
-    /** 同一边界既有例行轮又有手动轮（手动唤醒的 wake_time 就是当前边界）：开了仓的那条才是开仓决策 */
+    /** 同一 wake_time 撞上两行：开了仓的那条才是开仓决策 */
     @Test
     void sameBoundaryPrefersDecisionThatOpened() {
         FuturesPositionDTO pos = closedLong(1L, "108");

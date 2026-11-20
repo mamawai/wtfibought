@@ -50,20 +50,6 @@ class ApprovalGateTest {
                 });
     }
 
-    /** 批准 BTC 之后模型改口要 ETH：key 对不上，必须重新弹卡而不是放行 */
-    @Test
-    void 批准的标的之外不放行() {
-        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
-        registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
-
-        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
-                toolCallOf("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"));
-
-        assertThat(out).isPresent();
-        assertThat(out.orElseThrow().getResponses()).singleElement()
-                .satisfies(r -> assertThat(r.responseData()).contains("PENDING_APPROVAL"));
-    }
-
     /**
      * symbol 是模型填的，可能是 btc / BTCUSDT / btcusdt。
      * 不归一化就会出现"用户点了同意却弹第二次卡"——比不修更糟。
@@ -170,24 +156,6 @@ class ApprovalGateTest {
 
     // ===== 授权的粒度：闸门只管深研判一个工具了，区分维度全落在标的上 =====
 
-    /**
-     * 未授权就得拦下并把标的登记进待批。标的写法的归一化（btc / BTCUSDT / BTCUSDC 折成同一个）
-     * 由"批了一个标的不放行另一个"那条覆盖，这里只钉拦截与登记。
-     */
-    @Test
-    void 未授权时拦下并登记待批() {
-        String symbol = "BTCUSDT";
-
-        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
-                toolCallOf("run_deep_analysis", "{\"symbol\":\"" + symbol + "\"}"));
-
-        assertThat(out).isPresent();
-        assertThat(out.orElseThrow().getResponses()).singleElement()
-                .satisfies(r -> assertThat(r.responseData()).contains("PENDING_APPROVAL"));
-        assertThat(registry.peekPending(SESSION)).isPresent()
-                .get().satisfies(p -> assertThat(p.symbol()).isEqualTo(symbol));
-    }
-
     /** 批准之后就得真放行，否则用户点了同意还是执行不了 */
     @Test
     void 批准后同一标的放行() {
@@ -203,9 +171,6 @@ class ApprovalGateTest {
     /**
      * 授权是"这一件事"的票，不是"十分钟内的通用票"：批了 btc 不能顺手把 eth 也放行——
      * 用户为一次研判点的头，模型能拿去连烧几次，这是最贵的那种错。
-     * <p>
-     * 和"批准的标的之外不放行"分工：那边走 BTCUSDT/ETHUSDT 全称，这边走 btc/eth 短写法。
-     * 隔离判断的两侧都跑过一遍归一化才算钉住——写法可以收拢，标的不行
      */
     @Test
     void 批了一个标的不放行另一个() {

@@ -23,7 +23,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 工作台对话历史（展示用）：user/assistant 消息按会话落库，支撑历史会话列表与回看。
  * 续聊上下文不靠它——那是 {@link ChatContextStore} 的事（存的是模型侧完整 messages）；
- * 本表只为前端展示，所以 agent 调度/HITL 过程事件不存。
+ * 本表只为前端展示：assistant 行连同这一轮的读数、来源和过程事件一起存，前端重开历史时据它重建过程轨。
  */
 @Slf4j
 @Service
