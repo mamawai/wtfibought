@@ -48,7 +48,7 @@ public final class BuildFeaturesBuilder {
 
     /**
      * 特征构建入口；rawData 缺键按空值兜底，缺什么打什么质量标记。
-     * 回包四样：feature_snapshot、indicator_map、price_change_map、readings（{@link MarketReadings}）。
+     * 回包三样：feature_snapshot、price_change_map、readings（{@link MarketReadings}）。
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> buildFeatures(String symbol, Map<String, Object> rawData) {
@@ -161,8 +161,7 @@ public final class BuildFeaturesBuilder {
         log.info("[Q2.4] build_features完成 price={} qualityFlags={} 耗时{}ms",
                 lastPrice, qualityFlags, System.currentTimeMillis() - startMs);
 
-        return Map.of("feature_snapshot", snapshot, "indicator_map", indicatorsByTf,
-                "price_change_map", priceChanges, "readings", readings);
+        return Map.of("feature_snapshot", snapshot, "price_change_map", priceChanges, "readings", readings);
     }
 
     private BigDecimal extractLastPrice(String tickerJson, Map<String, List<BigDecimal>> closes) {

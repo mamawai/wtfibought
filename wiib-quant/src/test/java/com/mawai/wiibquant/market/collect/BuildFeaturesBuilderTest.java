@@ -25,7 +25,7 @@ class BuildFeaturesBuilderTest {
 
         Map<String, Object> result = builder.buildFeatures("BTCUSDT", Map.of());
 
-        assertThat(result).containsKeys("feature_snapshot", "indicator_map", "price_change_map", "readings");
+        assertThat(result).containsKeys("feature_snapshot", "price_change_map", "readings");
         FeatureSnapshot snapshot = (FeatureSnapshot) result.get("feature_snapshot");
         assertThat(snapshot.symbol()).isEqualTo("BTCUSDT");
         assertThat(snapshot.qualityFlags())
