@@ -87,7 +87,7 @@ public class PublicTradeService {
         return dto;
     }
 
-    /** userId + 盐 的 SHA-256 前 6 位十六进制。同一用户恒定，跨用户不冲突 */
+    /** userId + 盐 的 SHA-256 前 6 位十六进制。同一用户恒定，跨用户基本不会撞 */
     private String alias(Long userId) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");

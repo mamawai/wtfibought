@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 留言板接口。整体需登录：路径不在 {@code SaTokenConfig} 放行清单里，拦截器先挡一道，
+ * 留言板接口。除三条 GET 读接口外都要登录：拦截器先挡一道，
  * 各接口的 {@code @CurrentUserId} / {@code @RequireAdmin} 再取一次 loginId。
  */
 @Tag(name = "留言板")

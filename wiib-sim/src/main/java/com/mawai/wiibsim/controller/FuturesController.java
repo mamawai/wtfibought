@@ -201,7 +201,7 @@ public class FuturesController {
     }
 
     /**
-     * 资金费率：只读结算点（0/8/16 点）写下的缓存，绝不回源 Binance。
+     * 资金费率：只读 feed 写的缓存，绝不回源 Binance。
      * 无合约的标的（bStock 等）和缓存没命中都返回 null，前端不渲染这段。
      */
     @GetMapping("/funding-rate")

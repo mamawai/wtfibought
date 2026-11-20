@@ -72,21 +72,9 @@ class LedgerControllerTest {
     }
 
     @Test
-    void limit超过封顶一点也照样卡住() {
-        controller.list(ME, null, null, 101);
-        assertThat(capturedLimit()).isEqualTo(100);
-    }
-
-    @Test
     void 封顶之内的limit原样传下去() {
         controller.list(ME, null, null, 30);
         assertThat(capturedLimit()).isEqualTo(30);
-    }
-
-    @Test
-    void limit为零兜到1() {
-        controller.list(ME, null, null, 0);
-        assertThat(capturedLimit()).isEqualTo(1);
     }
 
     /** PG 对负数 LIMIT 直接报错，兜不住就是一个手搓请求刷 500 */

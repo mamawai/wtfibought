@@ -14,8 +14,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 资金方法改 @Select + UPDATE...RETURNING 的范式（账本要拿变动后余额，影响行数不够用）。
- * 已由 UserLedgerRealRunTest 真跑钉死，全部原子资金方法已按这三条改完，以后新增的照抄：
+ * 原子资金方法都用 @Select + UPDATE...RETURNING（账本要拿变动后余额，影响行数不够用），
+ * 由 UserLedgerRealRunTest 真跑钉死。写法守下面三条，新增的照抄：
  * <ol>
  *   <li><b>必须 @Options(flushCache=TRUE, useCache=false)</b>。挂 @Select 但实为 UPDATE，
  *       默认会吃缓存：同事务内第二次同参调用直接返上次的值、SQL 不发 DB，钱静默没扣。
@@ -37,7 +37,6 @@ public interface UserMapper extends BaseMapper<User> {
      * 冻结/解冻返回：可用与冻结两个钱包的变动后新值。null=条件不满足，一行没改。
      * <p>
      * 组件顺序钉死为 (balance, frozenBalance)，对应 RETURNING balance, frozen_balance。
-     * 两个都是 BigDecimal，写反了编译和运行都不报错，只是账本里可用/冻结对调——见类注释第 3 条。
      */
     record BalanceFrozen(BigDecimal balance, BigDecimal frozenBalance) {}
 
@@ -98,15 +97,6 @@ public interface UserMapper extends BaseMapper<User> {
     /**
      * 原子更新可用余额，返回变动后余额。入账不看余额（全仓结算可能已经把余额扣成负数，该进的钱照进）；
      * 扣款余额不够就不改，返回 null。
-     * RETURNING 是同条语句的返回子句，不是二次查询——写的仍是 balance = balance + delta
-     * 相对更新、条件仍由 DB 判定，并发语义与改造前完全一致。账本靠这个返回值拿 balance_after。
-     * <p>
-     * flushCache 必须开：这条挂 @Select 但实为 UPDATE。MyBatis 对 select 默认吃一级缓存，
-     * 同事务内第二次同参调用会直接返上次的缓存值、SQL 根本不发给 DB——钱静默没扣，
-     * 而返回值还装作扣成了。原来挂 @Update 时每次都自动清缓存，不存在这问题，改 @Select 才冒出来。
-     * 已实测复现（见 同事务内重复扣款每次都真发SQL 用例）。资金语句一律不许走缓存。
-     * <p>
-     * balance 是 NOT NULL 列，所以 null 只可能是"没匹配到行"，无二义性（见类注释第 2 条）。
      */
     @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
     @Select("UPDATE \"user\" SET balance = balance + #{amount}, updated_at = NOW() " +
@@ -164,8 +154,7 @@ public interface UserMapper extends BaseMapper<User> {
     /**
      * 游戏钱包→余额钱包，单条SQL原子划转；net=扣掉手续费后的实际到账。返回两钱包新值；null=游戏钱包不足。
      * <p>
-     * RETURNING 列序 balance, game_balance == BalanceGame 组件顺序。注意 SET 是先 game 后 balance、
-     * RETURNING 是先 balance 后 game——只有 RETURNING 的列序参与映射，别照着 SET 的顺序去"对齐"。
+     * RETURNING 列序 balance, game_balance == BalanceGame 组件顺序，跟 SET 的先后无关，别照 SET 去"对齐"。
      */
     @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
     @Select("UPDATE \"user\" SET game_balance = game_balance - #{amount}, balance = balance + #{net}, updated_at = NOW() " +
@@ -219,8 +208,7 @@ public interface UserMapper extends BaseMapper<User> {
     /**
      * 原子应用现金流入（先还息后还本，剩余入余额）。返回三列变动后新值；null=还款额超过欠款或用户不存在。
      * <p>
-     * RETURNING 列序 margin_interest_accrued, margin_loan_principal, balance == CashInflow 组件顺序，
-     * 三列全是 BigDecimal，写反了不报错只错账，改一边必须同时改另一边。
+     * RETURNING 列序 margin_interest_accrued, margin_loan_principal, balance == CashInflow 组件顺序，改一边必须同时改另一边。
      */
     @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
     @Select("UPDATE \"user\" SET " +

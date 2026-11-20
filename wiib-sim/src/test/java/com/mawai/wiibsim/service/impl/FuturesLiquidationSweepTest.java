@@ -52,7 +52,7 @@ class FuturesLiquidationSweepTest {
     @Test
     void 单个symbol取不到价不中断整轮巡检() {
         symbols("NOPRICE", "BTCUSDT");
-        // NOPRICE 两个价都缺 → FuturesHelper#markPrice 抛 BizException
+        // NOPRICE 两个价都缺 → FuturesPrices#mark 抛 BizException
         when(cacheService.getMarkPrice("NOPRICE")).thenReturn(null);
         when(cacheService.getFuturesPrice("NOPRICE")).thenReturn(null);
         when(cacheService.getMarkPrice("BTCUSDT")).thenReturn(new BigDecimal("50000"));

@@ -320,7 +320,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                         .eq(FuturesPosition::getUserId, userId)
                         .eq(FuturesPosition::getStatus, "OPEN"));
         for (FuturesPosition fp : fps) {
-            // 统一口径见 AssetValuationService：缺价保留保证金、浮盈亏按0，不再整仓蒸发
+            // 统一口径见 AssetValuationService：缺价保留保证金、浮盈亏按0
             BigDecimal markPrice = assetValuationService.resolveFuturesPrice(fp.getSymbol());
             futFloating.merge(sets.classify(fp.getSymbol()),
                     AssetValuationService.futuresUnrealizedPnl(fp, markPrice), BigDecimal::add);

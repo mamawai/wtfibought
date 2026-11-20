@@ -248,7 +248,7 @@ public class FuturesLeverageBracketRegistry {
      * 按仓位名义价值定档位。
      * 已知 symbol：返回命中档；notional 超出最高档时保守返回最高档（避免空指针，模拟盘
      * 不限制超大仓）。
-     * 未知 symbol 或 notional 为 null：返回 null（仅供内部判存在性使用，调用方请优先
+     * 未知 symbol：返回 null（仅供内部判存在性使用，调用方请优先
      * 使用 calcMaintenanceMargin / getEffectiveMaxLeverage 等带异常的 API）。
      */
     public Bracket findBracket(String symbol, BigDecimal notional) {

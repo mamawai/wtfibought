@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 
 /**
  * 用户服务接口
- * 提供用户余额管理，支持乐观锁和冻结机制
+ * 提供用户余额管理（单条原子 SQL）和冻结机制
  */
 public interface UserService extends IService<User> {
 
@@ -62,7 +62,7 @@ public interface UserService extends IService<User> {
     UserDTO getUserPortfolio(Long userId);
 
     /**
-     * 更新用户余额（带乐观锁重试）
+     * 更新用户余额（单条原子 SQL）
      *
      * @param userId 用户ID
      * @param amount 变动金额（正数增加，负数减少）

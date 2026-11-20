@@ -35,7 +35,7 @@ public final class LedgerCtx {
     }
 
     /**
-     * 刻意不用 withInitial：一读就建栈的话，每笔没标注的资金变动（现在是全部）都会给自己的线程
+     * 刻意不用 withInitial：一读就建栈的话，每笔没标注的资金变动都会给自己的线程
      * 绑上一个空 ArrayDeque，而 pop() 里的 remove() 只在"弹到空"时才触发——从没 push 过的线程
      * 永远等不到那次 remove，空栈就一直挂在 ThreadLocalMap 上。改成 push 时懒建，读侧判 null。
      */

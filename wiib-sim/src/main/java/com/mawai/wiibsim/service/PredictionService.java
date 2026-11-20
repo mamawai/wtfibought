@@ -34,6 +34,6 @@ public interface PredictionService {
 
     void syncOpenPrice();
 
-    /** 补结算巡检：把早该结算却还停在 LOCKED 的回合逐个重跑 */
+    /** 补结算巡检：把早该结算却还停在 OPEN / LOCKED 的回合逐个重跑（OPEN 的先补锁） */
     void sweepStuckRounds();
 }
