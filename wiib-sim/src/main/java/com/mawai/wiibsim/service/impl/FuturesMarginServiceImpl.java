@@ -67,7 +67,8 @@ public class FuturesMarginServiceImpl implements FuturesMarginService {
         if (position.isCross()) throw new BizException(ErrorCode.FUTURES_CROSS_MARGIN_ADJUST);
 
         BigDecimal amount = request.getAmount();
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+        // 余额、仓位保证金都只有两位小数，金额最多两位
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0 || amount.stripTrailingZeros().scale() > 2) {
             throw new BizException(ErrorCode.PARAM_ERROR);
         }
 
@@ -102,7 +103,8 @@ public class FuturesMarginServiceImpl implements FuturesMarginService {
         if (position.isCross()) throw new BizException(ErrorCode.FUTURES_CROSS_MARGIN_ADJUST);
 
         BigDecimal amount = request.getAmount();
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+        // 同追加：金额最多两位小数
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0 || amount.stripTrailingZeros().scale() > 2) {
             throw new BizException(ErrorCode.PARAM_ERROR);
         }
 

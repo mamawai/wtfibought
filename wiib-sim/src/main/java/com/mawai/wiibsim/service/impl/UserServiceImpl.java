@@ -297,7 +297,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     private BigDecimal validateAndCalcFee(BigDecimal amount) {
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+        // 钱包只有两位小数，金额最多两位
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0 || amount.stripTrailingZeros().scale() > 2) {
             throw new BizException(ErrorCode.WALLET_TRANSFER_INVALID);
         }
         return amount.multiply(TRANSFER_FEE_RATE).setScale(2, RoundingMode.HALF_UP);
