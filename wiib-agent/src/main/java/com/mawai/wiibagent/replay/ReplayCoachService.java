@@ -23,6 +23,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -93,16 +94,22 @@ public class ReplayCoachService {
 
         SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS);
         SseChannel channel = new SseChannel(emitter);
-        emitter.onCompletion(channel::markClosed);
-        emitter.onTimeout(() -> {
+        // 断开、超时、出错：标关并掐断在途的模型调用
+        CompletableFuture<Void> cancel = new CompletableFuture<>();
+        Runnable close = () -> {
             channel.markClosed();
+            cancel.complete(null);
+        };
+        emitter.onCompletion(close);
+        emitter.onTimeout(() -> {
+            close.run();
             emitter.complete();
         });
-        emitter.onError(ex -> channel.markClosed());
+        emitter.onError(_ -> close.run());
         try {
             streamExecutor.execute(() -> {
                 try {
-                    run(channel, model, request, lang);
+                    run(channel, cancel, model, request, lang);
                 } catch (Throwable e) {
                     log.error("[ReplayCoach] 任务异常退出 userId={}", userId, e);
                 } finally {
@@ -134,18 +141,28 @@ public class ReplayCoachService {
         }
     }
 
-    /** 一次流式调用的全过程。包私有：单测直接喂 mock 模型看它发出去的事件 */
-    void run(SseChannel channel, ChatModel model, ReplayCoachRequest request, AgentLang lang) {
-        ScheduledFuture<?> heartbeat = heartbeatScheduler.scheduleWithFixedDelay(
-                channel::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+    /**
+     * 一次流式调用的全过程。包私有：单测直接喂 mock 模型看它发出去的事件
+     *
+     * @param cancel 通道关了就完成，掐断在途的模型调用
+     */
+    void run(SseChannel channel, CompletableFuture<Void> cancel, ChatModel model, ReplayCoachRequest request,
+             AgentLang lang) {
+        // 心跳写失败 SseChannel 只标关不通知：写完看到已关，也掐断模型调用
+        ScheduledFuture<?> heartbeat = heartbeatScheduler.scheduleWithFixedDelay(() -> {
+            channel.heartbeat();
+            if (channel.isClosed()) {
+                cancel.complete(null);
+            }
+        }, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
         StringBuilder answer = new StringBuilder();
         try {
             // LlmClient 捎系统提示 + 流式重试；不挂工具不进 ReactLoop，落到底就是一次 model.stream
             LlmClient client = LlmClient.builder().model(model)
                     .systemPrompt(coachPrompts.system(request, lang)).build();
-            // toStream + try-with-resources：用户切走（通道关闭）后 takeWhile 停止迭代、close 取消订阅，不再烧 token
+            // cancel 完成就掐断上游；写 token 失败只标关，由 takeWhile 在下一帧停下、close 取消订阅
             try (Stream<ChatResponse> frames = client.streamingExecute(
-                    List.of(new UserMessage(coachPrompts.user(request, lang))), null).toStream()) {
+                    List.of(new UserMessage(coachPrompts.user(request, lang))), cancel).toStream()) {
                 frames.takeWhile(f -> !channel.isClosed()).forEach(f -> {
                     String chunk = textOf(f);
                     if (chunk == null || chunk.isEmpty()) {
