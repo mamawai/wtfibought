@@ -21,7 +21,7 @@ public class FeedStreamController {
 
     private final WsConnectionRegistry registry;
 
-    /** 全量流健康快照（前端进面板时拉一次，之后靠 WS 事件增量刷新）。 */
+    /** 全量流健康快照（前端进面板时拉一次，之后 WS 推的也是全量快照，前端整表替换）。 */
     @GetMapping
     public StreamHealthSnapshot list() {
         return registry.snapshot();

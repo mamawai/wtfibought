@@ -14,7 +14,7 @@ public interface StreamHandler {
     /** 连接名（日志用），如 "Spot" "Kline5m" */
     String name();
 
-    /** 静默重连阈值秒：0=关闭检测（稀疏流如 forceOrder 取 0） */
+    /** 静默重连阈值（秒），0=关闭检测 */
     long maxIdleSeconds();
 
     /** 拼接订阅 URL */

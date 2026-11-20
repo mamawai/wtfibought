@@ -7,7 +7,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * 合约 miniTicker 副连接：Binance 2026-04-23 端点拆分后 miniTicker 单独走 /market，
- * 与 markPrice 分两条物理连接。解析逻辑复用 {@link FuturesStreamHandler#handle}，本类只提供独立 URL。
+ * 与 markPrice 分两条物理连接。解析逻辑复用 {@link FuturesStreamHandler#handle}；
+ * bind 时把本条连接交给主 handler 判 fws，断线时广播 fws=false。
  */
 @Component
 @RequiredArgsConstructor

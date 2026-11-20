@@ -42,7 +42,7 @@ final class StreamParse {
         return raw.substring(dataStart);
     }
 
-    /** 解析时间戳字段（idx 指向 {@code "\"E\":"} 这类 4 字符键的起点）；解析失败返回 fallback */
+    /** 解析时间戳字段（idx 指向 {@code "\"E\":"} 这类 4 字符键的起点）；只有缺这个键时返回 fallback，值不是数字会抛异常 */
     static long getEventTime(String json, int idx, long fallback) {
         if (idx >= 0) {
             int start = idx + 4;
