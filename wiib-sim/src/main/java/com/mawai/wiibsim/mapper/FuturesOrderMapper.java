@@ -136,16 +136,25 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             "WHERE id = #{orderId} AND status = 'TRIGGERED'")
     int casMarkProcessing(@Param("orderId") Long orderId);
 
-    // 全仓挂单占用聚合已并入 FuturesPositionMapper.selectCrossSnapshot（三查合一），此处不再单列
-
-    /** 用户所有已平仓单的已实现盈亏（已扣手续费和强平清算费） */
-    @Select("SELECT COALESCE(SUM(realized_pnl - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0) " +
-            "FROM futures_order WHERE user_id = #{userId} AND realized_pnl IS NOT NULL")
+    /** 用户合约已实现盈亏，口径同排行榜：开/加仓单只贡献-fee，平仓单贡献 pnl-fee，强平单再减清算费。行为分析用 */
+    @Select("""
+            SELECT COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0)
+            FROM futures_order
+            WHERE user_id = #{userId} AND status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
+            """)
     BigDecimal sumRealizedPnl(@Param("userId") Long userId);
 
-    /** 分符号已实现盈亏（已扣手续费和强平清算费）：crypto 合约与大宗商品合约分开归集，四分类用 */
-    @Select("SELECT symbol, COALESCE(SUM(realized_pnl - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0) AS amount " +
-            "FROM futures_order WHERE user_id = #{userId} AND realized_pnl IS NOT NULL GROUP BY symbol")
+    /**
+     * 按符号拆的 sumRealizedPnl，同一口径。归桶在 Java 侧按符号集做：
+     * 资产四分类里 TradFi 合约归 bstock 桶；行为分析按 crypto/大宗/tradfi 拆也用它。
+     */
+    @Select("""
+            SELECT symbol,
+                   COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0) - COALESCE(liquidation_fee, 0)), 0) AS amount
+            FROM futures_order
+            WHERE user_id = #{userId} AND status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
+            GROUP BY symbol
+            """)
     List<Map<String, Object>> sumRealizedPnlBySymbol(@Param("userId") Long userId);
 
     /** 排行榜交易盈利：所有最终成交单都扣手续费、强平单再扣清算费，开仓/加仓单realized_pnl为空只贡献-fee */

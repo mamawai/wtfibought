@@ -308,11 +308,11 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         for (Map<String, Object> row : cryptoOrderMapper.sumNetCashBySymbol(userId)) {
             netCash.merge(sets.classify((String) row.get("symbol")), (BigDecimal) row.get("amount"), BigDecimal::add);
         }
-        BigDecimal bstockProfit = bucket(heldMv, "bstock").add(bucket(netCash, "bstock"));
+        BigDecimal bstockSpotProfit = bucket(heldMv, "bstock").add(bucket(netCash, "bstock"));
         BigDecimal cryptoSpotProfit = bucket(heldMv, "crypto").add(bucket(netCash, "crypto"));
         BigDecimal commoditySpotProfit = bucket(heldMv, "commodity").add(bucket(netCash, "commodity"));
 
-        // ---- 合约：浮盈按持仓符号、已实现按订单符号拆入 crypto / 大宗商品 ----
+        // ---- 合约：浮盈按持仓符号、已实现按订单符号拆入 bStock（TradFi 合约）/ crypto / 大宗商品 ----
         BigDecimal futuresValue = BigDecimal.ZERO;
         Map<String, BigDecimal> futFloating = new HashMap<>();
         List<FuturesPosition> fps = futuresPositionMapper.selectList(
@@ -330,6 +330,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         for (Map<String, Object> row : futuresOrderMapper.sumRealizedPnlBySymbol(userId)) {
             futRealized.merge(sets.classify((String) row.get("symbol")), (BigDecimal) row.get("amount"), BigDecimal::add);
         }
+        BigDecimal bstockProfit = bstockSpotProfit.add(bucket(futFloating, "bstock")).add(bucket(futRealized, "bstock"));
         BigDecimal cryptoProfit = cryptoSpotProfit.add(bucket(futFloating, "crypto")).add(bucket(futRealized, "crypto"));
         BigDecimal commodityProfit = commoditySpotProfit.add(bucket(futFloating, "commodity")).add(bucket(futRealized, "commodity"));
 
