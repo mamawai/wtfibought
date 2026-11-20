@@ -34,7 +34,7 @@ public class SaTokenConfig extends BaseSaTokenConfig {
     @Override
     protected List<String> getAnonymousGetPaths() {
         return List.of(
-                "/api/crypto/klines",              // /crypto/price 不放：游客页用不到，且未命中会直连币安
+                "/api/crypto/klines",              // /crypto/price 不放：游客页用不到
                 "/api/crypto/order/live",          // 全站最新现货成交
                 "/api/bstock/*",                    // list / price / klines / {symbol}，下单在 /bstock/order/** 不受影响
                 "/api/futures/klines",

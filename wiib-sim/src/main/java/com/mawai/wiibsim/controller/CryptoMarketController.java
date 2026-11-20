@@ -1,7 +1,8 @@
 package com.mawai.wiibsim.controller;
 
+import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.Result;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.KlineCacheService;
 import cn.dev33.satoken.stp.StpUtil;
@@ -19,7 +20,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CryptoMarketController {
 
-    private final BinanceRestClient binanceRestClient;
     private final CacheService cacheService;
     private final KlineCacheService klineCacheService;
 
@@ -40,10 +40,7 @@ public class CryptoMarketController {
     public Result<Map<String, String>> price(
             @RequestParam(defaultValue = "BTCUSDT") String symbol) {
         BigDecimal price = cacheService.getCryptoPrice(symbol);
-        if (price == null) {
-            String json = binanceRestClient.getTickerPrice(symbol);
-            return Result.ok(Map.of("raw", json));
-        }
+        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
         return Result.ok(Map.of("price", price.toPlainString()));
     }
 }
