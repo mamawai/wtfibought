@@ -1,4 +1,5 @@
 package com.mawai.wiibquant.strategy.execution;
+import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
@@ -11,6 +12,7 @@ import com.mawai.wiibquant.strategy.core.StrategySignal;
 import com.mawai.wiibquant.strategy.core.TradingOperations;
 import com.mawai.wiibquant.strategy.core.TradingStrategySpi;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -45,6 +47,7 @@ class SimExecutionServiceTest {
         List<FuturesOrderResponse> pending = new ArrayList<>();
         BigDecimal balance = bd("10000");
         boolean cancelFails;
+        RuntimeException openFails;
 
         StubClient() {
             super("http://localhost:1", "t");
@@ -63,6 +66,7 @@ class SimExecutionServiceTest {
         @Override
         public FuturesOrderResponse openPosition(Long userId, FuturesOpenRequest request) {
             opened.add(request);
+            if (openFails != null) throw openFails;
             return openResp;
         }
 
@@ -463,5 +467,29 @@ class SimExecutionServiceTest {
 
         assertThat(client.canceled).containsExactly(77L);   // 残留挂单撤掉
         assertThat(client.opened).isEmpty();                // 已收养持仓, 新信号被 POSITION 挡下
+    }
+
+    @Test
+    void 下单结果未知_当根tick不对账_下一根先撤残留再重挂只剩一张() {
+        StubClient client = new StubClient();
+        client.openFails = new SimOrderRetry.UnknownOutcome(new ResourceAccessException("Read timed out"));
+        SimExecutionService svc = service(client);
+        RecStrategy strategy = new RecStrategy();
+
+        svc.onSignal(SYM, limit("3000", "2950", T0), strategy);
+        assertThat(client.opened.getFirst().getClientRequestId()).isNotBlank();
+        client.pending = List.of(resp("PENDING", 1000L, null, null));   // 其实 sim 已经挂上了
+
+        svc.tick(SYM, T0);                                              // 同一根紧接着的 tick
+        assertThat(client.canceled).isEmpty();                          // 不对账，残留单还在
+
+        svc.onPositionBarClosed(SYM, strategy, null);                   // 下一根先跑持仓钩子：对账撤残留
+        assertThat(client.canceled).containsExactly(1000L);
+
+        client.openFails = null;
+        client.openResp = resp("PENDING", 1001L, null, null);
+        svc.onSignal(SYM, limit("3000", "2950", T0 + BAR), strategy);  // 同腿重申，重挂
+        assertThat(client.opened).hasSize(2);
+        assertThat(client.canceled).containsExactly(1000L);             // 挂过两张撤掉一张，sim 上只剩 1001
     }
 }

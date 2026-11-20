@@ -1,4 +1,5 @@
 package com.mawai.wiibquant.strategy.execution;
+import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
@@ -24,6 +25,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
@@ -68,7 +70,7 @@ public class SimExecutionService implements StrategyExecutionPort {
         Long orderId;
         long placedBarCloseTime;     // 挂单所在 bar 收盘时刻，算超时
         Long positionId;
-        boolean recovered;           // 重启对账每 key 只做一次（成功才置位，失败下次重试）
+        boolean recovered;           // 对账做过没有：首次触达、下单结果未知后为 false，由 onPositionBarClosed/onSignal 开头补跑（成功才置位，失败下次重试）
 
         void reset() {
             state = State.FLAT;
@@ -206,7 +208,6 @@ public class SimExecutionService implements StrategyExecutionPort {
             ExecState st = entry.getValue();
             synchronized (st) {
                 try {
-                    recoverIfNeeded(st, strategyId, symbol);
                     if (st.state == State.WORKING) checkWorking(strategyId, symbol, nowMs, st);
                     else if (st.state == State.POSITION) checkPosition(strategyId, symbol, st);
                 } catch (Exception e) {
@@ -327,10 +328,22 @@ public class SimExecutionService implements StrategyExecutionPort {
             req.setTakeProfits(List.of(tp));
         }
 
-        if ("LIMIT".equals(signal.orderType())) {
-            req.setOrderType("LIMIT");
-            req.setLimitPrice(signal.entryRefPrice());
-            FuturesOrderResponse resp = client.openPosition(userId, req);
+        boolean limit = "LIMIT".equals(signal.orderType());
+        req.setOrderType(limit ? "LIMIT" : "MARKET");
+        if (limit) req.setLimitPrice(signal.entryRefPrice());
+        // 本次下单的幂等键：读超时拿同一个键重发，sim 只成交一次
+        req.setClientRequestId(UUID.randomUUID().toString());
+        FuturesOrderResponse resp;
+        try {
+            resp = SimOrderRetry.send(() -> client.openPosition(userId, req));
+        } catch (SimOrderRetry.UnknownOutcome e) {
+            // 结果未知：单可能已挂上或已成交，下次先对账（撤残留挂单、收养持仓）
+            log.warn("[SimExec] 开仓结果未知，下次先对账 {}:{} msg={}", signal.strategyId(), symbol, e.toString());
+            st.recovered = false;
+            return;
+        }
+
+        if (limit) {
             st.state = State.WORKING;
             st.strategy = strategy;
             st.signal = signal;
@@ -341,8 +354,6 @@ public class SimExecutionService implements StrategyExecutionPort {
                     signal.side(), qty, signal.entryRefPrice(), resp.getOrderId());
         } else {
             // MARKET(含策略侧其他即时单型)：sim 市价单同步成交，直接进 POSITION
-            req.setOrderType("MARKET");
-            FuturesOrderResponse resp = client.openPosition(userId, req);
             st.state = State.POSITION;
             st.strategy = strategy;
             st.signal = signal;
@@ -408,7 +419,10 @@ public class SimExecutionService implements StrategyExecutionPort {
 
     // ==================== 对账与工具 ====================
 
-    /** 重启对账（每 key 一次，全部成功才置位）：有持仓收养为 POSITION；残留挂单一律撤掉。 */
+    /**
+     * 对账，在 onPositionBarClosed/onSignal 开头跑（首次触达、下单结果未知后各一次，全部成功才置位）：
+     * 有持仓收养为 POSITION；残留挂单一律撤掉。
+     */
     private void recoverIfNeeded(ExecState st, String strategyId, String symbol) {
         if (st.recovered) return;
         Long userId = account(strategyId);
