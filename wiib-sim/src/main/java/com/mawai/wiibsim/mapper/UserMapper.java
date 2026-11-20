@@ -194,7 +194,7 @@ public interface UserMapper extends BaseMapper<User> {
     int ensureMarginInterestLastDate(@Param("userId") Long userId, @Param("today") LocalDate today);
 
     /**
-     * 本金还清后清空计息起算点，下次借款由 ensureMarginInterestLastDate 重新写成借款日。
+     * 本金还清后清空计息起算点，下次借款由 ensureMarginInterestLastDate 重新写成借款前一天。
      * 不清的话起算点会停在还清前最后一次计息那天——还清期间计息任务按本金>0过滤，扫不到该用户，
      * 没人推进它，下次借款就把中间没欠钱的空档天数一起算成利息。
      * 本金条件放 WHERE：与新借款并发时本金已变正，此时不该抹掉新写入的起算点。

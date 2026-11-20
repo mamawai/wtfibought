@@ -61,7 +61,8 @@ public class MarginAccountServiceImpl implements MarginAccountService {
         if (afterPrincipal == null) {
             throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
         }
-        userMapper.ensureMarginInterestLastDate(userId, LocalDate.now());
+        // 计息日期记的是利息结到哪天：借款记成昨天，借款当天也算一天息
+        userMapper.ensureMarginInterestLastDate(userId, LocalDate.now().minusDays(1));
     }
 
     // 刻意不标 @Ledger：这是"现金流入先还贷再入余额"的公共出口，语义由调用方给
@@ -159,11 +160,8 @@ public class MarginAccountServiceImpl implements MarginAccountService {
         }
 
         long days = ChronoUnit.DAYS.between(last, today);
-        if (days < 0) {
+        if (days <= 0) {
             return;
-        }
-        if (days == 0) {
-            days = 1;
         }
 
         BigDecimal dailyRate = tradingConfig.getMargin().getDailyInterestRate();

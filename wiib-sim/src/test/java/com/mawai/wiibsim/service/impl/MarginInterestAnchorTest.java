@@ -11,6 +11,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
 
@@ -91,6 +92,21 @@ class MarginInterestAnchorTest {
         service.applyCashInflow(1L, new BigDecimal("500"), "SELL");
 
         verify(userMapper).clearMarginInterestLastDate(1L);
+    }
+
+    @Test
+    void 同日第二次不计息() {
+        LocalDate today = LocalDate.now();
+        User user = new User();
+        user.setId(1L);
+        user.setMarginLoanPrincipal(new BigDecimal("2000"));
+        // 今天已经计过一次，利息结到了今天
+        user.setMarginInterestLastDate(today);
+        when(userMapper.selectByIdForUpdate(1L)).thenReturn(user);
+
+        service.accrueUserInterest(1L, today);
+
+        verify(userMapper, never()).atomicAccrueInterest(anyLong(), any(), any());
     }
 
     @Test
