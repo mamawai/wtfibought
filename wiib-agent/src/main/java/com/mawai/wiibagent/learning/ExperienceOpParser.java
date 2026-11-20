@@ -74,6 +74,10 @@ public class ExperienceOpParser {
                 continue;
             }
             String[] parts = SEP.split(line);
+            // 一行只有分隔符（"|"、"| | |"）时 split 出来是空数组
+            if (parts.length == 0) {
+                continue;
+            }
             String head = parts[0].strip();
             Matcher m = ID_LINE.matcher(head);
             if (m.matches()) {

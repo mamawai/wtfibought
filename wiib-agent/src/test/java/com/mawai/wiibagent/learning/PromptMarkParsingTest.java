@@ -201,6 +201,19 @@ class PromptMarkParsingTest {
                 new ExperienceLedger.Classify(3L, List.of(mark(MARK_UNDER, 42L))));
     }
 
+    /** 一行只有分隔符：这行跳过，前后两条照常解析 */
+    @Test
+    void 只有分隔符的行跳过_前后照常解析() {
+        List<ExperienceLedger.Op> ops = parser.parseOps("""
+                #3 名下 42
+                |
+                删除 #4 ｜ 重复""", AgentLang.ZH);
+
+        assertThat(ops).containsExactly(
+                new ExperienceLedger.Classify(3L, List.of(mark(MARK_UNDER, 42L))),
+                new ExperienceLedger.Delete(4L, "重复"));
+    }
+
     private static ExperienceLedger.Mark mark(String mark, long positionId) {
         return new ExperienceLedger.Mark(mark, positionId);
     }
