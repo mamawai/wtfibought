@@ -13,8 +13,8 @@ import java.math.BigDecimal;
  * 存量用户的期初值既没记录也不回填（账本只记上线之后的变动），拿它们对账每个钱包各差
  * "上线那一刻该列的值"，那是口径不是漏账。用法见 UserLedgerRealRunTest#assertInvariant。
  * <p>
- * 放在 com.mawai.wiibsim.mapper 包下的原因同 {@link ReturningRecordProbeMapper}：
- * {@code @MapperScan} 按包名扫描，测试源码目录下的同名包会一起被扫到——别挪走。
+ * 放在 com.mawai.wiibsim.mapper 包下：{@code @MapperScan} 按包名扫描，
+ * 测试源码目录下的同名包会一起被扫到——别挪走。
  */
 @Mapper
 public interface LedgerProbeMapper {

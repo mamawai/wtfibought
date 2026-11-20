@@ -8,7 +8,6 @@ import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.enums.LedgerWallet;
 import com.mawai.wiibsim.controller.LedgerController;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.mapper.ReturningRecordProbeMapper;
 import com.mawai.wiibsim.mapper.LedgerProbeMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -60,9 +59,6 @@ class UserLedgerRealRunTest {
 
     @Autowired
     private TransactionTemplate tx;
-
-    @Autowired
-    private ReturningRecordProbeMapper probeMapper;
 
     @Autowired
     private UserLedgerMapper ledgerMapper;
@@ -206,34 +202,8 @@ class UserLedgerRealRunTest {
     }
 
     /**
-     * RETURNING 多列 → record：Task 4 要定义 3 个 record、4 个多钱包方法全靠这条路，先钉死。
-     * <p>
-     * MyBatis 对 record 走构造器自动映射，argNameBasedConstructorAutoMapping 默认 false，
-     * 是<b>按 RETURNING 的列序依次填组件</b>，不看列名（mapUnderscoreToCamelCase 在这条路径上不参与）。
-     * 两个组件又都是 BigDecimal，类型检查兜不住，列序和组件顺序对不上就是静默返错值。
-     * <p>
-     * 所以这里刻意让两个钱包取不同的值（700 / 300）：一旦对调，两行断言都会红。
-     * 若写成都是 500 就测不出对调——改这个用例的人注意别把值改成一样的。
-     */
-    @Test
-    void RETURNING多列按列序映射进record() {
-        Long uid = newUser("1000.00");   // frozen_balance 起始 0
-
-        // 冻结 300：balance 1000→700，frozen_balance 0→300
-        ReturningRecordProbeMapper.FreezeResult r =
-                probeMapper.atomicFreezeBalanceProbe(uid, new BigDecimal("300.00"));
-
-        assertThat(r).isNotNull();
-        assertThat(r.balance()).isEqualByComparingTo("700.00");          // 对调则变 300.00
-        assertThat(r.frozenBalance()).isEqualByComparingTo("300.00");    // 对调则变 700.00
-
-        // record 版同样遵守 null=没改成：余额不够时整个 record 返 null，不是返一个装满 null 的 record
-        assertThat(probeMapper.atomicFreezeBalanceProbe(uid, new BigDecimal("99999.00"))).isNull();
-    }
-
-    /**
-     * 上面那条用的是探针 mapper，这条打真正在跑的 UserMapper.atomicFreezeBalance。
-     * 同样刻意让两个钱包取不同值（600/400），列序写反两行断言都会红——别把值改成一样的。
+     * RETURNING 多列 → record：MyBatis 按列序填组件、不看列名，两个组件又都是 BigDecimal。
+     * 所以两个钱包刻意取不同值（600/400），列序写反两行断言都会红——别把值改成一样的。
      */
     @Test
     void 冻结返回两个钱包新值() {
@@ -244,6 +214,9 @@ class UserLedgerRealRunTest {
         assertThat(r).isNotNull();
         assertThat(r.balance()).isEqualByComparingTo("600.00");          // 对调则变 400.00
         assertThat(r.frozenBalance()).isEqualByComparingTo("400.00");    // 对调则变 600.00
+
+        // 余额不够时整个 record 返 null，不是返一个装满 null 的 record
+        assertThat(userMapper.atomicFreezeBalance(uid, new BigDecimal("99999.00"))).isNull();
     }
 
     /**
