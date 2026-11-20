@@ -87,7 +87,10 @@ public class DeepAnalysisToolkit {
         return MAPPER.writeValueAsString(out);
     }
 
-    /** 子运行主体：Bull∥Bear 并行 + Judge 裁决，阶段进度挂在过程轨的子运行条目上；返回回灌主 agent 的报告（JSON） */
+    /**
+     * 子运行主体：Bull∥Bear 并行 + Judge 裁决，阶段进度挂在过程轨的子运行条目上；返回回灌主 agent 的报告（JSON）。
+     * 裁决失败直接往外抛，子运行注册表据此记失败
+     */
     String execute(ChildRun run, String symbol) {
         long closeTime = System.currentTimeMillis();
         UsageTrackingChatModel model = new UsageTrackingChatModel(base);   // 这一次研判自己的账
@@ -112,14 +115,12 @@ public class DeepAnalysisToolkit {
             return null;
         }
         progress(run, prompts.get(lang, "chat.deepAnalysis.progress.judging"));
-        QuantDeepAnalysis analysis = deepAnalysisService.judge(model, symbol, closeTime, "chat",
-                newsContext, bull, bear, lang);
-        log.info("[DeepTool] #{} 研判跑完 symbol={} usage={}", run.id(), symbol, model.snapshot());
-        if (analysis == null) {
-            ObjectNode out = MAPPER.createObjectNode();
-            out.put("status", "FAILED");
-            out.put("message", prompts.get(lang, "chat.deepAnalysis.judgeFailed"));
-            return MAPPER.writeValueAsString(out);
+        QuantDeepAnalysis analysis;
+        try {
+            analysis = deepAnalysisService.judge(model, symbol, closeTime, "chat", newsContext, bull, bear, lang);
+        } finally {
+            // 裁决失败也记一笔用量
+            log.info("[DeepTool] #{} 研判跑完 symbol={} usage={}", run.id(), symbol, model.snapshot());
         }
         deepAnalysisService.persist(analysis);
         progress(run, prompts.get(lang, "chat.deepAnalysis.progress.judged"));

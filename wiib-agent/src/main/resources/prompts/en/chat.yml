@@ -355,7 +355,6 @@ chat:
       [OPTION IV] {{iv}}
       [NEWS CONTEXT]
       {{news}}
-    judgeFailed: The deep analysis verdict failed (LLM error), please try again later
     progress:
       start: "Deep analysis of {{symbol}} started: Bull/Bear debating in parallel (a few minutes)"
       bullDone: Bull case complete

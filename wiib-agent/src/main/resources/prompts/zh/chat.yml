@@ -289,7 +289,6 @@ chat:
       【期权IV】{{iv}}
       【新闻上下文】
       {{news}}
-    judgeFailed: 深度研判裁决失败（LLM 异常），请稍后重试
     progress:
       start: "深研判 {{symbol}} 启动：Bull/Bear 并行辩论中（约需数分钟）"
       bullDone: Bull 多方论证完成

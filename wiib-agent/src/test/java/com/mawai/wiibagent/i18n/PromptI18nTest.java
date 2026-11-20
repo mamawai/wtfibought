@@ -134,7 +134,7 @@ class PromptI18nTest {
                 "chat.compact.instruction", "chat.compact.preamble", "chat.compact.progress",
                 "chat.deepAnalysis.noNews", "chat.deepAnalysis.noIv",
                 "chat.deepAnalysis.bullStance",
-                "chat.deepAnalysis.bearStance", "chat.deepAnalysis.judgeFailed",
+                "chat.deepAnalysis.bearStance",
                 "chat.deepAnalysis.progress.bullDone", "chat.deepAnalysis.progress.judging",
                 "chat.deepAnalysis.progress.judged", "chat.outputLanguage",
                 "chat.turn.timePrefix", "chat.turn.questionPrefix",

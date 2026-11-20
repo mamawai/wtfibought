@@ -34,7 +34,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 深研判服务（P2b）：新闻拼接 → Bull∥Bear 对抗辩论 → Judge 裁决 → 落库。
  * 产物是研判叙事（方向倾向/情景分布/失效条件，证据实在均衡才标无方向态），与交易解耦；
- * LLM 任一步失败只缺席本次研判。
+ * 辩手失败给占位论据，裁决失败直接抛给调用方。
  * 数据上下文只用实时测量（快照/vol预测/脆弱度已随预测管线下线，2026-08）。
  */
 @Slf4j
@@ -118,27 +118,21 @@ public class DeepAnalysisService {
         return prompts.get(lang, "chat.deepAnalysis.argueFailed", Map.of("side", side));
     }
 
-    /** Judge 裁决：综合数据+双方论据产研判；失败返回 null（本次研判缺席）。 */
+    /** Judge 裁决：综合数据+双方论据产研判；调用失败、空响应、解析不了都直接抛 */
     public QuantDeepAnalysis judge(ChatModel model, String symbol, long closeTime, String triggerSource,
                                    String newsContext, String bullArgument, String bearArgument,
                                    AgentLang lang) {
-        try {
-            String prompt = prompts.get(lang, "chat.deepAnalysis.judgePrompt", Map.of(
-                    "data", buildDataContext(symbol, newsContext, lang),
-                    "bull", bullArgument,
-                    "bear", bearArgument,
-                    "format", JUDGE_CONVERTER.getFormat()));
-            String response = call(model, prompt);
-            if (response == null || response.isBlank()) {
-                log.warn("[Deep] Judge 空响应 symbol={}", symbol);
-                return null;
-            }
-            DeepAnalysisResponse parsed = JUDGE_CONVERTER.convert(JsonUtils.extractJson(response));
-            return toEntity(symbol, closeTime, triggerSource, newsContext, bullArgument, bearArgument, parsed);
-        } catch (Exception e) {
-            log.warn("[Deep] Judge 失败 symbol={} msg={}", symbol, e.getMessage());
-            return null;
+        String prompt = prompts.get(lang, "chat.deepAnalysis.judgePrompt", Map.of(
+                "data", buildDataContext(symbol, newsContext, lang),
+                "bull", bullArgument,
+                "bear", bearArgument,
+                "format", JUDGE_CONVERTER.getFormat()));
+        String response = call(model, prompt);
+        if (response == null || response.isBlank()) {
+            throw new IllegalStateException("Judge 空响应 symbol=" + symbol);
         }
+        DeepAnalysisResponse parsed = JUDGE_CONVERTER.convert(JsonUtils.extractJson(response));
+        return toEntity(symbol, closeTime, triggerSource, newsContext, bullArgument, bearArgument, parsed);
     }
 
     public Long persist(QuantDeepAnalysis analysis) {
@@ -177,13 +171,13 @@ public class DeepAnalysisService {
         entity.setInvalidation(r.invalidation());
         entity.setBullArgument(bull);
         entity.setBearArgument(bear);
-    /** 三个概率按比例缩放到和为 100：涨、跌向下取整，余数给震荡；三项都是 0 时按缺省 33/34/33 */
         entity.setJudgeReasoning(r.judgeReasoning());
         entity.setNewsContext(newsContext);
         entity.setCreatedAt(LocalDateTime.now());
         return entity;
     }
 
+    /** 三个概率按比例缩放到和为 100：涨、跌向下取整，余数给震荡；三项都是 0 时按缺省 33/34/33 */
     private static @NonNull ObjectNode getScenarios(DeepAnalysisResponse r) {
         int bull = r.bullPct() != null ? Math.max(0, r.bullPct()) : 33;
         int range = r.rangePct() != null ? Math.max(0, r.rangePct()) : 34;

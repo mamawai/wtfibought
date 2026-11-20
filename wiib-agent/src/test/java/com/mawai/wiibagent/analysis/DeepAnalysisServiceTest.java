@@ -26,6 +26,7 @@ import java.util.Map;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
@@ -96,14 +97,14 @@ class DeepAnalysisServiceTest {
     }
 
     @Test
-    void judgeReturnsNullOnLlmFailure() {
+    void judgeThrowsOnLlmFailure() {
         marketUnavailable();
         when(model.call(any(Prompt.class))).thenThrow(new RuntimeException("LLM down"));
 
-        QuantDeepAnalysis analysis = service.judge(model, "BTCUSDT", 123L, "cron_1h",
-                "无新闻上下文", "bull", "bear", AgentLang.ZH);
-
-        assertThat(analysis).isNull(); // 研判缺席，不抛异常
+        assertThatThrownBy(() -> service.judge(model, "BTCUSDT", 123L, "cron_1h",
+                "无新闻上下文", "bull", "bear", AgentLang.ZH))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("LLM down");
     }
 
     @Test

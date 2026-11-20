@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -79,17 +80,17 @@ class DeepAnalysisToolkitTest {
         verify(deepAnalysisService).persist(any());
     }
 
+    /** 裁决失败不自己兜成报告：异常原样往外抛，交给子运行注册表记失败 */
     @Test
-    void 裁决失败时报FAILED且不落库() {
+    void 裁决失败时往外抛且不落库() {
         when(deepAnalysisService.buildNewsContext(any())).thenReturn("ctx");
         when(deepAnalysisService.bullArgue(any(), anyString(), anyString(), any())).thenReturn("b");
         when(deepAnalysisService.bearArgue(any(), anyString(), anyString(), any())).thenReturn("b");
+        RuntimeException failure = new RuntimeException("LLM down");
         when(deepAnalysisService.judge(any(), anyString(), anyLong(), anyString(),
-                anyString(), anyString(), anyString(), any())).thenReturn(null);
+                anyString(), anyString(), anyString(), any())).thenThrow(failure);
 
-        String result = toolkit.execute(run(), "BTCUSDT");
-
-        assertThat(result).contains("FAILED");
+        assertThatThrownBy(() -> toolkit.execute(run(), "BTCUSDT")).isSameAs(failure);
         verify(deepAnalysisService, never()).persist(any());
     }
 
