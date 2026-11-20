@@ -225,10 +225,6 @@ public class CacheService {
         stringRedisTemplate.opsForValue().set(key, value, duration);
     }
 
-    public void set(String key, String value) {
-        stringRedisTemplate.opsForValue().set(key, value);
-    }
-
     public String get(String key) {
         return stringRedisTemplate.opsForValue().get(key);
     }
@@ -237,45 +233,10 @@ public class CacheService {
         stringRedisTemplate.unlink(key);
     }
 
-    public boolean setIfAbsent(String key, String value, Duration ttl) {
-        return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(key, value, ttl));
-    }
-
-    public Long increment(String key, long delta) {
-        return stringRedisTemplate.opsForValue().increment(key, delta);
-    }
-
-    /**
-     * 原子扣减，不允许低于 floor。
-     * @return 实际扣减量（0 ~ amount）
-     */
-    public long decrementWithFloor(String key, long amount, long floor) {
-        String lua = """
-                local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
-                local amt = tonumber(ARGV[1])
-                local flr = tonumber(ARGV[2])
-                local avail = cur - flr
-                if avail <= 0 then return 0 end
-                if amt > avail then amt = avail end
-                redis.call('DECRBY', KEYS[1], amt)
-                return amt
-                """;
-        return stringRedisTemplate.execute(
-                RedisScript.of(lua, Long.class),
-                List.of(key),
-                String.valueOf(amount), String.valueOf(floor)
-        );
-    }
-
     // ==================== 对象序列化（使用RedisTemplate） ====================
 
     public void setObject(String key, Object obj, Duration ttl) {
         redisTemplate.opsForValue().set(key, obj, ttl);
-    }
-
-    @SuppressWarnings("unchecked")
-    public <T> T getObject(String key) {
-        return (T) redisTemplate.opsForValue().get(key);
     }
 
     @SuppressWarnings("unchecked")
