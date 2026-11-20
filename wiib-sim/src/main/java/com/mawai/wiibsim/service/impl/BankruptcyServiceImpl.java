@@ -1,6 +1,7 @@
 package com.mawai.wiibsim.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibcommon.entity.CryptoPosition;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
@@ -32,8 +33,10 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 @Slf4j
@@ -169,8 +172,19 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         }
         Long userId = user.getId();
 
-        // 现货持仓市值（crypto + bStock，均在 crypto_position）
-        BigDecimal marketValue = cryptoPositionService.calculateCryptoMarketValue(userId);
+        // 现货持仓市值（crypto + bStock，均在 crypto_position）；有一笔取不到价就本轮先不判这个用户
+        List<CryptoPosition> spots = cryptoPositionService.getUserPositions(userId);
+        Map<String, BigDecimal> spotPrices = spots.isEmpty() ? Map.of() : cryptoPositionService.fetchCryptoPriceMap();
+        BigDecimal marketValue = BigDecimal.ZERO;
+        for (CryptoPosition cp : spots) {
+            BigDecimal price = spotPrices.get(cp.getSymbol());
+            if (price == null) {
+                log.warn("现货缺价，本轮跳过破产判定 userId={} symbol={}", userId, cp.getSymbol());
+                return false;
+            }
+            marketValue = marketValue.add(price.multiply(cp.getTotalQuantity()));
+        }
+        marketValue = marketValue.setScale(2, RoundingMode.HALF_UP);
 
         // 合约仓位 margin + 浮盈亏(统一口径见 AssetValuationService)；旧版只算保证金，深亏用户会被高估净资产、延迟破产
         List<FuturesPosition> futuresPositions = futuresPositionMapper.selectList(

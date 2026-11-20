@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibcommon.entity.CryptoPosition;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
@@ -27,6 +28,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -35,7 +37,7 @@ import static org.mockito.Mockito.*;
 
 /**
  * 爆仓判定：批量检查锁外粗筛、锁行后按最新数据重判；全仓穿仓的 bankruptNow 不判直接清。
- * 现货/预测估值都桩成 0，净资产 = 余额 − 借款本金。
+ * 现货桩成没持仓、预测估值桩成 0，净资产 = 余额 − 借款本金。
  */
 class BankruptcyServiceImplTest {
 
@@ -54,7 +56,7 @@ class BankruptcyServiceImplTest {
         cryptoPositionService = mock(CryptoPositionService.class);
         futuresPositionMapper = mock(FuturesPositionMapper.class);
         AssetValuationService assetValuationService = mock(AssetValuationService.class);
-        when(cryptoPositionService.calculateCryptoMarketValue(UID)).thenReturn(BigDecimal.ZERO);
+        when(cryptoPositionService.getUserPositions(UID)).thenReturn(List.of());
         when(assetValuationService.predictionMarketValue(UID)).thenReturn(BigDecimal.ZERO);
 
         service = new BankruptcyServiceImpl(
@@ -109,7 +111,7 @@ class BankruptcyServiceImplTest {
 
         InOrder inOrder = inOrder(userMapper, cryptoPositionService);
         inOrder.verify(userMapper).selectByIdForUpdate(UID);
-        inOrder.verify(cryptoPositionService).calculateCryptoMarketValue(UID);
+        inOrder.verify(cryptoPositionService).getUserPositions(UID);
         verify(userMapper, never()).markBankrupt(anyLong(), any());
     }
 
@@ -122,9 +124,24 @@ class BankruptcyServiceImplTest {
 
         InOrder inOrder = inOrder(userMapper, cryptoPositionService);
         inOrder.verify(userMapper).selectByIdForUpdate(UID);
-        inOrder.verify(cryptoPositionService).calculateCryptoMarketValue(UID);
+        inOrder.verify(cryptoPositionService).getUserPositions(UID);
         inOrder.verify(userMapper).markBankrupt(eq(UID), any());
         verify(userMapper).selectByIdForUpdate(UID);
+    }
+
+    /** 有一笔现货取不到价：本轮跳过，不按 0 算进净资产 */
+    @Test
+    void 现货缺价_不清算() {
+        givenListed(user("100", "1000"));
+        CryptoPosition spot = new CryptoPosition();
+        spot.setSymbol("BTCUSDT");
+        spot.setQuantity(BigDecimal.ONE);
+        when(cryptoPositionService.getUserPositions(UID)).thenReturn(List.of(spot));
+        when(cryptoPositionService.fetchCryptoPriceMap()).thenReturn(Map.of());
+
+        service.checkAndLiquidateAll();
+
+        verify(userMapper, never()).markBankrupt(anyLong(), any());
     }
 
     /** 全仓穿仓的强制破产：锁行后直接清，不看净资产 */
