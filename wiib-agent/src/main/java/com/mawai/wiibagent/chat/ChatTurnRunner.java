@@ -170,6 +170,16 @@ public class ChatTurnRunner {
         return new TurnResult(false, pending, context);
     }
 
+    /**
+     * 这一轮作废，会话上下文整体退回 state（重新生成那轮最后旧答案还留在页面上时用）。
+     * 先停掉这轮派出的子运行再覆盖：停之前回灌的被盖掉，停之后的不再回灌，也就没有欠着的唤醒
+     */
+    public void restore(String sessionId, long userId, ChatContextStore.State state) {
+        childRuns.cancelAll(sessionId);
+        // 收件箱这轮收尾时已经摘了，这里只剩在会话锁里整体覆盖、清掉 pending
+        childRuns.settle(sessionId, userId, state);
+    }
+
     private static boolean cancelled(CompletableFuture<Void> cancel) {
         return cancel != null && cancel.isDone();
     }

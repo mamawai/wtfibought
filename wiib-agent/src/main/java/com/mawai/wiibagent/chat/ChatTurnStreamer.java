@@ -42,6 +42,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <p>
  * 唤醒轮（wake=true）：没有用户提问，用户侧消息是唤醒指令，答案带【补充回答】标头、不落 user 行。
  * <p>
+ * 重新生成轮：新答案落库后才顶掉旧答案；最后旧答案还留在页面上的（一个字没出就停、报错、产出为空），模型上下文也退回重新生成之前。
+ * <p>
  * 断连不中止本轮：通道关了照样跑完并落历史，只是不再往通道里写帧，前端回来靠 status 接口+历史回放补。
  */
 @Slf4j
@@ -89,13 +91,14 @@ public class ChatTurnStreamer {
     /**
      * 跑一轮到底。
      *
-     * @param message          用户提问；唤醒轮为 null
-     * @param replacedAnswerId null=普通轮；非空=重新生成轮，它在顶替这条旧答案——提问已在库里不再落一遍
-     * @param wake             唤醒轮：子运行报告已落进上下文，这一轮据此补充回答
+     * @param message  用户提问；唤醒轮为 null
+     * @param rollback null=普通轮；非空=重新生成轮：提问已在库里不再落一遍，新答案落库后顶掉其中那条旧答案；
+     *                 最后旧答案还留在页面上（一个字没出就停、报错、产出为空）就把上下文退回其中回退前那份
+     * @param wake     唤醒轮：子运行报告已落进上下文，这一轮据此补充回答
      */
     public void run(SseChannel channel, long userId, String sessionId, String message,
-                    ChatAgentFactory.Leaves leaves, Long replacedAnswerId, ChatIntent intent, boolean wake) {
-        new Turn(channel, userId, sessionId, message, leaves, replacedAnswerId, intent, wake).run();
+                    ChatAgentFactory.Leaves leaves, ChatTurnRewinder.Rollback rollback, ChatIntent intent, boolean wake) {
+        new Turn(channel, userId, sessionId, message, leaves, rollback, intent, wake).run();
     }
 
     /** 一轮的执行现场：入参与跑出来的中间量都在这儿，各种结局收尾时直接取用。 */
@@ -106,7 +109,7 @@ public class ChatTurnStreamer {
         private final String sessionId;
         private final String message;
         private final ChatAgentFactory.Leaves leaves;
-        private final Long replacedAnswerId;
+        private final ChatTurnRewinder.Rollback rollback;
         private final ChatIntent intent;
         private final boolean wake;
 
@@ -145,7 +148,7 @@ public class ChatTurnStreamer {
                 }, cancel);
                 channel.send("session", MAPPER.createObjectNode().put("sessionId", sessionId));
                 // 重新生成不落库：提问行已经在了；唤醒轮没有提问
-                if (replacedAnswerId == null && !wake) {
+                if (rollback == null && !wake) {
                     chatHistoryService.append(sessionId, userId, "user", message);
                 }
 
@@ -173,6 +176,10 @@ public class ChatTurnStreamer {
                 }
             } catch (Exception e) {
                 log.error("[Workbench] 对话失败 sessionId={}", sessionId, e);
+                // 重新生成报错：旧答案没删、还留在页面上，上下文也退回重新生成之前
+                if (rollback != null) {
+                    turnRunner.restore(sessionId, userId, rollback.before());
+                }
                 if (!channel.isClosed()) {
                     channel.send("error", MAPPER.createObjectNode()
                             .put("message", LlmErrorMessages.classify(e, prompts, leaves.lang())));
@@ -231,14 +238,18 @@ public class ChatTurnStreamer {
             // 重生成轮：出了半截才顶掉旧答案，半截也是这一次重生成的产物，留着旧的同一个提问下
             // 就是两条 assistant 行。一个字都没出（点得快）就别删——那等于拿一行"未作答"
             // 换掉用户原来那条好答案，而且不可恢复
-            if (replacedAnswerId != null && saved && !answer.isEmpty()) {
-                chatHistoryService.deleteMessage(replacedAnswerId);
+            boolean keptOld = rollback != null && answer.isEmpty();
+            if (keptOld) {
+                // 旧答案留在页面上：上下文也退回重新生成之前，这轮的子运行报告跟着作废，不欠唤醒
+                turnRunner.restore(sessionId, userId, rollback.before());
+            } else if (rollback != null && saved) {
+                chatHistoryService.deleteMessage(rollback.answerId());
             }
             sendDone(MAPPER.createObjectNode()
                     .put("sessionId", sessionId)
                     .put("answer", stopped)
                     .put("cancelled", true)
-                    .put("pending", pending)
+                    .put("pending", pending && !keptOld)
                     .set("meta", metaJson(meta))
                     .set("sources", SearchEvent.Source.toJson(sourceList())));
         }
@@ -262,7 +273,7 @@ public class ChatTurnStreamer {
                                     prompts.get(leaves.lang(), "chat.hitl.resumeMessage"))));
         }
 
-        /** 正常作答收尾：答案落库、顶掉旧答案（重生成轮）、发 done。 */
+        /** 正常作答收尾：答案落库、顶掉旧答案（重生成轮；产出为空则上下文退回）、发 done。 */
         private void finishAnswered(boolean pending, ContextUsage context) {
             String finalAnswer = fullAnswer();
             ChatHistoryService.TurnMeta meta = turnMeta(context);
@@ -272,13 +283,17 @@ public class ChatTurnStreamer {
             // 旧答案留到新答案确实落库之后才删（append 落没落库看返回值，空产出压根不落行）：
             // 重跑抛异常、产出为空、insert 失败的任何一条路上，用户至少还留着原来那条，
             // 也还能再点一次重新生成——两条都没了的话末尾是 user 行，连重新生成都点不了
-            if (replacedAnswerId != null && saved) {
-                chatHistoryService.deleteMessage(replacedAnswerId);
+            boolean keptOld = rollback != null && answer.isEmpty();
+            if (keptOld) {
+                // 产出为空：旧答案留在页面上，上下文也退回重新生成之前
+                turnRunner.restore(sessionId, userId, rollback.before());
+            } else if (rollback != null && saved) {
+                chatHistoryService.deleteMessage(rollback.answerId());
             }
             sendDone(MAPPER.createObjectNode()
                     .put("sessionId", sessionId)
                     .put("answer", finalAnswer)
-                    .put("pending", pending)
+                    .put("pending", pending && !keptOld)
                     .set("meta", metaJson(meta))
                     .set("sources", SearchEvent.Source.toJson(sourceList())));
         }

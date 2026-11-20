@@ -28,12 +28,17 @@ public class ChatTurnRewinder {
     private final ChatContextStore contextStore;
     private final PromptCatalog prompts;
 
-    /** 回退的产物：要重问的原文，以及那条等着被顶替的旧答案行 */
-    public record Rollback(String question, long answerId) {
+    /**
+     * 回退的产物：要重问的原文、那条等着被顶替的旧答案行、回退前的上下文
+     *
+     * @param before 回退前的上下文：这一轮最后旧答案还留在页面上（一个字没出就停、报错、产出为空）时原样存回去，
+     *               见 {@link ChatTurnStreamer}
+     */
+    public record Rollback(String question, long answerId, ChatContextStore.State before) {
     }
 
     /**
-     * 回退并交出要重问的原文和那条待顶替的旧答案行。
+     * 回退并交出要重问的原文、那条待顶替的旧答案行和回退前的上下文。
      * <p>
      * 上下文从尾部回删到本轮提问为止（含它）——一轮的尾巴不止"一问一答"，中间还夹着 tool_call 配对、
      * 子运行报告与收尾指令。展示表这里一行不动：旧答案要留到新答案确实落库之后才删，见 {@link ChatTurnStreamer}。
@@ -78,7 +83,7 @@ public class ChatTurnRewinder {
         // 回删之后上下文变小了，读数作废，下一轮按字数估
         contextStore.save(sessionId, userId,
                 new ChatContextStore.State(List.copyOf(context.subList(0, cut)), null, state.prefix()));
-        return Optional.of(new Rollback(question, answer.id()));
+        return Optional.of(new Rollback(question, answer.id(), state));
     }
 
     /**

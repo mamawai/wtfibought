@@ -249,17 +249,17 @@ public class ChatWorkbenchController {
         childRuns.cancelAll(sessionId);
         // 重新生成不带意图：库里存的是提问原文，按钮意图是请求级的、没落库。
         // 行为分析这类提问原文本身就够明确，主 agent 的成文规则接得住
-        return streamTurn(userId, sessionId, rollback.question(), leaves, rollback.answerId(), null, false);
+        return streamTurn(userId, sessionId, rollback.question(), leaves, rollback, null, false);
     }
 
     /**
      * 建流并把这一轮丢给执行器。/chat、/regenerate、/wake 共用。
      *
-     * @param replacedAnswerId null=普通轮；非空=重新生成轮，它在顶替这条旧答案——提问已在库里不再落一遍
-     * @param wake             唤醒轮：message 为 null，用户侧消息是唤醒指令
+     * @param rollback null=普通轮；非空=重新生成轮：顶替哪条旧答案、回退前的上下文，用法见 {@link ChatTurnStreamer#run}
+     * @param wake     唤醒轮：message 为 null，用户侧消息是唤醒指令
      */
     private SseEmitter streamTurn(long userId, String sessionId, String message,
-                                  ChatAgentFactory.Leaves leaves, Long replacedAnswerId, ChatIntent intent,
+                                  ChatAgentFactory.Leaves leaves, ChatTurnRewinder.Rollback rollback, ChatIntent intent,
                                   boolean wake) {
         // 给足 10 分钟
         SseEmitter emitter = new SseEmitter(600_000L);
@@ -275,7 +275,7 @@ public class ChatWorkbenchController {
             streamExecutor.execute(() -> {
                 // 名额在这一层 try/finally 归还
                 try {
-                    turnStreamer.run(channel, userId, sessionId, message, leaves, replacedAnswerId, intent, wake);
+                    turnStreamer.run(channel, userId, sessionId, message, leaves, rollback, intent, wake);
                 } catch (Throwable e) {
                     log.error("[Workbench] 对话任务异常退出 sessionId={}", sessionId, e);
                     // 那边只兜 Exception，Error 穿到这里时通道还开着：不收口前端要挂到 10 分钟超时

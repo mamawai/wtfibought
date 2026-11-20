@@ -8,13 +8,18 @@ import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.chat.store.ChatRowKind;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
+import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.LlmEndpointService;
+import com.mawai.wiibagent.llm.ModelCallLimiter;
+import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
+import com.mawai.wiibagent.mapper.WorkbenchChatContextMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,17 +28,27 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doAnswer;
@@ -48,12 +63,13 @@ import static org.mockito.Mockito.when;
 /**
  * 重新生成最后一条回答：回退到"提问已在、回答未出"，再用原提问重跑。
  * <p>
- * 三件必须钉住的事：
+ * 四件必须钉住的事：
  * <ol>
  *   <li><b>轮起始标记只是候选</b>——整理上下文会把上一轮的提问原样留在摘要后面，老会话的压缩还把
  *       首条用户消息原样放在队首，那几条也带标记；不拿提问原文核对就会切错位置，把中间几轮一起抹掉。</li>
  *   <li><b>旧答案要留到新答案确实落库之后才删</b>——重跑失败/空产出的路上，
  *       用户至少还留着原来那条，也还能再点一次。</li>
+ *   <li><b>页面上留着旧答案，模型上下文里也得有它</b>——一个字没出就被停下、产出为空时，上下文退回重新生成之前。</li>
  *   <li><b>拒绝时名额必须还回去</b>——不还的话这个用户此后永久占线，比不给重新生成严重得多。</li>
  * </ol>
  */
@@ -143,6 +159,21 @@ class ChatRegenerateTest {
         verify(h.history(), never()).deleteMessage(anyLong());
     }
 
+    /** 会话上下文表的假实现：字节真存真取，编解码是生产那套 */
+    private static ChatContextStore inMemoryContextStore() {
+        Map<String, byte[]> rows = new ConcurrentHashMap<>();
+        WorkbenchChatContextMapper mapper = mock(WorkbenchChatContextMapper.class);
+        when(mapper.selectState(anyString())).thenAnswer(inv -> {
+            byte[] row = rows.get(inv.getArgument(0));
+            return row == null ? List.of() : List.of(row);
+        });
+        when(mapper.upsert(anyString(), anyLong(), any())).thenAnswer(inv -> {
+            rows.put(inv.getArgument(0), inv.getArgument(2));
+            return 1;
+        });
+        return new ChatContextStore(mapper);
+    }
+
     @Test
     void 回退后用原提问重跑且不重复落提问行() {
         Harness h = harness(
@@ -220,6 +251,80 @@ class ChatRegenerateTest {
 
         verify(h.history(), timeout(5_000)).append(eq(SESSION), eq(1L), eq("assistant"), any(), any(), any(), any());
         verify(h.history(), never()).deleteMessage(anyLong());
+    }
+
+    /**
+     * 真 runner、真上下文存储跑一遍：一个字没出就被停下，页面留着旧答案，模型上下文也得退回有它的样子——
+     * 不然用户接着问"展开第二个方案"，模型根本没见过屏幕上那份回答
+     */
+    @Test
+    void 重生成一个字没出就被停下_上下文仍含旧答案() throws InterruptedException {
+        // 出字前点了停止：模型一被调用就叫停这一轮，一帧都没来
+        RealRun run = regenerateOnRealContext(runRegistry -> inv -> {
+            runRegistry.requestCancel(SESSION);
+            return Flux.empty();
+        });
+
+        assertThat(run.context()).containsExactly(turnStart("BTC 怎么样").getText(), "旧答案");
+    }
+
+    /** 正常跑完却一个字都没产出：页面同样换回旧答案，上下文也退回 */
+    @Test
+    void 重生成产出为空_上下文仍含旧答案() throws InterruptedException {
+        RealRun run = regenerateOnRealContext(runRegistry -> inv -> Flux.just(new ChatResponse(List.of(new Generation(
+                new AssistantMessage(""), ChatGenerationMetadata.builder().finishReason("STOP").build())))));
+
+        // 走的是正常收尾：空答案交给了落库，旧答案没删
+        verify(run.history()).append(eq(SESSION), eq(1L), eq("assistant"), eq(""), any(), any(), any());
+        verify(run.history(), never()).deleteMessage(anyLong());
+        assertThat(run.context()).containsExactly(turnStart("BTC 怎么样").getText(), "旧答案");
+    }
+
+    /** 真 runner、真上下文存储跑完的现场：落历史的 mock 和收尾后的上下文 */
+    private record RealRun(ChatHistoryService history, List<String> context) {
+    }
+
+    /** 上下文是"BTC 怎么样 / 旧答案"，点重新生成；upstream 定模型这次怎么回，能拿到这一轮的运行登记 */
+    private static RealRun regenerateOnRealContext(
+            Function<WorkbenchRunRegistry, Answer<Flux<ChatResponse>>> upstream) throws InterruptedException {
+        ChatContextStore contextStore = inMemoryContextStore();
+        contextStore.save(SESSION, 1L, new ChatContextStore.State(
+                List.of(turnStart("BTC 怎么样"), new AssistantMessage("旧答案")), 1000L, "fp"));
+        ChatHistoryService history = mock(ChatHistoryService.class);
+        when(history.messages(SESSION)).thenReturn(List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "旧答案")));
+        when(history.append(any(), anyLong(), any(), any(), any(), any(), any())).thenReturn(true);
+        WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
+        ChatModel model = ChatTestEndpoints.model();
+        when(model.stream(any(Prompt.class))).thenAnswer(upstream.apply(runRegistry));
+        UsageTrackingChatModel deep = new UsageTrackingChatModel(model);
+        LlmClient client = LlmClient.builder().model(deep).systemPrompt("你是助手").build();
+        ReactLoop main = ReactLoop.builder().client(client).streaming(true)
+                .limiter(new ModelCallLimiter(8, "未执行", "收尾")).build();
+        ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
+        when(agentFactory.leavesFor(any(), any()))
+                .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", deep, main, client, AgentLang.ZH, 256_000));
+        LlmEndpointService endpointService = mock(LlmEndpointService.class);
+        when(endpointService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
+        ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
+        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry,
+                ChatTestEndpoints.compactor());
+        ApprovalRegistry approvals = new ApprovalRegistry();
+        ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, approvals,
+                ChatTestEndpoints.PROMPTS);
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService,
+                approvals, mock(TraderPickRegistry.class), mock(TraderService.class),
+                history, contextStore, streamer, new ChatTurnRewinder(history, contextStore, ChatTestEndpoints.PROMPTS),
+                runRegistry, childRuns, ChatTestEndpoints.prefs(), new ChatConcurrencyGate(10), new MessageCatalog(),
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), executor);
+        ChatWorkbenchController.RegenerateRequest request = new ChatWorkbenchController.RegenerateRequest();
+        request.setSessionId(SESSION);
+
+        controller.regenerate(1L, request, mock(HttpServletResponse.class));
+        // 等这一轮彻底收完尾
+        executor.shutdown();
+        assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        return new RealRun(history, contextStore.load(SESSION).messages().stream().map(Message::getText).toList());
     }
 
     @Test
