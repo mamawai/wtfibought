@@ -1,14 +1,20 @@
 package com.mawai.wiibsim.service.impl;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.limiter.TokenBucketLimiter;
 import com.mawai.wiibsim.config.GoogleConfig;
 import com.mawai.wiibsim.config.LinuxDoConfig;
+import com.mawai.wiibsim.dto.LinuxDoUserInfo;
 import com.mawai.wiibsim.mapper.InviteCodeMapper;
 import com.mawai.wiibsim.service.UserService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
@@ -18,7 +24,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,7 +39,9 @@ class AuthServiceUsernameTest {
 
     private final UserService userService = mock(UserService.class);
     private final InviteCodeMapper inviteCodes = mock(InviteCodeMapper.class);
-    private final AuthServiceImpl service = new AuthServiceImpl(userService, mock(LinuxDoConfig.class), mock(RestTemplate.class),
+    private final LinuxDoConfig linuxDo = mock(LinuxDoConfig.class);
+    private final RestTemplate linuxDoRest = mock(RestTemplate.class);
+    private final AuthServiceImpl service = new AuthServiceImpl(userService, linuxDo, linuxDoRest,
             mock(GoogleConfig.class), mock(RestTemplate.class), inviteCodes, mock(MessageCatalog.class),
             mock(TokenBucketLimiter.class));
 
@@ -69,6 +79,42 @@ class AuthServiceUsernameTest {
         assertThat(service.linuxDoUsername("alice2", old)).isEqualTo("alice2");
         assertThat(service.linuxDoUsername("ai_trader_t7_r2", null)).isEqualTo("user");
         assertThat(service.linuxDoUsername("ai_trader_t7_r2", old)).isEqualTo("bob");
+    }
+
+    @Test
+    void 老号在LinuxDo改的名字站内已有人用_留旧名() {
+        User old = new User();
+        old.setUsername("bob");
+        when(userService.findByUsername("carol")).thenReturn(new User());
+        // 名字没变：查到的是自己
+        when(userService.findByUsername("bob")).thenReturn(old);
+
+        assertThat(service.linuxDoUsername("carol", old)).isEqualTo("bob");
+        assertThat(service.linuxDoUsername("bob", old)).isEqualTo("bob");
+    }
+
+    @Test
+    void LinuxDo新用户和站内已有用户同名_另起名照常登录() {
+        when(linuxDo.getTokenUrl()).thenReturn("https://linux.do/token");
+        when(linuxDo.getUserUrl()).thenReturn("https://linux.do/user");
+        when(linuxDoRest.postForObject(eq("https://linux.do/token"), any(), eq(String.class)))
+                .thenReturn("{\"access_token\":\"at\"}");
+        LinuxDoUserInfo info = new LinuxDoUserInfo();
+        info.setId(42L);
+        info.setUsername("alice");
+        when(linuxDoRest.exchange(eq("https://linux.do/user"), eq(HttpMethod.GET), any(), eq(LinuxDoUserInfo.class)))
+                .thenReturn(ResponseEntity.ok(info));
+        // 站内已经有人叫 alice
+        when(userService.findByUsername("alice")).thenReturn(new User());
+
+        try (MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
+            stp.when(StpUtil::getTokenValue).thenReturn("token");
+            assertThat(service.handleLinuxDoCallback("code")).isEqualTo("token");
+        }
+
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(userService).save(saved.capture());
+        assertThat(saved.getValue().getUsername()).matches("alice_\\d{4}");
     }
 
     @Test

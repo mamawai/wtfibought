@@ -148,30 +148,18 @@ public class AuthServiceImpl implements AuthService {
                 user.setBalance(initialBalance);
                 // agent 语言初值取建号那一刻的界面语言，之后只在配置页改
                 user.setLang(RequestLang.current().code());
-                try {
-                    userService.save(user);
-                    // 建号走 INSERT，记账切面（只切 atomic* 资金方法）抓不到，必须显式补这一笔，
-                    // 否则新用户一落库就是 SUM(delta)=0 而 balance=10000
-                    userService.recordInitialGrant(user.getId(), initialBalance);
-                } catch (DuplicateKeyException e) {
-                    // 本意是"并发回调抢先创建，重查后继续登录"（那一笔 INITIAL_GRANT 由抢先者记了，不重复记）。
-                    // 但在 PG 上这条恢复路径其实走不通：本方法带 @Transactional，save 撞唯一键后
-                    // 整个事务已 aborted，紧跟的 findByLinuxDoId 会直接失败——要真恢复得先开 SAVEPOINT。
-                    // 属既存问题，不在本次范围；无论走哪支都不会重复记账，故不动逻辑只把注释写准。
-                    user = userService.findByLinuxDoId(linuxDoId);
-                    if (user == null) throw e;
-                }
+                userService.save(user);
+                // 建号走 INSERT，记账切面（只切 atomic* 资金方法）抓不到，必须显式补这一笔，
+                // 否则新用户一落库就是 SUM(delta)=0 而 balance=10000
+                userService.recordInitialGrant(user.getId(), initialBalance);
                 log.info("新用户注册: {} LinuxDoId={}", username, linuxDoId);
             } else {
-                // 更新用户信息
-                user.setUsername(linuxDoUsername(username, user));
-                user.setAvatar(avatar);
-                try {
-                    userService.updateById(user);
-                } catch (DuplicateKeyException e) {
-                    // LinuxDo 侧改名撞上本地注册用户名：跳过本次资料更新，保留旧名照常登录
-                    log.warn("LinuxDo 用户名 {} 已被本地账号占用，保留旧资料 UserId={}", username, user.getId());
-                }
+                // 只更用户名和头像两列，不整行写回
+                userService.lambdaUpdate()
+                        .eq(User::getId, user.getId())
+                        .set(User::getUsername, linuxDoUsername(username, user))
+                        .set(User::getAvatar, avatar)
+                        .update();
             }
 
             // 4. 登录（Sa-Token）
@@ -242,13 +230,16 @@ public class AuthServiceImpl implements AuthService {
 
     /**
      * LinuxDo 登录后站内叫什么：一般跟 LinuxDo 的名字走；
-     * 撞上 AI Trader 子账户前缀的不跟——新号另起一个，老号（existing）留着原来的
+     * 撞上 AI Trader 子账户前缀、或站内已经有人叫这个名字的不跟——新号另起一个，老号（existing）留着原来的
      */
     String linuxDoUsername(String linuxDoName, User existing) {
-        if (!linuxDoName.startsWith(UserService.TRADER_ACCOUNT_PREFIX)) {
-            return linuxDoName;
+        // 老号名字没变时查到的是它自己，照样留原名
+        boolean taken = linuxDoName.startsWith(UserService.TRADER_ACCOUNT_PREFIX)
+                || userService.findByUsername(linuxDoName) != null;
+        if (existing == null) {
+            return taken ? freshUsername(linuxDoName) : linuxDoName;
         }
-        return existing == null ? freshUsername(linuxDoName) : existing.getUsername();
+        return taken ? existing.getUsername() : linuxDoName;
     }
 
     /**
