@@ -57,13 +57,13 @@ public class WsConnection {
     static final int INBOX_CAPACITY = 4096;
     private final BlockingQueue<Frame> inbox = new ArrayBlockingQueue<>(INBOX_CAPACITY);
     private final AtomicLong dropped = new AtomicLong();
-    /** 这一轮被挤掉的帧最早、最晚的收到时刻（0 = 没挤掉过）；读线程记，consumer 追上后取走 */
+    /** 这一轮丢的帧（被挤掉或处理抛错）最早、最晚的收到时刻（0 = 没丢过）；读线程和 consumer 都会记，consumer 追上后取走 */
     private final AtomicLong droppedFrom = new AtomicLong();
-    private volatile long droppedTo;
-    /** 挤掉过帧、consumer 又追上了：报被挤掉的那段收到时刻。装配期由 BinanceWsClient 接到 handler */
+    private final AtomicLong droppedTo = new AtomicLong();
+    /** 丢过帧（被挤掉或处理抛错）、consumer 又追上了：报丢的那段收到时刻。装配期由 BinanceWsClient 接到 handler */
     @Setter
     private volatile BiConsumer<Long, Long> onDropped;
-    /** 丢帧最多这么久报一次，这期间挤掉的并成一段：行情剧烈时会接连挤掉，每段都报 sim 每次都要给所有币拉一遍 K 线 */
+    /** 丢帧最多这么久报一次，这期间丢的并成一段：行情剧烈时会接连挤掉，每段都报 sim 每次都要给所有币拉一遍 K 线 */
     static final long DROP_REPORT_INTERVAL_MS = 30_000L;
     /** 上次报丢帧的时刻；只有 consumer 线程读写 */
     private long lastDropReportAt;
@@ -105,7 +105,7 @@ public class WsConnection {
         Thread.ofVirtual().name("ws-consumer-" + name).start(this::drain);
     }
 
-    /** 按收到的顺序逐条交给 messageHandler；处理异常只记日志，不断流 */
+    /** 按收到的顺序逐条交给 messageHandler；处理抛错记日志、这帧算丢帧，不断流 */
     private void drain() {
         while (!shutdown.get()) {
             Frame frame;
@@ -120,6 +120,7 @@ public class WsConnection {
                 if (inbox.isEmpty()) reportDropped();
             } catch (Exception e) {
                 log.warn("{} WS消息处理失败: {}", name, e.getMessage());
+                markDropped(frame.receivedAt());
             }
         }
     }
@@ -129,23 +130,26 @@ public class WsConnection {
         Frame frame = new Frame(message, receivedAt);
         if (inbox.offer(frame)) return;
         Frame old = inbox.poll();
-        if (old != null) {
-            droppedFrom.compareAndSet(0L, old.receivedAt());
-            droppedTo = old.receivedAt();
-        }
+        if (old != null) markDropped(old.receivedAt());
         inbox.offer(frame);
         long n = dropped.incrementAndGet();
         if (n % 1000 == 1) log.warn("{} 处理不过来，已丢 {} 帧", name, n);
     }
 
-    /** 追上了：把挤掉的那段报出去，离上次报不到 30 秒就先攒着 */
+    /** 丢了一帧：把它的收到时刻并进这一轮的区间。读线程和 consumer 都会调 */
+    private void markDropped(long receivedAt) {
+        droppedFrom.accumulateAndGet(receivedAt, (from, t) -> from == 0L ? t : Math.min(from, t));
+        droppedTo.accumulateAndGet(receivedAt, Math::max);
+    }
+
+    /** 追上了：把丢的那段报出去，离上次报不到 30 秒就先攒着 */
     private void reportDropped() {
         if (droppedFrom.get() == 0L) return;
         long now = System.currentTimeMillis();
         if (now - lastDropReportAt < DROP_REPORT_INTERVAL_MS) return;
         lastDropReportAt = now;
         long from = droppedFrom.getAndSet(0L);
-        if (onDropped != null) onDropped.accept(from, Math.max(from, droppedTo));
+        if (onDropped != null) onDropped.accept(from, Math.max(from, droppedTo.get()));
     }
 
     /** 正在处理的这一帧是什么时候收到的；只能在 messageHandler 里调（积压时它早于处理时刻） */

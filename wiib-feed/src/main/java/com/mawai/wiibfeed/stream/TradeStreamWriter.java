@@ -22,7 +22,7 @@ public class TradeStreamWriter {
 
     private final StringRedisTemplate redisTemplate;
 
-    /** 写失败往外抛，由 WsConnection 的 consumer 记 warn */
+    /** 写失败往外抛：WsConnection 的 consumer 记 warn，这帧算丢帧、追上后发空窗补漏 */
     public void append(String keyPrefix, String symbol, String price, String qty, boolean buyerMaker,
                        long tradeTime, long receivedAt) {
         Map<String, String> f = new LinkedHashMap<>();

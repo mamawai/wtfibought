@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 收件箱满了挤掉最旧的帧；consumer 追上之后把被挤掉的那段收到时刻报一次
+ * 收件箱满了挤掉最旧的帧、处理抛错的帧，都算丢帧；consumer 追上之后把丢的那段收到时刻报一次
  * （逐笔成交丢了就没了，handler 拿它发空窗补漏）
  */
 class WsConnectionDropTest {
@@ -49,5 +49,19 @@ class WsConnectionDropTest {
         release.countDown();
 
         assertThat(reported.get(5, TimeUnit.SECONDS)).containsExactly(100L, 102L);
+    }
+
+    @Test
+    void 处理抛错的帧_追上后报它的收到时刻() throws Exception {
+        WsConnection conn = new WsConnection("AggTrade", () -> "", msg -> {
+            if ("bad".equals(msg)) throw new IllegalStateException("XADD 失败");
+        }, ws -> { }, () -> { }, null, null, shutdown);
+        CompletableFuture<long[]> reported = new CompletableFuture<>();
+        conn.setOnDropped((from, to) -> reported.complete(new long[]{from, to}));
+
+        conn.enqueue("bad", 100L);
+        conn.enqueue("ok", 200L);
+
+        assertThat(reported.get(5, TimeUnit.SECONDS)).containsExactly(100L, 100L);
     }
 }

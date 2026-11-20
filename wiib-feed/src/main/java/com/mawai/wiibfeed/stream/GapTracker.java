@@ -45,7 +45,7 @@ final class GapTracker {
         publishGap(from, System.currentTimeMillis());
     }
 
-    /** 发 [from, to] 这段空窗；连接没断、只是处理不过来挤掉过帧也走这里 */
+    /** 发 [from, to] 这段空窗；连接没断、只是挤掉过帧或有帧没处理成功也走这里 */
     void publishGap(long from, long to) {
         publisher.publish("{\"type\":\"gap\",\"kind\":\"" + kind + "\",\"from\":" + from + ",\"to\":" + to + "}");
         log.info("{} 空窗 {}ms，发 gap 事件补漏", name, to - from);

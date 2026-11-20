@@ -44,7 +44,7 @@ public class AggTradeStreamHandler implements StreamHandler {
         tracker.publishGap();
     }
 
-    /** 挤掉的是一笔笔成交，丢了就没了：按被挤掉的那段发空窗补漏 */
+    /** 挤掉或没写进去的是一笔笔成交，丢了就没了：按这段发空窗补漏 */
     @Override
     public void onDropped(long fromMs, long toMs) {
         tracker.publishGap(fromMs, toMs);
