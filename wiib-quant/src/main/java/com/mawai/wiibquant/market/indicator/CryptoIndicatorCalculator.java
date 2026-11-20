@@ -563,7 +563,8 @@ public class CryptoIndicatorCalculator {
             BigDecimal diff = closes.get(i).subtract(mid);
             sumSq = sumSq.add(diff.multiply(diff));
         }
-        BigDecimal variance = sumSq.divide(BigDecimal.valueOf(period), SCALE, RoundingMode.HALF_UP);
+        // 方差按有效位数除：低价币的方差能小到 1e-11，远在 8 位小数以下
+        BigDecimal variance = sumSq.divide(BigDecimal.valueOf(period), MathContext.DECIMAL64);
         // 开方走 double 足够：收盘价本身已是有限精度，平方根误差远小于价格 tick
         BigDecimal std = BigDecimal.valueOf(Math.sqrt(variance.doubleValue()));
         BigDecimal band = std.multiply(BigDecimal.valueOf(mult));

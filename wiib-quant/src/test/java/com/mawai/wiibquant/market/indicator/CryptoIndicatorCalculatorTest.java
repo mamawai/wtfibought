@@ -41,6 +41,24 @@ class CryptoIndicatorCalculatorTest {
         assertThat(mean).isEqualByComparingTo("15.50000000");
     }
 
+    @Test
+    void bollBandwidthAndPercentBDoNotDependOnPriceScale() {
+        List<BigDecimal[]> tiny = new ArrayList<>();
+        List<BigDecimal[]> scaled = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            BigDecimal close = i % 2 == 0 ? bd("0.00001") : bd("0.00002");
+            BigDecimal big = close.movePointRight(6);
+            tiny.add(new BigDecimal[]{close, close, close, bd("100")});
+            scaled.add(new BigDecimal[]{big, big, big, bd("100")});
+        }
+
+        Map<String, Object> a = CryptoIndicatorCalculator.calcAll(tiny);
+        Map<String, Object> b = CryptoIndicatorCalculator.calcAll(scaled);
+
+        assertThat(a.get("boll_bandwidth")).isEqualTo(b.get("boll_bandwidth"));
+        assertThat(a.get("boll_pb")).isEqualTo(b.get("boll_pb"));
+    }
+
     private static BigDecimal bd(String value) {
         return new BigDecimal(value);
     }
