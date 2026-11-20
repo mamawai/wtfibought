@@ -58,6 +58,7 @@ public class BacktestTradingTools implements TradingOperations {
     private final Map<Long, BigDecimal> maxFavorableRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> maxAdverseRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> openFeeRateByPosition = new HashMap<>();  // 开仓实际费率(maker/taker)，平仓算总费用时复用
+    private final Map<Long, Integer> openBarIndexByPosition = new HashMap<>();
 
     @Setter
     private int currentBarIndex = 0;
@@ -296,7 +297,7 @@ public class BacktestTradingTools implements TradingOperations {
         List<FuturesPositionDTO> posSnapshot = new ArrayList<>(openPositions);
         for (FuturesPositionDTO pos : posSnapshot) {
             if (!"OPEN".equals(pos.getStatus()) || !currentSymbol.equals(pos.getSymbol())) continue;
-            walkBarPath(pos, path);
+            walkBarPath(pos, path, high, low);
         }
 
         // 更新当前币种仓位的现价与未实现盈亏
@@ -311,13 +312,14 @@ public class BacktestTradingTools implements TradingOperations {
 
     /**
      * 沿盘中路径逐段判平仓。本根新开的仓：先在路径上定位成交点(首次穿过 entryPrice)，只对成交点
-     * 之后的路径判 SL/TP；旧仓整根都在成交之后，全程判。逐段用该段局部 high/low 复用
-     * {@link #checkSlTpTrigger}——段内单调，SL 与 TP 必在 entry 两侧、单段至多触一侧，
-     * 故"先后"由分段顺序决定，原"同根 SL 一律优先"退化为同段内兜底。
+     * 之后的路径判 SL/TP；旧仓整根都在成交之后，全程判；成交价不在本根高低之间的新仓（跳空成交）也全程判。
+     * 逐段用该段局部 high/low 复用 {@link #checkSlTpTrigger}——段内单调，SL 与 TP 必在 entry 两侧、
+     * 单段至多触一侧，故"先后"由分段顺序决定，原"同根 SL 一律优先"退化为同段内兜底。
      */
-    private void walkBarPath(FuturesPositionDTO pos, BigDecimal[] path) {
-        boolean armed = findOpenBarIndex(pos) != currentBarIndex;   // 旧仓全程已成交；本根新仓待定位成交点
+    private void walkBarPath(FuturesPositionDTO pos, BigDecimal[] path, BigDecimal high, BigDecimal low) {
         BigDecimal entry = pos.getEntryPrice();
+        boolean armed = findOpenBarIndex(pos) != currentBarIndex
+                || entry.compareTo(low) < 0 || entry.compareTo(high) > 0;
         for (int i = 0; i + 1 < path.length; i++) {
             BigDecimal p = path[i], q = path[i + 1];
             BigDecimal segLow = p.min(q), segHigh = p.max(q);
@@ -441,6 +443,7 @@ public class BacktestTradingTools implements TradingOperations {
             maxFavorableRByPosition.remove(pos.getId());
             maxAdverseRByPosition.remove(pos.getId());
             openFeeRateByPosition.remove(pos.getId());
+            openBarIndexByPosition.remove(pos.getId());
         } else {
             pos.setQuantity(pos.getQuantity().subtract(closeQty));
             pos.setMargin(pos.getMargin().subtract(marginRelease));
@@ -468,11 +471,7 @@ public class BacktestTradingTools implements TradingOperations {
     }
 
     private int findOpenBarIndex(FuturesPositionDTO pos) {
-        // 如果能从现有closedTrades中推算，就用；否则用当前bar（保守）
-        // 开仓的bar index保存在createdAt的一个小技巧中不太好
-        // 简单做法：用一个 Map 记录，或者直接用 currentBarIndex - 1
-        // 这里用简化方案：记录在 pos.fundingFeeTotal 的 intValue (hack)
-        return pos.getFundingFeeTotal() != null ? pos.getFundingFeeTotal().intValue() : 0;
+        return openBarIndexByPosition.getOrDefault(pos.getId(), 0);
     }
 
     private BigDecimal calcUnrealizedPnl(FuturesPositionDTO pos, BigDecimal currentPrice) {
@@ -560,13 +559,10 @@ public class BacktestTradingTools implements TradingOperations {
         return List.copyOf(closedTrades);
     }
 
-    /**
-     * 标记开仓K线索引（在openPosition之后立即调用）。
-     * 利用 FuturesPositionDTO.fundingFeeTotal 字段临时存储开仓bar index。
-     */
+    /** 标记开仓K线索引（在openPosition之后立即调用）。 */
     public void markOpenBarIndex(int barIndex) {
         if (!openPositions.isEmpty()) {
-            openPositions.getLast().setFundingFeeTotal(BigDecimal.valueOf(barIndex));
+            openBarIndexByPosition.put(openPositions.getLast().getId(), barIndex);
         }
     }
 }

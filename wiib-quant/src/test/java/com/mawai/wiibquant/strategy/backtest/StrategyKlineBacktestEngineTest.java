@@ -174,6 +174,17 @@ class StrategyKlineBacktestEngineTest {
     }
 
     @Test
+    void limitGapFillStillChecksStopOnSameBar() {
+        List<KlineBar> bars = new ArrayList<>(flatBars(11, 100));
+        bars.set(10, bar(10, 94, 96, 85, 93));                      // 跳空低开到挂单价 100 下方，同根跌穿止损 90
+        BacktestResult result = new StrategyKlineBacktestEngine(
+                limitLongFrom(9, 100, 90, 130), SYM, bars, new BigDecimal("100000"), 5, 0, null, null)
+                .run();
+        assertEquals(1, result.totalTrades());
+        assertEquals("SL", result.getTrades().getFirst().exitReason(), "100 成交后同根到过 85，必须止损出场");
+    }
+
+    @Test
     void stopFillsAtTriggerWhenBrokenThrough() {
         List<KlineBar> bars = new ArrayList<>(flatBars(20, 100));   // high 恒 101，够不到 105
         bars.set(12, bar(12, 100, 106, 99, 105));                   // bar12 冲高 106，突破触发价 105
