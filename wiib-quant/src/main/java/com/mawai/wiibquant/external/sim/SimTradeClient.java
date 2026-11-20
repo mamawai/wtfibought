@@ -104,11 +104,6 @@ public class SimTradeClient {
         return unwrap(api.closedPositions(userId, limit));
     }
 
-    public BigDecimal getBalance(Long userId) {
-        Map<String, Object> data = unwrap(api.balance(userId));
-        return new BigDecimal(String.valueOf(data.get("balance")));
-    }
-
     /** 余额明细：balance、frozenBalance、available（全仓下单额度）、equity（合约账户权益）。 */
     public Map<String, Object> getBalanceDetail(Long userId) {
         return unwrap(api.balance(userId));

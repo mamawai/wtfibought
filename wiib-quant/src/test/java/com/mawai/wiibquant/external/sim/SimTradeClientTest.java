@@ -166,7 +166,7 @@ class SimTradeClientTest {
     void 业务失败200加Resultfail_拆壳转异常() {
         responseJson = "{\"code\":500,\"msg\":\"余额不足\",\"data\":null}";
 
-        assertThatThrownBy(() -> client.getBalance(42L))
+        assertThatThrownBy(() -> client.getBalanceDetail(42L))
                 .isInstanceOf(SimTradeClient.SimBizException.class)
                 .hasMessageContaining("余额不足");
     }

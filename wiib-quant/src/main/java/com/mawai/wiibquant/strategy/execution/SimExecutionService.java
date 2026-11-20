@@ -299,7 +299,7 @@ public class SimExecutionService implements StrategyExecutionPort {
             return;
         }
         Long userId = account(signal.strategyId());
-        BigDecimal equity = client.getBalance(userId);   // 进场只在 FLAT，余额≈权益
+        BigDecimal equity = client.getEquity(userId);
         BigDecimal qty = riskSizedQty(signal, strategy, equity);
         if (qty.signum() <= 0) {
             log.warn("[SimExec] 数量为0跳过 {}:{} equity={}", signal.strategyId(), symbol, equity);

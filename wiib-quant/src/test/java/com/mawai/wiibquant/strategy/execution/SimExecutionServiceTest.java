@@ -36,7 +36,7 @@ class SimExecutionServiceTest {
         return new BigDecimal(v);
     }
 
-    /** 可控 stub：记录 open/cancel 调用，orderQuery/positions/balance 可设；不真发 HTTP。 */
+    /** 可控 stub：记录 open/cancel 调用，orderQuery/positions/equity 可设；不真发 HTTP。 */
     private static final class StubClient extends SimTradeClient {
         final List<FuturesOpenRequest> opened = new ArrayList<>();
         final List<Long> canceled = new ArrayList<>();
@@ -45,7 +45,7 @@ class SimExecutionServiceTest {
         FuturesOrderResponse orderQuery;
         List<FuturesPositionDTO> positions = new ArrayList<>();
         List<FuturesOrderResponse> pending = new ArrayList<>();
-        BigDecimal balance = bd("10000");
+        BigDecimal equity = bd("10000");
         boolean cancelFails;
         RuntimeException openFails;
 
@@ -59,8 +59,8 @@ class SimExecutionServiceTest {
         }
 
         @Override
-        public BigDecimal getBalance(Long userId) {
-            return balance;
+        public BigDecimal getEquity(Long userId) {
+            return equity;
         }
 
         @Override

@@ -1017,7 +1017,6 @@ class TraderWakeupLoopTest {
     void positionPlanInjectedIntoOpening() {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("1000", "-5")));
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9995", "frozenBalance", "0", "equity", "9990"));
-        when(simTradeClient.getBalance(99L)).thenReturn(new BigDecimal("9995"));
         when(simTradeClient.getPendingOrders(99L, null)).thenReturn(List.of());
         when(decisionMapper.selectList(any())).thenReturn(List.of());
         AiTraderPlan plan = new AiTraderPlan();
@@ -1264,7 +1263,6 @@ class TraderWakeupLoopTest {
     @Test
     void stalePlanArchivedWhenPositionGone() {
         stubHealthyAccount();
-        when(simTradeClient.getBalance(99L)).thenReturn(new BigDecimal("10000"));
         AiTraderPlan stale = new AiTraderPlan();
         stale.setId(11L);
         stale.setSymbol("BTCUSDT");
@@ -1405,7 +1403,6 @@ class TraderWakeupLoopTest {
     void alertWakeUsesAlertInstructionAndKind() {
         stubHealthyAccount();
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("1000", "-5")));
-        when(simTradeClient.getBalance(99L)).thenReturn(new BigDecimal("9995"));
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9995", "frozenBalance", "0", "equity", "9990"));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
@@ -1435,7 +1432,6 @@ class TraderWakeupLoopTest {
     void eventWakeUsesEventInstructionAndKind() {
         stubHealthyAccount();
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
-        when(simTradeClient.getBalance(99L)).thenReturn(new BigDecimal("9987"));
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9987", "frozenBalance", "0", "equity", "9987"));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
@@ -1465,7 +1461,6 @@ class TraderWakeupLoopTest {
     void watchWakeUsesWatchInstructionAndKind() {
         stubHealthyAccount();
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
-        when(simTradeClient.getBalance(99L)).thenReturn(new BigDecimal("9987"));
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9987", "frozenBalance", "0", "equity", "9987"));
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);

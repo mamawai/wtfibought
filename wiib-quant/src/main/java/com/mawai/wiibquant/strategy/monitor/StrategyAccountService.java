@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 多策略独立模拟盘账户监控（quant-FIBO / quant-SQZMOM / quant-TURTLE）。
@@ -71,7 +72,9 @@ public class StrategyAccountService {
 
     private StrategyAccountView assemble(String strategyId) {
         Long userId = account(strategyId);
-        BigDecimal balance = client.getBalance(userId);
+        Map<String, Object> balanceDetail = client.getBalanceDetail(userId);
+        BigDecimal balance = new BigDecimal(String.valueOf(balanceDetail.get("balance")));
+        BigDecimal equity = SimTradeClient.equityOf(balanceDetail);
         List<FuturesPositionDTO> positions = client.getAllPositions(userId);
         List<FuturesPositionDTO> closed = client.getClosedPositions(userId, CLOSED_LIMIT);
 
@@ -83,13 +86,6 @@ public class StrategyAccountService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         int wins = (int) closed.stream().filter(p -> nz(p.getClosedPnl()).signum() > 0).count();
         double winRate = closed.isEmpty() ? 0 : (double) wins / closed.size();
-        // 权益=余额+逐仓保证金+浮盈。只加逐仓的margin：逐仓开仓时钱已从balance划走到仓位；
-        // 全仓是占用制，钱没离开balance，再加margin就重复计钱（机器人默认逐仓，此处兼容手动开的全仓）
-        BigDecimal marginInUse = positions.stream()
-                .filter(p -> !"CROSS".equals(p.getMarginMode()))
-                .map(p -> nz(p.getMargin()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal equity = balance.add(marginInUse).add(unrealized);
 
         return new StrategyAccountView(strategyId, userId, true,
                 balance, unrealized, equity, cumPnl, closed.size(), wins, winRate,
