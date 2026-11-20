@@ -33,8 +33,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BizException.class)
     public Result<?> handleBizException(BizException e) {
-        // 带码的现查词表，带话的（调用方自己查过词表或拼了上游原文）原样下发
-        String msg = e.getErrorCode() != null ? messages.get(e.getErrorCode().getMsgKey()) : e.getMsg();
+        String msg = e.render(messages);
         log.warn("业务异常: {}", msg);
         return Result.fail(e.getCode(), msg);
     }
