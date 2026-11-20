@@ -217,18 +217,14 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
     }
 
     /**
-     * 帧合并：拼文本、收工具调用，finishReason/usage/消息 metadata 取收尾帧；没等到收尾帧＝上游断流，判瞬时可重试。
+     * 帧合并：拼文本、收工具调用，finishReason/usage/消息 metadata 取收尾帧（没收尾帧的流 {@link #streamOnce} 已报断流）。
      * 消息 metadata 跟着最后一帧走，与 {@link ReactLoop} 的流式合并同口径——子类挂在上面的原始内容块两条路都不丢。
      * 搜索过程帧也在这里并掉：这次调用的搜索事件按到达顺序挂在 generation metadata 的 {@link SearchEvent#KEY} 上
      * （值是 {@code List<SearchEvent>}），{@link WebSearchTool} 从这取来源。
      */
     private ChatResponse mergeFrames(List<ChatResponse> frames) {
-        ChatResponse last = frames == null || frames.isEmpty() ? null : frames.getLast();
-        String finishReason = last == null ? null : last.getResult().getMetadata().getFinishReason();
-        if (finishReason == null || finishReason.isBlank()) {
-            // 收尾事件没到流就终了：连接级偶发，换个连接大概率就好，交给 callWithRetry
-            throw new TransientAiException(tag + " SSE 断流：未收到收尾事件就结束了");
-        }
+        ChatResponse last = frames.getLast();
+        String finishReason = last.getResult().getMetadata().getFinishReason();
         StringBuilder text = new StringBuilder();
         List<AssistantMessage.ToolCall> toolCalls = new ArrayList<>();
         List<SearchEvent> searches = new ArrayList<>();
@@ -259,6 +255,8 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
 
     /**
      * 单轮 SSE：增量文本逐帧发（供工作台 token 流），工具调用整只发一帧，收尾事件发带 usage 的收尾帧。
+     * 流正常结束却没出过收尾帧＝上游断流：已发的帧照发，末尾接一个瞬时错误
+     * （阻塞路径进 callWithRetry，流式路径由 LlmClient 在一帧没吐时重试）。
      * state 每次订阅新建：LlmClient 靠重订阅实现重试，共享 state 会污染收尾帧判断。
      */
     private Flux<ChatResponse> streamOnce(Prompt prompt) {
@@ -283,11 +281,18 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
                             new TransientAiException(tag + " SSE 首帧 " + FIRST_EVENT_TIMEOUT.toSeconds()
                                     + "s 未到或相邻事件间隔超 " + STREAM_IDLE_TIMEOUT.toMinutes() + " 分钟，判定连接挂死"))
                     .concatMap(sse -> parse(sse, state))
+                    .doOnNext(frame -> {
+                        if (frame.getResult().getMetadata().getFinishReason() != null) {
+                            state.sawFinish = true;
+                        }
+                    })
                     // 整条流一个可解析事件都没有：上游返回的根本不是我们认的 SSE，得当场说清楚，
-                    // 否则退化成静默空回答更难查
+                    // 否则会被当成断流去重试
                     .switchIfEmpty(Flux.defer(() -> state.sawMalformed
                             ? Flux.error(new NonTransientAiException(tag + " SSE 全程无可解析事件，上游返回格式不兼容"))
-                            : Flux.empty()));
+                            : Flux.empty()))
+                    .concatWith(Flux.defer(() -> state.sawFinish ? Flux.empty()
+                            : Flux.error(new TransientAiException(tag + " SSE 断流：未收到收尾事件就结束了"))));
         });
     }
 
@@ -311,11 +316,13 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
         return event == null ? Flux.empty() : toFrames(event, state);
     }
 
-    /** 一次订阅的累计状态：判定收尾帧的 finishReason、无增量服务端的兜底、畸形流与陌生事件的观测 */
+    /** 一次订阅的累计状态：判定收尾帧的 finishReason、无增量服务端的兜底、断流判定、畸形流与陌生事件的观测 */
     protected static class StreamState {
         public boolean sawText;
         public boolean sawToolCall;
         boolean sawMalformed;
+        /** 出过收尾帧（带 finishReason 的帧） */
+        boolean sawFinish;
         /** 陌生事件类型每种只记一条日志：流上到底在发什么不能是盲区，又不许刷屏 */
         private final Set<String> unknownTypes = new HashSet<>();
 

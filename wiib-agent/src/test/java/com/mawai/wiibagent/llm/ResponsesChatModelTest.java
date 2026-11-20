@@ -25,6 +25,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -451,6 +452,23 @@ class ResponsesChatModelTest {
         assertThatThrownBy(() -> model().call(new Prompt("问题")))
                 .isInstanceOf(TransientAiException.class)
                 .hasMessageContaining("断流");
+    }
+
+    /** 流式同样认收尾帧：出过字再断流，已出的字照发，末尾报瞬时错误，不能当完整回答收场 */
+    @Test
+    void 流式_出字后断流_末尾报瞬时错误() {
+        events = new String[]{
+                """
+                {"type":"response.output_text.delta","delta":"说到一半"}"""
+        };
+        List<String> texts = new ArrayList<>();
+
+        assertThatThrownBy(() -> model().stream(new Prompt("问题"))
+                .doOnNext(frame -> texts.add(frame.getResult().getOutput().getText()))
+                .blockLast())
+                .isInstanceOf(TransientAiException.class)
+                .hasMessageContaining("断流");
+        assertThat(texts).containsExactly("说到一半");
     }
 
     @Test
