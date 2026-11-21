@@ -13,6 +13,7 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import tools.jackson.databind.JsonNode;
@@ -72,7 +73,9 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
         WebClient.RequestHeadersSpec<?> request = WebClient.create(OpenAiBaseUrl.strip(baseUrl, "/v1")).get()
                 .uri("/v1/models?limit=1000");
         headers(apiKey).forEach(request::header);
-        String body = request.retrieve().bodyToMono(String.class).block(LIST_TIMEOUT);
+        String body = request.retrieve()
+                .onStatus(HttpStatusCode::is3xxRedirection, resp -> redirected("Anthropic", resp))
+                .bodyToMono(String.class).block(LIST_TIMEOUT);
         JsonNode data = MAPPER.readTree(body).get("data");
         List<String> ids = new ArrayList<>();
         for (JsonNode item : data) {

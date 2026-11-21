@@ -16,9 +16,11 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -270,6 +272,7 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
                     .accept(MediaType.TEXT_EVENT_STREAM)
                     .bodyValue(MAPPER.writeValueAsString(body))
                     .retrieve()
+                    .onStatus(HttpStatusCode::is3xxRedirection, resp -> redirected(tag, resp))
                     .onStatus(HttpStatusCode::isError, resp ->
                             resp.bodyToMono(String.class).defaultIfEmpty("")
                                     .flatMap(errBody -> Mono.error(toApiException(resp.statusCode().value(), errBody))))
@@ -407,7 +410,14 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
         return new UpstreamRejected(status, message);
     }
 
-    /** 上游回的 4xx（429 除外），带着状态码 */
+    /** 上游回了 3xx：不跟随，带着状态码和要跳去的地址报出来 */
+    static Mono<UpstreamRejected> redirected(String tag, ClientResponse resp) {
+        int status = resp.statusCode().value();
+        return Mono.just(new UpstreamRejected(status, tag + " API HTTP " + status + ": 上游要求重定向到 "
+                + resp.headers().asHttpHeaders().getFirst(HttpHeaders.LOCATION) + "，不跟随"));
+    }
+
+    /** 上游回的 3xx、4xx（429 除外），带着状态码 */
     public static final class UpstreamRejected extends NonTransientAiException {
 
         private final int status;

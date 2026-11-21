@@ -122,18 +122,25 @@ class ByokRedirectTest {
     void 跨主机重定向的openai调用被拒() {
         assertThatThrownBy(() -> builder.build(endpoint(AiProtocols.OPENAI, "/cross"))
                 .call(new Prompt(new UserMessage("ping"))))
-                .hasStackTraceContaining("已拒绝");
+                .hasRootCauseInstanceOf(ByokModelBuilder.CrossHostRedirect.class);
     }
 
-    /** responses 协议走 WebClient，压根不跟随重定向，落点一次都碰不到 */
+    /** responses 协议走 WebClient，压根不跟随重定向，落点一次都碰不到；302 带着状态码报出来，不当断流去重试 */
     @Test
     void responses协议不跟随重定向() {
-        try {
-            builder.build(endpoint(AiProtocols.RESPONSES, "/cross"))
-                    .call(new Prompt(new UserMessage("ping")));
-        } catch (Exception ignored) {
-            // 302 不跟随时按非 2xx 处理，抛什么不重要
-        }
+        assertThatThrownBy(() -> builder.build(endpoint(AiProtocols.RESPONSES, "/cross"))
+                .call(new Prompt(new UserMessage("ping"))))
+                .isInstanceOfSatisfying(SseChatModel.UpstreamRejected.class,
+                        e -> assertThat(e.status()).isEqualTo(302));
+        assertThat(landingHits).hasValue(0);
+    }
+
+    /** 自研协议拉模型清单也一样 */
+    @Test
+    void 自研协议的模型清单不跟随重定向() {
+        assertThatThrownBy(() -> builder.listModels(AiProtocols.ANTHROPIC, originBaseUrl("/cross"), "sk-test"))
+                .isInstanceOfSatisfying(SseChatModel.UpstreamRejected.class,
+                        e -> assertThat(e.status()).isEqualTo(302));
         assertThat(landingHits).hasValue(0);
     }
 

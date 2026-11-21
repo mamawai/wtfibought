@@ -9,12 +9,13 @@ import org.springframework.ai.retry.TransientAiException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.IntPredicate;
 
 /**
  * 异常 → 用户看得懂、也能据此动手解决的一句话。
  * <p>
  * BYOK 之后最高频的故障就是 key 相关，而 SDK 原始异常常是几百字符、带 URL 和请求片段的东西，
- * 所以认得出的那几类（401/429/不支持联网搜索/模型不存在/连不上）各给一句能照着做的话。
+ * 所以认得出的那几类（401/地址跳转/429/不支持联网搜索/模型不存在/连不上）各给一句能照着做的话。
  * <p>
  * <b>认不出来的就不替用户判病因。</b> 调用方的 catch 罩的范围都比 LLM 大得多——
  * 落历史、写记忆、上下文落库全在里面，数据库挂了也走这条路。
@@ -24,7 +25,7 @@ import java.util.Map;
  * 子运行失败时它会被拼进失败报告喂回模型，并随会话上下文落库。
  * <p>
  * 文案在 {@link PromptCatalog} 的 {@code llm.error.*}，按当前用户的 {@link AgentLang} 取；
- * 鉴权失败看状态码，其余几类（429/404 model/超时那几组关键字）只认上游英文原文，与语言无关。
+ * 鉴权失败看状态码，地址跳转看状态码或异常类型，其余几类（429/404 model/超时那几组关键字）只认上游英文原文，与语言无关。
  */
 @Slf4j
 public final class LlmErrorMessages {
@@ -48,11 +49,25 @@ public final class LlmErrorMessages {
      * openai 协议是 SDK 的 {@link OpenAIServiceException}。{@link #classify} 的第一分支，唤醒回路据它立即暂停
      */
     public static boolean unauthorized(Throwable t) {
+        return hasStatus(t, status -> status == 401 || status == 403);
+    }
+
+    /**
+     * 上游要求重定向，没跟过去，地址得改成跳转后的那个。
+     * 自研协议是带着 3xx 状态码上来的；openai 协议是跳去别的主机被 {@link ByokModelBuilder} 拦下的
+     */
+    private static boolean redirected(Throwable t) {
+        return hasStatus(t, status -> status >= 300 && status < 400)
+                || hasCause(t, ByokModelBuilder.CrossHostRedirect.class);
+    }
+
+    /** 因果链上有没有哪层模型层异常的状态码对得上 */
+    private static boolean hasStatus(Throwable t, IntPredicate match) {
         Throwable cur = t;
         for (int i = 0; i < MAX_CAUSE_DEPTH && cur != null; i++, cur = cur.getCause()) {
             int status = cur instanceof SseChatModel.UpstreamRejected rejected ? rejected.status()
                     : cur instanceof OpenAIServiceException sdk ? sdk.statusCode() : 0;
-            if (status == 401 || status == 403) {
+            if (match.test(status)) {
                 return true;
             }
         }
@@ -66,6 +81,9 @@ public final class LlmErrorMessages {
         String lower = chain(t).toLowerCase(Locale.ROOT);
         if (unauthorized(t)) {
             return prompts.get(lang, "llm.error.unauthorized");
+        }
+        if (redirected(t)) {
+            return prompts.get(lang, "llm.error.redirected");
         }
         if (lower.contains("429") || lower.contains("quota") || lower.contains("rate limit")) {
             return prompts.get(lang, "llm.error.quota");

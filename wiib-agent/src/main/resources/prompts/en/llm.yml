@@ -17,6 +17,8 @@ llm:
     searchUnsupported: This endpoint does not support web search - turn off "Web search" in the model settings
     modelNotFound: This endpoint does not support that model, pick another one
     unreachable: The endpoint is not responding - check that the Base URL is correct
+    # The upstream answered 3xx and the redirect was not followed
+    redirected: The endpoint redirected the request elsewhere - set the Base URL to the address it redirects to
     # Transient failures: stream cut off, hung connection, upstream 5xx
     transient: The model service dropped the connection or hit a temporary error - please try again shortly
     # type is the class name of the deepest cause, language-independent; it is how unclassified shapes get spotted

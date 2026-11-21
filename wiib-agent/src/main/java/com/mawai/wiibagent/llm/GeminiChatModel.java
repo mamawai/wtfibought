@@ -13,6 +13,7 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import tools.jackson.databind.JsonNode;
@@ -66,7 +67,9 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
         String body = WebClient.create(OpenAiBaseUrl.strip(baseUrl, "/v1beta")).get()
                 .uri("/v1beta/models?pageSize=1000")
                 .header("x-goog-api-key", apiKey)
-                .retrieve().bodyToMono(String.class).block(LIST_TIMEOUT);
+                .retrieve()
+                .onStatus(HttpStatusCode::is3xxRedirection, resp -> redirected("Gemini", resp))
+                .bodyToMono(String.class).block(LIST_TIMEOUT);
         JsonNode models = MAPPER.readTree(body).get("models");
         List<String> names = new ArrayList<>();
         for (JsonNode item : models) {

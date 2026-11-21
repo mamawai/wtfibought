@@ -45,10 +45,18 @@ public class ByokModelBuilder {
                 String landed = response.request().url().host();
                 if (!asked.equalsIgnoreCase(landed)) {
                     response.close();
-                    throw new IOException("上游把请求重定向到了 " + landed + "，已拒绝");
+                    throw new CrossHostRedirect(landed);
                 }
                 return response;
             }));
+
+    /** openai 协议的请求被上游跳去了别的主机，拦下没放行 */
+    static final class CrossHostRedirect extends IOException {
+
+        CrossHostRedirect(String landed) {
+            super("上游把请求重定向到了 " + landed + "，已拒绝");
+        }
+    }
 
     private final ApiKeyCrypto apiKeyCrypto;
     private final ToolCallingManager toolCallingManager;

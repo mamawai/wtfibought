@@ -48,6 +48,15 @@ class LlmErrorMessagesTest {
                 "Responses API HTTP 500: {\"request_id\":\"req_8a403f\"}"))).isFalse();
     }
 
+    /** 自研协议不跟随重定向，3xx 带着状态码上来；openai 协议跳去别的主机被拦下，埋在 SDK 异常的 cause 里 */
+    @Test
+    void 地址跳转提示改BaseUrl() {
+        assertThat(zh(new SseChatModel.UpstreamRejected(302, "Responses API HTTP 302: 上游要求重定向到 https://x.example/v1，不跟随")))
+                .contains("跳转");
+        assertThat(zh(new RuntimeException("Request failed", new ByokModelBuilder.CrossHostRedirect("x.example"))))
+                .contains("跳转");
+    }
+
     @Test
     void 限流与额度用尽单独归类() {
         assertThat(zh(new RuntimeException("429 Too Many Requests")))
@@ -149,11 +158,12 @@ class LlmErrorMessagesTest {
                 .doesNotContain("Zm9vYmFyMTIzNDU2");
     }
 
-    /** 英文用户不许收到一个中文字：七条归类各扫一遍 */
+    /** 英文用户不许收到一个中文字：八条归类各扫一遍 */
     @Test
     void 英文侧全部文案无中文() {
         for (Throwable t : new Throwable[]{
                 new SseChatModel.UpstreamRejected(401, "Responses API HTTP 401: Unauthorized"),
+                new SseChatModel.UpstreamRejected(302, "Responses API HTTP 302"),
                 new RuntimeException("429 Too Many Requests"),
                 new RuntimeException("web_search tool is not supported by this model"),
                 new RuntimeException("404 model 'gpt-9' not found"),
