@@ -3,8 +3,8 @@
 @layer components {
   /* 刚放出来的一段（Markdown 把它包成了行内元素）：从下面弹上来，略过头再落定，同时淡入。
      行内元素不吃 transform，位移用相对定位的 top，折行的每一行都跟着动 */
-  .sx .pop{position:relative;top:0;animation:wiib-pop-rise 280ms cubic-bezier(.3,1.9,.5,1) both,wiib-pop-fade 160ms ease-out both}
-  @keyframes wiib-pop-rise{from{top:.55em}}
+  .sx .pop{position:relative;top:0;animation:wiib-pop-rise 280ms cubic-bezier(.3,1.6,.5,1) both,wiib-pop-fade 160ms ease-out both}
+  @keyframes wiib-pop-rise{from{top:.3em}}
   @keyframes wiib-pop-fade{from{opacity:0}}
 
   /* 呼吸点：缩小了的 Polaris 球，跟在最后一个字后面（末段是列表就跟在最后一条后面），带一圈橙晕一起一明一暗 */
