@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -370,6 +371,13 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
 
     protected ChatResponseMetadata.Builder metadata() {
         return ChatResponseMetadata.builder().model(model);
+    }
+
+    /** 带缓存命中 / 写入数的 usage：这两项是 prompt 内部的明细，给 0 就是没有 */
+    protected static DefaultUsage usageWithCache(Integer prompt, Integer completion, Integer total,
+                                                 int cacheRead, int cacheWrite) {
+        return new DefaultUsage(prompt, completion, total, null,
+                cacheRead > 0 ? (long) cacheRead : null, cacheWrite > 0 ? (long) cacheWrite : null);
     }
 
     /** 请求级 model 覆盖端点配置（一般就是端点的） */

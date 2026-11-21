@@ -360,6 +360,8 @@ class AnthropicChatModelTest {
         assertThat(response.getMetadata().getUsage().getPromptTokens()).isEqualTo(123);
         assertThat(response.getMetadata().getUsage().getCompletionTokens()).isEqualTo(3);
         assertThat(response.getMetadata().getUsage().getTotalTokens()).isEqualTo(126);
+        assertThat(response.getMetadata().getUsage().getCacheReadInputTokens()).isEqualTo(100L);
+        assertThat(response.getMetadata().getUsage().getCacheWriteInputTokens()).isEqualTo(20L);
     }
 
     private static final String[] THINK_THEN_TOOL = new String[]{

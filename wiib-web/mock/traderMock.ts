@@ -208,7 +208,7 @@ const decisions = () => {
         { tool: 'set_stop_loss', status: 'ok', args: { positionId: 501, stopLossPrice: 62300, reason: '成本已覆盖，移到保本上方' } },
         { tool: 'close_position', rejected: '持仓 88 不存在或已平仓', args: { positionId: 88, reason: '清掉旧的 ETH 空单' } },
       ]),
-      toolCalls: 6, modelCalls: 3, promptTokens: 14820, completionTokens: 3600, totalTokens: 18420,
+      toolCalls: 6, modelCalls: 3, promptTokens: 14820, completionTokens: 3600, totalTokens: 18420, cachedTokens: 11200,
       latencyMs: 42800, error: null, createdAt: '2026-09-05 12:04:11', hasTrace: true,
     },
     {
@@ -220,7 +220,7 @@ const decisions = () => {
         { tool: 'market_snapshot', status: 'ok', args: { symbol: 'SOLUSDT' } },
         { tool: 'set_stop_loss', status: 'ok', args: { positionId: 502, stopLossPrice: 208.5, reason: '给插针留空间，结构没破' } },
       ]),
-      toolCalls: 3, modelCalls: 2, promptTokens: 9200, completionTokens: 1840, totalTokens: 11040,
+      toolCalls: 3, modelCalls: 2, promptTokens: 9200, completionTokens: 1840, totalTokens: 11040, cachedTokens: 6400,
       latencyMs: 21400, error: null, createdAt: '2026-09-05 09:15:02', hasTrace: true,
     },
     {
@@ -231,7 +231,7 @@ const decisions = () => {
         { tool: 'get_account', status: 'ok', args: {} },
         { tool: 'indicators', status: 'ok', args: { symbol: 'BTCUSDT', interval: '4h' } },
       ]),
-      toolCalls: 2, modelCalls: 2, promptTokens: 8400, completionTokens: 1200, totalTokens: 9600,
+      toolCalls: 2, modelCalls: 2, promptTokens: 8400, completionTokens: 1200, totalTokens: 9600, cachedTokens: null,
       latencyMs: 15200, error: null, createdAt: '2026-09-05 06:20:44', hasTrace: true,
     },
     {
@@ -241,7 +241,7 @@ const decisions = () => {
       actionsJson: actions([
         { tool: 'klines', status: 'ok', args: { symbol: 'BTCUSDT', interval: '4h', limit: 200 } },
       ]),
-      toolCalls: 1, modelCalls: 1, promptTokens: 7200, completionTokens: null, totalTokens: null,
+      toolCalls: 1, modelCalls: 1, promptTokens: 7200, completionTokens: null, totalTokens: null, cachedTokens: null,
       latencyMs: 61200, error: '上游端点超时：Read timed out after 60000ms（已重试 2 次）',
       createdAt: '2026-09-05 02:10:08', hasTrace: true,
     },
@@ -256,7 +256,7 @@ const decisions = () => {
 
 **下一步**：SOL 空单不加仓，触到 208.5 就认。BTC 单继续拿，65,000 上方考虑分批止盈。`,
       actionsJson: null,
-      toolCalls: 0, modelCalls: 1, promptTokens: 22400, completionTokens: 2100, totalTokens: 24500,
+      toolCalls: 0, modelCalls: 1, promptTokens: 22400, completionTokens: 2100, totalTokens: 24500, cachedTokens: 18900,
       latencyMs: 18900, error: null, createdAt: '2026-09-04 22:00:00', hasTrace: false,
     },
   ];

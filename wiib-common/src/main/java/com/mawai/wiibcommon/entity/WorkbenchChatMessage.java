@@ -34,8 +34,9 @@ public class WorkbenchChatMessage {
     private String content;
 
     /**
-     * 以下 6 列是这一轮的读数，只有 assistant 行有值（user 行与历史老数据一律 null）。
-     * 口径与 {@code ai_trader_decision} 同源：token 三项 null=上游端点没返回 usage，不是 0。
+     * 以下 7 列是这一轮的读数，只有 assistant 行有值（user 行与历史老数据一律 null）。
+     * 口径与 {@code ai_trader_decision} 同源：token 三项 null=上游端点没返回 usage，不是 0；
+     * cachedTokens 是 promptTokens 里命中提示缓存的那部分，没命中或上游没报为 null。
      */
     private String modelLabel;
 
@@ -46,6 +47,8 @@ public class WorkbenchChatMessage {
     private Long completionTokens;
 
     private Long totalTokens;
+
+    private Long cachedTokens;
 
     private Integer latencyMs;
 

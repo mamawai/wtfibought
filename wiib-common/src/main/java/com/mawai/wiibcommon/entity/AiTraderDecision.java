@@ -77,6 +77,8 @@ public class AiTraderDecision {
     private Long promptTokens;
     private Long completionTokens;
     private Long totalTokens;
+    /** promptTokens 里命中提示缓存的那部分；null=没命中或上游没报 */
+    private Long cachedTokens;
 
     private Integer latencyMs;
 

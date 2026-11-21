@@ -50,7 +50,7 @@ class ChatHistoryMetaTest {
         ArrayNode steps = MAPPER.createArrayNode();
         steps.addObject().put("type", "tool_calls").putArray("calls").addObject().put("id", "c1").put("name", "klines");
         service.append(SESSION, 1L, "assistant", "答案",
-                new ChatHistoryService.TurnMeta("我的端点 · gpt-5", 3, 160L, 30L, 190L, 4200,
+                new ChatHistoryService.TurnMeta("我的端点 · gpt-5", 3, 160L, 30L, 190L, 120L, 4200,
                         new ContextUsage(201_000, 256_000, true)),
                 List.of(new SearchEvent.Source("https://a.com/1", "A1")), steps);
 
@@ -62,6 +62,7 @@ class ChatHistoryMetaTest {
         assertThat(saved.getPromptTokens()).isEqualTo(160L);
         assertThat(saved.getCompletionTokens()).isEqualTo(30L);
         assertThat(saved.getTotalTokens()).isEqualTo(190L);
+        assertThat(saved.getCachedTokens()).isEqualTo(120L);
         assertThat(saved.getLatencyMs()).isEqualTo(4200);
         // 来源单独一列，JSON 数组 [{url,title}]
         assertThat(saved.getSources()).contains("https://a.com/1").contains("A1");

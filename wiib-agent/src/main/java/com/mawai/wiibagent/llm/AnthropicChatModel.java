@@ -4,7 +4,6 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
-import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -433,7 +432,7 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
             int cacheWrite = orZero(usageField(usage, state.startUsage, "cache_creation_input_tokens"));
             int in = orZero(input) + cacheRead + cacheWrite;
             int out = orZero(output);
-            metadata.usage(new DefaultUsage(in, out, in + out));
+            metadata.usage(usageWithCache(in, out, in + out, cacheRead, cacheWrite));
             if (cacheRead > 0 || cacheWrite > 0) {
                 log.info("[Anthropic] {} 缓存命中{} 写入{} 未命中{}", model, cacheRead, cacheWrite, orZero(input));
             }

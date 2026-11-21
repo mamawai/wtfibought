@@ -492,7 +492,7 @@ CREATE TABLE IF NOT EXISTS workbench_chat_message (
     user_id     BIGINT NOT NULL,
     role        VARCHAR(10) NOT NULL,
     content     TEXT NOT NULL,
-    -- 下面 6 列只有 assistant 行有值：这一轮用的端点、烧的 token、花的时间，随答案一起落库
+    -- 下面 7 列只有 assistant 行有值：这一轮用的端点、烧的 token、花的时间，随答案一起落库
     -- 200 是按上界算的：端点名上限 32 + 分隔符 3 + user_llm_endpoint.model 的 128。
     -- 装不下不是丢一列而是丢一整条答案——插入抛异常被 ChatHistoryService 的 catch 吞掉
     model_label VARCHAR(200),
@@ -500,6 +500,7 @@ CREATE TABLE IF NOT EXISTS workbench_chat_message (
     prompt_tokens BIGINT,
     completion_tokens BIGINT,
     total_tokens BIGINT,
+    cached_tokens BIGINT,
     latency_ms  INT,
     -- 这一轮联网搜索的来源 [{url,title}]，只有搜过的 assistant 行有值
     sources     JSONB,
@@ -517,6 +518,7 @@ CREATE INDEX IF NOT EXISTS idx_wb_chat_user ON workbench_chat_message (user_id, 
 COMMENT ON TABLE workbench_chat_message IS '工作台对话历史(展示用):user/assistant按会话落库,session_id与workbench_chat_context同值';
 COMMENT ON COLUMN workbench_chat_message.model_label IS '这一轮用的对话主模型:端点名 · 模型名(与LlmEndpointSelect展示口径一致)';
 COMMENT ON COLUMN workbench_chat_message.total_tokens IS '本轮主agent与整理上下文的模型调用token合计(后台子运行另记账,不在内);NULL=上游端点没返回usage或本轮被中断账不可信,不是0';
+COMMENT ON COLUMN workbench_chat_message.cached_tokens IS 'prompt_tokens里命中提示缓存的那部分;NULL=没命中或上游端点没报';
 COMMENT ON COLUMN workbench_chat_message.latency_ms IS '本轮墙钟耗时:准入与建叶子之后开跑起算;比[TurnMetrics]日志多一帧session与user行落库';
 COMMENT ON COLUMN workbench_chat_message.sources IS '这一轮联网搜索搜到/引用的来源 [{url,title}],按url去重;答案底部展示;没搜过或老数据为NULL';
 COMMENT ON COLUMN workbench_chat_message.steps IS '这一轮的过程事件数组[{type,...}](阶段/工具调用/搜索/子运行),与SSE帧同形;重开历史时前端据它重建过程轨;老数据与user行为NULL';
@@ -764,6 +766,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
     prompt_tokens   BIGINT,
     completion_tokens BIGINT,
     total_tokens    BIGINT,
+    cached_tokens   BIGINT,
     latency_ms      INT,
     error           TEXT,
     memory_after    TEXT,
@@ -779,6 +782,7 @@ COMMENT ON COLUMN ai_trader_decision.memory_after IS '仅REVIEW行：本期学�
 COMMENT ON COLUMN ai_trader_decision.equity IS '本轮动作落地后的账户权益USDT';
 COMMENT ON COLUMN ai_trader_decision.model_calls IS '本轮模型调用次数：ReAct是循环，一次唤醒会调很多次（上限见ModelCallLimiter）';
 COMMENT ON COLUMN ai_trader_decision.total_tokens IS '本轮全部模型调用的token合计；NULL=上游端点没返回usage（BYOK网关各不相同），不是0';
+COMMENT ON COLUMN ai_trader_decision.cached_tokens IS 'prompt_tokens里命中提示缓存的那部分；NULL=没命中或上游端点没报';
 COMMENT ON COLUMN ai_trader_decision.trace_json IS '唤醒过程轨迹JSON（提示词/每次模型调用的正文与工具调用/回执预览/收尾），形状见WakeTrace.toJson；仅TRADE/ALERT/MANUAL行，NULL=老行或begin之前就失败';
 
 -- ============================================

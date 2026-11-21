@@ -24,8 +24,13 @@ import static org.mockito.Mockito.when;
 class UsageTrackingChatModelTest {
 
     private static ChatResponse respWith(Integer prompt, Integer completion, Integer total) {
+        return respWith(prompt, completion, total, null);
+    }
+
+    /** @param cached prompt 里命中提示缓存的那部分，null=上游没报 */
+    private static ChatResponse respWith(Integer prompt, Integer completion, Integer total, Long cached) {
         ChatResponseMetadata meta = ChatResponseMetadata.builder()
-                .usage(new DefaultUsage(prompt, completion, total)).build();
+                .usage(new DefaultUsage(prompt, completion, total, null, cached, null)).build();
         return new ChatResponse(List.of(new Generation(new AssistantMessage("ok"))), meta);
     }
 
@@ -63,6 +68,22 @@ class UsageTrackingChatModelTest {
         assertThat(s.promptTokens()).isEqualTo(400L);
         assertThat(s.completionTokens()).isEqualTo(70L);
         assertThat(s.totalTokens()).isEqualTo(470L);
+        assertThat(s.cachedTokens()).isNull();
+    }
+
+    /** 命中提示缓存的 token 也跨调用累加；哪次都没命中是 null，不是 0 */
+    @Test
+    void cachedTokensAccumulateAcrossCalls() {
+        ChatModel inner = mock(ChatModel.class);
+        when(inner.call(any(Prompt.class)))
+                .thenReturn(respWith(100, 20, 120, 80L), respWith(300, 50, 350, 250L), respWith(100, 20, 120));
+        UsageTrackingChatModel m = new UsageTrackingChatModel(inner);
+
+        m.call(new Prompt("a"));
+        m.call(new Prompt("b"));
+        m.call(new Prompt("c"));
+
+        assertThat(m.snapshot().cachedTokens()).isEqualTo(330L);
     }
 
     /**

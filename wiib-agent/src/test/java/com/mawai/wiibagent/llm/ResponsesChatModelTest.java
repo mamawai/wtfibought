@@ -311,13 +311,15 @@ class ResponsesChatModelTest {
                 """
                 {"type":"response.completed","response":{"id":"resp_1","status":"completed",
                  "model":"grok-test","output":[],
-                 "usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}"""
+                 "usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,
+                          "input_tokens_details":{"cached_tokens":6}}}}"""
         };
         ChatResponse response = model().call(new Prompt("问题"));
 
         assertThat(response.getResult().getOutput().getText()).isEqualTo("[本轮结论]HOLD，等待突破确认。");
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("STOP");
         assertThat(response.getMetadata().getUsage().getTotalTokens()).isEqualTo(15);
+        assertThat(response.getMetadata().getUsage().getCacheReadInputTokens()).isEqualTo(6L);
     }
 
     @Test

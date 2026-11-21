@@ -269,6 +269,7 @@ export function AssistantAnswer({ item, last, canRegenerate, onRegenerate }: {
     meta?.modelLabel,
     meta?.latencyMs != null ? `${(meta.latencyMs / 1000).toFixed(1)}s` : null,
     meta?.totalTokens != null ? `${fmtTokens(meta.totalTokens)} tok` : null,
+    meta?.cachedTokens != null ? t('detail.cachedTokens', { n: fmtTokens(meta.cachedTokens) }) : null,
     fmtTime(item.at),
   ].filter(Boolean).join(' · ');
 

@@ -87,6 +87,7 @@
     "expandFull": "展开全文",
     "toolCalls_other": "{{count}}次工具",
     "modelCalls_other": "{{count}}次模型",
+    "cachedTokens": "缓存命中 {{n}}",
     "thisRound": "本局",
     "equityCurve": "{{round}}净值",
     "notEnoughPoints": "数据点不足，等它多醒几次",

@@ -136,7 +136,8 @@ class GeminiChatModelTest {
             {"candidates":[{"content":{"role":"model","parts":[{"text":"答"}]}}],"responseId":"r1"}""",
             """
             {"candidates":[{"content":{"role":"model","parts":[{"text":"案"}]},"finishReason":"STOP"}],
-             "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"totalTokenCount":14},"responseId":"r1"}"""
+             "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"totalTokenCount":14,
+                              "cachedContentTokenCount":7},"responseId":"r1"}"""
     };
 
     // ========== 请求侧 ==========
@@ -304,6 +305,7 @@ class GeminiChatModelTest {
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("STOP");
         assertThat(response.getMetadata().getUsage().getPromptTokens()).isEqualTo(10);
         assertThat(response.getMetadata().getUsage().getTotalTokens()).isEqualTo(14);
+        assertThat(response.getMetadata().getUsage().getCacheReadInputTokens()).isEqualTo(7L);
         assertThat(response.getMetadata().getId()).isEqualTo("r1");
     }
 

@@ -28,8 +28,12 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class UsageTrackingChatModel implements ChatModel {
 
-    /** 上游没返回 usage 时 token 三项为 null——不能拿 0 冒充"没花钱" */
-    public record UsageSnapshot(int modelCalls, Long promptTokens, Long completionTokens, Long totalTokens) {
+    /**
+     * 上游没返回 usage 时 token 三项为 null——不能拿 0 冒充"没花钱"。
+     * cachedTokens 是 promptTokens 里命中提示缓存的那部分，没命中或上游没报为 null
+     */
+    public record UsageSnapshot(int modelCalls, Long promptTokens, Long completionTokens, Long totalTokens,
+                                Long cachedTokens) {
     }
 
     /** 一轮的账本。ReAct 循环可能跑在虚拟线程上，读写都加锁 */
@@ -39,6 +43,7 @@ public class UsageTrackingChatModel implements ChatModel {
         private Long promptTokens;
         private Long completionTokens;
         private Long totalTokens;
+        private Long cachedTokens;
         /** 本轮丢下过在途调用（用户中断）：它们的 token 要么未知、要么在读数之后才到，这本账不能报 */
         private boolean abandoned;
 
@@ -50,10 +55,11 @@ public class UsageTrackingChatModel implements ChatModel {
             promptTokens = plus(promptTokens, usage.getPromptTokens());
             completionTokens = plus(completionTokens, usage.getCompletionTokens());
             totalTokens = plus(totalTokens, usage.getTotalTokens());
+            cachedTokens = plus(cachedTokens, usage.getCacheReadInputTokens());
         }
 
         synchronized UsageSnapshot snapshot() {
-            return new UsageSnapshot(calls, promptTokens, completionTokens, totalTokens);
+            return new UsageSnapshot(calls, promptTokens, completionTokens, totalTokens, cachedTokens);
         }
 
         synchronized void markAbandoned() {
@@ -71,11 +77,11 @@ public class UsageTrackingChatModel implements ChatModel {
          * EmptyUsage，DefaultUsage 还会把 null 归一成 0。所以只认正数——真实调用的 prompt token
          * 不可能是 0，全程没见过正数就是上游压根没报。
          */
-        private static Long plus(Long acc, Integer add) {
-            if (add == null || add <= 0) {
+        private static Long plus(Long acc, Number add) {
+            if (add == null || add.longValue() <= 0) {
                 return acc;
             }
-            return acc == null ? add.longValue() : acc + add;
+            return acc == null ? add.longValue() : acc + add.longValue();
         }
     }
 

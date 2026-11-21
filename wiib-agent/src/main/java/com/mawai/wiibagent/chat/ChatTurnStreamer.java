@@ -337,6 +337,7 @@ public class ChatTurnStreamer {
                 .put("promptTokens", meta.promptTokens())
                 .put("completionTokens", meta.completionTokens())
                 .put("totalTokens", meta.totalTokens())
+                .put("cachedTokens", meta.cachedTokens())
                 .put("latencyMs", meta.latencyMs());
         if (meta.context() != null) {
             json.set("context", meta.context().toJson());

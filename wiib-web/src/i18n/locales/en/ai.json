@@ -90,6 +90,7 @@
     "toolCalls_other": "{{count}} tool calls",
     "modelCalls_one": "{{count}} model call",
     "modelCalls_other": "{{count}} model calls",
+    "cachedTokens": "{{n}} cached",
     "thisRound": "This round",
     "equityCurve": "{{round}} equity",
     "notEnoughPoints": "Not enough data points yet — let it wake up a few more times",

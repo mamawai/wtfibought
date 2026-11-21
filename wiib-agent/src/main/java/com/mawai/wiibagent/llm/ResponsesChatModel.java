@@ -4,7 +4,6 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
-import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -391,10 +390,11 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
     }
 
     private Usage parseUsage(JsonNode usage) {
-        return new DefaultUsage(
+        return usageWithCache(
                 usage.hasNonNull("input_tokens") ? usage.get("input_tokens").asInt() : null,
                 usage.hasNonNull("output_tokens") ? usage.get("output_tokens").asInt() : null,
-                usage.hasNonNull("total_tokens") ? usage.get("total_tokens").asInt() : null);
+                usage.hasNonNull("total_tokens") ? usage.get("total_tokens").asInt() : null,
+                usage.path("input_tokens_details").path("cached_tokens").asInt(0), 0);
     }
 
     private String extractErrorMessage(JsonNode response) {

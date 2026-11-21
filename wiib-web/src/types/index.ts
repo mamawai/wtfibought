@@ -725,6 +725,8 @@ export interface TurnMeta {
   promptTokens?: number | null;
   completionTokens?: number | null;
   totalTokens?: number | null;
+  /** promptTokens 里命中提示缓存的那部分；没命中或上游没报就没有 */
+  cachedTokens?: number | null;
   latencyMs?: number | null;
   /** 这一轮结束时的上下文用量；中断的轮与老数据没有 */
   context?: ContextUsage | null;
@@ -1056,6 +1058,8 @@ export interface AiTraderDecisionView {
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
+  /** promptTokens 里命中提示缓存的那部分；null=没命中或上游没报 */
+  cachedTokens: number | null;
   latencyMs: number | null;
   error: string | null;
   createdAt: string;

@@ -243,6 +243,7 @@ public class ReviewRunner {
             d.setPromptTokens(usage.promptTokens());
             d.setCompletionTokens(usage.completionTokens());
             d.setTotalTokens(usage.totalTokens());
+            d.setCachedTokens(usage.cachedTokens());
         }
     }
 

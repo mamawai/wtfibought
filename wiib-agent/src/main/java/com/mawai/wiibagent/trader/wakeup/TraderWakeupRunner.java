@@ -467,6 +467,7 @@ public class TraderWakeupRunner {
             decision.setPromptTokens(usage.promptTokens());
             decision.setCompletionTokens(usage.completionTokens());
             decision.setTotalTokens(usage.totalTokens());
+            decision.setCachedTokens(usage.cachedTokens());
         }
         if (outcome.modelCalls() >= MAX_MODEL_CALLS) {
             // 保险丝收束不算失败（已有动作真实生效），但必须留痕——否则时间线上像正常决策

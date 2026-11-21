@@ -44,21 +44,23 @@ public class ChatHistoryService {
     /**
      * 一轮的读数，只挂在 assistant 行上（user 行与历史老数据为 null）。
      * token 三项 null = 上游端点没报 usage 或本轮账不可信，<b>不是 0</b>——展示层必须区分这两者。
+     * cachedTokens = promptTokens 里命中提示缓存的那部分，没命中或上游没报为 null。
      * context = 这一轮结束时的上下文用量，中断的轮与老数据为 null。
      */
     public record TurnMeta(String modelLabel, Integer modelCalls, Long promptTokens,
-                           Long completionTokens, Long totalTokens, Integer latencyMs, ContextUsage context) {
+                           Long completionTokens, Long totalTokens, Long cachedTokens,
+                           Integer latencyMs, ContextUsage context) {
 
         /** 正常轮：账本快照直接入账 */
         public static TurnMeta of(String modelLabel, UsageTrackingChatModel.UsageSnapshot usage, int latencyMs,
                                   ContextUsage context) {
             return new TurnMeta(modelLabel, usage.modelCalls(), usage.promptTokens(),
-                    usage.completionTokens(), usage.totalTokens(), latencyMs, context);
+                    usage.completionTokens(), usage.totalTokens(), usage.cachedTokens(), latencyMs, context);
         }
 
         /** 只报耗时：账本不可信（用户中断丢下的在途流会在读数之后才入账）时用它 */
         public static TurnMeta latencyOnly(String modelLabel, int latencyMs, ContextUsage context) {
-            return new TurnMeta(modelLabel, null, null, null, null, latencyMs, context);
+            return new TurnMeta(modelLabel, null, null, null, null, null, latencyMs, context);
         }
     }
 
@@ -94,6 +96,7 @@ public class ChatHistoryService {
                 row.setPromptTokens(meta.promptTokens());
                 row.setCompletionTokens(meta.completionTokens());
                 row.setTotalTokens(meta.totalTokens());
+                row.setCachedTokens(meta.cachedTokens());
                 row.setLatencyMs(meta.latencyMs());
                 if (meta.context() != null) {
                     row.setContextTokens(meta.context().tokens());
@@ -172,7 +175,8 @@ public class ChatHistoryService {
             return null;
         }
         return new TurnMeta(row.getModelLabel(), row.getModelCalls(), row.getPromptTokens(),
-                row.getCompletionTokens(), row.getTotalTokens(), row.getLatencyMs(), contextOf(row));
+                row.getCompletionTokens(), row.getTotalTokens(), row.getCachedTokens(), row.getLatencyMs(),
+                contextOf(row));
     }
 
     private static ContextUsage contextOf(WorkbenchChatMessage row) {

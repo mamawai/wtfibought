@@ -4,7 +4,6 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
-import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -358,11 +357,12 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
         JsonNode usage = state.usage;
         if (usage != null) {
             Integer prompt = usage.hasNonNull("promptTokenCount") ? usage.get("promptTokenCount").asInt() : null;
-            metadata.usage(new DefaultUsage(prompt,
-                    usage.hasNonNull("candidatesTokenCount") ? usage.get("candidatesTokenCount").asInt() : null,
-                    usage.hasNonNull("totalTokenCount") ? usage.get("totalTokenCount").asInt() : null));
             // 隐式缓存 2.5 起默认开，不用声明；命中数是 promptTokenCount 内部的明细，不另加
             int cached = usage.path("cachedContentTokenCount").asInt(0);
+            metadata.usage(usageWithCache(prompt,
+                    usage.hasNonNull("candidatesTokenCount") ? usage.get("candidatesTokenCount").asInt() : null,
+                    usage.hasNonNull("totalTokenCount") ? usage.get("totalTokenCount").asInt() : null,
+                    cached, 0));
             if (cached > 0) {
                 log.info("[Gemini] {} 缓存命中{}/{}", model, cached, prompt);
             }
