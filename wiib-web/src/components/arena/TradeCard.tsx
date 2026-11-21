@@ -5,7 +5,8 @@ import { formatCoinPrice, getCoin } from '../../lib/coinConfig';
 import { cn, fmtDateTime, fmtDuration, fmtNum } from '../../lib/utils';
 import type { TradeDecisionRef, TradeRecordView } from '../../types';
 import { PlanEntries } from './PlanEntries';
-import { planRevisions, planTargets } from './traderTools';
+import { PlanRevisions } from './PlanRevisions';
+import { planTargets } from './traderTools';
 
 /**
  * 了结方式标签的颜色：止盈绿、止损/强平红、主动平仓灰（模型的手）。
@@ -35,7 +36,6 @@ export function TradeCard({ r, onJump, onToggleStale }: {
   // stale 视觉与开关同门槛（仅主人）：忽略是主人对自家教材的私人治理，公开视角的列表与常人无异
   const stale = plan?.stale === true && onToggleStale != null;
   const targets = useMemo(() => planTargets(plan?.takeProfitsJson), [plan?.takeProfitsJson]);
-  const revisions = useMemo(() => planRevisions(plan?.revisionsJson), [plan?.revisionsJson]);
   return (
     <div className={cn('tc', stale && 'stale')}>
       <div className="tc-h">
@@ -79,17 +79,7 @@ export function TradeCard({ r, onJump, onToggleStale }: {
             )}
           </div>
           <PlanEntries json={plan.entriesJson} />
-          {revisions.length > 0 && (
-            <div className="revs">
-              {revisions.map((v, i) => (
-                // 改了几次是这块的抬头，接在第一条前面，后面每条各占一行
-                <p key={i}>
-                  {i === 0 && `${t('plan.revisions', { count: revisions.length })} · `}
-                  {fmtDateTime(v.time)} {v.type}{v.change && ` ${v.change}`}{v.reason && `，${v.reason}`}
-                </p>
-              ))}
-            </div>
-          )}
+          <PlanRevisions json={plan.revisionsJson} labelKey="plan.revisions" />
         </>
       ) : <div className="tm">{t('trade.noPlan')}</div>}
       {(r.openDecision || r.closeDecision) && (

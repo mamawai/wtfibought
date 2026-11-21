@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMarkPrices } from '../../hooks/useMarkPrices';
 import { formatCoinPrice, getCoin } from '../../lib/coinConfig';
-import { cn, fmtDateTime, fmtSigned, fmtSignedPct, fmtTime } from '../../lib/utils';
+import { cn, fmtDateTime, fmtSigned, fmtSignedPct } from '../../lib/utils';
 import type { AiTraderPlanView, FuturesOrder, FuturesPosition, TraderWatch } from '../../types';
 import { HelpTip } from '../HelpTip';
 import { PlanEntries } from './PlanEntries';
-import { planRevisions } from './traderTools';
+import { PlanRevisions } from './PlanRevisions';
 
 /** 盯盘价离现价不到这么多（%）就标「快到了」 */
 const NEAR_PCT = 0.35;
@@ -45,7 +45,6 @@ function useMoveText() {
 /** 计划并进仓位卡：为什么开、看错的标志、逐档安排、改过几次 */
 function PlanLines({ plan }: { plan?: AiTraderPlanView }) {
   const { t } = useTranslation('ai');
-  const revisions = useMemo(() => planRevisions(plan?.revisionsJson), [plan?.revisionsJson]);
   if (!plan) return null;
   const why = [plan.playType, plan.signalsUsed].filter(Boolean).join(' · ');
   return (
@@ -53,12 +52,7 @@ function PlanLines({ plan }: { plan?: AiTraderPlanView }) {
       {why && <div><span>{t('wb.hold.why')}</span>{why}</div>}
       <div><span>{t('wb.hold.inval')}</span>{plan.invalidationCondition}</div>
       <PlanEntries json={plan.entriesJson} />
-      {revisions.length > 0 && (
-        <div>
-          <span>{t('wb.hold.revised', { count: revisions.length })}</span>
-          {revisions.map(r => [fmtTime(r.time), r.type, r.change, r.reason].filter(Boolean).join(' ')).join(' / ')}
-        </div>
-      )}
+      <PlanRevisions json={plan.revisionsJson} labelKey="wb.hold.revised" />
     </div>
   );
 }
