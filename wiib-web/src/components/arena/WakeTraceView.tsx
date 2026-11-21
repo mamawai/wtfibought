@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, Timer } from 'lucide-react';
+import { Timer } from 'lucide-react';
+import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn, fmtDateTime, fmtNum, fmtTokens } from '../../lib/utils';
 import type { WakeStage, WakeToolCall, WakeToolResult, WakeTrace } from '../../types';
 import { StreamText } from '../StreamText';
@@ -14,12 +15,49 @@ function kvArgs(args: Record<string, unknown>): string {
 }
 
 /**
- * 一次工具调用一行：工具名（结果不好就跟着标被拒 / 出错…）、参数、还没回执的标「处理中」；
- * 有回执预览的能点开看全文。
+ * 一次工具调用一小块：工具名（结果不好就跟着标被拒 / 出错…）、参数、还没回执的标「处理中」。
+ * 有回执的能点：回执弹在这块上方，点外面或按 Esc 收起。这块自己点开前后一个样，弹窗靠一根细脖子连在它顶上偏左的地方。
+ * 脖子、弹窗的底、这块的底画在同一层（.tr-goo），整层过一遍「先糊开、再把边缘收紧」的滤镜，脖子两头就像水滴那样是弧线；
+ * 弹出时脖子先顶上去、冒出一个小球，再撑开成弹窗；收起时倒着来（动画在 ArenaDetail.css）。
  */
-function ToolRow({ tc, result, running }: { tc: WakeToolCall; result?: WakeToolResult; running: boolean }) {
+function ToolChip({ tc, result, running }: { tc: WakeToolCall; result?: WakeToolResult; running: boolean }) {
   const { t } = useTranslation('ai');
-  const [open, setOpen] = useState(false);
+  // 收起分两步：先标 closing 放收回去的动画，动画放完才真的卸掉弹窗
+  const [phase, setPhase] = useState<'closed' | 'open' | 'closing'>('closed');
+  const ref = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLPreElement>(null);
+  const gooId = useId();
+  const close = useCallback(() => setPhase('closing'), []);
+  useClickOutside(ref, close, phase === 'open');
+
+  // 摆弹窗：宽度跟着内容走（最宽到这一排的宽度），左边跟这块对齐，右边放不下就往左挪。
+  // 量出来的 --x / --r 是弹窗比这块往左、往右各多伸出多少，--h 是弹窗多高，样式拿去定位和画底下那两层。
+  // 每次渲染都重量：实时流里前面的块会变宽变窄，这块跟着挪
+  useLayoutEffect(() => {
+    if (phase === 'closed') return;
+    const place = () => {
+      const el = ref.current!;
+      const pop = popRef.current!;
+      const rowWidth = (el.offsetParent as HTMLElement).clientWidth;
+      el.style.setProperty('--w', `${rowWidth}px`);
+      const left = Math.max(0, Math.min(el.offsetLeft, rowWidth - pop.offsetWidth));
+      el.style.setProperty('--x', `${el.offsetLeft - left}px`);
+      el.style.setProperty('--r', `${left + pop.offsetWidth - el.offsetLeft - el.offsetWidth}px`);
+      el.style.setProperty('--h', `${pop.offsetHeight}px`);
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  });
+  // 开着的时候：弹窗顶到屏幕外面就把页面往回滚一点；Esc 挂在整页上听，焦点不在这块里也收得起来
+  useEffect(() => {
+    if (phase !== 'open') return;
+    popRef.current!.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [phase, close]);
+
   const args = typeof tc.args === 'string' ? tc.args
     : TRADE_TOOL_SET.has(tc.name) ? tradeArgsSummary({ tool: tc.name, args: tc.args })
     : dataArgsSummary(tc.name, tc.args) ?? kvArgs(tc.args);
@@ -28,9 +66,10 @@ function ToolRow({ tc, result, running }: { tc: WakeToolCall; result?: WakeToolR
   const failed = result != null && result.status !== 'ok' && !skipped;
   const pending = !result && running;
   return (
-    <>
-      <button type="button" className={cn('tr-tool', failed && 'bad', pending && 'wait')} aria-expanded={open}
-              disabled={!result?.preview} onClick={() => setOpen(o => !o)}>
+    <div ref={ref}
+         className={cn('tr-tool', failed && 'bad', pending && 'wait', phase !== 'closed' && 'open', phase === 'closing' && 'closing')}>
+      <button type="button" aria-expanded={phase === 'open'} disabled={!result?.preview}
+              onClick={() => setPhase(p => p === 'open' ? 'closing' : 'open')}>
         <b>
           {toolName(tc.name)}
           {result?.status === 'rejected' ? t('trade.rejected')
@@ -41,12 +80,28 @@ function ToolRow({ tc, result, running }: { tc: WakeToolCall; result?: WakeToolR
             : skipped ? t('trade.notAttempted') : ''}
         </b>
         {/* 参数一行放不下就截断，指上去看全的 */}
-        <span title={args}>{args}</span>
+        {args && <span title={args}>{args}</span>}
         {pending && <em>{t('live.processing')}</em>}
-        <ChevronRight className="ic" />
       </button>
-      {open && <pre className="tr-pre">{result?.preview}</pre>}
-    </>
+      {phase !== 'closed' && (
+        <>
+          <svg className="tr-goo-def" aria-hidden="true">
+            <filter id={gooId} colorInterpolationFilters="sRGB">
+              <feGaussianBlur stdDeviation="4" />
+              {/* 只动透明度：半透明的边缘要么拉成实的、要么砍掉 */}
+              <feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 24 -12" />
+            </filter>
+          </svg>
+          <span className="tr-sh" aria-hidden="true"><i className="pane" /></span>
+          <span className="tr-goo" aria-hidden="true" style={{ filter: `url(#${gooId})` }}>
+            <i className="pane" onAnimationEnd={() => { if (phase === 'closing') setPhase('closed'); }} />
+            <i className="neck" />
+            <i className="chip" />
+          </span>
+          <pre ref={popRef} className="tr-pop">{result?.preview}</pre>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -66,7 +121,7 @@ function StageDivider({ stage }: { stage: WakeStage }) {
 }
 
 /**
- * 一次唤醒的过程（样式见 ArenaDetail.css .tr-*）：信息行（带提示词开关，有才显示，只有主人拿得到）→ 一次思考一节，
+ * 一次唤醒的过程（样式见 ArenaDetail.css .tr-*）：信息行（带提示词开关，有才显示，只有主人拿得到）→ 一次模型调用一节，
  * 分过段的在那次调用前插一道分界 → 收尾行。
  * 只吃 WakeTrace，不管数据来自实时流还是 trace 接口；running=true 时末节的字是浮出来的（卡住了文末有呼吸点）、没回执的工具标处理中
  */
@@ -101,7 +156,11 @@ export function WakeTraceView({ trace, running = false }: { trace: WakeTrace; ru
             {stages.filter(s => s.call === c.n).map(s => <StageDivider key={s.n} stage={s} />)}
             <small>{t('live.callN', { n: c.n })}</small>
             {c.text && <StreamText className="tx" content={c.text} streaming={hot} />}
-            {c.toolCalls.map(tc => <ToolRow key={tc.id} tc={tc} result={c.results.find(r => r.id === tc.id)} running={hot} />)}
+            {c.toolCalls.length > 0 && (
+              <div className="tr-tools">
+                {c.toolCalls.map(tc => <ToolChip key={tc.id} tc={tc} result={c.results.find(r => r.id === tc.id)} running={hot} />)}
+              </div>
+            )}
           </div>
         );
       })}

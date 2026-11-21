@@ -66,17 +66,57 @@
   .p-tw .tr-call{margin-top:16px}
   .p-tw .tr-call > small{display:block;font-size:12px;font-weight:500;color:var(--color-muted-foreground)}
   .p-tw .tr-call .tx{max-width:80ch;margin-top:5px;font-size:14.5px;line-height:1.7}
-  /* 一次工具调用一行：名字、参数、处理中；有回执的点开看全文 */
-  .p-tw .tr-tool{display:flex;align-items:baseline;gap:8px;width:100%;margin-top:6px;padding:7px 10px;border-radius:10px;background:var(--ctl);font-size:13px;text-align:left;transition:background-color var(--t) var(--ease-control)}
+  /* 一次模型调用里的工具：一排小块，放不下就换行 */
+  .p-tw .tr-tools{position:relative;display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  /* 一小块：名字、参数、处理中；有回执的能点 */
+  .p-tw .tr-tool{position:relative;min-width:0;max-width:100%}
+  .p-tw .tr-tool > button{display:flex;align-items:baseline;gap:8px;width:100%;padding:6px 10px;border-radius:10px;background:var(--ctl);font-size:13px;text-align:left;transition:background-color var(--t) var(--ease-control)}
   .p-tw .tr-tool b{flex:none;font-weight:600}
-  .p-tw .tr-tool span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-muted-foreground)}
-  .p-tw .tr-tool em{margin-left:auto;flex:none;font-style:normal;font-size:12px;color:var(--color-faint)}
-  .p-tw .tr-tool .ic{flex:none;align-self:center;width:13px;height:13px;margin-left:auto;color:var(--color-faint);transition:transform var(--t) var(--ease-control)}
-  .p-tw .tr-tool em + .ic{margin-left:0}
-  .p-tw .tr-tool[aria-expanded="true"] .ic{transform:rotate(90deg)}
-  .p-tw .tr-tool:disabled{cursor:default}
+  .p-tw .tr-tool > button span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-muted-foreground)}
+  .p-tw .tr-tool em{flex:none;font-style:normal;font-size:12px;color:var(--color-faint)}
+  .p-tw .tr-tool > button:disabled{cursor:default}
   .p-tw .tr-tool.bad b{color:var(--color-loss)}
   .p-tw .tr-tool.wait em{color:var(--color-primary)}
+  /* 点开：回执弹在这一排上方、隔 --gap，宽度跟着内容走：最窄和这块一样宽，最宽到这一排的宽度 --w。
+     --x / --r 是弹窗比这块往左、往右各多伸出多少，--h 是弹窗多高（--w、--x、--r、--h 都是 WakeTraceView 量的）。
+     这块自己不变样，弹窗靠一根细脖子连在它顶上偏左的地方 */
+  .p-tw .tr-tool.open{--gap:10px;z-index:5}
+  .p-tw .tr-goo-def{position:absolute;width:0;height:0}
+  /* 垫在这块和回执字底下的两层，都是「弹窗 + 间隔 + 这块」这么大：
+     .tr-sh 只画弹窗的底，带描边和投影；
+     .tr-goo 画弹窗的底、脖子、这块的底，整层过一遍滤镜（WakeTraceView 里那个），脖子两头糊成弧线接上去。
+     --cx 是脖子的中线在层里的横向位置：离这块左边 24px；--root 是脖子根上的颜色，跟着这块当前的底色走 */
+  .p-tw .tr-sh,.p-tw .tr-goo{--cx:calc(var(--x) + 24px);--root:var(--ctl);position:absolute;z-index:-1;left:calc(-1 * var(--x));right:calc(-1 * var(--r));top:calc(-1 * (var(--h) + var(--gap)));bottom:0;pointer-events:none}
+  .p-tw .tr-sh{filter:drop-shadow(0 0 1px var(--color-line2)) drop-shadow(0 10px 20px rgb(0 0 0 / .18))}
+  .p-tw .tr-sh i,.p-tw .tr-goo i{position:absolute;background:var(--ctl)}
+  .p-tw .tr-goo .chip{left:var(--x);right:var(--r);top:calc(var(--h) + var(--gap));bottom:0;border-radius:10px;background:var(--root)}
+  /* 脖子：两头各插进弹窗和这块 14px，颜色从弹窗的过渡到这块的 */
+  .p-tw .tr-goo .neck{left:calc(var(--cx) - 6px);width:12px;top:calc(var(--h) - 14px);height:calc(var(--gap) + 28px);background:linear-gradient(var(--ctl) 14px,var(--root) calc(100% - 14px));transform-origin:bottom;animation:wiib-trneck 120ms var(--ease-control)}
+  /* 弹窗底的两个中间样子：--dot 缩成底边上脖子顶着的那一个点，--ball 是那里的一个小球 */
+  .p-tw .tr-tool .pane{
+    --dot:inset(100% calc(100% - var(--cx)) 0 var(--cx) round 14px);
+    --ball:inset(calc(100% - 28px) calc(100% - var(--cx) - 14px) 0 calc(var(--cx) - 14px) round 14px);
+    inset:0 0 auto;height:var(--h);border-radius:14px;animation:wiib-trgoo 500ms}
+  .p-tw .tr-pop{position:absolute;bottom:calc(100% + var(--gap));left:calc(-1 * var(--x));width:max-content;min-width:100%;max-width:var(--w);max-height:320px;overflow:auto;scroll-margin-top:96px;padding:12px 14px;border-radius:14px;font:12px/1.6 var(--font-mono);color:var(--color-muted-foreground);white-space:pre-wrap;overflow-wrap:anywhere;animation:wiib-trfade 160ms 340ms backwards}
+  /* 弹出：脖子先顶上去，冒出一个小球，停一下，再撑开成弹窗；字最后淡进来 */
+  @keyframes wiib-trneck{from{transform:scaleY(0)}}
+  @keyframes wiib-trgoo{
+    0%,16%{clip-path:var(--dot);animation-timing-function:var(--ease-control)}
+    40%,48%{clip-path:var(--ball);animation-timing-function:cubic-bezier(.2,0,0,1)}
+    100%{clip-path:inset(0 round 14px)}
+  }
+  @keyframes wiib-trfade{from{opacity:0}}
+  /* 收起（.closing）：倒着来，字先淡掉，弹窗缩回小球，小球缩没，脖子最后收回去；放完 WakeTraceView 才卸掉弹窗 */
+  .p-tw .tr-tool.closing .pane{animation:wiib-trgoo-out 340ms forwards}
+  .p-tw .tr-tool.closing .neck{animation:wiib-trneck-out 90ms 250ms forwards}
+  .p-tw .tr-tool.closing .tr-pop{animation:wiib-trfade-out 100ms forwards}
+  @keyframes wiib-trgoo-out{
+    0%{clip-path:inset(0 round 14px);animation-timing-function:cubic-bezier(.4,0,.2,1)}
+    55%,62%{clip-path:var(--ball);animation-timing-function:cubic-bezier(.4,0,1,1)}
+    88%,100%{clip-path:var(--dot)}
+  }
+  @keyframes wiib-trneck-out{to{transform:scaleY(0)}}
+  @keyframes wiib-trfade-out{to{opacity:0}}
   .p-tw .tr-stage{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-top:12px;border-top:1px dashed var(--color-line2);font-size:12.5px;font-weight:500}
   .p-tw .tr-end{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:16px;padding-top:12px;border-top:1px dashed var(--color-line2);font-size:12.5px;color:var(--color-muted-foreground)}
   .p-tw .tr-end b{font-weight:500;color:var(--color-foreground)}
@@ -207,7 +247,8 @@
   .p-tw .nt-e{font-size:14px;color:var(--color-muted-foreground)}
 
   @media (hover:hover){
-    .p-tw .tr-tool:not(:disabled):hover{background:var(--ctl-h)}
+    .p-tw .tr-tool > button:not(:disabled):hover{background:var(--ctl-h)}
+    .p-tw .tr-tool > button:hover ~ .tr-goo{--root:var(--ctl-h)}
   }
   /* 单列时排成：曲线 → 实时思考 → 仓位 → 盯盘 → 笔记 → 时间线（时间线能一直往下加载，压在最后） */
   @media (max-width:1180px){
@@ -235,7 +276,9 @@
     .p-tw .dc-h .m{margin-left:0;flex-basis:100%}
   }
   @media (prefers-reduced-motion:reduce){
-    .p-tw .tr-tool,.p-tw .tr-tool .ic,.p-tw .live-h .bud i b,.p-tw .pc-bar .f,.p-tw .pc-bar .nw{transition:none}
+    .p-tw .tr-tool > button,.p-tw .live-h .bud i b,.p-tw .pc-bar .f,.p-tw .pc-bar .nw{transition:none}
     .p-tw .cells i.cur,.p-tw .dc.hl{animation:none}
+    /* 弹窗的动画不关掉，压到一瞬间：收起要等动画放完才卸弹窗 */
+    .p-tw .tr-tool.open .tr-pop,.p-tw .tr-tool.open .pane,.p-tw .tr-tool.open .neck{animation-duration:1ms;animation-delay:0s}
   }
 }
