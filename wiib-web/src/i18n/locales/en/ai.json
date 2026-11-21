@@ -179,7 +179,7 @@
     "process": "Process",
     "endedOk": "Run finished",
     "endedError": "Run failed",
-    "callN": "Thought #{{n}}",
+    "callN": "Model call #{{n}}",
     "stageN": "Part {{n}}",
     "bars_one": "{{count}} bar",
     "bars_other": "{{count}} bars"
