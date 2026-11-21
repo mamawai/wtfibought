@@ -31,8 +31,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * Anthropic Messages API（/v1/messages）协议。
  * <p>
- * 思考档位：留空不传；none → {@code thinking:{type:disabled}}；其余 → {@code thinking:{type:adaptive}} +
- * {@code output_config.effort}。服务端搜索声明 {@code {type:web_search_20250305,name:web_search}}。
+ * 思考档位：留空不传；填了就是 {@code thinking:{type:adaptive}} + {@code output_config.effort}，
+ * 其中 none 按 medium 发。服务端搜索声明 {@code {type:web_search_20250305,name:web_search}}。
  * <p>
  * 内容块原样回传：每条 assistant 的原始 content 块数组挂在收尾帧消息的 {@link #BLOCKS_KEY} 上，之后每次请求都原样回放。
  * 官方要求对话只往后追加：思考块 signature、搜索调用与结果的 encrypted_content、引用都得原样回去，
@@ -106,11 +106,11 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
         if (temp != null) {
             body.put("temperature", temp);
         }
-        if ("none".equals(reasoningEffort)) {
-            body.set("thinking", MAPPER.createObjectNode().put("type", "disabled"));
-        } else if (reasoningEffort != null) {
+        if (reasoningEffort != null) {
             body.set("thinking", MAPPER.createObjectNode().put("type", "adaptive"));
-            body.set("output_config", MAPPER.createObjectNode().put("effort", reasoningEffort));
+            // none 按 medium 发：新一代模型关不掉思考，发 disabled 会被 400
+            body.set("output_config", MAPPER.createObjectNode()
+                    .put("effort", "none".equals(reasoningEffort) ? "medium" : reasoningEffort));
         }
 
         List<String> toolNames = new ArrayList<>();

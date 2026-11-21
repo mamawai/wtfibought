@@ -206,11 +206,11 @@ class AnthropicChatModelTest {
     }
 
     @Test
-    void 请求侧_档位none为disabled_留空不传() {
+    void 请求侧_档位none按medium发_留空不传() {
         events = PLAIN;
         model("none", false, mock(ToolCallingManager.class)).call(new Prompt("q"));
-        assertThat(body().get("thinking").path("type").asString(null)).isEqualTo("disabled");
-        assertThat(body().has("output_config")).isFalse();
+        assertThat(body().get("thinking").path("type").asString(null)).isEqualTo("adaptive");
+        assertThat(body().get("output_config").path("effort").asString(null)).isEqualTo("medium");
 
         model().call(new Prompt("q"));
         assertThat(body().has("thinking")).isFalse();
