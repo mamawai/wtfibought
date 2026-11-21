@@ -43,12 +43,6 @@
             <artifactId>mybatis-plus-jsqlparser</artifactId>
         </dependency>
 
-        <!-- HTTP Client (LLM API调用) -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-        </dependency>
-
         <!-- 本地观测：Graph节点耗时/异常指标 + Prometheus导出 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

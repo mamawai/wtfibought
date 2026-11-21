@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.2</version>
+        <version>4.2.0</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.mawai</groupId>
@@ -31,9 +31,7 @@
         <wiib.version>0.0.1-SNAPSHOT</wiib.version>
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
         <mybatis.version>3.5.19</mybatis.version>
-        <postgresql.version>42.7.3</postgresql.version>
         <sa-token.version>1.45.0</sa-token.version>
-        <lombok.version>1.18.46</lombok.version>
         <hutool.version>5.8.24</hutool.version>
         <pagehelper-starter.version>4.1.1</pagehelper-starter.version>
         <openapi.version>3.0.3</openapi.version>
@@ -74,13 +72,6 @@
                 <version>${mybatis-plus.version}</version>
             </dependency>
 
-            <!-- PostgreSQL驱动 -->
-            <dependency>
-                <groupId>org.postgresql</groupId>
-                <artifactId>postgresql</artifactId>
-                <version>${postgresql.version}</version>
-            </dependency>
-
             <!-- Sa-Token -->
             <dependency>
                 <groupId>cn.dev33</groupId>
@@ -93,13 +84,6 @@
                 <groupId>cn.dev33</groupId>
                 <artifactId>sa-token-redis-template</artifactId>
                 <version>${sa-token.version}</version>
-            </dependency>
-
-            <!-- Lombok -->
-            <dependency>
-                <groupId>org.projectlombok</groupId>
-                <artifactId>lombok</artifactId>
-                <version>${lombok.version}</version>
             </dependency>
 
             <!-- Hutool工具类 -->
@@ -123,7 +107,7 @@
                 <version>${pagehelper-starter.version}</version>
             </dependency>
 
-            <!-- MyBatis（覆盖Spring Boot默认版本） -->
+            <!-- MyBatis（钉版本：mybatis-plus 和 pagehelper 各带一份，统一用这个） -->
             <dependency>
                 <groupId>org.mybatis</groupId>
                 <artifactId>mybatis</artifactId>

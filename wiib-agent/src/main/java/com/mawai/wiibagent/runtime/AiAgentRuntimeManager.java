@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 
 /**
  * AI 运行时管理：唯一配置源是 DB（ai_runtime_config + ai_model_assignment），启动/Admin 变更时重建各功能位模型。
- * ChatModel 自动装配已关（yml: spring.ai.model.*=none，不再要求 yml 预置 api-key），模型全部在此手建；
+ * 没有 ChatModel 自动装配（Spring AI 的模型自动配置没引，yml 不用预置 api-key），模型全部在此手建；
  * 空库不拖死进程（降级为"AI未就绪"），构建失败保留上一份可用模型——Admin 页配好后 refresh 即恢复，无需重启。
  */
 @Slf4j

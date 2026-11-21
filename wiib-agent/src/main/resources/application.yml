@@ -7,18 +7,8 @@ spring:
     import:
       - optional:file:.env.local[.properties]
       - optional:file:../.env.local[.properties]
-  ai:
-    # Spring AI 2.0 起弃用 spring-retry，spring.ai.retry.* 已无人读取；重试在
-    # ResponsesChatModel(协议层) 与 LlmClient(调模型的客户端) 两处代码里。
-    # 下面 6 类必须全关：各自独立开关，只关 chat 其余仍会因缺 api-key 拒启动。LLM 配置唯一来源是 DB
-    model:
-      chat: none
-      embedding: none
-      image: none
-      moderation: none
-      audio:
-        speech: none
-        transcription: none
+  # 没有 spring.ai.* 配置：LLM 配置唯一来源是 DB，Spring AI 的模型自动配置没引进来；
+  # 重试在 SseChatModel(协议层) 与 LlmClient(调模型的客户端) 两处代码里
   application:
     name: wiib-agent
   threads:

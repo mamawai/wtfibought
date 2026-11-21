@@ -6,7 +6,7 @@
 
 平台里有五处独立的 LLM 用法，形态和停止条件各不相同。它们之间不直接调用，只通过 PostgreSQL 交换数据，加一套新的不用改旧的。
 
-叶子 agent 的 ReAct 循环是自写的 `ReactLoop`（Spring AI 2.0.2 原语：`ChatModel` 调模型、`ToolCallback` 执行工具、`Flux<ChatResponse>` 出流），不引图引擎。取舍原则是：能写死成代码的固定步骤就写死，只有开放决策才交给模型循环。五处里两处是真正的 agent（trader / chat），另外三处是一次性调用。
+叶子 agent 的 ReAct 循环是自写的 `ReactLoop`（Spring AI 2.1.0 原语：`ChatModel` 调模型、`ToolCallback` 执行工具、`Flux<ChatResponse>` 出流），不引图引擎。取舍原则是：能写死成代码的固定步骤就写死，只有开放决策才交给模型循环。五处里两处是真正的 agent（trader / chat），另外三处是一次性调用。
 
 | 装置 | 形态 | 工具 | 循环 | 触发 | 模型来源 | 产出 |
 |---|---|:---:|:---:|---|---|---|
