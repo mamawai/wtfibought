@@ -442,10 +442,7 @@ public class TraderPlanStore {
                 // 判成交只看订单状态
                 switch (order.getStatus()) {
                     case "FILLED" -> {
-                        entry.setStatus("FILLED");
-                        entry.setFilledPrice(order.getFilledPrice());
-                        entry.setFee(order.getCommission());
-                        entry.setClosedAt(TradePairing.msOf(order.getUpdatedAt()));
+                        settle(entry, order);
                         filled.add(entry);
                         // 计划没绑仓就按订单上的仓位 id 绑
                         if (row.getPositionId() == null && order.getPositionId() != null) {
@@ -454,8 +451,7 @@ public class TraderPlanStore {
                         }
                     }
                     case "CANCELLED" -> {
-                        entry.setStatus("CANCELLED");
-                        entry.setClosedAt(TradePairing.msOf(order.getUpdatedAt()));
+                        settle(entry, order);
                         // 撤单时自己记过理由的用自己的，没有的按 sim 的原因码成文
                         if (entry.getReason() == null || entry.getReason().isBlank()) {
                             entry.setReason(cancelReason(order.getCancelReason(), lang));
@@ -475,6 +471,16 @@ public class TraderPlanStore {
             cancelled.forEach(e -> events.add(new EntryCancelled(plan, e, counts)));
         });
         return new EntrySync(unresolved[0], pending, bound[0]);
+    }
+
+    /** 成交或撤掉的订单，把状态和时刻记到这一档上，成交的再记成交价和手续费 */
+    private static void settle(PlanEntry entry, FuturesOrderResponse order) {
+        entry.setStatus(order.getStatus());
+        entry.setClosedAt(TradePairing.msOf(order.getUpdatedAt()));
+        if ("FILLED".equals(order.getStatus())) {
+            entry.setFilledPrice(order.getFilledPrice());
+            entry.setFee(order.getCommission());
+        }
     }
 
     /** 这一档还没定论：挂着，或下单结果未知 */
@@ -622,6 +628,33 @@ public class TraderPlanStore {
                 .eq(AiTraderPlan::getTraderId, traderId)
                 .eq(AiTraderPlan::getRoundNo, roundNo)
                 .eq(AiTraderPlan::getStatus, AiTraderPlan.STATUS_LIVE));
+    }
+
+    /**
+     * 把计划各档盖上 sim 订单的最新状态，给页面看。只改传进来的这几份，不写库：新成交和撤单留给唤醒开头的对账去报，撤单原因也是那时候写。
+     * 标着挂着的档，订单号不在 pendingIds 里了才去查它的订单组
+     */
+    public void overlayEntries(List<AiTraderPlan> plans, Set<Long> pendingIds,
+                               Function<String, List<FuturesOrderResponse>> groupOrders) {
+        for (AiTraderPlan plan : plans) {
+            List<PlanEntry> entries = PlanEntry.read(plan);
+            List<PlanEntry> gone = entries.stream()
+                    .filter(e -> "PENDING".equals(e.getStatus()) && !pendingIds.contains(e.getOrderId()))
+                    .toList();
+            if (gone.isEmpty()) {
+                continue;
+            }
+            Map<Long, FuturesOrderResponse> orderById = new HashMap<>();
+            groupOrders.apply(plan.getOrderGroup()).forEach(o -> orderById.put(o.getOrderId(), o));
+            for (PlanEntry e : gone) {
+                FuturesOrderResponse order = orderById.get(e.getOrderId());
+                // 查不到的、还在触发中的照旧显示挂着
+                if (order != null && ("FILLED".equals(order.getStatus()) || "CANCELLED".equals(order.getStatus()))) {
+                    settle(e, order);
+                }
+            }
+            PlanEntry.save(plan, entries);
+        }
     }
 
     /** 本局全部计划（含归档）：对账要看谁认领了哪个仓位，stale 教材过滤要按生命期识别，都得看全量。 */

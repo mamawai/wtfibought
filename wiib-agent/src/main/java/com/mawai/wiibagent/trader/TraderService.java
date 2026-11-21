@@ -546,6 +546,13 @@ public class TraderService {
         return planStore.list(t.getId(), t.getRoundNo());
     }
 
+    /** 把计划各档盖上 sim 订单的最新状态，只改传进来的这几份，不写库；pending 是刚查到的挂单 */
+    public void overlayEntries(AiTrader t, List<AiTraderPlan> plans, List<FuturesOrderResponse> pending) {
+        planStore.overlayEntries(plans,
+                pending.stream().map(FuturesOrderResponse::getOrderId).collect(Collectors.toSet()),
+                group -> simTradeClient.getGroupOrders(t.getSimUserId(), group));
+    }
+
     /** 净值曲线：(wakeTime, equity) 升序；round 缺省=当前局。 */
     public List<AiTraderDecision> equityCurve(AiTrader t, Integer round) {
         return decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()

@@ -419,15 +419,18 @@ public class TraderController {
         }
         List<FuturesPositionDTO> positions = List.of();
         List<FuturesOrderResponse> pending = List.of();
+        List<AiTraderPlan> plans = traderService.plans(t);
         try {
             positions = simTradeClient.getAllPositions(t.getSimUserId());
             pending = simTradeClient.getPendingOrders(t.getSimUserId(), null);
+            // 计划各档是唤醒开头对账时记的，两次唤醒之间成交或撤掉的按订单的最新状态给
+            traderService.overlayEntries(t, plans, pending);
         } catch (Exception e) {
             log.warn("[Trader] 详情持仓查询失败 traderId={} msg={}", id, e.getMessage());
         }
         Long nextWakeAt = AiTrader.STATUS_RUNNING.equals(t.getStatus()) ? scheduler.nextRoutineWakeAt(t) : null;
         return Result.ok(new TraderDetailView(publicView(t, viewer, modelName(t)), positions, pending,
-                traderService.plans(t), t.getMemory(), traderService.latestReviewTime(id),
+                plans, t.getMemory(), traderService.latestReviewTime(id),
                 nextWakeAt, watchStore.armed(id, t.getRoundNo())));
     }
 

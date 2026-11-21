@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -304,6 +305,31 @@ class TraderPlanStoreTest {
         assertThat(PlanEntry.read(old)).extracting(PlanEntry::getStatus).containsExactly("FILLED", "CANCELLED");
         assertThat(PlanEntry.read(old).getLast().getReason()).isEqualTo("仓位了结，平台撤单");
         assertThat(old.getStatus()).isEqualTo(AiTraderPlan.STATUS_CLOSED);
+    }
+
+    // ==================== 页面读法：各档盖上订单的最新状态 ====================
+
+    /** 两次唤醒之间成交、撤掉的档按订单显示，触发中的照旧，不写库 */
+    @Test
+    void overlayShowsSettledEntriesWithoutSaving() {
+        AiTraderPlan plan = grouped(42L, entry(1L, "PENDING"), entry(2L, "PENDING"), entry(3L, "PENDING"), entry(4L, "PENDING"));
+        store.overlayEntries(List.of(plan), Set.of(4L), _ -> List.of(
+                groupOrder(1, "FILLED"), groupOrder(2, "CANCELLED"), groupOrder(3, "TRIGGERED"), groupOrder(4, "PENDING")));
+        List<PlanEntry> entries = PlanEntry.read(plan);
+        assertThat(entries).extracting(PlanEntry::getStatus).containsExactly("FILLED", "CANCELLED", "PENDING", "PENDING");
+        assertThat(entries.getFirst().getFilledPrice()).isEqualByComparingTo("98990");
+        assertThat(entries.getFirst().getClosedAt()).isEqualTo(BOUNDARY - 1000);
+        verify(mapper, never()).updateById(any(AiTraderPlan.class));
+    }
+
+    /** 标着挂着的档都还在挂单里：不查订单组 */
+    @Test
+    void overlaySkipsOrderQueryWhileEntriesStillPending() {
+        AiTraderPlan plan = grouped(42L, entry(1L, "FILLED"), entry(2L, "PENDING"));
+        store.overlayEntries(List.of(plan), Set.of(2L), _ -> {
+            throw new AssertionError("订单组不该被查");
+        });
+        assertThat(PlanEntry.read(plan)).extracting(PlanEntry::getStatus).containsExactly("FILLED", "PENDING");
     }
 
     // ==================== 对账：没事 / 成交 / 挂着 ====================
