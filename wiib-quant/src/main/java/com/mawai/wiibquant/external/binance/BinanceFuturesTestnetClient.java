@@ -8,16 +8,13 @@ import com.mawai.wiibquant.external.binance.model.SetLeverageResponse;
 import com.mawai.wiibquant.external.binance.model.SimpleAck;
 import com.mawai.wiibquant.external.binance.model.UserTrade;
 import com.mawai.wiibquant.external.binance.model.IncomeRecord;
-import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BaseRestClientConfig;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.JsonNode;
 
@@ -36,17 +33,17 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  */
 @Slf4j
 @Component
-public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
+public class BinanceFuturesTestnetClient extends BaseRestClientConfig {
 
     private static final String HEADER_API_KEY = "X-MBX-APIKEY";
 
     private final BinanceFuturesTestnetProperties props;
     private final BinanceSigner signer;
-    private final RestTemplate restTemplate;
+    private final RestClient restClient;
 
     public BinanceFuturesTestnetClient(BinanceFuturesTestnetProperties props) {
         this.props = props;
-        this.restTemplate = createRestTemplate(props.getConnectTimeout(), props.getReadTimeout());
+        this.restClient = createRestClient(props.getConnectTimeout(), props.getReadTimeout());
         boolean hasSecret = props.getSecretKey() != null && !props.getSecretKey().isBlank();
         this.signer = hasSecret ? new BinanceSigner(props.getSecretKey()) : null;
     }
@@ -204,12 +201,12 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         String signature = signer.sign(query);
         URI uri = URI.create(props.getRestBaseUrl() + path + "?" + query + "&signature=" + signature);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set(HEADER_API_KEY, props.getApiKey());
-
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(uri, method, new HttpEntity<>(headers), String.class);
-            return resp.getBody();
+            return restClient.method(method).uri(uri)
+                    .header(HEADER_API_KEY, props.getApiKey())
+                    // 请求体是空的，长度写明 0；不写的话 POST/DELETE 会按分块传输发
+                    .contentLength(0)
+                    .retrieve().body(String.class);
         } catch (HttpStatusCodeException e) {
             throw parseError(e);
         }

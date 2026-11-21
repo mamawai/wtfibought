@@ -1,9 +1,9 @@
 package com.mawai.wiibquant.external.deribit;
-import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BaseRestClientConfig;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
@@ -22,14 +22,14 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  */
 @Slf4j
 @Component
-public class DeribitClient extends BaseRestTemplateConfig {
+public class DeribitClient extends BaseRestClientConfig {
 
     private static final String BASE_URL = "https://www.deribit.com/api/v2/public";
     /** 币本位期权：簿挂在币自己名下（currency=BTC），DVOL 指数也只有这两个 */
     private static final Set<String> INVERSE = Set.of("BTC", "ETH");
     /** USDC 结算的线性期权：簿挂在 currency=USDC 下，合约名形如 SOL_USDC-25SEP26-118-C，没有 DVOL。DOGE/BNB 没期权 */
     private static final Set<String> LINEAR = Set.of("SOL", "XRP");
-    private final RestTemplate restTemplate;
+    private final RestClient restClient;
 
     /** 有没有期权数据；没有的调用方直接跳过，不发无谓请求 */
     public static boolean supports(String currency) {
@@ -51,7 +51,7 @@ public class DeribitClient extends BaseRestTemplateConfig {
     }
 
     public DeribitClient() {
-        this.restTemplate = createRestTemplate(5000, 10000);
+        this.restClient = createRestClient(5000, 10000);
     }
 
     /**
@@ -70,7 +70,7 @@ public class DeribitClient extends BaseRestTemplateConfig {
                 .build().toUri();
         try {
             log.info("Deribit DVOL: {}", uri);
-            return restTemplate.getForObject(uri, String.class);
+            return restClient.get().uri(uri).retrieve().body(String.class);
         } catch (Exception e) {
             log.warn("Deribit DVOL获取失败: {}", e.getMessage());
             return null;
@@ -95,7 +95,7 @@ public class DeribitClient extends BaseRestTemplateConfig {
                 .build().toUri();
         try {
             log.info("Deribit bookSummary: {}", uri);
-            String raw = restTemplate.getForObject(uri, String.class);
+            String raw = restClient.get().uri(uri).retrieve().body(String.class);
             return "USDC".equals(bookCurrency)
                     ? filterBook(raw, currency.toUpperCase(Locale.ROOT) + "_USDC-")
                     : raw;

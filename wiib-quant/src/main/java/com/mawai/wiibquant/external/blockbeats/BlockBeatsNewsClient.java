@@ -1,14 +1,10 @@
 package com.mawai.wiibquant.external.blockbeats;
 
-import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BaseRestClientConfig;
 import com.mawai.wiibquant.market.domain.news.NewsFlash;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import tools.jackson.databind.JsonNode;
 
@@ -25,14 +21,14 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  */
 @Slf4j
 @Component
-public class BlockBeatsNewsClient extends BaseRestTemplateConfig {
+public class BlockBeatsNewsClient extends BaseRestClientConfig {
 
     private final BlockBeatsProperties props;
-    private final RestTemplate restTemplate;
+    private final RestClient restClient;
 
     public BlockBeatsNewsClient(BlockBeatsProperties props) {
         this.props = props;
-        this.restTemplate = createRestTemplate(5000, 10000);
+        this.restClient = createRestClient(5000, 10000);
     }
 
     /**
@@ -51,12 +47,10 @@ public class BlockBeatsNewsClient extends BaseRestTemplateConfig {
                 .queryParam("size", size)
                 .queryParam("lang", props.getLang())
                 .build().toUri();
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("api-key", props.getApiKey());
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(
-                    uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-            return parse(resp.getBody());
+            return parse(restClient.get().uri(uri)
+                    .header("api-key", props.getApiKey())
+                    .retrieve().body(String.class));
         } catch (Exception e) {
             log.warn("[BlockBeats] 重要快讯拉取失败: {}", e.getMessage());
             return null;

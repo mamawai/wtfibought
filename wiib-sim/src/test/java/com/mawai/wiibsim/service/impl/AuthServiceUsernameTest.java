@@ -7,29 +7,32 @@ import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.limiter.TokenBucketLimiter;
 import com.mawai.wiibsim.config.GoogleConfig;
 import com.mawai.wiibsim.config.LinuxDoConfig;
-import com.mawai.wiibsim.dto.LinuxDoUserInfo;
 import com.mawai.wiibsim.mapper.InviteCodeMapper;
 import com.mawai.wiibsim.service.UserService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
  * 站内用户名的规则：外面的名字只留注册允许的字符，撞名、太短都补随机后缀，补完也不超 20 个字；
@@ -40,9 +43,11 @@ class AuthServiceUsernameTest {
     private final UserService userService = mock(UserService.class);
     private final InviteCodeMapper inviteCodes = mock(InviteCodeMapper.class);
     private final LinuxDoConfig linuxDo = mock(LinuxDoConfig.class);
-    private final RestTemplate linuxDoRest = mock(RestTemplate.class);
-    private final AuthServiceImpl service = new AuthServiceImpl(userService, linuxDo, linuxDoRest,
-            mock(GoogleConfig.class), mock(RestTemplate.class), inviteCodes, mock(MessageCatalog.class),
+    private final RestClient.Builder linuxDoRest = RestClient.builder();
+    /** 假的 LinuxDo：接住 linuxDoRest 发出去的请求 */
+    private final MockRestServiceServer linuxDoServer = MockRestServiceServer.bindTo(linuxDoRest).build();
+    private final AuthServiceImpl service = new AuthServiceImpl(userService, linuxDo, linuxDoRest.build(),
+            mock(GoogleConfig.class), mock(RestClient.class), inviteCodes, mock(MessageCatalog.class),
             mock(TokenBucketLimiter.class));
 
     @Test
@@ -97,13 +102,12 @@ class AuthServiceUsernameTest {
     void LinuxDo新用户和站内已有用户同名_另起名照常登录() {
         when(linuxDo.getTokenUrl()).thenReturn("https://linux.do/token");
         when(linuxDo.getUserUrl()).thenReturn("https://linux.do/user");
-        when(linuxDoRest.postForObject(eq("https://linux.do/token"), any(), eq(String.class)))
-                .thenReturn("{\"access_token\":\"at\"}");
-        LinuxDoUserInfo info = new LinuxDoUserInfo();
-        info.setId(42L);
-        info.setUsername("alice");
-        when(linuxDoRest.exchange(eq("https://linux.do/user"), eq(HttpMethod.GET), any(), eq(LinuxDoUserInfo.class)))
-                .thenReturn(ResponseEntity.ok(info));
+        linuxDoServer.expect(requestTo("https://linux.do/token"))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_FORM_URLENCODED))
+                .andRespond(withSuccess("{\"access_token\":\"at\"}", MediaType.APPLICATION_JSON));
+        linuxDoServer.expect(requestTo("https://linux.do/user"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer at"))
+                .andRespond(withSuccess("{\"id\":42,\"username\":\"alice\"}", MediaType.APPLICATION_JSON));
         // 站内已经有人叫 alice
         when(userService.findByUsername("alice")).thenReturn(new User());
 

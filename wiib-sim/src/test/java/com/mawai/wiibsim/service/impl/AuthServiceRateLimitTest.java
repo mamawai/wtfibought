@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -31,8 +31,8 @@ class AuthServiceRateLimitTest {
 
     private final UserService userService = mock(UserService.class);
     private final TokenBucketLimiter limiter = mock(TokenBucketLimiter.class);
-    private final AuthServiceImpl service = new AuthServiceImpl(userService, mock(LinuxDoConfig.class), mock(RestTemplate.class),
-            mock(GoogleConfig.class), mock(RestTemplate.class), mock(InviteCodeMapper.class), mock(MessageCatalog.class), limiter);
+    private final AuthServiceImpl service = new AuthServiceImpl(userService, mock(LinuxDoConfig.class), mock(RestClient.class),
+            mock(GoogleConfig.class), mock(RestClient.class), mock(InviteCodeMapper.class), mock(MessageCatalog.class), limiter);
 
     @BeforeEach
     void setUp() {

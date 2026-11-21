@@ -28,17 +28,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
-import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.text.Normalizer;
@@ -60,9 +57,9 @@ public class AuthServiceImpl implements AuthService {
 
     private final UserService userService;
     private final LinuxDoConfig linuxDoConfig;
-    private final RestTemplate linuxDoRestTemplate;
+    private final RestClient linuxDoRestClient;
     private final GoogleConfig googleConfig;
-    private final RestTemplate googleRestTemplate;
+    private final RestClient googleRestClient;
     private final InviteCodeMapper inviteCodeMapper;
     /** 登录多半发生在未登录态，语言只能取自请求头（见 RequestLang） */
     private final MessageCatalog messages;
@@ -72,9 +69,9 @@ public class AuthServiceImpl implements AuthService {
     public AuthServiceImpl(
             UserService userService,
             LinuxDoConfig linuxDoConfig,
-            @Qualifier("linuxDoRestTemplate") RestTemplate linuxDoRestTemplate,
+            @Qualifier("linuxDoRestClient") RestClient linuxDoRestClient,
             GoogleConfig googleConfig,
-            @Qualifier("googleRestTemplate") RestTemplate googleRestTemplate,
+            @Qualifier("googleRestClient") RestClient googleRestClient,
             InviteCodeMapper inviteCodeMapper,
             MessageCatalog messages,
             TokenBucketLimiter limiter
@@ -82,9 +79,9 @@ public class AuthServiceImpl implements AuthService {
     {
         this.userService = userService;
         this.linuxDoConfig = linuxDoConfig;
-        this.linuxDoRestTemplate = linuxDoRestTemplate;
+        this.linuxDoRestClient = linuxDoRestClient;
         this.googleConfig = googleConfig;
-        this.googleRestTemplate = googleRestTemplate;
+        this.googleRestClient = googleRestClient;
         this.inviteCodeMapper = inviteCodeMapper;
         this.messages = messages;
         this.limiter = limiter;
@@ -125,10 +122,10 @@ public class AuthServiceImpl implements AuthService {
     public String handleLinuxDoCallback(String code) {
         try {
             // 1. 用code换取access_token
-            String accessToken = exchangeToken(linuxDoConfig, linuxDoRestTemplate, code);
+            String accessToken = exchangeToken(linuxDoConfig, linuxDoRestClient, code);
 
             // 2. 用token获取用户信息
-            LinuxDoUserInfo userInfo = getUserInfo(linuxDoConfig, linuxDoRestTemplate, accessToken, LinuxDoUserInfo.class);
+            LinuxDoUserInfo userInfo = getUserInfo(linuxDoConfig, linuxDoRestClient, accessToken, LinuxDoUserInfo.class);
             if (userInfo.getId() == null) {
                 throw new BizException(messages.get("auth.oauth.userIdEmpty"));
             }
@@ -186,8 +183,8 @@ public class AuthServiceImpl implements AuthService {
     @Transactional(rollbackFor = Exception.class)
     public String handleGoogleCallback(String code) {
         try {
-            String accessToken = exchangeToken(googleConfig, googleRestTemplate, code);
-            GoogleUserInfo userInfo = getUserInfo(googleConfig, googleRestTemplate, accessToken, GoogleUserInfo.class);
+            String accessToken = exchangeToken(googleConfig, googleRestClient, code);
+            GoogleUserInfo userInfo = getUserInfo(googleConfig, googleRestClient, accessToken, GoogleUserInfo.class);
             if (StrUtil.isBlank(userInfo.getSub())) {
                 throw new BizException(messages.get("auth.oauth.userIdEmpty"));
             }
@@ -376,7 +373,7 @@ public class AuthServiceImpl implements AuthService {
     /**
      * 用授权码换取access_token
      */
-    private String exchangeToken(OAuthClientConfig provider, RestTemplate restTemplate, String code) {
+    private String exchangeToken(OAuthClientConfig provider, RestClient restClient, String code) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("grant_type", "authorization_code");
         form.add("code", code);
@@ -384,14 +381,12 @@ public class AuthServiceImpl implements AuthService {
         form.add("client_secret", provider.getClientSecret());
         form.add("redirect_uri", provider.getRedirectUri());
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
-
         String response;
         try {
-            response = restTemplate.postForObject(provider.getTokenUrl(), entity, String.class);
+            response = restClient.post().uri(provider.getTokenUrl())
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
+                    .retrieve().body(String.class);
         } catch (RestClientResponseException e) {
             throw new BizException(messages.get("auth.oauth.tokenFailed", Map.of("reason", e.getResponseBodyAsString())));
         }
@@ -411,19 +406,12 @@ public class AuthServiceImpl implements AuthService {
     /**
      * 用access_token获取用户信息
      */
-    private <T> T getUserInfo(OAuthClientConfig provider, RestTemplate restTemplate, String accessToken, Class<T> type) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + accessToken);
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
-
+    private <T> T getUserInfo(OAuthClientConfig provider, RestClient restClient, String accessToken, Class<T> type) {
         T userInfo;
         try {
-            userInfo = restTemplate.exchange(
-                    provider.getUserUrl(),
-                    HttpMethod.GET,
-                    entity,
-                    type
-            ).getBody();
+            userInfo = restClient.get().uri(provider.getUserUrl())
+                    .headers(headers -> headers.setBearerAuth(accessToken))
+                    .retrieve().body(type);
         } catch (RestClientResponseException e) {
             throw new BizException(messages.get("auth.oauth.userInfoFailed", Map.of("reason", e.getResponseBodyAsString())));
         } catch (RestClientException e) {

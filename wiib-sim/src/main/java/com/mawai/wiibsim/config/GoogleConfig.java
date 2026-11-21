@@ -1,16 +1,16 @@
 package com.mawai.wiibsim.config;
 
-import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BaseRestClientConfig;
 import lombok.Getter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @Getter
 @Configuration
-public class GoogleConfig extends BaseRestTemplateConfig implements OAuthClientConfig {
+public class GoogleConfig extends BaseRestClientConfig implements OAuthClientConfig {
 
     @Value("${google.connect-timeout:3000}")
     private int connectTimeout;
@@ -52,8 +52,8 @@ public class GoogleConfig extends BaseRestTemplateConfig implements OAuthClientC
                 .encode().build().toUriString();
     }
 
-    @Bean(name = "googleRestTemplate")
-    public RestTemplate googleRestTemplate() {
-        return createRestTemplate(connectTimeout, readTimeout);
+    @Bean(name = "googleRestClient")
+    public RestClient googleRestClient() {
+        return createRestClient(connectTimeout, readTimeout);
     }
 }

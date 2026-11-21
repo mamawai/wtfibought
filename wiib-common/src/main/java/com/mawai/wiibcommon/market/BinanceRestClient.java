@@ -1,5 +1,5 @@
 package com.mawai.wiibcommon.market;
-import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BaseRestClientConfig;
 import com.mawai.wiibcommon.config.BinanceProperties;
 
 import lombok.extern.slf4j.Slf4j;
@@ -7,7 +7,7 @@ import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
@@ -22,10 +22,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 @Slf4j
 @Component
-public class BinanceRestClient extends BaseRestTemplateConfig {
+public class BinanceRestClient extends BaseRestClientConfig {
 
     private static final int LONG_SHORT_RATIO_5M_LIMIT = 288; // 5m * 288 = 24h，用于LSR滚动百分位
-    private final RestTemplate restTemplate;
+    private final RestClient restClient;
     private final BinanceProperties props;
 
     /** 冷却时长：Binance 的 418 最短 2 分钟，冷却期设短了等于没熔断 */
@@ -45,8 +45,9 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
 
     public BinanceRestClient(BinanceProperties props) {
         this.props = props;
-        this.restTemplate = createRestTemplate(5000, 10000);
-        this.restTemplate.setInterceptors(List.of(weightInterceptor(weight, hostOf(props.getFuturesRestBaseUrl()))));
+        this.restClient = createRestClient(5000, 10000).mutate()
+                .requestInterceptor(weightInterceptor(weight, hostOf(props.getFuturesRestBaseUrl())))
+                .build();
     }
 
     /** 每个回包（含 429 的）都经过这里：打到合约站的，把已用权重头读进读数；现货站是另一套计数，跳过 */
@@ -71,12 +72,12 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
 
     /**
      * 裸网络调用，也是测试的接缝（Binance 请求经 getGuarded 进来，第三方 API 直接调）。
-     * 这里必须走 {@code getForObject(URI, ...)}：
-     * String 重载会过 RestTemplate 的 UriTemplateHandler（默认 URI_COMPONENT 模式）再编码一遍，
+     * 这里必须走 {@code uri(URI)}：
+     * String 重载会过 RestClient 的 UriBuilderFactory 再编码一遍，
      * 把已经 encode 过的 %5B 变成 %255B，Binance 收到字面量直接 400。
      */
     protected String get(String uri) {
-        return restTemplate.getForObject(URI.create(uri), String.class);
+        return restClient.get().uri(URI.create(uri)).retrieve().body(String.class);
     }
 
     /**

@@ -3,12 +3,10 @@ package com.mawai.wiibcommon.market;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.client.ClientHttpRequest;
-import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
 import java.net.URI;
@@ -85,7 +83,7 @@ class BinanceRestClientCircuitTest {
             @Override
             protected String get(String uri) {
                 if (calls.incrementAndGet() == 1) {
-                    throw HttpClientErrorException.create(HttpStatus.I_AM_A_TEAPOT,
+                    throw HttpClientErrorException.create(HttpStatusCode.valueOf(418),
                             "I'm a teapot", headers, null, null);
                 }
                 return "[]";
@@ -129,7 +127,7 @@ class BinanceRestClientCircuitTest {
             @Override
             protected String get(String uri) {
                 calls.incrementAndGet();
-                throw HttpClientErrorException.create(HttpStatus.I_AM_A_TEAPOT,
+                throw HttpClientErrorException.create(HttpStatusCode.valueOf(418),
                         "I'm a teapot", new HttpHeaders(), null, null);
             }
         };
@@ -141,7 +139,7 @@ class BinanceRestClientCircuitTest {
     }
 
     /**
-     * 已经 encode 过的 symbols 参数不能再被 RestTemplate 的 UriTemplateHandler 编码一遍：
+     * 已经 encode 过的 symbols 参数不能再被 RestClient 的 UriBuilderFactory 编码一遍：
      * %5B 变 %255B，Binance 收到字面量返回 400，而 400 被熔断层吞成 null，
      * getSpotExchangeInfo / get24hTickers 就永久静默失效（过滤器冻在硬编码快照、bStock 列表永久降级）。
      */
@@ -150,8 +148,8 @@ class BinanceRestClientCircuitTest {
         SENT_URI.set(null);
         BinanceRestClient client = new BinanceRestClient(props()) {
             @Override
-            protected RestTemplate createRestTemplate(int connectTimeout, int readTimeout) {
-                return recordingRestTemplate();
+            protected RestClient createRestClient(int connectTimeout, int readTimeout) {
+                return recordingRestClient();
             }
         };
 
@@ -205,21 +203,16 @@ class BinanceRestClientCircuitTest {
     }
 
     /**
-     * 记录最终真正发出去的 URI。createRestTemplate 在父类构造期就被调用，
+     * 记录最终真正发出去的 URI。createRestClient 在父类构造期就被调用，
      * 那时匿名子类捕获的局部变量还没赋值，只能用静态字段接。
      */
     private static final AtomicReference<URI> SENT_URI = new AtomicReference<>();
 
-    private static RestTemplate recordingRestTemplate() {
-        RestTemplate rt = new RestTemplate();
-        rt.setRequestFactory(new ClientHttpRequestFactory() {
-            @Override
-            public ClientHttpRequest createRequest(URI uri, HttpMethod httpMethod) throws IOException {
-                SENT_URI.set(uri);
-                throw new IOException("stub：只记 URI，不真发请求");
-            }
-        });
-        return rt;
+    private static RestClient recordingRestClient() {
+        return RestClient.builder().requestFactory((uri, httpMethod) -> {
+            SENT_URI.set(uri);
+            throw new IOException("stub：只记 URI，不真发请求");
+        }).build();
     }
 
     private static java.util.function.LongSupplier fixedClock(long value) {
