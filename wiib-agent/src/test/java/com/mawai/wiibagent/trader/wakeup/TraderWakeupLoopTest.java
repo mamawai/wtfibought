@@ -55,7 +55,8 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -87,6 +88,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -431,8 +433,20 @@ class TraderWakeupLoopTest {
         verify(planStore).reconcile(eq(7L), eq(1), any(), any(), any(), any(), eq(1785171600000L), eq(AgentLang.ZH));
     }
 
+    /** 预算在哪一段、哪一次调用上用完：几个数都跟着上限走 */
+    static Stream<Arguments> budgetBoundaries() {
+        int limit = TraderWakeupRunner.MAX_MODEL_CALLS;
+        return Stream.of(
+                Arguments.of(0, limit - 1, false, limit),
+                Arguments.of(0, limit, true, limit + 1),
+                Arguments.of(1, limit - 1, false, limit),
+                Arguments.of(1, limit, true, limit + 1),
+                Arguments.of(2, limit, true, limit + 1),
+                Arguments.of(2, limit, false, limit));
+    }
+
     @ParameterizedTest
-    @CsvSource({"0,11,false,12", "0,12,true,13", "1,11,false,12", "1,12,true,13", "2,12,true,13", "2,12,false,12"})
+    @MethodSource("budgetBoundaries")
     void onlineBudgetEndsOnceAtEveryStage(int completedStages, int boundary, boolean toolAtBoundary, int expectedCalls) {
         stubHealthyAccount();
         ChatModel model = onlineModel(n -> {

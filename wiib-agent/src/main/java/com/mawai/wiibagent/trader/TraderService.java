@@ -63,7 +63,7 @@ public class TraderService {
     public static final int MAX_PER_USER = 3;
     /** 轮次保留窗口：每 trader 只留最近 10 局（R10），开新局时更早的整局数据连同 sim 子账户一并清除 */
     public static final int MAX_ROUNDS_KEPT = 10;
-    /** 币种上限：单轮 12 次模型调用按币摊，一个币扎实求证约 3 次，3 币正好（前端 MyTrader.MAX_SYMBOLS 同一个数） */
+    /** 币种上限：单轮 16 次模型调用按币摊，一个币扎实求证约 3 次，3 币走得完（前端 traderConfig.MAX_SYMBOLS 同一个数） */
     public static final int MAX_SYMBOLS = 3;
     /** 主人交易指令字数上限，按 String.length() 算（前端指令框同一个数） */
     public static final int MAX_CUSTOM_PROMPT = 4000;

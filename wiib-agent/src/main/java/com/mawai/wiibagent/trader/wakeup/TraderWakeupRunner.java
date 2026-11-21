@@ -96,12 +96,12 @@ public class TraderWakeupRunner {
     /**
      * 单次唤醒模型调用上限（ReAct 迭代保险丝，挡住无限工具循环烧用户的钱）。
      * <p>
-     * 值给到 12 是因为并不并行差得远：会并行的模型一轮发 4~9 个 tool_call，2~3 次调用就取完数据；
+     * 值给到 16 是因为并不并行差得远：会并行的模型一轮发 4~9 个 tool_call，2~3 次调用就取完数据；
      * 不并行的一轮一个，3 币多周期求证根本走不完。撞上限不算失败（见下面 setError 那段），
      * 但收束时最后一条是纯 tool_call、正文空，这轮决策就没有收尾的结论块——
      * 下一轮的【上一轮结论】和复盘素材都跟着缺。
      */
-    public static final int MAX_MODEL_CALLS = 12;
+    public static final int MAX_MODEL_CALLS = 16;
     static final int MAX_CONSECUTIVE_FAILURES = 5;
     /** 出局判定线：权益 < 初始资金 10000 的 1% */
     static final BigDecimal BUST_OUT_FLOOR = new BigDecimal("100");
