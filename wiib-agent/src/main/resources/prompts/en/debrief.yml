@@ -18,10 +18,16 @@ debrief:
     Do not say what to change next time and do not propose new rules; conclusions across trades are left to the daily unified review.
 
     The user message carries: your owner's trading instructions, this trade's fact sheet (computed by code), every round from the one
-    that opened it to the first round after it closed (each led by its decision id), and the active entries of the experience ledger
-    with which of them the opening round cited.
+    that opened it to the first round after it closed, and the active entries of the experience ledger with which of them the opening round cited.
+    Every round is given in full. Inside a round, in order:
+    - Head of the opening message: why that round woke you (scheduled, a watch condition met, a position event, a volatility alert; a watch condition that was met carries the note you wrote when you set it), and the fills and closes since the previous wake-up. One round may be woken by several things at once, other symbols' included; the wake-up kind in the title line is only the one that ranks first
+    - This position as the round began: code data. unrealizedR is the open P&L in R (R = the distance from the entry price to the plan's original stop), stopDistancePct is how far the mark price is from the stop in percent, lossAtStopPctOfEquity is the percent of equity lost if the stop is hit, sinceLastWake is this position's open/high/low/close since the previous round; on the account line lossAtAllStopsPctOfEquity is the total over all positions and lossIfPendingFillPctOfEquity is the extra share if the resting orders fill and are then stopped. None of them counts fees
+    - What this round did to this trade: the arguments as they were; facts in a receipt are the numbers code computed when the order was placed. signalsUsed in the opening round's open_position arguments is the thesis at entry; a later add replaces the plan's thesis, so the thesis in the fact sheet is the last one
+    - Watch conditions this round set on this symbol: note is what you wrote down to check and decide when price gets there
+    - Each stage's text, the round's overall verdict, and this symbol's conclusion (Judgement / Action / Waiting). Other symbols' conclusion segments are left out
+    When the position was closed partway through a round, a line after the actions gives the time. The stages of such a round were written one after another: the earlier ones may have been written before the close, the conclusion after it.
     You have tools to look up how things stood at the time:
-    - round_detail: by decision id, a round's full text, its opening message, the tools it called and their results
+    - round_detail: by decision id, the tools a round used and their results; with call, what one model call wrote (other symbols' conclusion segments included) and its tool results in full; with opening, the round's whole opening message
     - trade_history: the closed trades of this round; give a position id to see that trade's fact sheet and its debrief
     - klines / indicators / kline_structure: with endTime, the candles, indicators and structure up to a moment in the past
     - news_archive: the news flashes in a time range, each with its publication time
@@ -29,11 +35,11 @@ debrief:
     before the entry, an indicator at the time, the news at the time), look it up first.
 
     Rules:
-    - Numbers may only be quoted from the fact sheet and the tool results, never computed or prettified yourself
+    - Numbers may only be quoted from the fact sheet and the tool results, never computed or prettified yourself. The numbers code gives in the rounds (this position as the round began, the account line, action receipts) may be quoted the same way; numbers inside the stage texts, the overall verdict and the conclusion are what you wrote at the time: say so when you quote one, and to verify it use round_detail for that round's tool results or look up the past candles and indicators
     - Keep what was visible at the time apart from what happened afterwards: when you look up past candles, indicators or structure, set endTime to the moment you want to see, otherwise you get the present; price action and news after the close may only explain the outcome, never say what should have been done at the time
     - A loser answers: path / wrong direction or shaken out (read the replay row: max favourable and max adverse in the 24h after the first fill, the outcome at each wider stop, and the best price after the exit) / if shaken out, where the problem lay: stop width, entry method, or managing the position after entry (argue from "actual" against the original-stop outcome) / did managing add or cost
     - A winner answers: path / what was right (which reason for the entry the later price action confirmed) / how much was left on the table (exit vs best price after the exit) / did managing add or cost ("actual" above or below the original-stop outcome)
-    - Both answer: was there anything I wrote down to do and did not do (in the plan's thesis and invalidation, in a Waiting line of a round's conclusion, or a hard line with a number in the owner's instructions). If so, say which sentence and what was actually done; if not, write "none"
+    - Both answer: was there anything I wrote down to do and did not do (in the plan's thesis and invalidation, in a Waiting line of a round's conclusion, in the note of a watch condition, or a hard line with a number in the owner's instructions). If so, say which sentence and what was actually done; if not, write "none"
     - Sorting: write one row for every active entry of the experience ledger, and the position id can only be this trade's. Hypotheses and rules: for an opportunity or execution entry, this trade met the situation it describes and followed it; for a restriction entry, this trade met the situation and was taken anyway — write UNDER. If the opening round cited the entry but this trade's situation does not match its condition, write MISCITED. Execution gaps: this trade met the situation it describes — write KEPT if it did what the entry says, BROKEN if it did not. If none of these applies, write NONE
     - Whether this trade belongs to an entry depends only on whether the situation at entry and while holding matches the entry's condition, not on whether the trade ended up winning or losing. Do not force it in when the situation does not match
     - You only sort; code keeps score from the trades' P&L, so do not judge for or against an entry yourself
@@ -76,16 +82,43 @@ debrief:
     factsHeader: "[THIS TRADE'S FACT SHEET] (facts computed by code. The number in square brackets is the position id; the sorting rows use it. {{guide}})"
 
     # ---- rounds ----
-    roundsHeader: "[ROUNDS] (from the round that opened this trade to the first round after it closed, in time order; the number after # is the decision id, and round_detail shows that round's full text, its opening message and the tool results. Actions list only what was done to this trade, and a bracket after a tool name is the status of an action that did not go through. Conclusion is this symbol's segment of that round's conclusion block. Singapore time)"
-    roundRow: "- #{{id}} {{time}} {{kind}} | actions: {{actions}} | conclusion: {{section}}"
+    # Every round is given in full, nothing truncated: the original text and code data as they were, minus other symbols' conclusion segments
+    roundsHeader: "[ROUNDS] (from the round that opened this trade to the first round after it closed, in time order, Singapore time. Each round starts with the facts about this trade: the head of that round's opening message (why you were woken and what happened since the previous wake-up, other symbols included), this position as the round began, what the round did to this trade, and the watch conditions it set on this symbol; then what you wrote in that round: each stage's text, the round's overall verdict, and this symbol's conclusion, with other symbols' conclusion segments left out. Everything is the original text or code data of that moment. A bracket after a tool name is the status of an action that did not go through. In the title line the number after # is the decision id)"
     roundsNone: (no wake-up on record in this stretch)
-    # With too many rounds, those that did nothing to this trade are listed by id and time only
-    roundsBrief: "The other {{n}} rounds did nothing to this trade; decision ids and times only: {{rows}}"
-    roundBrief: "#{{id}} {{time}}"
-    closedMark: "—— closed {{time}} ({{manner}}) ——"
+    roundTitle: "==== Round {{no}}/{{total}} | decision #{{id}} | {{time}} | {{kind}} ===="
+    # Names of the wake-up kinds; a round whose status is not OK carries /STATUS after it
+    kind:
+      trade: scheduled wake-up
+      watch: watch condition met
+      event: position event
+      alert: volatility alert
+      manual: manual wake-up
+      preset: preset executed
+    # The opening message as written, up to the account block
+    roundOpening: "[Head of the opening message: why you were woken, what happened since the previous wake-up]"
+    # This position's part of the account data; field names are the account data's own
+    roundPosition: "[This position as the round began]"
+    positionNotYet: (this position did not exist yet when the round began)
+    positionGone: (this position was already closed when the round began)
+    pendingEntries: "Entry orders still resting: "
+    account: "Account: "
+    roundActions: "[What this round did to this trade]"
+    actionArgs: "args: "
+    actionReceipt: "receipt: "
+    actionFailed: "did not go through because: "
+    closedMidRound: "(this position was closed partway through the round, at {{time}}: {{manner}}. The round ran from {{from}} to {{to}})"
+    roundWatches: "[Watch conditions this round set on {{symbol}}]"
+    # part is beforeConclusion or empty: the conclusion block of the last stage's text is listed separately after it
+    stageText: "[Written in stage {{n}}{{part}}]"
+    # A row without a stored trace cannot be split into stages
+    wholeText: "[Written in this round{{part}}]"
+    beforeConclusion: " (before the conclusion block)"
+    roundOverall: "[The round's overall verdict]"
+    roundSymbol: "[Conclusion on {{symbol}}]"
+    symbolAbsent: (this round's conclusion did not write about this symbol)
+    notSegmented: (this round's conclusion is not split by symbol; all of it is under the overall verdict above)
+    closedMark: "———— closed {{time}} ({{manner}}) ————"
     noAction: none
-    actionSep: "; "
-    none: —
     listSep: ", "
 
     # ---- experience ledger ----

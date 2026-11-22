@@ -64,7 +64,8 @@ public class DebriefRunner {
     /** 平仓超过这么久的不再补做：复盘开关关了很久再打开、停机很久再起来，不会把整局的老单子全翻出来做一遍 */
     static final long MAX_AGE_MS = 7 * 24 * 3_600_000L;
     static final int MAX_MODEL_CALLS = 16;
-    static final int TIMEOUT_SECONDS = 900;
+    /** 一笔最多跑多久：开场素材十几万 token，一次模型调用就要几分钟 */
+    static final int TIMEOUT_SECONDS = 1800;
     /** 失败后隔多久再试：第一次失败等 1 小时，第二次失败等 24 小时，第三次还失败就不再试 */
     static final long[] RETRY_DELAYS_MS = {3_600_000L, 24 * 3_600_000L};
 

@@ -72,34 +72,38 @@ class DebriefToolkitTest {
         return d;
     }
 
-    /** 两次模型调用的轨迹：第一次调 klines（回执 500 字），第二次给结论 */
+    /** 两段、两次模型调用的轨迹：第一次调 klines（回执 500 字），第二次是第二段的开头，给结论 */
     private static String trace() {
         WakeTrace trace = new WakeTrace(7L, AiTraderDecision.KIND_TRADE, T0, 900, BigDecimal.TEN, 0, 0);
         trace.prompt("系统提示词", "开场白：账户与持仓");
         trace.callStart();
         trace.callEnd("先看结构", List.of(new AssistantMessage.ToolCall("c1", "function", "klines", "{\"symbol\":\"BTCUSDT\"}")));
         trace.toolResult("c1", "klines", "{\"rows\":\"" + "x".repeat(500) + "\"}");
+        trace.stage("第二段的开场白");
         trace.callStart();
         trace.callEnd("结论：开多", List.of());
         trace.end(AiTraderDecision.STATUS_OK, null, BigDecimal.TEN, 10, 2, 100L);
         return trace.toJson();
     }
 
+    /** 总览每次调用都列，带写了多少字，不带字本身，回执只带开头；写的字和回执全文按调用序号查；开场白单独要 */
     @Test
-    void roundDetailGivesOverviewThenOneCallInFull() {
+    void roundDetailGivesToolsOverviewThenOneCallOrTheOpening() {
         when(decisionMapper.selectOne(any())).thenReturn(round(AiTraderDecision.KIND_TRADE, trace()));
+        DebriefToolkit.Tools tools = toolkit.boundTo(trader(), AgentLang.ZH);
 
-        String overview = toolkit.boundTo(trader(), AgentLang.ZH).roundDetail(901L, null);
+        String overview = tools.roundDetail(901L, null, null);
 
-        // 开场白给，系统提示词不给；回执只带开头 300 字
-        assertThat(overview).contains("\"decisionId\":901").contains("\"opening\":\"开场白：账户与持仓\"")
-                .contains("\"call\":1").contains("先看结构").contains("\"name\":\"klines\"").contains("结论：开多")
-                .doesNotContain("系统提示词").doesNotContain("x".repeat(400));
+        assertThat(overview).contains("\"decisionId\":901").contains("{\"call\":1,\"textChars\":4,").contains("\"name\":\"klines\"")
+                .contains("{\"call\":2,\"textChars\":5,\"tools\":[]}")
+                .doesNotContain("先看结构").doesNotContain("开场白").doesNotContain("x".repeat(400));
 
-        String call = toolkit.boundTo(trader(), AgentLang.ZH).roundDetail(901L, 1);
+        assertThat(tools.roundDetail(901L, 1, null)).contains("\"call\":1").contains("先看结构").contains("x".repeat(500));
+        assertThat(tools.roundDetail(901L, 9, null)).contains("\"available\":false");
 
-        assertThat(call).contains("\"call\":1").contains("x".repeat(500)).doesNotContain("opening");
-        assertThat(toolkit.boundTo(trader(), AgentLang.ZH).roundDetail(901L, 9)).contains("\"available\":false");
+        assertThat(tools.roundDetail(901L, null, true)).contains("\"opening\":\"开场白：账户与持仓\"")
+                .contains("\"stageOpenings\":[{\"call\":2,\"text\":\"第二段的开场白\"}]")
+                .doesNotContain("系统提示词").doesNotContain("klines");
     }
 
     /** 没存过程的行只有正文和动作；别的交易员的轮、复盘行不给 */
@@ -108,16 +112,16 @@ class DebriefToolkitTest {
         AiTraderDecision plain = round(AiTraderDecision.KIND_TRADE, null);
         plain.setActionsJson("[{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\"},\"rejected\":\"止损太窄\"}]");
         when(decisionMapper.selectOne(any())).thenReturn(plain);
-        assertThat(toolkit.roundDetail(trader(), 901L, null)).contains("\"reasoning\":\"这一轮的正文\"")
+        assertThat(toolkit.roundDetail(trader(), 901L, null, null)).contains("\"reasoning\":\"这一轮的正文\"")
                 .contains("\"tool\":\"open_position\"").contains("\"status\":\"rejected\"");
 
         AiTraderDecision foreign = round(AiTraderDecision.KIND_TRADE, trace());
         foreign.setTraderId(8L);
         when(decisionMapper.selectOne(any())).thenReturn(foreign);
-        assertThat(toolkit.roundDetail(trader(), 901L, null)).contains("\"available\":false");
+        assertThat(toolkit.roundDetail(trader(), 901L, null, null)).contains("\"available\":false");
 
         when(decisionMapper.selectOne(any())).thenReturn(round(AiTraderDecision.KIND_REVIEW, null));
-        assertThat(toolkit.roundDetail(trader(), 901L, null)).contains("\"available\":false");
+        assertThat(toolkit.roundDetail(trader(), 901L, null, null)).contains("\"available\":false");
     }
 
     @Test

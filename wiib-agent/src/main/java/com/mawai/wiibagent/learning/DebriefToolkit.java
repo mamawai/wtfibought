@@ -28,7 +28,7 @@ import java.util.stream.Stream;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 单笔复盘查历史用的两个工具：某一轮的过程（round_detail）、本局已了结的单子（trade_history）。
+ * 单笔复盘查历史用的两个工具：某一轮用过的工具和开场白（round_detail）、本局已了结的单子（trade_history）。
  * 只读，查的都是这个交易员当前这一局的。
  */
 @Component
@@ -65,11 +65,13 @@ public class DebriefToolkit {
         // 描述在词表 tool.round_detail（见 LocalizedToolCallbacks）
         @Tool(name = "round_detail")
         public String roundDetail(
-                @ToolParam(description = "Decision id of the round: the number after # in the rounds list")
+                @ToolParam(description = "Decision id of the round: the number after # in that round's title line")
                 long decisionId,
-                @ToolParam(required = false, description = "Model-call number inside that round (the `call` field of the overview); give it to get that call's tool results in full instead of the overview")
-                Integer call) {
-            return toolkit.roundDetail(trader, decisionId, call);
+                @ToolParam(required = false, description = "Model-call number inside that round (the `call` field of the overview); give it to get that call's text and its tool results in full instead of the overview")
+                Integer call,
+                @ToolParam(required = false, description = "true to get the round's whole opening message, and the opening of each later stage, instead of the overview")
+                Boolean opening) {
+            return toolkit.roundDetail(trader, decisionId, call, opening);
         }
 
         // 描述在词表 tool.trade_history
@@ -82,11 +84,13 @@ public class DebriefToolkit {
     }
 
     /**
-     * 一轮的过程。不给 call：这轮的开场白、每次模型调用的正文和它调的工具（回执只带开头一段）；
-     * 给 call：那一次调用的工具回执全文（库里存的预览，最多 2000 字）。
+     * 一轮当时用过的工具和看到的开场白。各段写的字在开场素材里给全了，总览里不重复。
+     * 什么都不带：每次模型调用写了多少字、调了哪些工具（回执只带开头一段）；
+     * 给 call：那一次调用写的字和工具回执全文（库里存的预览，最多 2000 字）；
+     * opening 为真：整篇开场白，和后面每一段的段开场白。
      * 没存过程轨迹的行（旧行、预案行）只有正文和动作
      */
-    String roundDetail(AiTrader t, long decisionId, Integer call) {
+    String roundDetail(AiTrader t, long decisionId, Integer call, Boolean opening) {
         AiTraderDecision d = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
                 .select(AiTraderDecision::getId, AiTraderDecision::getTraderId, AiTraderDecision::getRoundNo,
                         AiTraderDecision::getWakeTime, AiTraderDecision::getKind, AiTraderDecision::getStatus,
@@ -128,18 +132,22 @@ public class DebriefToolkit {
             }
             return unavailable("round " + decisionId + " has no model call " + call);
         }
-        out.put("opening", trace.path("prompt").path("instruction").asString(null));
+        if (Boolean.TRUE.equals(opening)) {
+            out.put("opening", trace.path("prompt").path("instruction").asString(null));
+            // call 是这一段从第几次模型调用开始
+            ArrayNode stages = out.putArray("stageOpenings");
+            for (JsonNode stage : trace.path("stages")) {
+                stages.addObject().put("call", stage.path("call").asInt())
+                        .put("text", stage.path("instruction").asString(null));
+            }
+            return MAPPER.writeValueAsString(out);
+        }
+        // 每次调用都列，带上这次写了多少字：要看字用 call 点名
         ArrayNode calls = out.putArray("calls");
         for (JsonNode c : trace.path("calls")) {
-            ObjectNode row = calls.addObject().put("call", c.path("n").asInt());
-            // 这一次调用是新一段的开头：带上那一段的开场白
-            for (JsonNode stage : trace.path("stages")) {
-                if (stage.path("call").asInt() == c.path("n").asInt()) {
-                    row.put("stageOpening", stage.path("instruction").asString(null));
-                }
-            }
-            row.put("text", c.path("text").asString(""));
-            row.set("tools", tools(c, OVERVIEW_RESULT_CHARS));
+            calls.addObject().put("call", c.path("n").asInt())
+                    .put("textChars", c.path("text").asString("").length())
+                    .set("tools", tools(c, OVERVIEW_RESULT_CHARS));
         }
         return MAPPER.writeValueAsString(out);
     }

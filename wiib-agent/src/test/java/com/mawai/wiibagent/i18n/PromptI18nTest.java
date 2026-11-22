@@ -136,6 +136,25 @@ class PromptI18nTest {
         }
         assertNoCjk("英文事实表块头", prompts.get(AgentLang.EN, "debrief.label.factsHeader",
                 Map.of("guide", prompts.get(AgentLang.EN, "reviewer.label.caseGuide"))));
+        // 各轮块的标签，有的带占位符，取原文看
+        for (String key : List.of("roundTitle", "roundOpening", "roundPosition", "positionNotYet", "positionGone",
+                "pendingEntries", "account", "roundActions", "actionArgs", "actionReceipt", "actionFailed", "closedMidRound",
+                "roundWatches", "stageText", "wholeText", "beforeConclusion", "roundOverall", "roundSymbol",
+                "symbolAbsent", "notSegmented", "closedMark")) {
+            assertNoCjk("英文 debrief.label." + key, prompts.find(AgentLang.EN, "debrief.label." + key));
+        }
+    }
+
+    /** 单笔复盘各轮标题行里的唤醒类型：五种唤醒加预案执行，两门语言都得有叫法 */
+    @Test
+    void debrief各轮标题的唤醒类型两门语言都有叫法() {
+        List<String> kinds = new java.util.ArrayList<>(AiTraderDecision.WAKE_KINDS);
+        kinds.add(AiTraderDecision.KIND_PRESET);
+        for (String kind : kinds) {
+            String key = "debrief.label.kind." + kind.toLowerCase(java.util.Locale.ROOT);
+            assertThat(prompts.get(AgentLang.ZH, key)).as("中文 " + key).isNotBlank();
+            assertNoCjk("英文 " + key, prompts.get(AgentLang.EN, key));
+        }
     }
 
     @Test

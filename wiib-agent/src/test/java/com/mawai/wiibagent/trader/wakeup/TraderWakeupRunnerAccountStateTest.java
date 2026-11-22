@@ -36,6 +36,13 @@ class TraderWakeupRunnerAccountStateTest {
 
     private final PromptCatalog prompts = new PromptCatalog();
 
+    /** 单笔复盘靠账户 JSON 是以 equity 开头的一整行，来认开场白里的账户段（DebriefMaterialAssembler.accountAt） */
+    @Test
+    void accountJsonIsOneLineStartingWithEquity() {
+        assertThat(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("1000"),
+                List.of(), List.of(), List.of(), BOUNDARY, Map.of())).startsWith("{\"equity\"").doesNotContain("\n");
+    }
+
     @Test
     void pendingEntriesExposeProtectionAndAdditionalStopScenario() {
         AiTraderPlan plan = new AiTraderPlan(); plan.setSymbol("BTCUSDT"); plan.setSide("SHORT");
