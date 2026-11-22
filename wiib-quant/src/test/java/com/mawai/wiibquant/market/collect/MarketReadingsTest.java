@@ -13,7 +13,7 @@ import static org.mockito.Mockito.when;
 /** 原始读数：各数据源的最新点原样给出、对照点取对了位置；没取到的那段不出现，爆仓没记录是 0 */
 class MarketReadingsTest {
 
-    /** 2026-11-10 12:00:00 北京时间 */
+    /** 2026-11-10 12:00:00 新加坡时间 */
     private static final long NOW = 1794283200000L;
     private static final long M5 = 300_000L;
 

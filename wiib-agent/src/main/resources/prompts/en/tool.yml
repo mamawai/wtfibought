@@ -395,8 +395,8 @@ tool:
     kind: TOUCH_ABOVE / TOUCH_BELOW (mark price touches level), CLOSE_ABOVE / CLOSE_BELOW (a candle of
     period 5m/15m/1h/4h/1d closes above / below level; a close of your heartbeat period or longer lands on the
     routine wake-up at that moment and is read out there, not as a separate wake-up), AT_TIME (at `at`,
-    Beijing time yyyy-MM-dd HH:mm).
-    The current Beijing time is nowBeijing in the [Account] block. note: one sentence to your next self about
+    Singapore time yyyy-MM-dd HH:mm).
+    The current Singapore time is nowBeijing in the [Account] block. note: one sentence to your next self about
     what it means when this fires. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward
     (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm
     then. The previous set on the symbol is replaced in full, an empty array clears it. A condition fires
@@ -455,12 +455,12 @@ tool:
 
   trade_history: |-
     The closed trades of this round. Without positionId: the list, newest first, at most 50, each with position id, symbol,
-    side, setup type, open and close times (Beijing time), close manner (closeManner: stopLoss/takeProfit/manual/liquidated) and net P&L.
+    side, setup type, open and close times (Singapore time), close manner (closeManner: stopLoss/takeProfit/manual/liquidated) and net P&L.
     With positionId: that trade's fact sheet (factSheet, written the same way as the fact sheet in the opening material) and
     its debrief text (debrief; absent if the trade has not been debriefed yet).
 
   news_archive: |-
     News flashes published in a time range, from the local archive (title + body + source + publication time). from and to are
-    Beijing time yyyy-MM-dd HH:mm, from inclusive and to exclusive; keyword optionally keeps only those whose title or body contains it
+    Singapore time yyyy-MM-dd HH:mm, from inclusive and to exclusive; keyword optionally keeps only those whose title or body contains it
     (Chinese and English both searched). Newest first, at most 30: exactly 30 means earlier ones in the range were left out, so move to earlier and query again.
     Each flash's publication time is the moment it became visible.

@@ -41,11 +41,11 @@ import java.util.Set;
 public class NewsEventCollector {
 
     /**
-     * BlockBeats create_time 是"2026-07-09 00:30:12"格式的墙钟时间，按北京时间解析成 epoch。
+     * BlockBeats create_time 是"2026-07-09 00:30:12"格式的墙钟时间，按新加坡时间解析成 epoch。
      * 这是推断不是实测（BlockBeats 中文服务、cn 快讯源，几乎必然如此）；上服务器后拿
      * 最新一条快讯的落库时间对一下当下时刻即可证实，偏差恒定 8 小时就是这里错了。
      */
-    private static final ZoneId SOURCE_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final ZoneId SOURCE_ZONE = ZoneId.of("Asia/Singapore");
     private static final DateTimeFormatter SOURCE_TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 

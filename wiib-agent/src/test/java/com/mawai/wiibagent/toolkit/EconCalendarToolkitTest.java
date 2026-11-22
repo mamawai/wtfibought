@@ -15,7 +15,7 @@ import static org.mockito.Mockito.when;
 
 class EconCalendarToolkitTest {
 
-    /** 2025-09-04 15:33:20 UTC = 北京 23:33:20 */
+    /** 2025-09-04 15:33:20 UTC = 新加坡 23:33:20 */
     private static final long NOW = 1_757_000_000_000L;
     private static final long HOUR = 3_600_000L;
     private static final long DAY = 24 * HOUR;

@@ -170,7 +170,7 @@ export function Slider({ nodes, value, onChange, snap, step, tick, label, text, 
 const DAY_MIN = 1440;
 
 /**
- * 唤醒时段的 24 小时尺（北京时间）：两头拖起止，5 分钟一档，起点比终点靠右就是跨到次日。
+ * 唤醒时段的 24 小时尺（新加坡时间）：两头拖起止，5 分钟一档，起点比终点靠右就是跨到次日。
  * 尺上标着每天 08:00 的复盘（复盘不看时段）和现在几点
  */
 export function WakeRuler({ win, onChange }: { win: WakeWin; onChange: (w: WakeWin) => void }) {

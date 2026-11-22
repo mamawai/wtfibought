@@ -18,13 +18,13 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 衍生品与微结构的原始读数：每个数据源取最新一个点原样给，再带一两个对照点，不打分。
  * 哪个数据源这次没取到、或者回包算不出来，它那一段就不出现；爆仓那段只有平台在采的币才有，在采而没有记录是 0。
- * 时刻都按北京时间成文。
+ * 时刻都按新加坡时间成文。
  */
 @Slf4j
 public final class MarketReadings {
 
     private static final DateTimeFormatter TIME =
-            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai"));
+            DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Singapore"));
     /** 持仓量、大户多空比都是 5 分钟一个点：1 小时前就是往回数 12 个 */
     private static final int POINTS_PER_HOUR = 12;
     /** 盘口合计前几档 */

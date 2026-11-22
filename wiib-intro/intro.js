@@ -638,12 +638,12 @@ const BEAT_MS = { '15m': 15 * 60 * 1000, '1h': HOUR, '4h': 4 * HOUR };
 /* 只在文字变了才写：每秒重算时不打断用户正在选的字 */
 const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 
-/* 北京时间的日期 / 时刻；轴上的日期跟界面语言走 */
+/* 新加坡时间的日期 / 时刻；轴上的日期跟界面语言走 */
 const bj = t => new Date(t + 8 * HOUR);
 const pad2 = n => String(n).padStart(2, '0');
 const hhmm = t => `${pad2(bj(t).getUTCHours())}:${pad2(bj(t).getUTCMinutes())}`;
 const mdhm = t => { const d = bj(t); return `${pad2(d.getUTCMonth() + 1)}/${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`; };
-const axDay = t => new Date(t).toLocaleDateString(LANG === 'zh' ? 'zh-CN' : 'en-US', { month: 'long', day: 'numeric', timeZone: 'Asia/Shanghai' });
+const axDay = t => new Date(t).toLocaleDateString(LANG === 'zh' ? 'zh-CN' : 'en-US', { month: 'long', day: 'numeric', timeZone: 'Asia/Singapore' });
 const curveWindow = () => dashRange === 0 ? MOCK.curve : MOCK.curve.slice(-(dashRange * 24 + 1));
 const coinOf = s => s.replace('USDT', '');
 const planOf = (symbol, side) => MOCK.plans.find(pl => pl.symbol === symbol && pl.side === side);

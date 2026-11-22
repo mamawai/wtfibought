@@ -1,5 +1,5 @@
 /**
- * trader 配置台与工作台共用的常量和北京时间计算。
+ * trader 配置台与工作台共用的常量和新加坡时间计算。
  * 数字都跟后端同一份，改一边要改另一边：可选币=agent 的 binance.symbols + crypto-futures-symbols，
  * 币数上限=TraderService.MAX_SYMBOLS，每人 trader 上限=TraderService.MAX_PER_USER，心跳档位=TraderScheduler.WAKE_INTERVALS，
  * 警报基准=VolatilitySentinel.BASE_THRESHOLD_PCT，模型调用上限=TraderWakeupRunner.MAX_MODEL_CALLS
@@ -22,13 +22,13 @@ export const ALERT_INTERVALS = ['1h', '4h'];
 export const MAX_MODEL_CALLS = 16;
 /** 每局注资 */
 export const BASE_EQUITY = 10_000;
-/** 统一复盘在北京时间 08:00 */
+/** 统一复盘在新加坡时间 08:00 */
 export const REVIEW_MIN = 8 * 60;
 
 const DAY_MIN = 1440;
 const BJ_OFFSET_MIN = 8 * 60;
 
-/** 唤醒时段，分钟数（北京时间，两端都算，from > to 就是跨到次日） */
+/** 唤醒时段，分钟数（新加坡时间，两端都算，from > to 就是跨到次日） */
 export interface WakeWin { from: number; to: number }
 
 /** "21:00-08:30" → 分钟；null=全天 */
@@ -52,7 +52,7 @@ export function minToHm(min: number): string {
   return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
 }
 
-/** 某时刻在北京时间是一天里的第几分钟 */
+/** 某时刻在新加坡时间是一天里的第几分钟 */
 export function bjMinute(ms: number): number {
   return Math.floor(((ms / 60_000 + BJ_OFFSET_MIN) % DAY_MIN + DAY_MIN) % DAY_MIN);
 }

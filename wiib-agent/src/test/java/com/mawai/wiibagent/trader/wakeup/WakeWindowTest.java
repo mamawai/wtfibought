@@ -18,7 +18,7 @@ class WakeWindowTest {
     private static final long H1 = 3_600_000L;
     private static final long H4 = 14_400_000L;
 
-    /** 北京时间 2026-07-27 hh:mm 的 epoch ms（时区跟 BeijingTime.ZONE 走，测试与机器 TZ 无关） */
+    /** 新加坡时间 2026-07-27 hh:mm 的 epoch ms（时区跟 BeijingTime.ZONE 走，测试与机器 TZ 无关） */
     private static long bj(int h, int m) {
         return ZonedDateTime.of(2026, 7, 27, h, m, 0, 0, BeijingTime.ZONE).toInstant().toEpochMilli();
     }
@@ -96,7 +96,7 @@ class WakeWindowTest {
         assertThat(w.nextBoundaryFrom(bj(8, 45), 900_000L)).isEqualTo(bj(21, 0));
     }
 
-    /** 4h 档边界只有北京 00/04/08/12/16/20 点：21:00-23:00 里一根都没有 → -1 */
+    /** 4h 档边界只有新加坡 00/04/08/12/16/20 点：21:00-23:00 里一根都没有 → -1 */
     @Test
     void nextBoundaryFromMinusOneWhenNoBoundaryInWindow() {
         WakeWindow w = WakeWindow.parse("21:00-23:00");

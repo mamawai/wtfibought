@@ -57,7 +57,7 @@ public class EconCalendarAssembler {
         return sb.toString();
     }
 
-    /** 北京时间当天 24:00 */
+    /** 新加坡时间当天 24:00 */
     static long endOfDay(long nowMs) {
         return BeijingTime.dayStart(nowMs) + 86_400_000L;
     }

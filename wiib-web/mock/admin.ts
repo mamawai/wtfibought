@@ -8,7 +8,7 @@ export const DAY = 24 * HOUR;
 
 export const r2 = (v: number) => Math.round(v * 100) / 100;
 /** 东八区 yyyy-MM-dd，跟 testnet 页切日的口径一样 */
-const cnDate = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+const cnDate = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 
 // ==================== 管理页 ====================
 

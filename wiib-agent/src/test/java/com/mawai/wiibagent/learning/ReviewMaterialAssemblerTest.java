@@ -337,7 +337,7 @@ class ReviewMaterialAssemblerTest {
         assertThat(cases).contains("  1h 收盘：102000 99700 95200");
         assertThat(cases).contains("  计划：论点 突破前高+量比1.8 ｜ 失效 1h收盘跌回98000下方 ｜ 修订 stop_loss 95500→96000（锁利）");
         assertThat(cases).contains("  入场上下文：1h ADX 31.2 ｜ 1h 布林带宽 2.8 ｜ 1h ATR 350.5 ｜ 止损 12.8 个 ATR（4.5%）｜ 距最近的美国 High 事件 -90 分 CPI"
-                + " ｜ 北京时间 9 时 ｜ 资金费 0.0001 ｜ MARKET 10x");
+                + " ｜ 新加坡时间 9 时 ｜ 资金费 0.0001 ｜ MARKET 10x");
     }
 
     /** 出场后数据覆盖不到 4h / 24h：最有利价留空，结尾写"出场后数据不足"而不是没到目标 */

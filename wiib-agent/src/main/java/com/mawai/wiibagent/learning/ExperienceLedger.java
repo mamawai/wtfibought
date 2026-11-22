@@ -79,7 +79,7 @@ public class ExperienceLedger {
     private final TraderPlanStore planStore;
     private final PromptCatalog prompts;
 
-    /** 本期一笔单子：净盈亏（案例行那个数）和平仓的北京日期，按仓位编号作键 */
+    /** 本期一笔单子：净盈亏（案例行那个数）和平仓的新加坡日期，按仓位编号作键 */
     public record PeriodTrade(BigDecimal net, LocalDate closedDay) {
     }
 

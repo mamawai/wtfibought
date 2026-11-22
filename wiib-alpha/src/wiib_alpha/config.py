@@ -107,7 +107,7 @@ def config() -> Config:
         data_dir=os.getenv("ALPHA_DATA_DIR", "./data"),
         db_path=os.getenv("ALPHA_DB_PATH", "./data/alpha.sqlite"),
         cost_tiers_bps=_tiers(os.getenv("ALPHA_COST_TIERS_BPS", "5,8,12")),
-        force_order_tz=os.getenv("TZ", "Asia/Shanghai"),
+        force_order_tz=os.getenv("TZ", "Asia/Singapore"),
         sim_base_url=os.getenv("SIM_BASE_URL", "http://localhost:8080").rstrip("/"),
         pg_host=os.getenv("PG_HOST", "localhost"),
         pg_port=int(os.getenv("PG_PORT", "5432")),

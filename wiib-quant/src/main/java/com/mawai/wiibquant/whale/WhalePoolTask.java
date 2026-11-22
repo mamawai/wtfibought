@@ -52,8 +52,8 @@ public class WhalePoolTask {
 
     LongSupplier nowMs = System::currentTimeMillis;
 
-    /** 每日 04:30 北京时间 */
-    @Scheduled(cron = "${whale.pool.cron:0 30 4 * * *}", zone = "Asia/Shanghai")
+    /** 每日 04:30 新加坡时间 */
+    @Scheduled(cron = "${whale.pool.cron:0 30 4 * * *}", zone = "Asia/Singapore")
     public void daily() {
         if (props.isEnabled()) {
             refresh();

@@ -203,7 +203,7 @@ public class ReviewMaterialAssembler {
         return out;
     }
 
-    /** 本批单子按仓位编号：净盈亏取事实表那个数，平仓日是北京日期；没有净盈亏的记不了账，不收 */
+    /** 本批单子按仓位编号：净盈亏取事实表那个数，平仓日是新加坡日期；没有净盈亏的记不了账，不收 */
     private static Map<Long, ExperienceLedger.PeriodTrade> periodTrades(List<CaseFileBuilder.TradeCase> cases) {
         Map<Long, ExperienceLedger.PeriodTrade> out = new HashMap<>();
         for (CaseFileBuilder.TradeCase c : cases) {

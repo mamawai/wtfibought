@@ -43,7 +43,7 @@ public class AiTraderExperienceTrade {
     /** 这笔的净盈亏，扣了手续费和资金费 */
     private BigDecimal net;
 
-    /** 平仓的北京日期 */
+    /** 平仓的新加坡日期 */
     private LocalDate closedDay;
 
     /** 记下时条目所在的段 */

@@ -84,7 +84,7 @@ const PANELS = [
         title: { zh: 'TraderScheduler 准入', en: 'Scheduler admission' },
         rows: [
           { id: 'mutex', led: true, t: { zh: '每 trader 互斥 · 非例行排队', en: 'mutex · non-routine queued' } },
-          { id: 'window', led: true, t: { zh: '唤醒时段过滤（北京时间）', en: 'wake window (Beijing time)' } },
+          { id: 'window', led: true, t: { zh: '唤醒时段过滤（新加坡时间）', en: 'wake window (Singapore time)' } },
           { id: 'budget', led: true, t: { zh: '预算 ≤900s · 边界前 5s 截止', en: 'budget ≤900s · −5s deadline' } },
           { id: 'hand', led: true, t: { zh: '日终交接窗口内一律拒', en: 'blocked during handover' } }
         ],
@@ -949,7 +949,7 @@ async function traderScript(c, scene) {
   if (scene === 4) {
     // 日线交接：交易定格 → 全体复盘 → 账本注入下一唤醒
     c.on('clock');
-    c.log('CLOCK', { zh: '日线边界（UTC0 / 北京 08:00）', en: 'daily boundary (UTC0 / 08:00 Beijing)' });
+    c.log('CLOCK', { zh: '日线边界（UTC0 / 新加坡 08:00）', en: 'daily boundary (UTC0 / 08:00 Singapore)' });
     await c.sleep(600);
     await c.pulse('ck-sch');
     c.on('sched');

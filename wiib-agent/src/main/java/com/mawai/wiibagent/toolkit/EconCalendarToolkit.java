@@ -16,7 +16,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 财经日历工具（chat 主 agent 挂）：库里的 TradingView High 级事件，只看美国的。
  * 不传指标给前 3 天已公布 + 后 7 天即将公布；传指标给标题含它的最近 12 条。
- * 时刻按北京时间成文，与 trader 开场白的日历块同口径（trader 那边也只认美国，注入不走工具）。
+ * 时刻按新加坡时间成文，与 trader 开场白的日历块同口径（trader 那边也只认美国，注入不走工具）。
  */
 @Slf4j
 @Component

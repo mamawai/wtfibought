@@ -25,7 +25,7 @@ import java.util.Locale;
 /**
  * 手动本地 K 线补齐入口。
  *
- * <p>补合约 5m；不传参时补哪些币、哪段时间（北京时间）看 {@code Settings.from} 里的默认值。</p>
+ * <p>补合约 5m；不传参时补哪些币、哪段时间（新加坡时间）看 {@code Settings.from} 里的默认值。</p>
  *
  * <p>IDEA 直接运行 main 即可；也可用 VM options 覆盖：</p>
  * <pre>
@@ -40,7 +40,7 @@ public final class KlineHistoryBackfillMain {
     private static final long BAR_MILLIS = 5 * 60_000L;
     private static final int PAGE_LIMIT = 1500;
     private static final int FLUSH_SIZE = 3000;
-    private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Singapore");
     private static final DateTimeFormatter LOCAL_SECONDS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter LOCAL_MINUTES = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 

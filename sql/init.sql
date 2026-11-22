@@ -559,7 +559,7 @@ CREATE TABLE IF NOT EXISTS news_event (
 CREATE INDEX IF NOT EXISTS idx_news_event_published ON news_event (published_at DESC);
 COMMENT ON TABLE news_event IS '快讯存档:BlockBeats重要快讯+轻模型英文译文;首页快讯卡数据源,未来做事件研究';
 COMMENT ON COLUMN news_event.source_id IS 'BlockBeats快讯id,增量去重键';
-COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按北京时间解析)';
+COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按新加坡时间解析)';
 COMMENT ON COLUMN news_event.translated_model IS '译文用的模型名,追责用;NULL=待译(中文已存,采集轨每轮补译)';
 COMMENT ON COLUMN news_event.title_en IS '标题英文译文;NULL=待译或没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
 COMMENT ON COLUMN news_event.content_en IS '正文英文译文;NULL 同 title_en。正文超过译文输入上限(NewsTranslator.CONTENT_CLIP)的那条不留译文:半截译文比原文更糟';
@@ -733,7 +733,7 @@ COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验�
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';
 COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/BNB0.6/ETH0.7/SOL0.9/DOGE0.9/XRP0.9/HYPE1.2/ZEC1.6%)×本系数，校准方法见VolatilitySentinel';
 COMMENT ON COLUMN ai_trader.web_search_enabled IS '主人开关：联网搜索。开了且所用端点也开了联网搜索(user_llm_endpoint.web_search)，唤醒时才挂web_search工具、例行轮和波动警报轮才多问一句要不要搜；保存时所用端点没开搜索的存FALSE';
-COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；单笔复盘和08:00的统一复盘不看时段。时段外静默不唤醒不写SKIPPED行';
+COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（新加坡时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；单笔复盘和08:00的统一复盘不看时段。时段外静默不唤醒不写SKIPPED行';
 COMMENT ON COLUMN ai_trader.llm_endpoint_id IS '这个trader用的端点(user_llm_endpoint.id)，NULL=跟随用户默认端点；端点删除时清空';
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：统一复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
@@ -923,7 +923,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_atet_exp_pos ON ai_trader_experience_trade 
 COMMENT ON TABLE ai_trader_experience_trade IS '经验名下的单子：复盘模型给仓位编号，钱、笔数、天数由代码按仓位记；同一条经验同一笔单子只记一次；review_id=记下它的那篇复盘(ai_trader_decision的REVIEW行)';
 COMMENT ON COLUMN ai_trader_experience_trade.mark IS 'UNDER名下（假设/规律：机会型、执行型=碰到它说的情况并照做，限制型=碰到它说的情况还是做了） KEPT守 BROKEN破（执行缺口） MISCITED引用不符（开仓引用了它但情况对不上，只记次数不记钱）';
 COMMENT ON COLUMN ai_trader_experience_trade.net IS '这笔的净盈亏USDT：复盘案例行那个数（sim closed_pnl，扣了手续费和资金费，与战绩块同口径）';
-COMMENT ON COLUMN ai_trader_experience_trade.closed_day IS '平仓的北京日期，转正要求至少3个不同日子';
+COMMENT ON COLUMN ai_trader_experience_trade.closed_day IS '平仓的新加坡日期，转正要求至少3个不同日子';
 COMMENT ON COLUMN ai_trader_experience_trade.segment_no IS '记下时条目所在的段：转正、降级各起一段，转正降级只看当前段';
 
 -- ============================================

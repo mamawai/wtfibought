@@ -60,7 +60,7 @@ public class TraderActionService {
      * 动作面板的一次性状态：三张卡要显示的东西全在这里，前端一个请求填满面板。
      *
      * @param wakeBlockedReason   null=可唤醒，否则是不能唤醒的原话
-     * @param todayWakes          今天（北京时间）本局醒了几次，按叫醒原因分，多的在前；跳过的不算
+     * @param todayWakes          今天（新加坡时间）本局醒了几次，按叫醒原因分，多的在前；跳过的不算
      * @param reviewBlockedReason null=可复盘（有没有素材另看 hasReviewMaterial）
      * @param noteRounds          当前留言剩余轮次，0=无待读留言
      */
@@ -243,7 +243,7 @@ public class TraderActionService {
                 MAX_NOTE_ROUNDS, MAX_NOTE_CHARS);
     }
 
-    /** 今天（北京时间零点起）本局醒了几次，按叫醒原因分，多的在前；复盘不算醒来，跳过的不算 */
+    /** 今天（新加坡时间零点起）本局醒了几次，按叫醒原因分，多的在前；复盘不算醒来，跳过的不算 */
     private Map<String, Long> todayWakes(AiTrader t) {
         long dayStart = BeijingTime.dayStart(System.currentTimeMillis());
         List<Map<String, Object>> rows = decisionMapper.selectMaps(new QueryWrapper<AiTraderDecision>()

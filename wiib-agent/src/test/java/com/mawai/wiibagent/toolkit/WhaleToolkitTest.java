@@ -18,7 +18,7 @@ import static org.mockito.Mockito.when;
 
 class WhaleToolkitTest {
 
-    /** 2025-09-04 15:33:20 UTC = 北京 23:33:20 */
+    /** 2025-09-04 15:33:20 UTC = 新加坡 23:33:20 */
     private static final long OBSERVED = 1_757_000_000_000L;
 
     private final WhaleQueryService whales = mock(WhaleQueryService.class);

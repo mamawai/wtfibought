@@ -253,7 +253,7 @@
     },
     "wakeWindow": {
       "title": "When it wakes up",
-      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window scheduled wake-ups, volatility alerts, watch hits and position events all stop; positions rely on the stop-loss and take-profit orders and standing orders it left. Manual wake-ups are never blocked.\nDebriefs and the unified review ignore the window: a trade is debriefed 24 hours after it closes, and the unified review still runs at 08:00."
+      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Singapore time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window scheduled wake-ups, volatility alerts, watch hits and position events all stop; positions rely on the stop-loss and take-profit orders and standing orders it left. Manual wake-ups are never blocked.\nDebriefs and the unified review ignore the window: a trade is debriefed 24 hours after it closes, and the unified review still runs at 08:00."
     },
     "symbols": {
       "title": "Which coins it may trade",
@@ -470,9 +470,9 @@
     },
     "window": {
       "onTitle": "Only within set hours",
-      "onDesc": "Beijing time · both ends included · a start later than the end runs past midnight · drag the ends of the ruler",
+      "onDesc": "Singapore time · both ends included · a start later than the end runs past midnight · drag the ends of the ruler",
       "offTitle": "All day",
-      "offDesc": "Off means it wakes around the clock; turn on to drag out the hours on the ruler (Beijing time)",
+      "offDesc": "Off means it wakes around the clock; turn on to drag out the hours on the ruler (Singapore time)",
       "now": "now {{time}}",
       "fromAria": "Start {{time}}",
       "toAria": "End {{time}}",

@@ -466,7 +466,7 @@ class TraderActionServiceTest {
             w.getTargetSql();
             return w.getParamNameValuePairs().containsValue(AiTraderDecision.KIND_REVIEW) ? reviewRow : wakeRow;
         });
-        // 今天醒了几次：只数北京时间零点起的，跳过的不算
+        // 今天醒了几次：只数新加坡时间零点起的，跳过的不算
         long todayStart = LocalDate.now(BeijingTime.ZONE).atStartOfDay(BeijingTime.ZONE).toInstant().toEpochMilli();
         when(decisionMapper.selectMaps(any())).thenAnswer(inv -> {
             QueryWrapper<AiTraderDecision> w = inv.getArgument(0);

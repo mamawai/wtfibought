@@ -153,7 +153,7 @@ whale:
   leaderboard-url: https://stats-data.hyperliquid.xyz/Mainnet/leaderboard
   max-in-flight: 8                     # 在途请求上限
   pool:
-    cron: "0 30 4 * * *"               # 每日认证，北京时间（代码里 zone=Asia/Shanghai）；启动时表为空另跑一次
+    cron: "0 30 4 * * *"               # 每日认证，新加坡时间（代码里 zone=Asia/Singapore）；启动时表为空另跑一次
     weight-per-minute: 800             # 认证预算；与 poll 合计 1100，官方上限 1200/分钟/IP
     min-leaderboard-value: 300000      # 排行榜候选门槛：榜上约 6400 个实体，认证约 3 小时；本地验证可临时抬高
     min-account-value: 1000000         # 门 1：链上合约净值 ≥ 它，或持有 ≥ min-position-value 的盯盘币仓位

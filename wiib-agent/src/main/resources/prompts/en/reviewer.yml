@@ -172,17 +172,17 @@ reviewer:
     entryAdd: " (add)"
     caseNoPlan: "  Plan: (no plan record)"
     caseRevision: "{{type}} {{change}} ({{reason}})"
-    caseCtx: "  Entry context: 1h ADX {{adx}} | 1h Bollinger bandwidth {{bollBw}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest US High event {{eventMin}} min {{eventTitle}} | Beijing hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x{{pending}}"
+    caseCtx: "  Entry context: 1h ADX {{adx}} | 1h Bollinger bandwidth {{bollBw}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest US High event {{eventMin}} min {{eventTitle}} | Singapore hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x{{pending}}"
     casePending: " (rested {{held}} before filling)"
     none: —
 
     # ---- this period's market ----
-    marketHeader: "[THIS PERIOD'S MARKET] (per-symbol OHLC in the window, Beijing time; the low-to-high range is the reference for the opportunity audit)"
+    marketHeader: "[THIS PERIOD'S MARKET] (per-symbol OHLC in the window, Singapore time; the low-to-high range is the reference for the opportunity audit)"
     marketRow: "- {{symbol}} {{open}} → {{close}}, low {{low}} ({{lowAt}}) high {{high}} ({{highAt}}), low to high {{range}}%"
     marketNoBars: "- {{symbol}}: no candle data in the window"
 
     # ---- watch conditions ----
-    watchHeader: "[WATCH CONDITIONS] (computed by code: conditions set with set_watch in the window, hits, and what the round that learned of each hit did; Beijing time)"
+    watchHeader: "[WATCH CONDITIONS] (computed by code: conditions set with set_watch in the window, hits, and what the round that learned of each hit did; Singapore time)"
     watchSummary: "- {{n}} conditions set in the window ({{symbols}}); {{hits}} hit; {{armed}} still armed at review time{{idle}}"
     watchIdle: "; symbols with no watch condition all period: {{symbols}}"
     watchHit: "- {{firedAt}} hit: {{detail}} | note when set: {{note}} | {{followUp}}"

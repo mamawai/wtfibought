@@ -91,7 +91,7 @@ class TraderPromptAssemblerTest {
         t.setId(1L);
         t.setWakeWindow("21:00-08:30");
         assertThat(assembler.assemble(t, AgentLang.ZH))
-                .contains("心跳：每天 21:00-08:30（北京时间，两端含）内每根 1h K线收盘例行唤醒你一次");
+                .contains("心跳：每天 21:00-08:30（新加坡时间，两端含）内每根 1h K线收盘例行唤醒你一次");
 
         t.setWakeWindow(null);
         assertThat(assembler.assemble(t, AgentLang.ZH)).contains("心跳：每根 1h K线收盘例行唤醒你一次");

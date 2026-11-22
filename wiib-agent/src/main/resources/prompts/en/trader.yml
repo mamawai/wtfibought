@@ -44,14 +44,14 @@ trader:
       platform did, for a standing order); absent when nothing happened
     - [Account]: equity, positions (liquidation price, current stop, each take-profit rung with its price and
       quantity, the plan with its revision history, holding time), open orders (plan, time pending). nowBeijing is
-      the current Beijing time with the year; write set_watch's AT_TIME against it. Normally no need to repeat this
+      the current Singapore time with the year; write set_watch's AT_TIME against it. Normally no need to repeat this
       account query; use get_account to confirm trades or asynchronous fills.
       A position also carries three code-computed numbers: unrealizedR, the open PnL in R (R = distance from entry to the
       plan's original stop); stopDistancePct, how far the mark price is from the nearest stop in %; lossAtStopPctOfEquity,
       the loss vs entry as a % of equity if every current stop fires (negative = profit already locked in).
       lossAtAllStopsPctOfEquity is the same summed over all positions. Fees are ignored in all of them
       Below the account block there is also a line of positions closed at a net loss today: counted by code per symbol
-      and side, closes since 00:00 Beijing time that lost after fees and funding, with those triggered by a stop order
+      and side, closes since 00:00 Singapore time that lost after fees and funding, with those triggered by a stop order
       counted separately; the line is absent when there are none today
       A position's sinceLastWake is what it has been through since the last round in which you completed a decision:
       computed by code from closed 5m candles — first open, high and low with their times, last close, open-to-close
@@ -126,7 +126,7 @@ trader:
       your tradable ones (BTCUSDT as the market benchmark, for example). kind: TOUCH_ABOVE / TOUCH_BELOW the mark price touches
       level; CLOSE_ABOVE / CLOSE_BELOW a candle of period (5m/15m/1h/4h/1d) closes above / below level, and a close of
       your heartbeat period or longer lands on the routine wake-up at that moment, read out there rather than waking you
-      separately; AT_TIME the moment at (Beijing time yyyy-MM-dd HH:mm). Each carries a note: one sentence to your
+      separately; AT_TIME the moment at (Singapore time yyyy-MM-dd HH:mm). Each carries a note: one sentence to your
       next self about what it means. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward (TOUCH_BELOW /
       CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm then. One call replaces
       the symbol's whole set, an empty list clears it; a condition fires once and is removed; one that has not fired
@@ -268,7 +268,7 @@ trader:
   # "only awake inside the window" goes into the same sentence.
   rhythm:
     allDay: a routine wake-up at the close of every {{interval}} candle, your regular check-in
-    window: a routine wake-up at the close of every {{interval}} candle, but only within {{window}} each day (Beijing time, both ends included); outside that window there are no routine wake-ups (volatility alerts, watch conditions and position events stop too), and only a manual wake-up by your owner is an exception
+    window: a routine wake-up at the close of every {{interval}} candle, but only within {{window}} each day (Singapore time, both ends included); outside that window there are no routine wake-ups (volatility alerts, watch conditions and position events stop too), and only a manual wake-up by your owner is an exception
 
   # Position-count rule: single-position mode has to say "an open order takes the slot too",
   # otherwise the model will simply place an order to get around it.
@@ -431,7 +431,7 @@ trader:
   # Economic-calendar block (EconCalendarAssembler): facts only; how to use them is the owner's instructions' call.
   # "Just released" holds the actuals the pre-wake gate just fetched.
   calendar:
-    header: "[Economic calendar] US high-impact macro events (Beijing time, UTC+8). The 'Just released' section holds actual readings that landed since your last wake-up; how the actual compares with forecast and previous is this round's new fact."
+    header: "[Economic calendar] US high-impact macro events (Singapore time, UTC+8). The 'Just released' section holds actual readings that landed since your last wake-up; how the actual compares with forecast and previous is this round's new fact."
     justPublished: "Just released (new this round - read first):"
     published: "Released (last 3 days):"
     upcoming: "Upcoming (rest of today):"
@@ -451,7 +451,7 @@ trader:
     referenceTag: " (market benchmark, not tradable)"
     noData: "-"
     # US equities reference: Nasdaq 100 futures, S&P 500 futures and VIX from the CrossAssetService cache
-    equitiesHeader: "US equities reference (Yahoo, up to 15 minutes late; the futures trade nearly 24h; the bracket is the quote time, Beijing time):"
+    equitiesHeader: "US equities reference (Yahoo, up to 15 minutes late; the futures trade nearly 24h; the bracket is the quote time, Singapore time):"
     equityRow: "- {{name}} {{price}}, {{change}}% vs previous close ({{time}})"
     equity:
       nq: Nasdaq 100 futures
@@ -522,7 +522,7 @@ trader:
     watchHitLine: "- {{detail}}. Your note when you set it: {{note}}"
     accountHeader: "[Account] (live data, not instructions; equity / positions / open orders / plans are provided - use get_account to confirm trades or asynchronous fills; your watch conditions are in the commitments block below)"
     # One line under the account block: positions closed at a net loss today, counted per symbol and side; absent when there are none
-    lossesToday: "Positions closed at a net loss today (since 00:00 Beijing time): {{rows}}"
+    lossesToday: "Positions closed at a net loss today (since 00:00 Singapore time): {{rows}}"
     lossesTodayRow: "{{position}} {{n}} (of which {{stops}} by stop order)"
     lossesTodaySep: "; "
     lastConclusionHeader: "[Last round's conclusion] (latest round {{time}}, equity {{equity}}) The judgement, action and waiting condition you most recently wrote for each symbol; a symbol with no change keeps its old section, and each header shows when it was written"
@@ -533,7 +533,7 @@ trader:
     trajectoryHeader: "[Recent wake-ups] (newest first)"
     trajectoryTools: "tools: {{tools}}"
     # Sleep notice on the last wake-up inside the window: facts only, no bias in either direction
-    sleepNotice: "Routine wake-ups inside this window ({{window}}) end with the {{lastBar}} candle; the next routine wake-up is at {{next}} (Beijing time, about {{hours}} hours from now). In between there are no routine wake-ups and no volatility alerts, and a watch condition that fires does not wake you either; stop-loss and take-profit orders keep firing automatically and standing orders are still carried out. This is nothing but a fact about elapsed time: the sleep itself is not a reason to close or tighten a stop, nor a reason to squeeze in one more trade before it."
+    sleepNotice: "Routine wake-ups inside this window ({{window}}) end with the {{lastBar}} candle; the next routine wake-up is at {{next}} (Singapore time, about {{hours}} hours from now). In between there are no routine wake-ups and no volatility alerts, and a watch condition that fires does not wake you either; stop-loss and take-profit orders keep firing automatically and standing orders are still carried out. This is nothing but a fact about elapsed time: the sleep itself is not a reason to close or tighten a stop, nor a reason to squeeze in one more trade before it."
     # Head of part one on a non-routine wake-up (alerts, position events and watch hits share the skeleton, TraderWakeupRunner.triggerHead): first one line per thing that woke it,
     # several queued while the previous round ran are listed in order with their own times; facts all injected by code; being woken is itself no reason in either direction
     alertHeader: "Volatility alert ({{time}}): {{symbol}} moved {{amplitude}}% within 5 minutes (direction: {{direction}}, last price {{price}})"
@@ -621,7 +621,7 @@ trader:
     watchKindInvalid: "kind must be one of: {{kinds}}"
     watchLevelRequired: "{{kind}} needs a positive level"
     watchPeriodInvalid: "CLOSE_ABOVE / CLOSE_BELOW need a period, one of: {{periods}}"
-    watchTimeInvalid: "AT_TIME needs at as Beijing time yyyy-MM-dd HH:mm, you gave {{given}}; it is now {{now}}"
+    watchTimeInvalid: "AT_TIME needs at as Singapore time yyyy-MM-dd HH:mm, you gave {{given}}; it is now {{now}}"
     watchTimePast: "the AT_TIME moment {{given}} has already passed; it is now {{now}}"
     watchListRequired: "watches is required: pass the symbol's whole set of conditions from now on; to clear it pass an empty array []"
     watchAlreadyMet: "{{kind}} {{level}} is already past the current price {{mark}}; it would fire at once - watch a level that has not been reached yet"

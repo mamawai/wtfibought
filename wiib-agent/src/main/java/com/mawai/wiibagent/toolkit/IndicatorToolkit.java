@@ -57,10 +57,10 @@ public class IndicatorToolkit {
     private static final int KLINE_BARS = 192;
     /** swing 半窗上限：window*2+1 得装得下，192 根理论到 95；卡 50 是不让模型把窗口开到没有 swing 可出 */
     private static final int MAX_SWING_WINDOW = 50;
-    /** 截止时间参数的格式，按北京时间读 */
+    /** 截止时间参数的格式，按新加坡时间读 */
     /** 三个工具共用的截止时间参数说明 */
     private static final String END_TIME_DESC = """
-            Optional window end, "yyyy-MM-dd HH:mm" in UTC+8 (Beijing time): the 192 bars then end at the
+            Optional window end, "yyyy-MM-dd HH:mm" in UTC+8 (Singapore time): the 192 bars then end at the
             bar containing that moment instead of now. Use it for a past stretch (a specific day, around an
             event). Omit for the latest bars ending now.""";
 

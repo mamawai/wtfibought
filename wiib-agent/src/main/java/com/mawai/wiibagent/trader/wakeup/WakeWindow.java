@@ -10,7 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 唤醒时段（北京时间，5 分钟粒度，两端闭区间，可跨午夜）："21:00-08:30"；null=全天。
+ * 唤醒时段（新加坡时间，5 分钟粒度，两端闭区间，可跨午夜）："21:00-08:30"；null=全天。
  * 只管交易类唤醒（例行/警报）；单笔复盘和统一复盘不看它——夜里交易了就该复盘夜里的交易。
  */
 @Slf4j
@@ -63,7 +63,7 @@ public record WakeWindow(int fromMin, int toMin) {
         }
     }
 
-    /** 该时刻是否在时段内：换成北京时间的"当日第几分钟"再比；跨午夜时段是"两头"的并集 */
+    /** 该时刻是否在时段内：换成新加坡时间的"当日第几分钟"再比；跨午夜时段是"两头"的并集 */
     public boolean contains(long epochMs) {
         LocalTime t = Instant.ofEpochMilli(epochMs).atZone(BeijingTime.ZONE).toLocalTime();
         int m = t.getHour() * 60 + t.getMinute();

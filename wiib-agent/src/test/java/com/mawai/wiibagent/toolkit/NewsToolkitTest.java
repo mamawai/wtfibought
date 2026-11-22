@@ -85,7 +85,7 @@ class NewsToolkitTest {
 
         String json = toolkit.newsSearch(AgentLang.EN, " ZEC ", null);
 
-        // 标题有译文、正文没有：正文回落原文；时刻按北京时间
+        // 标题有译文、正文没有：正文回落原文；时刻按新加坡时间
         assertThat(json).contains("ZEC halving nears").contains("区块奖励将减半").contains("2026-11-10 12:00:00");
         ArgumentCaptor<Long> from = ArgumentCaptor.forClass(Long.class);
         verify(newsEventMapper).search(eq("ZEC"), from.capture(), anyLong(), eq(30));
@@ -95,7 +95,7 @@ class NewsToolkitTest {
         assertThat(toolkit.newsSearch(AgentLang.ZH, "没有这个词", 6)).isEqualTo("[]");
     }
 
-    /** 带起止时刻的存档视图：两头按北京时间读成毫秒传给查询，右端不含 */
+    /** 带起止时刻的存档视图：两头按新加坡时间读成毫秒传给查询，右端不含 */
     @Test
     void archiveViewSearchesBetweenTwoBeijingTimes() {
         NewsEventItem hit = new NewsEventItem();

@@ -634,7 +634,7 @@ export interface TraderActionPanel {
   nextWakeAt: number | null;
   /** null=可唤醒，否则是不能唤醒的原话，直接显示给用户 */
   wakeBlockedReason: string | null;
-  /** 今天（北京时间）本局醒了几次：叫醒原因 → 次数，多的在前；跳过的不算 */
+  /** 今天（新加坡时间）本局醒了几次：叫醒原因 → 次数，多的在前；跳过的不算 */
   todayWakes: Record<string, number>;
   lastReviewAt: number | null;
   lastReviewStatus: string | null;
@@ -825,7 +825,7 @@ export interface TraderPublicView {
   equity: number;
   pnlPct: number;
   mine: boolean;
-  /** 唤醒时段 "HH:mm-HH:mm"（北京时间，两端含，可跨午夜），null=全天；进公开视图是让观众看得懂"半天没决策" */
+  /** 唤醒时段 "HH:mm-HH:mm"（新加坡时间，两端含，可跨午夜），null=全天；进公开视图是让观众看得懂"半天没决策" */
   wakeWindow: string | null;
 }
 
@@ -1176,7 +1176,7 @@ export interface TraderUpsertRequest {
   learnedRestrictionHold: boolean;
   /** 联网搜索开关；所选端点没开联网搜索的，后端存 false */
   webSearchEnabled: boolean;
-  /** 唤醒时段 "HH:mm-HH:mm"（北京时间），null=全天 */
+  /** 唤醒时段 "HH:mm-HH:mm"（新加坡时间），null=全天 */
   wakeWindow: string | null;
 }
 

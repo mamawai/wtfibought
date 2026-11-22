@@ -64,7 +64,7 @@ debrief:
 
   label:
     # ---- user message skeleton ----
-    subject: "Trade under debrief: position [{{id}}] {{symbol}} {{side}}, opened {{opened}}, closed {{closed}}; it is now {{now}} (Beijing time)"
+    subject: "Trade under debrief: position [{{id}}] {{symbol}} {{side}}, opened {{opened}}, closed {{closed}}; it is now {{now}} (Singapore time)"
     # Written by the owner, never translated, may be in another language
     ownerInstructions: "[YOUR OWNER'S TRADING INSTRUCTIONS] (the goal and limits your owner set)"
     ownerInstructionsEmpty: (your owner wrote none)
@@ -76,7 +76,7 @@ debrief:
     factsHeader: "[THIS TRADE'S FACT SHEET] (facts computed by code. The number in square brackets is the position id; the sorting rows use it. {{guide}})"
 
     # ---- rounds ----
-    roundsHeader: "[ROUNDS] (from the round that opened this trade to the first round after it closed, in time order; the number after # is the decision id, and round_detail shows that round's full text, its opening message and the tool results. Actions list only what was done to this trade, and a bracket after a tool name is the status of an action that did not go through. Conclusion is this symbol's segment of that round's conclusion block. Beijing time)"
+    roundsHeader: "[ROUNDS] (from the round that opened this trade to the first round after it closed, in time order; the number after # is the decision id, and round_detail shows that round's full text, its opening message and the tool results. Actions list only what was done to this trade, and a bracket after a tool name is the status of an action that did not go through. Conclusion is this symbol's segment of that round's conclusion block. Singapore time)"
     roundRow: "- #{{id}} {{time}} {{kind}} | actions: {{actions}} | conclusion: {{section}}"
     roundsNone: (no wake-up on record in this stretch)
     # With too many rounds, those that did nothing to this trade are listed by id and time only

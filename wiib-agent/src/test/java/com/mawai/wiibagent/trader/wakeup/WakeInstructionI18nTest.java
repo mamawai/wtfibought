@@ -230,12 +230,12 @@ class WakeInstructionI18nTest {
     }
 
     /**
-     * 账户块下面那一行：只数今天（北京时间）净亏损了结的，止损单触发的另数；赚的、昨天的、主人标了不算数的都不数。
+     * 账户块下面那一行：只数今天（新加坡时间）净亏损了结的，止损单触发的另数；赚的、昨天的、主人标了不算数的都不数。
      * 一笔都没有、或者已平仓位没取到，就没有这一行
      */
     @Test
     void 今天净亏损了结按币和方向数() {
-        // BOUNDARY 是北京时间 01:00
+        // BOUNDARY 是新加坡时间 01:00
         FuturesPositionDTO ignored = closedPos("-40", "STOP_LOSS", BOUNDARY - 400_000L);
         ignored.setId(9L);
         AiTraderPlan stale = new AiTraderPlan();
@@ -250,7 +250,7 @@ class WakeInstructionI18nTest {
                 closedPos("-80", "STOP_LOSS", BOUNDARY - 7_200_000L));
 
         assertThat(wakeObservation.lossesToday(trader(), () -> closed, List.of(stale), BOUNDARY, AgentLang.ZH))
-                .isEqualTo("今天（北京时间 0 点起）净亏损了结的仓位：BTCUSDT SHORT 2 次（其中止损单触发 1 次）\n");
+                .isEqualTo("今天（新加坡时间 0 点起）净亏损了结的仓位：BTCUSDT SHORT 2 次（其中止损单触发 1 次）\n");
         String en = wakeObservation.lossesToday(trader(), () -> closed, List.of(stale), BOUNDARY, AgentLang.EN);
         PromptI18nAssertions.assertNoCjk("英文今天净亏损了结行", en);
         assertThat(en).contains("BTCUSDT SHORT 2 (of which 1 by stop order)");
@@ -449,7 +449,7 @@ class WakeInstructionI18nTest {
     @Test
     void 警报开场白的下次例行唤醒按时段算() {
         AiTrader t = trader();
-        // BOUNDARY 是北京时间 01:00，时段内最后一根；下一边界 02:00 已出时段，再醒是 08:00
+        // BOUNDARY 是新加坡时间 01:00，时段内最后一根；下一边界 02:00 已出时段，再醒是 08:00
         t.setWakeWindow("08:00-01:00");
 
         assertThat(flows.stageOneInstruction(t, List.of(alert()), BOUNDARY, null, "", null, "", AgentLang.ZH, false))

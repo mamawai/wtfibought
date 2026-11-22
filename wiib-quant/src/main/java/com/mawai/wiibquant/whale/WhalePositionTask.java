@@ -61,7 +61,7 @@ public class WhalePositionTask {
 
     LongSupplier nowMs = System::currentTimeMillis;
 
-    @Scheduled(cron = "${whale.poll.cron:0 */10 * * * *}", zone = "Asia/Shanghai")
+    @Scheduled(cron = "${whale.poll.cron:0 */10 * * * *}", zone = "Asia/Singapore")
     public void poll() {
         if (props.isEnabled()) {
             run();

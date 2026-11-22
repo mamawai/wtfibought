@@ -114,7 +114,7 @@ chat:
   # ---- trader 只读工具返回里的说明字段（喂模型的 JSON 值，见 TraderChatService）----
   traderQuery:
     wakeWindowAllDay: 全天
-    wakeWindowNote: "{{window}}（北京时间，时段外不例行唤醒也不警报）"
+    wakeWindowNote: "{{window}}（新加坡时间，时段外不例行唤醒也不警报）"
     leverage: "{{min}}~{{max}}倍"
     memoryNote: 复盘笔记全文：每天的统一复盘写的，trader 每次唤醒都会看到
     kindNote: TRADE=K线收盘唤醒 ALERT=波动警报唤醒 MANUAL=主人手动唤醒 EVENT=持仓事件唤醒（止损/止盈/强平/限价成交） WATCH=它自己布的盯盘条件命中 REVIEW=统一复盘（每天一篇，reasoning是复盘全文） PRESET=它布的预案命中后平台代它执行的动作（移止损/平仓/撤单，没跑模型，reasoning是条件与执行结果）

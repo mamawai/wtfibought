@@ -29,9 +29,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class NewsFlashLocalizer {
 
-    /** 存档里的发布时刻成文：北京时间，和实时快讯的 createTime 同一个写法 */
+    /** 存档里的发布时刻成文：新加坡时间，和实时快讯的 createTime 同一个写法 */
     private static final DateTimeFormatter ARCHIVE_TIME =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.of("Asia/Shanghai"));
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.of("Asia/Singapore"));
 
     private final NewsEventMapper newsEventMapper;
 

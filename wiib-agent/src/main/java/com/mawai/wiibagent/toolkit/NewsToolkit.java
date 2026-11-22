@@ -61,7 +61,7 @@ public class NewsToolkit {
     }
 
     /**
-     * 存档里 [from, to) 这段时间发布的快讯，时刻是北京时间 yyyy-MM-dd HH:mm；
+     * 存档里 [from, to) 这段时间发布的快讯，时刻是新加坡时间 yyyy-MM-dd HH:mm；
      * 可以再按关键字筛。新的在前，最多 30 条
      */
     public String newsArchive(AgentLang lang, String from, String to, String keyword) {
@@ -125,7 +125,7 @@ public class NewsToolkit {
         // 描述在词表 tool.news_archive（见 LocalizedToolCallbacks）
         @Tool(name = "news_archive")
         public String newsArchive(
-                @ToolParam(description = "Range start, \"yyyy-MM-dd HH:mm\" in UTC+8 (Beijing time), inclusive")
+                @ToolParam(description = "Range start, \"yyyy-MM-dd HH:mm\" in UTC+8 (Singapore time), inclusive")
                 String from,
                 @ToolParam(description = "Range end, same format, exclusive")
                 String to,

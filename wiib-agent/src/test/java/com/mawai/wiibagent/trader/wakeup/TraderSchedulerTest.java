@@ -88,7 +88,7 @@ class TraderSchedulerTest {
         return new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("63120"), AlertTrigger.DOWN, H1_BOUNDARY);
     }
 
-    /** 北京时间 2026-07-27 hh:mm 的 epoch ms（与 DAY_BOUNDARY 同一天；+8 整时区，整点即 UTC 整点） */
+    /** 新加坡时间 2026-07-27 hh:mm 的 epoch ms（与 DAY_BOUNDARY 同一天；+8 整时区，整点即 UTC 整点） */
     private static long bj(int h, int m) {
         return ZonedDateTime.of(2026, 7, 27, h, m, 0, 0, BeijingTime.ZONE).toInstant().toEpochMilli();
     }
@@ -101,7 +101,7 @@ class TraderSchedulerTest {
 
     // ---------- 唤醒时段 ----------
 
-    /** 正午整点收盘（北京 12:00 = UTC 04:00，四档全是边界）：夜间档不醒，不写 SKIPPED */
+    /** 正午整点收盘（新加坡 12:00 = UTC 04:00，四档全是边界）：夜间档不醒，不写 SKIPPED */
     @Test
     void routineWakeSkippedOutsideWindow() {
         when(traderMapper.selectList(any())).thenReturn(List.of(nightTrader()));

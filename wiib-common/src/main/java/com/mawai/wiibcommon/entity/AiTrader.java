@@ -83,7 +83,7 @@ public class AiTrader {
     private Boolean webSearchEnabled;
 
     /**
-     * 唤醒时段（北京时间）"HH:mm-HH:mm"，5 分钟粒度、两端含、可跨午夜；null=全天。
+     * 唤醒时段（新加坡时间）"HH:mm-HH:mm"，5 分钟粒度、两端含、可跨午夜；null=全天。
      * 只管交易类唤醒（例行/警报），手动唤醒不拦；单笔复盘和统一复盘不看它——夜里交易了就该复盘夜里的交易。
      * 解析与判断见 WakeWindow。改回全天=写 null（updateConfig 列级 set）
      */

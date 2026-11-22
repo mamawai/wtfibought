@@ -159,17 +159,17 @@ reviewer:
     entryAdd: "（加仓）"
     caseNoPlan: "  计划：（无计划记录）"
     caseRevision: "{{type}} {{change}}（{{reason}}）"
-    caseCtx: "  入场上下文：1h ADX {{adx}} ｜ 1h 布林带宽 {{bollBw}} ｜ 1h ATR {{atr}} ｜ 止损 {{stopAtr}} 个 ATR（{{stopPct}}%）｜ 距最近的美国 High 事件 {{eventMin}} 分 {{eventTitle}} ｜ 北京时间 {{hour}} 时 ｜ 资金费 {{funding}} ｜ {{orderType}} {{leverage}}x{{pending}}"
+    caseCtx: "  入场上下文：1h ADX {{adx}} ｜ 1h 布林带宽 {{bollBw}} ｜ 1h ATR {{atr}} ｜ 止损 {{stopAtr}} 个 ATR（{{stopPct}}%）｜ 距最近的美国 High 事件 {{eventMin}} 分 {{eventTitle}} ｜ 新加坡时间 {{hour}} 时 ｜ 资金费 {{funding}} ｜ {{orderType}} {{leverage}}x{{pending}}"
     casePending: （挂了 {{held}} 才成交）
     none: —
 
     # ---- 本期行情 ----
-    marketHeader: 【本期行情】（各币窗口内 OHLC，时刻为北京时间；低到高幅度是机会审计的对照物）
+    marketHeader: 【本期行情】（各币窗口内 OHLC，时刻为新加坡时间；低到高幅度是机会审计的对照物）
     marketRow: "- {{symbol}} {{open}} → {{close}}，最低 {{low}}（{{lowAt}}）最高 {{high}}（{{highAt}}），低到高 {{range}}%"
     marketNoBars: "- {{symbol}}：窗口内无K线数据"
 
     # ---- 盯盘布防 ----
-    watchHeader: 【盯盘布防】（代码统计：期间用 set_watch 布的条件、命中，以及得知命中那轮的处置；时刻为北京时间）
+    watchHeader: 【盯盘布防】（代码统计：期间用 set_watch 布的条件、命中，以及得知命中那轮的处置；时刻为新加坡时间）
     watchSummary: "- 期间布防 {{n}} 条（{{symbols}}）；命中 {{hits}} 条；复盘时仍在盯 {{armed}} 条{{idle}}"
     watchIdle: "；整期没有盯盘条件的币：{{symbols}}"
     watchHit: "- {{firedAt}} 命中：{{detail}} ｜ 布时备注：{{note}} ｜ {{followUp}}"

@@ -42,7 +42,7 @@ tool:
 
   # ---- 行情/指标数据工具（chat 主 agent 与 trader 唤醒共用）----
   market_snapshot: |-
-    获取加密永续合约标的的实时横截面：各数据源最新的原始读数，不打分。哪一段没出现，就是那个数据源这次没取到。时刻都是北京时间。
+    获取加密永续合约标的的实时横截面：各数据源最新的原始读数，不打分。哪一段没出现，就是那个数据源这次没取到。时刻都是新加坡时间。
     - asOf：这份快照的取数时刻（最多缓存一分钟）
     - lastPrice 现价；atr 是 5m 周期的 atr14，止损距离请用 indicators 里你分析的那个周期的 atr14
     - price_change：{5m,15m,30m,1h,4h,24h} 各窗口涨跌幅（%）
@@ -87,7 +87,7 @@ tool:
     末行是否走完按 openTime 判断：openTime 加一个周期晚于现在就还在走。只有这个工具带着在走的那根；
     `indicators` 与 `kline_structure` 都只按已收盘的算。
     interval：5m/15m/1h/4h/1d——192 根分别覆盖 16小时 / 2天 / 8天 / 32天 / 192天。
-    可选 endTime（北京时间 yyyy-MM-dd HH:mm）：窗口改为以那个时刻结尾（含它所在那根），看过去某一天、
+    可选 endTime（新加坡时间 yyyy-MM-dd HH:mm）：窗口改为以那个时刻结尾（含它所在那根），看过去某一天、
     某次事件前后用；不传就是截止现在。三个工具传同一个 endTime 还是同一段数据。
     当你的方法需要逐根读 K 线时才调它：验证 K 线形态、套用你自己的摆动/结构定义、
     或细看 `kline_structure` 指给你的某一段。这是唯一给全每一根的工具——`kline_structure`
@@ -128,7 +128,7 @@ tool:
   # ---- 衍生品统计序列（chat 主 agent 与 trader 唤醒共用）：market_snapshot 那几个量的走势，只有 Binance 一家 ----
   derivatives_history: |-
     Binance U 本位永续的衍生品统计序列：按给定周期取最近 30 个点（1h 是最近 30 小时，4h 是 5 天，1d 是 30 天；
-    Binance 只保留 30 天）。只有 Binance 一家，不是跨所合计。一行一个点，旧在前，time 是北京时间：
+    Binance 只保留 30 天）。只有 Binance 一家，不是跨所合计。一行一个点，旧在前，time 是新加坡时间：
     - oi：持仓量（币数）；oiUsd：折成美元
     - accountLsr：全部有持仓的账户里，净多账户数 ÷ 净空账户数（按人头数，散户权重大）
     - topTraderPositionLsr：保证金余额前 20% 的账户，多头仓位名义 ÷ 空头仓位名义
@@ -144,14 +144,14 @@ tool:
     关键字宽会混进几条序列（"Inflation Rate" 同时命中 YoY / MoM / Core），只要一条序列就传完整标题，如 "Inflation Rate YoY"。
     标题是 TradingView 的英文叫法：CPI 叫 "Inflation Rate YoY/MoM"（核心加 Core），非农 "Non Farm Payrolls"，
     PCE "Core PCE Price Index MoM"，美联储决议 "Fed Interest Rate Decision"，纪要 "FOMC Minutes"，失业率 "Unemployment Rate"。
-    字段：time（北京时间 UTC+8）、title、actual、forecast、previous。
+    字段：time（新加坡时间 UTC+8）、title、actual、forecast、previous。
     有 forecast/previous 的是数值型事件：时间已过而没有 actual 就是还没公布；两个都没有的是讲话、会议类。
 
   # ---- Hyperliquid 大户持仓（chat 主 agent 与 trader 唤醒共用）：Coin 页那份最新快照，分桶只给名义最大的几桶 ----
   whale_positions: |-
     Hyperliquid 大户持仓（只有 BTC / ETH / SOL / XRP / DOGE）：每天认证一次的地址池（账户净值 ≥100 万美元，
     或持有 ≥100 万美元仓位；poolSize 是池内地址数）在这个币上的大额杠杆永续仓位，每 10 分钟一轮快照
-    （observedAt，北京时间）。只算 ≥10 万美元的仓位。是 Hyperliquid 链上数据，不是 Binance。
+    （observedAt，新加坡时间）。只算 ≥10 万美元的仓位。是 Hyperliquid 链上数据，不是 Binance。
     - price：快照时的 Hyperliquid 标记价
     - long / short：count 该方向地址数；notional 仓位名义合计（美元）；wavgEntry 按数量加权的开仓均价；
       medianEntry 各地址开仓价的中位数；top1Share 最大一户占该方向名义的比例；upnl 浮动盈亏合计（美元）。
@@ -168,7 +168,7 @@ tool:
     宏观跨资产快照（Yahoo Finance）：标普 500 与纳斯达克综合指数（现货指数，只在美股交易时段动）、
     标普 500 与纳斯达克 100 期货（接近 24 小时交易）、美元指数、美国十年期国债收益率（单位 %）、VIX、
     黄金期货（美元/盎司）、WTI 原油期货（美元/桶）。每个品种给 price 现价、changePct1d 相对昨收的涨跌幅（%）、
-    changePct5d 相对 5 个交易日前收盘的涨跌幅（%）、time 报价时刻（北京时间）。
+    changePct5d 相对 5 个交易日前收盘的涨跌幅（%）、time 报价时刻（新加坡时间）。
     十年美债那行的涨跌是收益率数值本身的百分比变化，不是基点。
     拿 time 和 now 比：美股休市时现货指数就是上次收盘价。非官方来源，报价可能延迟最多 15 分钟。
     黄金、原油平台上也有合约（XAUUSDT / CLUSDT），那是平台合约价，用 market_snapshot 查。
@@ -307,7 +307,7 @@ tool:
     平台在采的币都可以布，不限你可交易的那几个（比如拿 BTCUSDT 盯大盘）。
     kind：TOUCH_ABOVE / TOUCH_BELOW 标记价触及 level；CLOSE_ABOVE / CLOSE_BELOW 某周期（period 5m/15m/1h/4h/1d）收盘站上 / 跌破 level，
     心跳及更长周期的收盘命中正赶上同一刻的例行唤醒，在那轮开场白里念给你，不另外叫醒；
-    AT_TIME 到 at 时刻（北京时间 yyyy-MM-dd HH:mm，当前北京时间在【当前账户】的 nowBeijing）。
+    AT_TIME 到 at 时刻（新加坡时间 yyyy-MM-dd HH:mm，当前新加坡时间在【当前账户】的 nowBeijing）。
     note：给下一轮自己的一句话，这条命中意味着什么。
     每币向上（TOUCH_ABOVE / CLOSE_ABOVE）、向下（TOUCH_BELOW / CLOSE_BELOW）、到时刻（AT_TIME）各最多一条，先到的那条叫醒你，醒来再重布；
     传的是该币从现在起要盯的全部条件，旧的整组作废，传空数组 [] 清掉；一条命中一次就摘掉。
@@ -355,10 +355,10 @@ tool:
 
   trade_history: |-
     本局已了结的单子。不给 positionId：清单，新的在前，最多 50 笔，每笔有仓位编号、币、方向、单子类型、
-    开平时刻（北京时间）、了结方式（closeManner：stopLoss/takeProfit/manual/liquidated）、净盈亏。
+    开平时刻（新加坡时间）、了结方式（closeManner：stopLoss/takeProfit/manual/liquidated）、净盈亏。
     给 positionId：那一笔的事实表（factSheet，写法和开场素材里的事实表一样），和它的单笔复盘正文（debrief，还没复盘过就没有这一项）。
 
   news_archive: |-
-    本地存档里某段时间发布的快讯（标题+正文+来源+发布时刻）。from、to 是北京时间 yyyy-MM-dd HH:mm，含 from 不含 to；
+    本地存档里某段时间发布的快讯（标题+正文+来源+发布时刻）。from、to 是新加坡时间 yyyy-MM-dd HH:mm，含 from 不含 to；
     可以再给 keyword 只留标题或正文含它的（中英文都搜）。新的在前，最多 30 条：正好 30 条说明这段时间里更早的没列出来，把 to 往前挪再查。
     每条的发布时刻就是这条消息当时能被看到的时刻。

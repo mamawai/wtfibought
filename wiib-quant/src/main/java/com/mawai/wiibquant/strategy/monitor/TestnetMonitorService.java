@@ -42,7 +42,7 @@ import java.util.TreeMap;
 public class TestnetMonitorService {
 
     private static final long WEEK_MS = 7L * 24 * 3600 * 1000;
-    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+    private static final ZoneId ZONE = ZoneId.of("Asia/Singapore");
     /** 计入策略盈亏的流水类型；TRANSFER/WELCOME_BONUS 等本金类剔除。 */
     private static final Set<String> PNL_TYPES = Set.of("REALIZED_PNL", "COMMISSION", "FUNDING_FEE");
 

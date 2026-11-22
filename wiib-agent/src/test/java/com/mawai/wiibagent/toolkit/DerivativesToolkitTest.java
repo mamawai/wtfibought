@@ -12,7 +12,7 @@ import static org.mockito.Mockito.when;
 
 class DerivativesToolkitTest {
 
-    /** 2025-09-04 15:00 UTC = 北京 23:00；下一根是 16:00 UTC */
+    /** 2025-09-04 15:00 UTC = 新加坡 23:00；下一根是 16:00 UTC */
     private static final long T1 = 1_756_998_000_000L;
     private static final long T2 = T1 + 3_600_000L;
 

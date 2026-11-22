@@ -388,7 +388,7 @@ public final class TradeGuard {
         };
     }
 
-    /** AT_TIME 的 at（北京时间 yyyy-MM-dd HH:mm）→ epoch ms；没写或格式不对给 null */
+    /** AT_TIME 的 at（新加坡时间 yyyy-MM-dd HH:mm）→ epoch ms；没写或格式不对给 null */
     public static Long parseWatchTime(String text) {
         if (text == null) {
             return null;

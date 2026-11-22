@@ -20,7 +20,7 @@ import static org.mockito.Mockito.when;
  */
 class EconCalendarAssemblerTest {
 
-    /** 2025-09-04 15:33:20 UTC = 北京 23:33:20，当天 24:00 是 26 分 40 秒之后 */
+    /** 2025-09-04 15:33:20 UTC = 新加坡 23:33:20，当天 24:00 是 26 分 40 秒之后 */
     private static final long NOW = 1_757_000_000_000L;
     private static final long END_OF_DAY = NOW + 1_600_000L;
     private static final long HOUR = 3_600_000L;
@@ -59,7 +59,7 @@ class EconCalendarAssemblerTest {
         assertThat(block.indexOf("刚公布")).isLessThan(block.indexOf("已公布"));
         assertThat(block.indexOf("已公布")).isLessThan(block.indexOf("即将公布"));
         assertThat(block.indexOf("CPI m/m")).isLessThan(block.indexOf("GDP q/q"));
-        // 窗口钉死：过去 72h 到北京时间当天 24:00
+        // 窗口钉死：过去 72h 到新加坡时间当天 24:00
         verify(mapper).selectWindow(NOW - 72 * HOUR, END_OF_DAY);
     }
 

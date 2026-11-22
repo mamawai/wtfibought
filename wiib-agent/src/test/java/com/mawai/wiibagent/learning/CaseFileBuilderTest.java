@@ -311,7 +311,7 @@ class CaseFileBuilderTest {
     }
 
     /**
-     * 拿线上真 K 线对一遍 beta 那 16 笔（计划附录 B）：每行是 币 方向 开仓日 时:分（北京）入场 原止损 原目标 止损原样的结局 止损两倍的结局。
+     * 拿线上真 K 线对一遍 beta 那 16 笔（计划附录 B）：每行是 币 方向 开仓日 时:分（新加坡）入场 原止损 原目标 止损原样的结局 止损两倍的结局。
      * K 线到 11-10 09:25 为止，之后没数据的记未决。
      * 手工核对时是从开仓走 72 小时，这里把平仓时刻取成开仓后 48 小时，重放走的还是这一段。
      */
@@ -351,7 +351,7 @@ class CaseFileBuilderTest {
             String[] f = trade.split(" ");
             String[] hm = f[3].split(":");
             long openMs = ZonedDateTime.of(2026, 11, Integer.parseInt(f[2]), Integer.parseInt(hm[0]), Integer.parseInt(hm[1]),
-                    0, 0, ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli();
+                    0, 0, ZoneId.of("Asia/Singapore")).toInstant().toEpochMilli();
             FuturesPositionDTO pos = position(f[1], f[4], f[4], openMs, openMs + 48 * 3_600_000L);
             pos.setSymbol(f[0]);
 

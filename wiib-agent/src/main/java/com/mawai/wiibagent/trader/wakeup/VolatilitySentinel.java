@@ -38,10 +38,10 @@ import java.util.concurrent.Executor;
  * 持续高位不重复叫；结束后再穿上来才是新一段。
  * <p>
  * 基准阈值 2026-11-06 校准：Binance 公开 5m K 线（data.binance.vision），窗口 05-11 ~ 11-05 共 177 天。
- * 每根振幅 = (high-low)/low，按北京时间分天数"振幅 ≥ 候选阈值"的根数，中位数算平日、95 分位算波动日，
+ * 每根振幅 = (high-low)/low，按新加坡时间分天数"振幅 ≥ 候选阈值"的根数，中位数算平日、95 分位算波动日，
  * 取波动日少于 20 次的最低一档。市场性状变了可在 kline_history 上重跑：
  * <pre>
- * WITH amp AS (SELECT symbol, (to_timestamp(open_time/1000) AT TIME ZONE 'Asia/Shanghai')::date d, (high-low)/low*100 a
+ * WITH amp AS (SELECT symbol, (to_timestamp(open_time/1000) AT TIME ZONE 'Asia/Singapore')::date d, (high-low)/low*100 a
  *   FROM kline_history WHERE interval_code='5m' AND symbol IN (白名单) AND open_time > 近180天ms),
  * daily AS (SELECT symbol, d, count(*) FILTER (WHERE a>=候选阈值) c FROM amp GROUP BY symbol, d)
  * SELECT symbol, percentile_cont(0.5) WITHIN GROUP (ORDER BY c) 平日,

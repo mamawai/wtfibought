@@ -266,7 +266,7 @@ class ReviewLoopTest {
         assertThat(all).contains("#5 假设 入场条件 执行型 BREAKOUT ｜ 突破前高 → 等 1h 收稳再进 ｜ "
                 + "名下 0 笔，赚 0 亏 0，合计 +0.00，0 天；当前段 0 笔，合计 +0.00，0 天 ｜ 证据 ETH 09:32");
 
-        // 名下单子按仓位记：净盈亏取事实表那个数，平仓日是北京日期；单笔复盘归的 #5 和本篇新增的 #6 各一行
+        // 名下单子按仓位记：净盈亏取事实表那个数，平仓日是新加坡日期；单笔复盘归的 #5 和本篇新增的 #6 各一行
         verify(planStore).markReviewed(List.of(77L), 900L);
         assertThat(trades).extracting(AiTraderExperienceTrade::getExperienceId, AiTraderExperienceTrade::getPositionId,
                 AiTraderExperienceTrade::getReviewId, AiTraderExperienceTrade::getMark)

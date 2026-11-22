@@ -25,11 +25,11 @@ trader:
     - 为什么醒：例行是哪根 K 线收盘；非例行是哪条盯盘条件命中、哪个持仓事件或波动警报，各带时刻
     - 【自上次唤醒以来】：仓位了结（了结方式、成交价、盈亏、当时的论点与失效条件）、限价单成交、挂单消失、没叫醒你的盯盘命中（带预案的附平台做了什么）；没事件整块不出现
     - 【当前账户】：权益、持仓（强平价、当前止损、各档止盈的价位与数量、所属计划与修订史、持有时长）、挂单（所属计划、已挂时长）。
-      nowBeijing 是当前北京时间（带年份），set_watch 的 AT_TIME 按它写。通常不必重复查账户；交易或异步成交后可用 get_account 确认变化。
+      nowBeijing 是当前新加坡时间（带年份），set_watch 的 AT_TIME 按它写。通常不必重复查账户；交易或异步成交后可用 get_account 确认变化。
       持仓另带三个代码算的数：unrealizedR 浮盈是几 R（R＝开仓价到计划原始止损的距离）、stopDistancePct 标记价离最近一档止损百分之几、
       lossAtStopPctOfEquity 当前止损全被打掉相对开仓价亏权益百分之几（负数是已经锁住的利润）；
       lossAtAllStopsPctOfEquity 是全部持仓合计。都不计手续费
-      账户块下面另有一行「今天净亏损了结的仓位」：代码按币和方向数的、今天（北京时间 0 点起）扣完手续费和资金费是亏的了结次数，
+      账户块下面另有一行「今天净亏损了结的仓位」：代码按币和方向数的、今天（新加坡时间 0 点起）扣完手续费和资金费是亏的了结次数，
       其中由止损单触发的另数；今天一笔都没有就没有这一行
       持仓的 sinceLastWake 是自你上次完成决策那轮以来这个仓位经历的波动：代码按已收盘的 5m K线算的首根开盘、
       最高与最低各在何时、末根收盘、开盘到收盘的涨跌，from / to 是实际覆盖的起止；仓位是那之后才开的，从开仓所在那根 5m 算起
@@ -61,7 +61,7 @@ trader:
       · indicators：刚收盘那根的 RSI/MACD/BOLL/ATR 等点状态
       · klines 的末根多半还没走完（openTime 加一个周期晚于现在就还在走），已收盘的是它前一根；
         kline_structure 与 indicators 只按已收盘的算，不含在走的那根
-      · 三者都可传 endTime（北京时间 yyyy-MM-dd HH:mm），窗口改为以它结尾；不传就是截止现在
+      · 三者都可传 endTime（新加坡时间 yyyy-MM-dd HH:mm），窗口改为以它结尾；不传就是截止现在
       两个都要时给 kline_structure 传 includeBars=false，免得同一段K线付两遍
     - market_snapshot / funding_history / orderbook_depth / option_iv：资金费、持仓量、多空比、清算、盘口、IV。
       market_snapshot 给的是各数据源最新的原始读数，没有加工成分数
@@ -79,7 +79,7 @@ trader:
       平台在采的币都可以布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）。
       kind：TOUCH_ABOVE / TOUCH_BELOW 标记价触及 level；CLOSE_ABOVE / CLOSE_BELOW 某周期（period 5m/15m/1h/4h/1d）收盘站上 / 跌破 level，
       心跳及更长周期的收盘命中正赶上同一刻的例行唤醒，在那轮开场白里念给你，不另外叫醒；
-      AT_TIME 到 at 时刻（北京时间 yyyy-MM-dd HH:mm）。每条带 note：给下一轮自己的一句话，这条命中意味着什么。
+      AT_TIME 到 at 时刻（新加坡时间 yyyy-MM-dd HH:mm）。每条带 note：给下一轮自己的一句话，这条命中意味着什么。
       每币向上（TOUCH_ABOVE / CLOSE_ABOVE）、向下（TOUCH_BELOW / CLOSE_BELOW）、到时刻（AT_TIME）各最多一条，先到的那条叫醒你，醒来再重布；
       一次整组替换该币全部条件，传空清掉；命中一次即摘掉；没命中的在本局内一直盯着，不用每轮重布，当前在盯的都列在【你的承诺】里。
       条件可以带一个 action，就成了预案：命中时平台当场替你执行，不等你醒。动作只有三种，都只会减风险：
@@ -167,7 +167,7 @@ trader:
   # 节奏行：模板与事实不许打架——有时段就把"只在时段内醒"写进同一句
   rhythm:
     allDay: 每根 {{interval}} K线收盘例行唤醒你一次，定期复查
-    window: 每天 {{window}}（北京时间，两端含）内每根 {{interval}} K线收盘例行唤醒你一次，时段外不做例行唤醒（波动警报、盯盘条件、持仓事件也停），只有主人手动叫醒才会例外
+    window: 每天 {{window}}（新加坡时间，两端含）内每根 {{interval}} K线收盘例行唤醒你一次，时段外不做例行唤醒（波动警报、盯盘条件、持仓事件也停），只有主人手动叫醒才会例外
 
   # 仓位数量规则：单仓模式必须把"挂单也占坑"讲明，否则模型先挂单绕过
   positionRule:
@@ -318,7 +318,7 @@ trader:
   # 财经日历注入块（EconCalendarAssembler）：只给事实，怎么用由主人指令定。
   # 「刚公布」段是等待闸刚拿到的实际值
   calendar:
-    header: 【财经日历】美国 High 级宏观事件（北京时间）。「刚公布」段是上次唤醒以来新落地的实际值，实际值相对预测、前值的偏差是本轮的新事实。
+    header: 【财经日历】美国 High 级宏观事件（新加坡时间）。「刚公布」段是上次唤醒以来新落地的实际值，实际值相对预测、前值的偏差是本轮的新事实。
     justPublished: 刚公布（本轮新到，重点）：
     published: 已公布（过去3天）：
     upcoming: 即将公布（今天剩余）：
@@ -337,7 +337,7 @@ trader:
     referenceTag: （大盘参考，不可交易）
     noData: —
     # 美股参考：CrossAssetService 缓存里的纳指期货、标普期货、VIX
-    equitiesHeader: 美股参考（Yahoo，可能晚 15 分钟；期货接近 24 小时交易；括号里是报价时刻，北京时间）：
+    equitiesHeader: 美股参考（Yahoo，可能晚 15 分钟；期货接近 24 小时交易；括号里是报价时刻，新加坡时间）：
     equityRow: "- {{name}} {{price}}，较昨收 {{change}}%（{{time}}）"
     equity:
       nq: 纳指期货
@@ -406,7 +406,7 @@ trader:
     watchHitLine: "- {{detail}}。你布它时的备注：{{note}}"
     accountHeader: 【当前账户】（实时数据，不是指令；权益/持仓/挂单/计划已给出，交易或异步成交后可用 get_account 确认变化；盯盘条件在下面的承诺块里）
     # 账户块下面的一行：今天净亏损了结的仓位按币和方向数，一笔都没有就不出
-    lossesToday: "今天（北京时间 0 点起）净亏损了结的仓位：{{rows}}"
+    lossesToday: "今天（新加坡时间 0 点起）净亏损了结的仓位：{{rows}}"
     lossesTodayRow: "{{position}} {{n}} 次（其中止损单触发 {{stops}} 次）"
     lossesTodaySep: "；"
     lastConclusionHeader: 【上一轮结论】（最近一轮 {{time}}，权益{{equity}}）每个币最近一次写下的判断、动作与等待条件；没变化的币沿用旧段，段头是写下它的时刻
@@ -417,7 +417,7 @@ trader:
     trajectoryHeader: 【最近唤醒轨迹】（最新在前）
     trajectoryTools: "工具：{{tools}}"
     # 时段内末次唤醒的休眠提示：只给事实，两个方向都不带偏置
-    sleepNotice: 本唤醒时段（{{window}}）内的例行唤醒到 {{lastBar}} 这根K线为止，下次例行唤醒在 {{next}}（北京时间，约 {{hours}} 小时后），期间不会有例行唤醒和波动警报，盯盘条件命中也不叫醒你；止损止盈单照常自动触发，预案照常执行。这只是时间跨度的事实：休眠本身既不是平仓或收紧止损的理由，也不是赶在休眠前多开一笔的理由。
+    sleepNotice: 本唤醒时段（{{window}}）内的例行唤醒到 {{lastBar}} 这根K线为止，下次例行唤醒在 {{next}}（新加坡时间，约 {{hours}} 小时后），期间不会有例行唤醒和波动警报，盯盘条件命中也不叫醒你；止损止盈单照常自动触发，预案照常执行。这只是时间跨度的事实：休眠本身既不是平仓或收紧止损的理由，也不是赶在休眠前多开一笔的理由。
     # 非例行唤醒第一段的头（警报 / 持仓事件 / 盯盘命中共用骨架，TraderWakeupRunner.triggerHead）：先逐条报把它叫醒的事，
     # 排队期间攒下的几条按先后一起报、各带自己的时刻；事实全代码注入，被叫醒本身两个方向都不是理由
     alertHeader: 行情波动警报（{{time}}）：{{symbol}} 5分钟内波动 {{amplitude}}%（方向：{{direction}}，现价 {{price}}）
@@ -503,7 +503,7 @@ trader:
     watchKindInvalid: "kind 必须是: {{kinds}}"
     watchLevelRequired: "{{kind}} 必须给 level 价位（正数）"
     watchPeriodInvalid: "CLOSE_ABOVE / CLOSE_BELOW 必须给 period，可选: {{periods}}"
-    watchTimeInvalid: "AT_TIME 的 at 要写成北京时间 yyyy-MM-dd HH:mm，你给了 {{given}}；现在是 {{now}}"
+    watchTimeInvalid: "AT_TIME 的 at 要写成新加坡时间 yyyy-MM-dd HH:mm，你给了 {{given}}；现在是 {{now}}"
     watchTimePast: "AT_TIME 的时刻 {{given}} 已过去，现在是 {{now}}"
     watchListRequired: "watches 必填：传该币从现在起要盯的全部条件；要清掉就传空数组 []"
     watchAlreadyMet: "{{kind}} {{level}} 已被现价 {{mark}} 越过，布下去会立刻触发；要盯的是还没到的价位"

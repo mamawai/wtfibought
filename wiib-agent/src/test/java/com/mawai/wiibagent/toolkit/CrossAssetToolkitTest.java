@@ -19,8 +19,8 @@ class CrossAssetToolkitTest {
     private final CrossAssetToolkit toolkit = new CrossAssetToolkit(service);
 
     @Test
-    void 每个品种一行_带名字涨跌和北京时间() {
-        // 2025-09-04 15:33:20 UTC = 北京 23:33
+    void 每个品种一行_带名字涨跌和新加坡时间() {
+        // 2025-09-04 15:33:20 UTC = 新加坡 23:33
         when(service.snapshot()).thenReturn(List.of(new Quote("^GSPC", "S&P 500",
                 new BigDecimal("7720.39"), new BigDecimal("-0.30"), new BigDecimal("0.74"), 1_757_000_000_000L)));
 

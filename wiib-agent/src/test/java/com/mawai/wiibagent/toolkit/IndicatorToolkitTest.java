@@ -61,9 +61,9 @@ class IndicatorToolkitTest {
         assertThat(out).isEqualTo("[[1720000000000,100,110,95,105,1000]]");
     }
 
-    /** 2025-09-04 23:33 北京 = 15:33:00 UTC = 1_756_999_980_000 */
+    /** 2025-09-04 23:33 新加坡 = 15:33:00 UTC = 1_756_999_980_000 */
     @Test
-    void 传截止时间_按北京时间换成毫秒交给取数层_不传就是截止现在() {
+    void 传截止时间_按新加坡时间换成毫秒交给取数层_不传就是截止现在() {
         KlineFetcher fetcher = mock(KlineFetcher.class);
         when(fetcher.fetch("BTCUSDT", "1h", 192, 1_756_999_980_000L))
                 .thenReturn(List.of(bar(1_756_996_800_000L, "100", "110", "95", "105", "1000")));

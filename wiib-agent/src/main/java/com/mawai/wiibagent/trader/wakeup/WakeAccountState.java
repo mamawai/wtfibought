@@ -49,7 +49,7 @@ final class WakeAccountState {
         plans.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
         ObjectNode out = MAPPER.createObjectNode();
         out.put("equity", equity.setScale(2, RoundingMode.HALF_UP));
-        // 当前北京时间，带年份：set_watch 的 AT_TIME 按这个写法填
+        // 当前新加坡时间，带年份：set_watch 的 AT_TIME 按这个写法填
         out.put("nowBeijing", BeijingTime.format(wakeTime));
         // 全部持仓的止损同时被打掉，合计亏权益的百分之几
         out.put("lossAtAllStopsPctOfEquity", pctOfEquity(

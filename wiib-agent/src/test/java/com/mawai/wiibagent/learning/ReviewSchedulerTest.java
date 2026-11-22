@@ -34,7 +34,7 @@ class ReviewSchedulerTest {
 
     // 2026-07-27 17:00:00 UTC 整点前 1ms —— Binance closeTime 口径
     private static final long H1_CLOSE = 1785171599999L;
-    // 2026-07-27 00:00:00 UTC（日线边界，北京时间 08:00）
+    // 2026-07-27 00:00:00 UTC（日线边界，新加坡时间 08:00）
     private static final long DAY_BOUNDARY = 1785110400000L;
 
     /** 查交易员用了 in 条件，拼条件时就要查 TableInfo；不预热的话本类单独跑会炸 */

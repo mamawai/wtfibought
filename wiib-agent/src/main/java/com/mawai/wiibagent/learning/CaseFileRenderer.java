@@ -33,7 +33,7 @@ public class CaseFileRenderer {
 
     /** 一笔交易的 1h 收盘最多列几根 */
     static final int MAX_HOURLY = 24;
-    /** 时刻按北京时间写，与入场上下文的 hourBj 同一时区 */
+    /** 时刻按新加坡时间写，与入场上下文的 hourBj 同一时区 */
     private static final DateTimeFormatter HM_FMT =
             DateTimeFormatter.ofPattern("HH:mm").withZone(BeijingTime.ZONE);
 

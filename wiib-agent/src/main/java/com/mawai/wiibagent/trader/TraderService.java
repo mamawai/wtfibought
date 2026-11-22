@@ -94,7 +94,7 @@ public class TraderService {
     private final TransactionTemplate transactionTemplate;
 
     /**
-     * llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（北京时间），null=全天。
+     * llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（新加坡时间），null=全天。
      * webSearchEnabled：联网搜索开关，所用端点没开联网搜索的存 false
      */
     public record UpsertReq(String name, String symbols, String intervalCode, String customPrompt,

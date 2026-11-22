@@ -20,7 +20,7 @@ class TraderWakeupRunnerSleepNoticeTest {
         return ZonedDateTime.of(2026, 7, 27, h, m, 0, 0, BeijingTime.ZONE).toInstant().toEpochMilli();
     }
 
-    /** 21:00-08:00 的 08:00 是末次：说清到哪根为止、下次时刻（北京 21:00）与约 13 小时，反偏置两个方向都堵 */
+    /** 21:00-08:00 的 08:00 是末次：说清到哪根为止、下次时刻（新加坡 21:00）与约 13 小时，反偏置两个方向都堵 */
     @Test
     void lastBoundaryGetsNotice() {
         String s = WakeFlows.sleepNotice(PROMPTS, AgentLang.ZH, WakeWindow.parse("21:00-08:00"), bj(8, 0), H1, bj(8, 0));
