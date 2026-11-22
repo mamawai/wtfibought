@@ -240,7 +240,7 @@ class WakeFlows {
         public String opening() {
             String symbol = b.scope().symbol();
             return singleInstruction(b.trader(), symbol, b.triggers(), b.wakeTime(), lastRealWake(b.recent()), b.pack().text(),
-                    wakeObservation.coinFacts(b.trader(), symbol, b.pack().lastOkWakeMs(), b.wakeTime(), b.quotes(),
+                    wakeObservation.coinFacts(b.trader(), symbol, b.pack().lastSeen(), b.wakeTime(), b.quotes(),
                             nowMs.getAsLong(), b.lang()),
                     b.overview(), b.lang(), webSearch);
         }
@@ -279,7 +279,7 @@ class WakeFlows {
 
     private String symbolsSummary(Brief b) {
         return wakeObservation.symbolsSummary(b.trader(), WakeObservation.board(b.scope().tradable()), b.scope().tradable(),
-                b.pack().lastOkWakeMs(), b.wakeTime(), b.lang());
+                b.pack().lastSeen(), b.wakeTime(), b.lang());
     }
 
     private String history(Brief b) {

@@ -62,6 +62,9 @@ public class AiTraderDecision {
      */
     private String kind;
 
+    /** 这一轮只处理的那个币（单币轮）；看整盘的一轮、复盘行、预案行为 null */
+    private String symbol;
+
     /** OK / ERROR / SKIPPED（信号迟到，离下一根太近没跑） */
     private String status;
 

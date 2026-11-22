@@ -24,22 +24,22 @@ public class PositionPath {
     private final CaseFileBuilder caseFiles;
 
     /**
-     * @param lastOkWakeMs 本局最近一条 OK 决策行的唤醒时刻，null=本局还没有
-     * @param wakeTime     这一轮的唤醒时刻（例行=K 线收盘时刻，警报/手动=触发时刻）
+     * @param lastSeenMs 这个币上次被看到的时刻（本局最近一条管着它的 OK 唤醒行），null=本局还没有
+     * @param wakeTime   这一轮的唤醒时刻（例行=K 线收盘时刻，警报/手动=触发时刻）
      */
-    public CaseFileBuilder.MarketWindow build(FuturesPositionDTO pos, Long lastOkWakeMs, long wakeTime) {
+    public CaseFileBuilder.MarketWindow build(FuturesPositionDTO pos, Long lastSeenMs, long wakeTime) {
         long opened = TradePairing.msOf(pos.getCreatedAt());
-        long from = lastOkWakeMs == null ? opened : Math.max(lastOkWakeMs, opened);
+        long from = lastSeenMs == null ? opened : Math.max(lastSeenMs, opened);
         // 起点落在哪根里面，那根整根算进来；唤醒时刻所在那根还没收盘，不算
         long fromBar = WakeIntervals.align(from, BAR_MS);
         long toBar = WakeIntervals.align(wakeTime, BAR_MS);
         return caseFiles.market(pos.getSymbol(), fromBar, toBar);
     }
 
-    /** 一个币自上次 OK 轮以来的窗口；本局还没有 OK 轮次就是唤醒时刻前的一个心跳周期 */
-    public CaseFileBuilder.MarketWindow symbol(String symbol, Long lastOkWakeMs, long wakeTime, long intervalMs) {
+    /** 一个币从上次被看到起的窗口；本局还没有哪一轮看过它就是唤醒时刻前的一个心跳周期 */
+    public CaseFileBuilder.MarketWindow symbol(String symbol, Long lastSeenMs, long wakeTime, long intervalMs) {
         long toBar = WakeIntervals.align(wakeTime, BAR_MS);
-        long from = lastOkWakeMs == null ? toBar - intervalMs : lastOkWakeMs;
+        long from = lastSeenMs == null ? toBar - intervalMs : lastSeenMs;
         long fromBar = WakeIntervals.align(from, BAR_MS);
         return caseFiles.market(symbol, fromBar, toBar);
     }

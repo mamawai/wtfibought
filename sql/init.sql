@@ -763,6 +763,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
     wake_time       BIGINT NOT NULL,
     interval_code   VARCHAR(8) NOT NULL,
     kind            VARCHAR(8) NOT NULL DEFAULT 'TRADE',
+    symbol          VARCHAR(20),
     status          VARCHAR(16) NOT NULL,
     equity          NUMERIC(20,8),
     reasoning       TEXT,
@@ -785,6 +786,7 @@ CREATE INDEX IF NOT EXISTS idx_atd_trader_time ON ai_trader_decision(trader_id, 
 COMMENT ON TABLE ai_trader_decision IS 'AI Trader每次唤醒一行：推理全文+动作(含play_type论点标签)+权益快照——竞技场决策时间线与净值曲线数据源';
 COMMENT ON COLUMN ai_trader_decision.status IS 'OK/ERROR/SKIPPED（信号迟到，离下一根太近没跑）';
 COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） EVENT=持仓事件唤醒（sim止损/强平/限价成交当场叫醒，止盈不叫） WATCH=模型自己布的盯盘条件命中（ai_trader_watch） DRAWDOWN=权益回落警报唤醒（权益从参照点回落到主人设的比例，提前跑一轮整盘的） REVIEW=统一复盘（每天一篇，reasoning=复盘全文，无equity） DEBRIEF=单笔复盘（一笔单子平仓满24小时后复盘一次，reasoning=复盘全文，position_id=对应仓位，无equity） PRESET=预案命中后代码执行动作（没跑模型，reasoning=条件与执行结果，无equity）';
+COMMENT ON COLUMN ai_trader_decision.symbol IS '这一轮只处理的那个币（单币轮：盯盘命中/波动警报/限价成交/止损或强平叫醒的）；看整盘的一轮、复盘行、预案行为NULL。各币"自上次唤醒以来"的走势窗口按它算：从最近一条管着这个币的成功唤醒行起';
 COMMENT ON COLUMN ai_trader_decision.memory_after IS '仅REVIEW行：本期学习完的记忆快照存档（学习演进史,append-only）；ai_trader.memory是滚动覆盖的生效版本,历史版本只在这里';
 COMMENT ON COLUMN ai_trader_decision.equity IS '本轮动作落地后的账户权益USDT';
 COMMENT ON COLUMN ai_trader_decision.model_calls IS '本轮模型调用次数：ReAct是循环，一次唤醒会调很多次（上限见ModelCallLimiter）';

@@ -296,7 +296,7 @@ class WakeInstructionI18nTest {
                     List.of(eth, btc), List.of(), quotes, BOUNDARY, lang);
             assertThat(overview).contains("10000.00").contains("8200.50").contains("BTCUSDT SHORT").contains("0.1 @100000")
                     .doesNotContain("ETHUSDT LONG");
-            String coin = wakeObservation.coinFacts(t, "ETHUSDT", null, BOUNDARY, quotes, BOUNDARY, lang);
+            String coin = wakeObservation.coinFacts(t, "ETHUSDT", Map.of(), BOUNDARY, quotes, BOUNDARY, lang);
             assertThat(coin).contains("ETHUSDT").contains("3010").contains("-0.10%");
             if (lang == AgentLang.ZH) {
                 assertThat(overview).contains("【账户概况】").contains("大盘参考：BTCUSDT 标记价 100000，1h / 4h / 24h 涨跌 +0.42% / — / —");
@@ -463,10 +463,31 @@ class WakeInstructionI18nTest {
         t.setSymbols("ZECUSDT");
 
         List<String> rows = WakeObservation.board(List.of("ZECUSDT"));
-        assertThat(wakeObservation.symbolsSummary(t, rows, List.of("ZECUSDT"), null, BOUNDARY, AgentLang.ZH))
+        assertThat(wakeObservation.symbolsSummary(t, rows, List.of("ZECUSDT"), Map.of(), BOUNDARY, AgentLang.ZH))
                 .contains("- BTCUSDT（大盘参考，不可交易） ").doesNotContain("ZECUSDT");
         PromptI18nAssertions.assertNoCjk("英文各币摘要",
-                wakeObservation.symbolsSummary(t, rows, List.of("ZECUSDT"), null, BOUNDARY, AgentLang.EN));
+                wakeObservation.symbolsSummary(t, rows, List.of("ZECUSDT"), Map.of(), BOUNDARY, AgentLang.EN));
+    }
+
+    /** 一个币的窗口从上次看过它的那一轮算起：看整盘的一轮，或只处理它的那一轮；只处理别的币的那几轮不算 */
+    @Test
+    void 各币的窗口从上次看过它的那一轮算起() {
+        AiTraderDecisionMapper decisions = mock(AiTraderDecisionMapper.class);
+        WakeObservation observation = new WakeObservation(decisions, mock(DecisionText.class),
+                mock(PlayStatsAssembler.class), prompts, positionPath, crossAssets, binance);
+        // 一小时前有一轮看整盘的，十分钟前有一轮只处理 ETH 的
+        long book = BOUNDARY - 3_600_000L;
+        long eth = BOUNDARY - 600_000L;
+        when(decisions.selectList(org.mockito.ArgumentMatchers.any())).thenAnswer(call -> {
+            com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AiTraderDecision> q = call.getArgument(0);
+            assertThat(q.getSqlSegment()).contains("symbol IS NULL OR symbol =");
+            AiTraderDecision d = new AiTraderDecision();
+            d.setWakeTime(q.getParamNameValuePairs().containsValue("ETHUSDT") ? eth : book);
+            return List.of(d);
+        });
+
+        assertThat(observation.lastSeen(trader(), BOUNDARY, List.of("BTCUSDT", "ETHUSDT")))
+                .containsEntry("BTCUSDT", book).containsEntry("ETHUSDT", eth);
     }
 
     /** 观察包紧跟头部事实：整盘轮在快照之前；单币轮在"只处理哪个币"之后、这一轮的问题之前 */

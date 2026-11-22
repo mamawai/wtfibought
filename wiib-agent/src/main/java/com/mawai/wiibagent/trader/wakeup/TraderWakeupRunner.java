@@ -181,6 +181,7 @@ public class TraderWakeupRunner {
         long start = System.currentTimeMillis();
         // 本轮截止时刻：备料、下单护栏、超时计时都在这一份预算里
         long deadline = start + budgetSeconds * 1000;
+        decision.setSymbol(round.scope().symbol());
         // 交给这一轮的触发：把它叫醒的，和进行中插进来的（会话线程往里加）
         List<WakeTrigger> taken = new CopyOnWriteArrayList<>(triggers);
         // begin 之前出的异常没有这一轮现场

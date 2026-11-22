@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -93,9 +94,9 @@ public class WakeObservation {
 
     /**
      * 第一段的观察包成文 + 两个事实：有没有要处置的承诺（事件、收盘命中、持仓、挂单、盯盘条件、等待行，
-     * 有就分两段）、本局最近一条 OK 轮的时刻（各币摘要按它开窗）
+     * 有就分两段）、各币上次被看到的时刻（{@link #lastSeen}，各币摘要按它开窗）
      */
-    record Pack(String text, boolean busy, Long lastOkWakeMs) {
+    record Pack(String text, boolean busy, Map<String, Long> lastSeen) {
     }
 
     /** 一个币最近一次写下的结论段：哪一轮写的、用哪门语言写的（等待行的标记按它认）、段身 */
@@ -150,10 +151,13 @@ public class WakeObservation {
         List<FuturesOrderResponse> shownOrders = pendingOrders.stream().filter(o -> shown.test(o.getSymbol())).toList();
         StringBuilder sb = new StringBuilder();
         sb.append(events(planEvents, firedQuietly, lang));
-        Long lastOk = lastOkWakeTime(trader, wakeTime);
+        // 这一轮管的币（整盘轮连大盘参考）和有持仓的币，各自上次被看到的时刻
+        Set<String> watched = new LinkedHashSet<>(scope.single() ? List.of(scope.symbol()) : board(scope.tradable()));
+        shownPositions.forEach(p -> watched.add(p.getSymbol()));
+        Map<String, Long> lastSeen = lastSeen(trader, wakeTime, watched);
         Map<Long, CaseFileBuilder.MarketWindow> paths = new HashMap<>();
         for (FuturesPositionDTO p : shownPositions) {
-            CaseFileBuilder.MarketWindow w = positionPath.build(p, lastOk, wakeTime);
+            CaseFileBuilder.MarketWindow w = positionPath.build(p, lastSeen.get(p.getSymbol()), wakeTime);
             if (w != null) {
                 paths.put(p.getId(), w);
             }
@@ -169,7 +173,7 @@ public class WakeObservation {
                 armed, segments, marks, wakeTime, lang);
         sb.append(commitments);
         boolean busy = !firedQuietly.isEmpty() || !planEvents.isEmpty() || !commitments.isEmpty();
-        return new Pack(sb.toString(), busy, lastOk);
+        return new Pack(sb.toString(), busy, lastSeen);
     }
 
     /**
@@ -301,17 +305,18 @@ public class WakeObservation {
     }
 
     /**
-     * 各币摘要：这几个币自上次完成决策以来的开高低收（代码按已收盘 5m 算）；一个币都算不出返回空串
+     * 各币摘要：这几个币各自从上次被看到起的开高低收（代码按已收盘 5m 算）；一个币都算不出返回空串
      *
      * @param rows     列哪几个币，按这个顺序
      * @param tradable 可交易币，不在里面的那一行标成大盘参考
+     * @param lastSeen 各币上次被看到的时刻（{@link #lastSeen}），每个币的窗口从它自己的那个时刻起
      */
-    String symbolsSummary(AiTrader trader, List<String> rows, Collection<String> tradable, Long lastOkWakeMs,
+    String symbolsSummary(AiTrader trader, List<String> rows, Collection<String> tradable, Map<String, Long> lastSeen,
                           long wakeTime, AgentLang lang) {
         long intervalMs = WakeIntervals.MS.get(trader.getIntervalCode());
         StringBuilder sb = new StringBuilder();
         for (String symbol : rows) {
-            CaseFileBuilder.MarketWindow w = positionPath.symbol(symbol, lastOkWakeMs, wakeTime, intervalMs);
+            CaseFileBuilder.MarketWindow w = positionPath.symbol(symbol, lastSeen.get(symbol), wakeTime, intervalMs);
             if (w == null) {
                 continue;
             }
@@ -331,10 +336,10 @@ public class WakeObservation {
         return sb.isEmpty() ? "" : "\n" + prompts.get(lang, "trader.wake.symbolsHeader") + "\n" + sb;
     }
 
-    /** 单币轮：这个币自上次完成决策以来的开高低收，和它现在的标记价、涨跌、资金费率；都没有返回空串 */
-    String coinFacts(AiTrader trader, String symbol, Long lastOkWakeMs, long wakeTime, Map<String, JsonNode> quotes,
+    /** 单币轮：这个币从上次被看到起的开高低收，和它现在的标记价、涨跌、资金费率；都没有返回空串 */
+    String coinFacts(AiTrader trader, String symbol, Map<String, Long> lastSeen, long wakeTime, Map<String, JsonNode> quotes,
                      long now, AgentLang lang) {
-        StringBuilder sb = new StringBuilder(symbolsSummary(trader, List.of(symbol), Set.of(symbol), lastOkWakeMs, wakeTime, lang));
+        StringBuilder sb = new StringBuilder(symbolsSummary(trader, List.of(symbol), Set.of(symbol), lastSeen, wakeTime, lang));
         JsonNode q = quotes.get(symbol);
         if (q != null) {
             sb.append(sb.isEmpty() ? "\n" : "").append(prompts.get(lang, "trader.wake.single.quote", Map.of(
@@ -405,17 +410,27 @@ public class WakeObservation {
                 .collect(Collectors.joining(" / "));
     }
 
-    /** 本局最近一条 OK 唤醒行（复盘行不算）的唤醒时刻，不限于 recent 那几条；一条都没有给 null */
-    private Long lastOkWakeTime(AiTrader trader, long wakeTime) {
-        List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
-                .eq(AiTraderDecision::getTraderId, trader.getId())
-                .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
-                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
-                .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
-                .lt(AiTraderDecision::getWakeTime, wakeTime)
-                .orderByDesc(AiTraderDecision::getWakeTime)
-                .last("LIMIT 1"));
-        return rows.isEmpty() ? null : rows.getFirst().getWakeTime();
+    /**
+     * 这几个币各自上次被看到的时刻：本局最近一条成功的、管着它的唤醒行（复盘行不算）——看整盘的一轮，或只处理它的那一轮。
+     * 只处理别的币的那几轮不算：那几轮没看它。一条都没有的币不在结果里
+     */
+    Map<String, Long> lastSeen(AiTrader trader, long wakeTime, Collection<String> symbols) {
+        Map<String, Long> out = new HashMap<>();
+        for (String symbol : symbols) {
+            List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                    .eq(AiTraderDecision::getTraderId, trader.getId())
+                    .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
+                    .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
+                    .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
+                    .and(w -> w.isNull(AiTraderDecision::getSymbol).or().eq(AiTraderDecision::getSymbol, symbol))
+                    .lt(AiTraderDecision::getWakeTime, wakeTime)
+                    .orderByDesc(AiTraderDecision::getWakeTime)
+                    .last("LIMIT 1"));
+            if (!rows.isEmpty()) {
+                out.put(symbol, rows.getFirst().getWakeTime());
+            }
+        }
+        return out;
     }
 
     /** 自上次唤醒以来：命中了但没叫醒它的盯盘条件，再是对账事件行。都没有返回空串 */

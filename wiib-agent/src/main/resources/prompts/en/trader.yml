@@ -54,7 +54,8 @@ trader:
       Below the account block there is also a line of positions closed at a net loss today: counted by code per symbol
       and side, closes since 00:00 Singapore time that lost after fees and funding, with those triggered by a stop order
       counted separately; the line is absent when there are none today
-      A position's sinceLastWake is what it has been through since the last round in which you completed a decision:
+      A position's sinceLastWake is what it has been through since the last round that looked at its symbol (a
+      whole-board round, or the round handling that one symbol; rounds handling other symbols do not count):
       computed by code from closed 5m candles — first open, high and low with their times, last close, open-to-close
       change, from / to being the span actually covered; a position opened after that round counts from the 5m candle
       its entry falls in
@@ -68,8 +69,9 @@ trader:
       open / high / low / close of the heartbeat candle that just closed), every watch condition you set (how far from the
       current price / how long to go, and for a standing order what the platform will do when it fires), and the waiting
       line in each symbol's latest section (noting when that symbol has no watch set). Facts only; the judgement is yours
-    - [Per symbol since your last wake-up]: each symbol's open / high / low / close since the last round in
-      which you completed a decision (computed by code from closed 5m candles); a whole-board round also carries a
+    - [Per symbol since your last wake-up]: each symbol's open / high / low / close since the last round that
+      looked at it (computed by code from closed 5m candles; only a whole-board round or the round handling that one
+      symbol counts, so the starting point can differ per symbol - go by the span each row states); a whole-board round also carries a
       BTCUSDT row as the market benchmark even when you cannot trade it
     - [Recent wake-ups]: time, status, equity and tools used over the last few rounds; thesis record: this round's settled
       trades tallied by thesis tag, entry type and symbol, computed by code; quote only, never recompute

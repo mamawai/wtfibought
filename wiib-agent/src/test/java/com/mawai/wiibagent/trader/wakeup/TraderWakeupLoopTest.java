@@ -1509,6 +1509,8 @@ class TraderWakeupLoopTest {
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getKind()).isEqualTo(AiTraderDecision.KIND_DRAWDOWN);
+        // 看整盘的一轮，决策行不记币
+        assertThat(dec.getValue().getSymbol()).isNull();
         assertThat(dec.getValue().getWakeTime()).isEqualTo(at);
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
 
@@ -1563,6 +1565,8 @@ class TraderWakeupLoopTest {
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getKind()).isEqualTo(AiTraderDecision.KIND_EVENT);
+        // 单币轮的决策行记着它只处理的那个币
+        assertThat(dec.getValue().getSymbol()).isEqualTo("BTCUSDT");
         assertThat(dec.getValue().getWakeTime()).isEqualTo(at);
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
 

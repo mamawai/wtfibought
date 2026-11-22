@@ -1055,6 +1055,8 @@ export interface AiTraderDecisionView {
    * PRESET=预案命中后平台代它执行的动作（没跑模型，reasoning=条件与执行结果，无equity）
    */
   kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'REVIEW' | 'DEBRIEF' | 'PRESET';
+  /** 这一轮只处理的那个币；看整盘的一轮、复盘行、预案行为 null */
+  symbol: string | null;
   /** 仅 DEBRIEF 行：这篇单笔复盘对应的仓位编号 */
   positionId: number | null;
   status: 'OK' | 'ERROR' | 'SKIPPED';

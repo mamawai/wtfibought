@@ -82,6 +82,8 @@ export function DecisionCard({ d, mine, highlight, trade }: {
           <>
             {/* 是什么叫醒它的：例行心跳 / 盯盘触发 / 持仓有变化 / 剧烈波动 / 手动 */}
             <span className={cn('tag', KIND_TONE[d.kind])}>{kindLabel(d.kind, !!mine, d.intervalCode)}</span>
+            {/* 只处理一个币的那种轮，标出是哪个币 */}
+            {d.symbol && <span className="tag">{t('live.onlySymbol', { symbol: d.symbol })}</span>}
             {d.status === 'ERROR' && <span className="tag r">{t('decision.error')}</span>}
           </>
         )}
