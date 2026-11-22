@@ -715,6 +715,9 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     learned_restriction_hold BOOLEAN NOT NULL DEFAULT FALSE,
     alert_enabled   BOOLEAN NOT NULL DEFAULT TRUE,
     alert_threshold_mult NUMERIC(4,2) NOT NULL DEFAULT 1.0,
+    equity_drop_pct NUMERIC(4,1),
+    equity_peak     NUMERIC(20,8),
+    equity_peak_at  BIGINT,
     web_search_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     wake_window     VARCHAR(11),
     llm_endpoint_id BIGINT,
@@ -726,19 +729,22 @@ CREATE INDEX IF NOT EXISTS idx_ai_trader_user ON ai_trader(user_id);
 COMMENT ON TABLE ai_trader IS 'AI Trader：用户BYOK自主交易代理（每用户最多3个，各自独立sim子账户，公开竞技场）';
 COMMENT ON COLUMN ai_trader.status IS 'PAUSED/RUNNING/LIQUIDATED';
 COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分隔（须在agent的binance.symbols+crypto-futures-symbols范围内）';
-COMMENT ON COLUMN ai_trader.interval_code IS '心跳周期 15m/1h/4h：每根该级别K线收盘例行唤醒一次定期复查；两次心跳之间由止损止盈、盯盘条件命中、持仓事件、波动警报叫醒。5m已下线（存量迁15m）';
+COMMENT ON COLUMN ai_trader.interval_code IS '心跳周期 1h/4h：每根该级别K线收盘例行唤醒一次定期复查；两次心跳之间由盯盘条件命中、持仓事件（止损/强平/限价成交，止盈不叫）、波动警报叫醒。5m、15m已下线（存量迁1h）';
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：目标/边界/偏好，没写到的模型自己定（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当目标与边界；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '复盘开关：单子平仓满24小时做单笔复盘(DEBRIEF决策行)，日线边界做统一复盘(REVIEW决策行)并整理memory；关掉两种都停，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
-COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';
+COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒；一段行情（振幅穿上基准线到回落）只叫一次';
 COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/BNB0.6/ETH0.7/SOL0.9/DOGE0.9/XRP0.9/HYPE1.2/ZEC1.6%)×本系数，校准方法见VolatilitySentinel';
+COMMENT ON COLUMN ai_trader.equity_drop_pct IS '权益回落警报的比例%（1~90），NULL=不启用：每根5m收盘查一次权益，从参照点(equity_peak)回落到这个比例就叫醒一轮整盘的（DRAWDOWN决策行），参照点从那一刻的权益重新记；平台只叫醒，不平仓不限制开仓。休眠时段里不报，参照点也不重新记';
+COMMENT ON COLUMN ai_trader.equity_peak IS '权益回落警报的参照点：上次报警之后权益到过的最高点，没报过警就是启用以来的最高点；没启用、还没查过为NULL，关掉警报和重置开新局时清空';
+COMMENT ON COLUMN ai_trader.equity_peak_at IS '权益到参照点(equity_peak)的时刻ms';
 COMMENT ON COLUMN ai_trader.web_search_enabled IS '主人开关：联网搜索。开了且所用端点也开了联网搜索(user_llm_endpoint.web_search)，唤醒时才挂web_search工具、例行轮和波动警报轮才多问一句要不要搜；保存时所用端点没开搜索的存FALSE';
-COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（新加坡时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；单笔复盘和08:00的统一复盘不看时段。时段外静默不唤醒不写SKIPPED行';
+COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（新加坡时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。例行唤醒、盯盘命中、持仓事件、波动警报、权益回落警报时段外都不叫；手动唤醒不受限；单笔复盘和08:00的统一复盘不看时段。时段外静默不唤醒不写SKIPPED行';
 COMMENT ON COLUMN ai_trader.llm_endpoint_id IS '这个trader用的端点(user_llm_endpoint.id)，NULL=跟随用户默认端点；端点删除时清空';
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：统一复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
-COMMENT ON COLUMN ai_trader.owner_note_rounds IS '留言剩余注入轮次，0=无待读留言。1即"念一次就清"，上限24（15m档≈6小时）。递减走条件SQL(正文匹配作前置+原子递减)：唤醒读的是调度时刻的快照，以正文匹配保证只递减自己注入的那条';
-COMMENT ON COLUMN ai_trader.unreported_events IS '对账出来、还没成功告诉过模型的事件行（一条一行）：下一轮开场白接着报，那一轮成功了清空';
+COMMENT ON COLUMN ai_trader.owner_note_rounds IS '留言剩余注入轮次，0=无待读留言。1即"念一次就清"，上限24（1h档≈1天）。递减走条件SQL(正文匹配作前置+原子递减)：唤醒读的是调度时刻的快照，以正文匹配保证只递减自己注入的那条';
+COMMENT ON COLUMN ai_trader.unreported_events IS '对账出来、还没成功告诉过模型的事件行，JSON数组[{symbol,text}]（symbol=归哪个币，不归某一个币的为null）：管那个币的那一轮在开场白里报，那一轮成功了才清';
 COMMENT ON COLUMN ai_trader.sim_user_id IS '当前局sim子账户userId，每局独立，重置开新账户';
 COMMENT ON COLUMN ai_trader.round_no IS '局数：爆仓/手动重置+1开新局，历史留档';
 COMMENT ON COLUMN ai_trader.leverage_min IS '杠杆区间下界：模型必须从[min,max]里选，越界护栏拒（不截断——悄悄改值会让模型的止损计算失真）';
@@ -777,8 +783,8 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
 
 CREATE INDEX IF NOT EXISTS idx_atd_trader_time ON ai_trader_decision(trader_id, wake_time DESC);
 COMMENT ON TABLE ai_trader_decision IS 'AI Trader每次唤醒一行：推理全文+动作(含play_type论点标签)+权益快照——竞技场决策时间线与净值曲线数据源';
-COMMENT ON COLUMN ai_trader_decision.status IS 'OK/ERROR/SKIPPED（上一唤醒未完被跳过）';
-COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） EVENT=持仓事件唤醒（sim止损/止盈/强平/限价成交当场叫醒） WATCH=模型自己布的盯盘条件命中（ai_trader_watch） REVIEW=统一复盘（每天一篇，reasoning=复盘全文，无equity） DEBRIEF=单笔复盘（一笔单子平仓满24小时后复盘一次，reasoning=复盘全文，position_id=对应仓位，无equity） PRESET=预案命中后代码执行动作（没跑模型，reasoning=条件与执行结果，无equity）';
+COMMENT ON COLUMN ai_trader_decision.status IS 'OK/ERROR/SKIPPED（信号迟到，离下一根太近没跑）';
+COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） EVENT=持仓事件唤醒（sim止损/强平/限价成交当场叫醒，止盈不叫） WATCH=模型自己布的盯盘条件命中（ai_trader_watch） DRAWDOWN=权益回落警报唤醒（权益从参照点回落到主人设的比例，提前跑一轮整盘的） REVIEW=统一复盘（每天一篇，reasoning=复盘全文，无equity） DEBRIEF=单笔复盘（一笔单子平仓满24小时后复盘一次，reasoning=复盘全文，position_id=对应仓位，无equity） PRESET=预案命中后代码执行动作（没跑模型，reasoning=条件与执行结果，无equity）';
 COMMENT ON COLUMN ai_trader_decision.memory_after IS '仅REVIEW行：本期学习完的记忆快照存档（学习演进史,append-only）；ai_trader.memory是滚动覆盖的生效版本,历史版本只在这里';
 COMMENT ON COLUMN ai_trader_decision.equity IS '本轮动作落地后的账户权益USDT';
 COMMENT ON COLUMN ai_trader_decision.model_calls IS '本轮模型调用次数：ReAct是循环，一次唤醒会调很多次（上限见ModelCallLimiter）';
@@ -838,6 +844,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_watch (
     trader_id       BIGINT NOT NULL,
     round_no        INT NOT NULL,
     symbol          VARCHAR(20) NOT NULL,
+    for_symbol      VARCHAR(20) NOT NULL,
     kind            VARCHAR(16) NOT NULL,
     level           NUMERIC(20,8),
     period          VARCHAR(8),
@@ -856,7 +863,9 @@ CREATE TABLE IF NOT EXISTS ai_trader_watch (
 );
 -- 哨兵按币扫还在盯的条件
 CREATE INDEX IF NOT EXISTS idx_atw_armed ON ai_trader_watch (symbol) WHERE status = 'ARMED';
-COMMENT ON TABLE ai_trader_watch IS 'AI Trader 盯盘条件：模型用 set_watch 给自己布的"到了叫我"，一币一组整组替换；带动作的是预案，命中时代码先执行动作。哨兵盯 ARMED 的，命中标 FIRED 并唤醒；替换掉或重置作废的标 REPLACED，不删';
+COMMENT ON TABLE ai_trader_watch IS 'AI Trader 盯盘条件：模型用 set_watch 给自己布的"到了叫我"，按(for_symbol, symbol)一组整组替换；带动作的是预案，命中时代码先执行动作。哨兵盯 ARMED 的，命中标 FIRED 并唤醒；替换掉或重置作废的标 REPLACED，不删';
+COMMENT ON COLUMN ai_trader_watch.symbol IS '盯的是哪个币的价格（平台在采的币都行）';
+COMMENT ON COLUMN ai_trader_watch.for_symbol IS '为哪个可交易币布的：命中时叫醒只处理这个币的那一轮；多数时候和symbol是同一个';
 COMMENT ON COLUMN ai_trader_watch.kind IS 'TOUCH_ABOVE/TOUCH_BELOW=标记价触及level；CLOSE_ABOVE/CLOSE_BELOW=period周期收盘站上/跌破level；AT_TIME=到at_time时刻';
 COMMENT ON COLUMN ai_trader_watch.note IS '模型给下一轮自己的备注：这条命中意味着什么，命中唤醒的开场白原样念给它';
 COMMENT ON COLUMN ai_trader_watch.status IS 'ARMED=在盯 FIRED=命中过（fired_at/fired_price记命中时刻与价） REPLACED=被整组替换或重置作废';

@@ -20,14 +20,20 @@ public final class WatchText {
     private WatchText() {
     }
 
-    /** 一条命中：币、类型、价位 / 周期 / 时刻、命中价 */
+    /** 一条命中：币、类型、价位 / 周期 / 时刻、命中价；盯的是别的币的价格时，后面注明是为哪个币布的 */
     public static String detail(AiTraderWatch w, BigDecimal price, PromptCatalog prompts, AgentLang lang) {
         return prompts.get(lang, "trader.wake.watch." + key(w.getKind()), Map.of(
                 "symbol", w.getSymbol(),
                 "level", num(w.getLevel()),
                 "period", String.valueOf(w.getPeriod()),
                 "at", w.getAtTime() == null ? "" : BeijingTime.format(w.getAtTime()),
-                "price", num(price)));
+                "price", num(price))) + forTag(w, prompts, lang);
+    }
+
+    /** 盯的是别的币的价格时的一句注明：为哪个币布的；盯的就是它自己返回空串 */
+    public static String forTag(AiTraderWatch w, PromptCatalog prompts, AgentLang lang) {
+        return w.getForSymbol() == null || w.getForSymbol().equals(w.getSymbol()) ? ""
+                : prompts.get(lang, "trader.wake.watch.forTag", Map.of("symbol", w.getForSymbol()));
     }
 
     /** 一条还在盯的价格类条件本身：触及 X 以上 / 1h 收盘站上 X，承诺块用；AT_TIME 另有写法不走这儿 */

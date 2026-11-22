@@ -38,7 +38,7 @@ trader:
   config:
     nameRequired: A name is required, up to 32 characters
     nameTaken: You already have a trader with this name (case-insensitive) - pick another name
-    badInterval: The heartbeat interval must be 15m, 1h or 4h
+    badInterval: The heartbeat interval must be 1h or 4h
     windowNeverWakes: No {{interval}} candle closes inside that wake window, so it would never wake up. Widen the window or change the interval
     symbolRequired: Pick at least one coin to trade
     tooManySymbols: "At most {{max}} symbols (each wake-up's tool budget and attention are split per symbol)"
@@ -49,6 +49,7 @@ trader:
     marginRange: The margin cap per position must be between 0.1% and 50%
     hedgeNeedsTwoSlots: Hedging needs two position slots, so it cannot be on while only one position is allowed
     alertMultTooLow: The sensitivity multiplier cannot go below 1.0 (thresholds may only be raised)
+    equityDropRange: The equity drawdown alert must be between {{min}}% and {{max}}% (turn it off if you do not want it)
     # Wake-window parse failures. WakeWindow.parse throws these keys; TraderService renders them
     window:
       format: The wake window must look like HH:mm-HH:mm, e.g. 21:00-08:30
@@ -73,7 +74,7 @@ trader:
     liquidated: This round ended in liquidation - reset for a new round on the config page before trading again
     intervalRetired: This trader's wake interval has been retired, so it cannot be woken
     budgetTooTight: Less than {{seconds}}s to the next candle close - there is not enough time budget for this round. Wait for the candle to close
-    busy: The previous wake-up is still running, so this manual one is skipped (no trader runs twice at once)
+    busy: A whole-board wake-up is already running, so this manual one is skipped (only one whole-board round runs at a time)
 
   # On-demand review (the unified review, any time)
   review:

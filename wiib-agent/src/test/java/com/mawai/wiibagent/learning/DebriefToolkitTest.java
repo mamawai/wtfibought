@@ -74,7 +74,7 @@ class DebriefToolkitTest {
 
     /** 两段、两次模型调用的轨迹：第一次调 klines（回执 500 字），第二次是第二段的开头，给结论 */
     private static String trace() {
-        WakeTrace trace = new WakeTrace(7L, AiTraderDecision.KIND_TRADE, T0, 900, BigDecimal.TEN, 0, 0);
+        WakeTrace trace = new WakeTrace(7L, AiTraderDecision.KIND_TRADE, null, T0, 900, BigDecimal.TEN, 0, 0);
         trace.prompt("系统提示词", "开场白：账户与持仓");
         trace.callStart();
         trace.callEnd("先看结构", List.of(new AssistantMessage.ToolCall("c1", "function", "klines", "{\"symbol\":\"BTCUSDT\"}")));

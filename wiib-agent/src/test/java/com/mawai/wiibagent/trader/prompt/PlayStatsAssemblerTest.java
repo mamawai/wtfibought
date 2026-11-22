@@ -208,6 +208,7 @@ class PlayStatsAssemblerTest {
     /**
      * 重放汇总：5 笔多单入场 100、止损 98（R=2）、目标 106，开仓后那根 5m 最低 97.5、最高 100.5。
      * 止损原样被打（-1R），放宽到 1.5 倍以上没碰到；每笔净 -10、开仓数量 5，实际 = -10 ÷ (5×2) = -1R。
+     * 复盘素材和指令生成器要的那份带这两行，交易员开场白那份不带。
      */
     @Test
     void replaySummaryCountsOutcomesPerStopWidth() {
@@ -230,7 +231,7 @@ class PlayStatsAssemblerTest {
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(positions);
         when(planMapper.selectList(any())).thenReturn(plans);
 
-        String out = assembler.assemble(trader(), AgentLang.ZH);
+        String out = assembler.assembleWithReplay(trader(), AgentLang.ZH);
 
         assertThat(out).contains("原计划不动重放 5笔（")
                 .contains("：止损原样 到目标0 止损5 未决0 合计-5.20R ｜ 止损1.5倍 到目标0 止损0 未决5 合计+0R ｜ "
@@ -238,6 +239,10 @@ class PlayStatsAssemblerTest {
                 // 没有加过仓的单子，管理动作行不带加仓那半句
                 .contains("管理动作 5笔：实际合计-5.00R，原计划不动合计-5.20R（两边都已扣手续费、都不含资金费）\n");
         assertThat(out.indexOf("管理动作")).isLessThan(out.indexOf("样本少时"));
+
+        assertThat(assembler.assemble(trader(), AgentLang.ZH))
+                .contains("PULLBACK：5笔 0胜5负 盈亏合计-50.00 USDT")
+                .doesNotContain("原计划不动", "管理动作");
     }
 
     /**

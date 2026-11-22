@@ -260,7 +260,7 @@ tool:
 
   trader_decisions: |-
     Get the recent decision timeline of the user's AI trader, newest first. Each entry has
-    kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / EVENT=position-event wake / WATCH=watch-condition hit / REVIEW=unified review),
+    kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / EVENT=position-event wake / WATCH=watch-condition hit / DRAWDOWN=equity-drawdown wake / REVIEW=unified review),
     status, equity, the tools it called, and its FULL reasoning text. A trade action that did not go through
     carries its outcome in brackets after the tool name, e.g. open_position(rejected), close_position(not_attempted).
     Can be narrowed to one kind.
@@ -388,19 +388,23 @@ tool:
     Cancel one or more pending limit orders by orderIds (from the [Account] block's pendingOrders in your opening message, or get_account). reason is REQUIRED and records why these entries were cancelled in the plan and its revision history. Partial success starts with PARTIAL:.
 
   set_watch: |-
-    Replace ALL your watch conditions on one symbol. The symbol may be any coin the platform tracks, not
-    only your tradable ones (e.g. BTCUSDT as the market benchmark). The platform watches them between
-    wake-ups and wakes you the moment one is met: a non-routine wake-up whose opening names the condition
-    and your note.
+    Replace ALL your watch conditions on one symbol. symbol is the coin whose price is watched: any coin
+    the platform tracks, not only your tradable ones (e.g. BTCUSDT as the market benchmark). The platform
+    watches them between wake-ups and wakes you the moment one is met: a non-routine wake-up whose opening
+    names the condition and your note.
+    Every set belongs to a tradable symbol, and a hit wakes the round that handles only that symbol: leave
+    forSymbol out when the watched coin is the tradable symbol itself, and set forSymbol to the tradable
+    symbol the conditions are for when you watch another coin's price. In a round that handles a single
+    symbol the conditions always belong to that symbol.
     kind: TOUCH_ABOVE / TOUCH_BELOW (mark price touches level), CLOSE_ABOVE / CLOSE_BELOW (a candle of
     period 5m/15m/1h/4h/1d closes above / below level; a close of your heartbeat period or longer lands on the
     routine wake-up at that moment and is read out there, not as a separate wake-up), AT_TIME (at `at`,
     Singapore time yyyy-MM-dd HH:mm).
     The current Singapore time is nowBeijing in the [Account] block. note: one sentence to your next self about
     what it means when this fires. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward
-    (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per symbol: whichever comes first wakes you, and you re-arm
-    then. The previous set on the symbol is replaced in full, an empty array clears it. A condition fires
-    once and is removed.
+    (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per set: whichever comes first wakes you, and you re-arm
+    then. The previous set "for the same symbol, watching the same coin's price" is replaced in full, an
+    empty array clears it. A condition fires once and is removed.
     A condition may carry an action — a standing order the platform carries out by itself the moment the
     condition fires, on any of your positions or pending orders (not necessarily on this symbol):
     MOVE_STOP (positionId, stopLossPrice: tighten that position's stop to this price), CLOSE (positionId,

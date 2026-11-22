@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -36,8 +37,8 @@ public class TraderLiveHub {
     /** 订阅 30 分钟到点，前端自动重连 */
     private static final long SUBSCRIBE_TIMEOUT_MS = 30 * 60_000L;
 
-    /** traderId → 在跑的一轮，end 后摘掉 */
-    private final Map<Long, Run> runs = new ConcurrentHashMap<>();
+    /** traderId → 在跑的几轮（整盘轮和各个币的单币轮可以同时在跑），end 后摘掉 */
+    private final Map<Long, Set<Run>> runs = new ConcurrentHashMap<>();
     /** traderId → 订阅者；空闲时也挂着，等下一轮 run_start */
     private final Map<Long, Set<Sink>> traderSubscribers = new ConcurrentHashMap<>();
     /** 所有 SSE 通道，心跳用 */
@@ -67,11 +68,15 @@ public class TraderLiveHub {
 
     // ========== 运行侧 ==========
 
-    /** 一轮唤醒开始：建轨迹、登记在跑、扇出 run_start */
-    public Run begin(AiTrader trader, String kind, long wakeTime, long budgetSeconds,
+    /**
+     * 一轮唤醒开始：建轨迹、登记在跑、扇出 run_start
+     *
+     * @param symbol 这一轮只处理的那个币；整盘轮为 null
+     */
+    public Run begin(AiTrader trader, String kind, String symbol, long wakeTime, long budgetSeconds,
                      BigDecimal equity, int positions, int pendingOrders) {
-        Run run = new Run(new WakeTrace(trader.getId(), kind, wakeTime, budgetSeconds, equity, positions, pendingOrders));
-        runs.put(trader.getId(), run);
+        Run run = new Run(new WakeTrace(trader.getId(), kind, symbol, wakeTime, budgetSeconds, equity, positions, pendingOrders));
+        runs.computeIfAbsent(trader.getId(), _ -> ConcurrentHashMap.newKeySet()).add(run);
         run.started();
         return run;
     }
@@ -79,8 +84,11 @@ public class TraderLiveHub {
     /**
      * 一次唤醒的现场句柄。每个方法：轨迹变更拿帧 → 发该 trader 的订阅者。
      * 方法全同步：帧序与订阅者中途接入的回放互斥。
+     * 同一个 trader 可以有几轮同时在跑，每帧都带上是哪一轮的（run），订阅者按它分开。
      */
     public final class Run {
+        /** 这一轮在现场流里的编号 */
+        private final String id = UUID.randomUUID().toString();
         private final WakeTrace trace;
         /** finish 收好的 run_end 帧，end 补上 decisionId 才发 */
         private WakeTrace.Frame endFrame;
@@ -140,7 +148,10 @@ public class TraderLiveHub {
 
         /** 决策行已落库：从在跑表摘掉、发 run_end（带 decisionId） */
         public synchronized void end(Long decisionId) {
-            runs.remove(trace.traderId, this);
+            Set<Run> mine = runs.get(trace.traderId);
+            if (mine != null) {
+                mine.remove(this);
+            }
             endFrame.data().put("decisionId", decisionId);
             fanOut(endFrame);
         }
@@ -161,13 +172,13 @@ public class TraderLiveHub {
         }
 
         private boolean notDeliver(Sink sink, WakeTrace.Frame frame) {
-            return !sink.send(frame.event(), frame.data());
+            return !sink.send(frame.event(), frame.data().put("run", id));
         }
     }
 
     // ========== 订阅侧 ==========
 
-    /** 现场流：登记后立刻回放在跑的一轮；空闲时什么都不发，只有心跳 */
+    /** 现场流：登记后立刻回放在跑的每一轮；空闲时什么都不发，只有心跳 */
     public SseEmitter subscribeTrader(long traderId) {
         SseEmitter emitter = new SseEmitter(SUBSCRIBE_TIMEOUT_MS);
         SseChannel channel = new SseChannel(emitter);
@@ -179,13 +190,10 @@ public class TraderLiveHub {
 
     /** 包私有：测试挂收集器用 */
     void subscribeTrader(long traderId, Sink sink) {
-        Run run = runs.get(traderId);
-        // 空闲：挂上等下一轮 run_start；在跑：进 Run 锁里登记 + 回放
-        if (run == null) {
-            subscribers(traderId).add(sink);
-        } else {
-            run.attachAndReplay(sink);
-        }
+        // 先挂上：空闲就等下一轮 run_start。在跑的每一轮进它的 Run 锁里回放，
+        // 回放以 run_start 开头，订阅者据此把这一轮从头重建，回放之前零星收到的它的帧不作数
+        subscribers(traderId).add(sink);
+        runs.getOrDefault(traderId, Set.of()).forEach(run -> run.attachAndReplay(sink));
     }
 
     private Set<Sink> subscribers(long traderId) {

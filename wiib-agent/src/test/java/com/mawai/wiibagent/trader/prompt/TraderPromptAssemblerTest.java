@@ -342,14 +342,15 @@ class TraderPromptAssemblerTest {
                 .doesNotContain("【");
     }
 
-    /** 模板说明分段与收尾，具体交易判断仍由模型决定 */
+    /** 模板说明事实块读法与收尾，每一轮分几段走留给那一轮的消息；具体交易判断仍由模型决定 */
     @Test
     void openingInventoryAndConclusionPointerWithoutFraming() {
         String p = assembler.assemble(trader(), AgentLang.ZH);
 
         assertThat(p)
                 .contains("各段往返共享上下文")
-                .contains("挂有 web_search 时", "都分三段", "未挂 web_search 时保留原流程")
+                .contains("都以那一轮的消息为准")
+                .doesNotContain("都分三段", "未挂 web_search 时保留原流程")
                 .contains("[本轮结论]")
                 .contains("指令没覆盖到的，你自己定")
                 .doesNotContain("只需要回答一个问题")

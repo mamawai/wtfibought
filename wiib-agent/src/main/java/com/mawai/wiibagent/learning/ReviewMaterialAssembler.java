@@ -153,7 +153,7 @@ public class ReviewMaterialAssembler {
             }
         }
         List<ExperienceLedger.Classify> classifies = ExperienceLedger.mergeDebriefs(lines, active);
-        String stats = playStats.assemble(trader, lang);
+        String stats = playStats.assembleWithReplay(trader, lang);
         return new ReviewMaterial(
                 statsBlock(trader, fromMs, toMs, cases, lang),
                 stats == null ? "" : stats,

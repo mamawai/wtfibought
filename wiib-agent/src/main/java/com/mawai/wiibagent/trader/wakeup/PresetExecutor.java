@@ -4,6 +4,7 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.trade.AccountGates;
 import com.mawai.wiibagent.trader.trade.StopOrders;
 import com.mawai.wiibagent.trader.trade.PendingProtection;
 import com.mawai.wiibagent.trader.trade.TargetRung;
@@ -56,6 +57,8 @@ public class PresetExecutor {
     private final UserLangResolver userLangResolver;
     private final PromptCatalog prompts;
     private final MessageCatalog messages;
+    /** 每个 trader 一个账户闸，预案动作也从这里过 */
+    private final AccountGates gates;
 
     /** trader → 它还没做完的预案 */
     private final Map<Long, Set<CompletableFuture<Boolean>>> running = new ConcurrentHashMap<>();
@@ -77,7 +80,8 @@ public class PresetExecutor {
         mine.add(done);
         Thread.startVirtualThread(() -> {
             try {
-                done.complete(execute(w, price, at));
+                // 和这个 trader 各轮的交易动作排着队做
+                done.complete(gates.of(w.getTraderId()).exclusive(() -> execute(w, price, at)));
             } catch (Exception e) {
                 log.warn("[Preset] 执行出错 traderId={} watchId={} msg={}", w.getTraderId(), w.getId(), e.toString());
                 done.complete(true);

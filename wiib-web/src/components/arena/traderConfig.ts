@@ -1,7 +1,7 @@
 /**
  * trader 配置台与工作台共用的常量和新加坡时间计算。
  * 数字都跟后端同一份，改一边要改另一边：可选币=agent 的 binance.symbols + crypto-futures-symbols，
- * 币数上限=TraderService.MAX_SYMBOLS，每人 trader 上限=TraderService.MAX_PER_USER，心跳档位=TraderScheduler.WAKE_INTERVALS，
+ * 币数上限=TraderService.MAX_SYMBOLS，每人 trader 上限=TraderService.MAX_PER_USER，心跳档位=WakeIntervals.CODES，
  * 警报基准=VolatilitySentinel.BASE_THRESHOLD_PCT，模型调用上限=TraderWakeupRunner.MAX_MODEL_CALLS
  */
 
@@ -10,14 +10,12 @@ export const MAX_SYMBOLS = 3;
 /** 每人最多几个 trader */
 export const MAX_TRADERS = 3;
 /** 心跳档位 → 分钟 */
-export const INTERVAL_MIN: Record<string, number> = { '15m': 15, '1h': 60, '4h': 240 };
+export const INTERVAL_MIN: Record<string, number> = { '1h': 60, '4h': 240 };
 export const INTERVALS = Object.keys(INTERVAL_MIN);
 /** 波动警报每币基准阈值%（平台下限，只能经系数调高） */
 export const ALERT_BASE: Record<string, number> = {
   BTCUSDT: 0.6, BNBUSDT: 0.6, ETHUSDT: 0.7, SOLUSDT: 0.9, DOGEUSDT: 0.9, XRPUSDT: 0.9, HYPEUSDT: 1.2, ZECUSDT: 1.6,
 };
-/** 波动警报只在这两档生效 */
-export const ALERT_INTERVALS = ['1h', '4h'];
 /** 一次醒来最多调几次模型 */
 export const MAX_MODEL_CALLS = 16;
 /** 每局注资 */

@@ -29,6 +29,7 @@ import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.trade.AccountGate;
 import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
@@ -66,7 +67,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
  * 唤醒挂的那批工具的双语契约。工具描述与提示词一样是模型逐字读的输入：混一句中文，
  * 英文 trader 就会跟着串语言。
  * <p>
- * 断言直接打在 {@link TraderWakeupRunner#wakeTools} 上——那是建叶子时真正挂上去的那批，
+ * 断言直接打在 {@link WakeSession#wakeTools} 上——那是建叶子时真正挂上去的那批，
  * 测试里另抄一份工具清单就等于漏掉后来新加的工具。
  */
 class TraderToolI18nTest {
@@ -74,26 +75,14 @@ class TraderToolI18nTest {
     private final PromptCatalog prompts = new PromptCatalog();
     private final BinanceRestClient binance = mock(BinanceRestClient.class);
 
-    private final TraderWakeupRunner runner = new TraderWakeupRunner(
-            mock(TraderModelFactory.class),
-            new TraderPromptAssembler(mock(AiTraderMapper.class), prompts, mock(ExperienceLedger.class)),
-            mock(SimTradeClient.class), binance,
+    private final WakeSession runner = new WakeSession(
             new IndicatorToolkit(new KlineFetcher(binance, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
             new DerivativesToolkit(mock(MarketDataService.class)),
             new WhaleToolkit(mock(WhaleQueryService.class)),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             new CrossAssetToolkit(mock(CrossAssetService.class)),
-            mock(AiTraderMapper.class), mock(AiTraderDecisionMapper.class),
-            new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new TransactionTemplate(mock(PlatformTransactionManager.class))),
-            new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
-            mock(UserLangResolver.class), prompts,
-            new MessageCatalog(),
-            new LocalizedToolCallbacks(prompts),
-            mock(WakeObservation.class), mock(WakeFlows.class),
-            mock(EconCalendarAssembler.class), new TraderLiveHub(), mock(EntryContext.class),
-            mock(DecisionText.class), mock(ExperienceLedger.class), mock(BinanceProperties.class),
-            mock(PresetExecutor.class));
+            new LocalizedToolCallbacks(prompts), prompts);
 
     /** 只做反射扫描的壳：工具方法一个都不会被调起来，依赖给 null 即可 */
     private final TradeTools tradeTools = new TradeTools(
@@ -101,8 +90,8 @@ class TraderToolI18nTest {
             sym -> BigDecimal.ONE,
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts, new TransactionTemplate(mock(PlatformTransactionManager.class))),
             new TraderWatchStore(mock(AiTraderWatchMapper.class), mock(ApplicationEventPublisher.class)),
-            new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
-            mock(EntryContext.class), () -> true);
+            new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE, null, AgentLang.ZH, null), prompts, new MessageCatalog(),
+            mock(EntryContext.class), _ -> true, new AccountGate());
 
     private Map<String, String> descriptions(AgentLang lang) {
         return runner.wakeTools(lang, tradeTools, null).stream().collect(Collectors.toMap(
@@ -176,8 +165,8 @@ class TraderToolI18nTest {
         TradeTools bound = new TradeTools(sim, 1L, Set.of("BTCUSDT"), Set.of("BTCUSDT"),
                 _ -> new BigDecimal("100000"), mock(TraderPlanStore.class), mock(TraderWatchStore.class),
                 new TradeTools.WakeCtx(1L, 1, "1h", 0L, Long.MAX_VALUE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.EN),
-                prompts, new MessageCatalog(), mock(EntryContext.class), () -> true);
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.EN, null),
+                prompts, new MessageCatalog(), mock(EntryContext.class), _ -> true, new AccountGate());
         ToolCallback cb = runner.wakeTools(AgentLang.EN, bound, null).stream()
                 .filter(t -> "open_position".equals(t.getToolDefinition().name())).findFirst().orElseThrow();
         String result = cb.call("{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\",\"entries\":" + entries

@@ -17,4 +17,10 @@ public record WatchTrigger(AiTraderWatch watch, BigDecimal price, long firedAt) 
     public String kind() {
         return AiTraderDecision.KIND_WATCH;
     }
+
+    /** 归为它布这条条件的那个币，不是被盯价格的那个币 */
+    @Override
+    public String symbol() {
+        return watch.getForSymbol();
+    }
 }

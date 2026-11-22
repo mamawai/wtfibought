@@ -69,6 +69,9 @@ public class TraderService {
     public static final int MAX_SYMBOLS = 3;
     /** 主人交易指令字数上限，按 String.length() 算（前端指令框同一个数） */
     public static final int MAX_CUSTOM_PROMPT = 4000;
+    /** 权益回落警报的比例%能设的范围（前端滑杆在这之内） */
+    static final BigDecimal EQUITY_DROP_PCT_MIN = BigDecimal.ONE;
+    static final BigDecimal EQUITY_DROP_PCT_MAX = new BigDecimal("90");
 
     private final AiTraderMapper traderMapper;
     private final AiTraderDecisionMapper decisionMapper;
@@ -95,13 +98,13 @@ public class TraderService {
 
     /**
      * llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（新加坡时间），null=全天。
-     * webSearchEnabled：联网搜索开关，所用端点没开联网搜索的存 false
+     * webSearchEnabled：联网搜索开关，所用端点没开联网搜索的存 false。equityDropPct：权益回落警报的比例%，null=不启用
      */
     public record UpsertReq(String name, String symbols, String intervalCode, String customPrompt,
                             Long llmEndpointId,
                             Integer leverageMin, Integer leverageMax, BigDecimal marginPctMax,
                             Boolean allowMultiPosition, Boolean allowHedge,
-                            Boolean alertEnabled, BigDecimal alertThresholdMult,
+                            Boolean alertEnabled, BigDecimal alertThresholdMult, BigDecimal equityDropPct,
                             Boolean reviewEnabled, Boolean learnedRestrictionHold,
                             Boolean webSearchEnabled, String wakeWindow) {
     }
@@ -201,7 +204,7 @@ public class TraderService {
         applyConfig(probe, req, endpoint);
         // 列级更新只写配置字段：整行 updateById 会把唤醒回路并发写的 status/连败计数盖回快照旧值
         // （连通性测试要出网数秒，窗口不小）——与 runner 侧"状态回写列级更新"是同一条铁律的两半
-        traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
+        LambdaUpdateWrapper<AiTrader> upd = new LambdaUpdateWrapper<AiTrader>()
                 .eq(AiTrader::getId, t.getId())
                 .set(AiTrader::getName, probe.getName())
                 .set(AiTrader::getSymbols, probe.getSymbols())
@@ -214,12 +217,18 @@ public class TraderService {
                 .set(AiTrader::getAllowHedge, probe.getAllowHedge())
                 .set(AiTrader::getAlertEnabled, probe.getAlertEnabled())
                 .set(AiTrader::getAlertThresholdMult, probe.getAlertThresholdMult())
+                .set(AiTrader::getEquityDropPct, probe.getEquityDropPct())
                 .set(AiTrader::getReviewEnabled, probe.getReviewEnabled())
                 .set(AiTrader::getLearnedRestrictionHold, probe.getLearnedRestrictionHold())
                 .set(AiTrader::getWebSearchEnabled, probe.getWebSearchEnabled())
                 .set(AiTrader::getWakeWindow, probe.getWakeWindow())
                 .set(AiTrader::getLlmEndpointId, probe.getLlmEndpointId())
-                .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
+                .set(AiTrader::getUpdatedAt, LocalDateTime.now());
+        // 关掉权益回落警报，参照点一起清：再开的时候从那时的权益记起
+        if (probe.getEquityDropPct() == null) {
+            upd.set(AiTrader::getEquityPeak, null).set(AiTrader::getEquityPeakAt, null);
+        }
+        traderMapper.update(null, upd);
         if (modelChanged) {
             modelFactory.evict(t.getId());
         }
@@ -350,6 +359,9 @@ public class TraderService {
                 .set(AiTrader::getOwnerNote, null)
                 .set(AiTrader::getOwnerNoteRounds, 0)
                 .set(AiTrader::getUnreportedEvents, null)
+                // 权益回落警报的参照点按局记，新局从头记
+                .set(AiTrader::getEquityPeak, null)
+                .set(AiTrader::getEquityPeakAt, null)
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now());
         if (!carryNotes) {
             upd.set(AiTrader::getMemory, null);
@@ -654,6 +666,11 @@ public class TraderService {
         if (req.alertThresholdMult() != null && req.alertThresholdMult().compareTo(BigDecimal.ONE) < 0) {
             return messages.get("trader.config.alertMultTooLow");
         }
+        if (req.equityDropPct() != null && (req.equityDropPct().compareTo(EQUITY_DROP_PCT_MIN) < 0
+                || req.equityDropPct().compareTo(EQUITY_DROP_PCT_MAX) > 0)) {
+            return messages.get("trader.config.equityDropRange",
+                    Map.of("min", EQUITY_DROP_PCT_MIN, "max", EQUITY_DROP_PCT_MAX));
+        }
         return null;
     }
 
@@ -673,6 +690,7 @@ public class TraderService {
         t.setAllowHedge(Boolean.TRUE.equals(req.allowHedge()));
         t.setAlertEnabled(!Boolean.FALSE.equals(req.alertEnabled()));
         t.setAlertThresholdMult(req.alertThresholdMult() == null ? BigDecimal.ONE : req.alertThresholdMult());
+        t.setEquityDropPct(req.equityDropPct());
         t.setReviewEnabled(!Boolean.FALSE.equals(req.reviewEnabled()));
         t.setLearnedRestrictionHold(Boolean.TRUE.equals(req.learnedRestrictionHold()));
         // 端点没开联网搜索的，这个开关开不了

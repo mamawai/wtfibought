@@ -23,6 +23,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static com.mawai.wiibagent.trader.trade.StopOrders.pctOfEquity;
@@ -39,14 +40,19 @@ final class WakeAccountState {
     /**
      * 账户状态一次给足（持仓+计划+挂单）：模型不必再花工具预算查户口，
      * 预算留给行情求证。持仓携带交易计划与当前止损止盈，模型一眼看全。
+     *
+     * @param shown 持仓行和挂单行只列这些币的；权益和两个合计风险数照全账户算
      */
-    static String accountStateJson(PromptCatalog prompts, AgentLang lang,
+    static String accountStateJson(PromptCatalog prompts, AgentLang lang, Predicate<String> shown,
                                    BigDecimal equity, List<FuturesPositionDTO> positions,
                                    List<FuturesOrderResponse> pendingOrders,
                                    List<AiTraderPlan> plans, long wakeTime,
                                    Map<Long, CaseFileBuilder.MarketWindow> paths) {
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         plans.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
+        List<FuturesPositionDTO> shownPositions = positions.stream().filter(p -> shown.test(p.getSymbol())).toList();
+        List<FuturesOrderResponse> shownOrders = pendingOrders == null ? List.of()
+                : pendingOrders.stream().filter(o -> shown.test(o.getSymbol())).toList();
         ObjectNode out = MAPPER.createObjectNode();
         out.put("equity", equity.setScale(2, RoundingMode.HALF_UP));
         // 当前新加坡时间，带年份：set_watch 的 AT_TIME 按这个写法填
@@ -57,11 +63,11 @@ final class WakeAccountState {
         // 还挂着的开仓单全部成交、再全部被各自带的止损打掉，还要多亏权益的百分之几
         out.put("lossIfPendingFillPctOfEquity", pctOfEquity(pendingOrders == null ? BigDecimal.ZERO
                 : pendingOrders.stream().map(StopOrders::lossAtStops).reduce(BigDecimal.ZERO, BigDecimal::add), equity));
-        out.set("positions", positionsJson(prompts, lang, equity, positions, planByKey, wakeTime, paths));
+        out.set("positions", positionsJson(prompts, lang, equity, shownPositions, planByKey, wakeTime, paths));
         // 挂单同样给足：开仓挂单占坑且带着计划（成交后计划全文随持仓回注，这里给轻量版）。
         // 挂出时刻与已挂时长必须在：限价单挂了多久只有代码知道，模型据此执行自己写的作废条件
-        if (pendingOrders != null && !pendingOrders.isEmpty()) {
-            out.set("pendingOrders", pendingOrdersJson(prompts, lang, equity, pendingOrders, planByKey, wakeTime));
+        if (!shownOrders.isEmpty()) {
+            out.set("pendingOrders", pendingOrdersJson(prompts, lang, equity, shownOrders, planByKey, wakeTime));
         }
         return MAPPER.writeValueAsString(out);
     }

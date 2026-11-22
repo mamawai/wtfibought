@@ -251,7 +251,11 @@ export function WatchList({ watches }: { watches: TraderWatch[] }) {
             <div key={w.id} className="wa">
               <Icon className="ci" />
               <div className="b">
-                <b>{cfg.name} · {cond(w)}{away < NEAR_PCT && <span className="tag o sm">{t('wb.watch.soon')}</span>}</b>
+                <b>
+                  {cfg.name} · {cond(w)}
+                  {w.forSymbol !== w.symbol && <span className="tag sm">{t('wb.watch.forSymbol', { coin: getCoin(w.forSymbol).name })}</span>}
+                  {away < NEAR_PCT && <span className="tag o sm">{t('wb.watch.soon')}</span>}
+                </b>
                 {w.note && <span>{t('wb.watch.note', { v: w.note })}</span>}
                 {w.actionJson && <span>{preset(w)}</span>}
               </div>

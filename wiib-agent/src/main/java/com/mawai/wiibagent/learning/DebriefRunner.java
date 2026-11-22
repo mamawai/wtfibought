@@ -186,7 +186,7 @@ public class DebriefRunner {
         d.setPositionId(pos.getId());
         d.setToolCalls(0);
         // 复盘和唤醒会同时跑，不走现场流，轨迹自己拿着
-        WakeTrace trace = new WakeTrace(trader.getId(), AiTraderDecision.KIND_DEBRIEF, start, timeoutSeconds, null, 0, 0);
+        WakeTrace trace = new WakeTrace(trader.getId(), AiTraderDecision.KIND_DEBRIEF, null, start, timeoutSeconds, null, 0, 0);
         try {
             DebriefMaterialAssembler.DebriefMaterial material = assembler.assemble(trader, pos, due.plan(), lang);
             String output = run(trader, prompts.get(lang, "debrief.system"), userPrompt(trader, pos, material, start, lang),

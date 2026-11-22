@@ -836,10 +836,12 @@ export interface TraderOwnerView {
   llmEndpointId: number | null;
   customPrompt: string | null;
   spec: TraderSpec;
-  /** 波动哨兵警报开关（仅 1h/4h 档生效） */
+  /** 波动哨兵警报开关 */
   alertEnabled: boolean;
   /** 警报灵敏度系数 >=1 只能调高：生效阈值 = 每币基准 x 系数 */
   alertThresholdMult: number;
+  /** 权益回落警报的比例%，null=没启用 */
+  equityDropPct: number | null;
   /** 复盘开关：管单笔复盘（DEBRIEF 行）和统一复盘（REVIEW 行）两种 */
   reviewEnabled: boolean;
   /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
@@ -967,7 +969,7 @@ export interface AiTraderPlanView {
 export interface TradeDecisionRef {
   id: number;
   wakeTime: number;
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DEBRIEF';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'DEBRIEF';
   reasoning: string | null;
   reason: string | null;
 }
@@ -1015,7 +1017,10 @@ export interface TraderDetailView {
 /** 它给自己布的一条盯盘条件（ai_trader_watch 原样），命中就叫醒它；带 actionJson 的是预案，命中时平台先把动作做掉 */
 export interface TraderWatch {
   id: number;
+  /** 盯的是哪个币的价格 */
   symbol: string;
+  /** 为哪个可交易币布的：命中时叫醒只处理这个币的那一轮；多数时候和 symbol 是同一个 */
+  forSymbol: string;
   kind: 'TOUCH_ABOVE' | 'TOUCH_BELOW' | 'CLOSE_ABOVE' | 'CLOSE_BELOW' | 'AT_TIME';
   /** 价位；AT_TIME 为 null */
   level: number | null;
@@ -1043,12 +1048,13 @@ export interface AiTraderDecisionView {
   intervalCode: string;
   /**
    * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader）
-   * EVENT=持仓事件唤醒（止损/止盈/强平/限价成交当场叫醒） WATCH=它自己布的盯盘条件命中
+   * EVENT=持仓事件唤醒（止损/强平/限价成交当场叫醒，止盈不叫） WATCH=它自己布的盯盘条件命中
+   * DRAWDOWN=权益回落警报唤醒（权益从最高点回落到主人设的比例，提前看一次整盘）
    * REVIEW=统一复盘（每天一篇，reasoning=复盘全文，无equity）
    * DEBRIEF=单笔复盘（一笔单子平仓满 24 小时后复盘一次，reasoning=复盘全文，无equity）
    * PRESET=预案命中后平台代它执行的动作（没跑模型，reasoning=条件与执行结果，无equity）
    */
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'REVIEW' | 'DEBRIEF' | 'PRESET';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'REVIEW' | 'DEBRIEF' | 'PRESET';
   /** 仅 DEBRIEF 行：这篇单笔复盘对应的仓位编号 */
   positionId: number | null;
   status: 'OK' | 'ERROR' | 'SKIPPED';
@@ -1080,7 +1086,7 @@ export interface TraderEquityPoint {
 // ---- 唤醒过程：实时流（/ai/trader/{id}/live、/ai/trader/live）与落库轨迹（trace_json）----
 
 /** 会走实时流的唤醒类型（复盘不进这条通道） */
-export type WakeKind = 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH';
+export type WakeKind = 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN';
 /** 工具回执状态：成功、拒绝、失败、未知、部分完成。 */
 export type WakeToolStatus = 'ok' | 'rejected' | 'error' | 'unknown' | 'partial' | 'not_attempted' | 'unavailable';
 
@@ -1134,6 +1140,8 @@ export interface WakeTrace {
   v: number;
   /** 落库轨迹里还有单笔复盘的（DEBRIEF）：它不是唤醒，没有权益、持仓、挂单 */
   kind: WakeKind | 'DEBRIEF';
+  /** 这一轮只处理的那个币；看整盘的那一轮、老的轨迹没有 */
+  symbol?: string | null;
   wakeTime: number;
   startedAt: number;
   budgetSeconds: number;
@@ -1147,9 +1155,15 @@ export interface WakeTrace {
   end?: WakeEnd;
 }
 
-/** 现场流 SSE 事件（与后端 TraderLiveHub 帧协议一一对应） */
-export type TraderLiveEvent =
-  | { type: 'run_start'; kind: WakeKind; wakeTime: number; budgetSeconds: number; equity: number; positions: number; pendingOrders: number; startedAt: number }
+/**
+ * 现场流 SSE 事件（与后端 TraderLiveHub 帧协议一一对应）。
+ * 一个 trader 可以有几轮同时在跑，每帧的 run 是它属于哪一轮
+ */
+export type TraderLiveEvent = { run: string } & TraderLiveFrame;
+
+export type TraderLiveFrame =
+  // symbol：这一轮只处理的那个币；看整盘的那一轮为 null
+  | { type: 'run_start'; kind: WakeKind; symbol: string | null; wakeTime: number; budgetSeconds: number; equity: number; positions: number; pendingOrders: number; startedAt: number }
   | { type: 'prompt'; system: string; instruction: string }
   // 下一段开场白进了历史，排在第 call 次调用之前
   | { type: 'stage'; n: number; call: number; instruction: string }
@@ -1172,6 +1186,8 @@ export interface TraderUpsertRequest {
   spec: TraderSpec;
   alertEnabled: boolean;
   alertThresholdMult: number;
+  /** 权益回落警报的比例%，null=不启用 */
+  equityDropPct: number | null;
   reviewEnabled: boolean;
   learnedRestrictionHold: boolean;
   /** 联网搜索开关；所选端点没开联网搜索的，后端存 false */

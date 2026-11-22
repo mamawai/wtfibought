@@ -33,7 +33,7 @@ type Tab = 'timeline' | 'trades';
 /** 时间线筛选：全部 / 动过仓位的 / 被叫醒的（例行心跳之外） / 单笔复盘 / 统一复盘 */
 const FILTERS = ['all', 'acted', 'woken', 'debrief', 'review'] as const;
 type Filter = typeof FILTERS[number];
-const WOKEN_KINDS = new Set(['WATCH', 'EVENT', 'ALERT', 'MANUAL']);
+const WOKEN_KINDS = new Set(['WATCH', 'EVENT', 'ALERT', 'DRAWDOWN', 'MANUAL']);
 
 const coinName = (symbol: string) => COIN_MAP[symbol]?.name ?? symbol.replace('USDT', '');
 

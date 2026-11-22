@@ -92,6 +92,7 @@ debrief:
       watch: watch condition met
       event: position event
       alert: volatility alert
+      drawdown: equity drawdown alert
       manual: manual wake-up
       preset: preset executed
     # The opening message as written, up to the account block

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import {
-  ArrowRight, ChevronLeft, ChevronRight, CircleHelp, Info, Loader2, Lock, MessageCircle, NotebookPen,
+  ArrowRight, ChevronLeft, ChevronRight, CircleHelp, Loader2, Lock, MessageCircle, NotebookPen,
   Plus, RotateCcw, Sparkles, Trash2, TriangleAlert, Zap,
 } from 'lucide-react';
 import { llmEndpointApi, traderApi } from '../api';
@@ -13,7 +13,7 @@ import { PnlPct } from '../components/arena/PnlPct';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { RangeRail, Slider, SwitchRow, WakeRuler } from '../components/arena/TraderControls';
 import {
-  ALERT_BASE, ALERT_INTERVALS, BASE_EQUITY, beatsPerDay, INTERVALS, MAX_SYMBOLS, MAX_TRADERS, minToHm, parseWindow, posOf,
+  ALERT_BASE, BASE_EQUITY, beatsPerDay, INTERVALS, MAX_SYMBOLS, MAX_TRADERS, minToHm, parseWindow, posOf,
   TRADER_SYMBOLS, valueAt, windowText, type WakeWin,
 } from '../components/arena/traderConfig';
 import { DATA_TOOLS, TRADE_TOOLS, toolName } from '../components/arena/traderTools';
@@ -43,6 +43,9 @@ const MARGIN_MAX = 50;
 const MAR_T = [0.1, 0.5, 1, 2, 5, 10, 20, 30, MARGIN_MAX];
 /** 警报灵敏度系数 1.0~4.0，只能调高 */
 const SENS_T = [1, 2, 3, 4];
+/** 权益回落警报的比例刻度%，在后端 TraderService 收的 1~90 之内；刚打开时给 15 */
+const DROP_T = [5, 10, 15, 20, 30, 50];
+const DROP_DEFAULT = 15;
 /** 交易指令最多这么多字，跟后端 TraderService.MAX_CUSTOM_PROMPT 同一个数 */
 const PROMPT_MAX = 4000;
 /** 名字最多这么多字 */
@@ -63,7 +66,7 @@ const DEFAULT_SPEC: TraderSpec = {
 const EMPTY_FORM: TraderUpsertRequest = {
   name: '', symbols: 'BTCUSDT', intervalCode: '1h', customPrompt: '',
   llmEndpointId: null,
-  spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, reviewEnabled: true,
+  spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, equityDropPct: null, reviewEnabled: true,
   learnedRestrictionHold: false,
   webSearchEnabled: false,
   wakeWindow: null,
@@ -75,6 +78,7 @@ function formOf(v: TraderOwnerView): TraderUpsertRequest {
     customPrompt: v.customPrompt ?? '', llmEndpointId: v.llmEndpointId,
     spec: v.spec,
     alertEnabled: v.alertEnabled, alertThresholdMult: v.alertThresholdMult,
+    equityDropPct: v.equityDropPct,
     reviewEnabled: v.reviewEnabled,
     learnedRestrictionHold: v.learnedRestrictionHold,
     webSearchEnabled: v.webSearchEnabled,
@@ -88,7 +92,7 @@ const SECTIONS: { id: string; keys: (keyof TraderUpsertRequest)[] }[] = [
   { id: 'coins', keys: ['symbols'] },
   { id: 'beat', keys: ['intervalCode', 'wakeWindow'] },
   { id: 'spec', keys: ['spec'] },
-  { id: 'alert', keys: ['alertEnabled', 'alertThresholdMult', 'reviewEnabled', 'learnedRestrictionHold'] },
+  { id: 'alert', keys: ['alertEnabled', 'alertThresholdMult', 'equityDropPct', 'reviewEnabled', 'learnedRestrictionHold'] },
   { id: 'model', keys: ['llmEndpointId', 'webSearchEnabled'] },
   { id: 'prompt', keys: ['customPrompt'] },
 ];
@@ -129,6 +133,11 @@ function stepMargin(v: number, dir: number) {
 
 function snapSens(v: number) {
   return Math.max(SENS_T[0], Math.min(SENS_T[SENS_T.length - 1], Math.round(v * 10) / 10));
+}
+
+/** 权益回落比例：1% 一档 */
+function snapDrop(v: number) {
+  return Math.max(DROP_T[0], Math.min(DROP_T[DROP_T.length - 1], Math.round(v)));
 }
 
 function fmtPct(v: number) {
@@ -613,11 +622,8 @@ export function MyTrader({ traderId }: { traderId: number | null }) {
 
           <section id={secId('alert')} className="msec">
             <SecHead no="04" title={t('my.idx.alert')} />
-            {!ALERT_INTERVALS.includes(form.intervalCode) && (
-              <div className="note"><Info className="ic" /><div>{t('my.alert.off15m')}</div></div>
-            )}
             <SwitchRow checked={form.alertEnabled} onChange={v => set({ alertEnabled: v })} title={t('my.alert.title')} desc={t('my.alert.desc')} />
-            <div className={cn('asub blk', (!form.alertEnabled || !ALERT_INTERVALS.includes(form.intervalCode)) && 'dim')}>
+            <div className={cn('asub blk', !form.alertEnabled && 'dim')}>
               <div className="fld">
                 <div className="fl"><span>{t('my.alert.mult')}</span><span>{t('my.alert.multSub')}</span></div>
                 <b className="bigv nf">×{form.alertThresholdMult.toFixed(1)}</b>
@@ -634,6 +640,18 @@ export function MyTrader({ traderId }: { traderId: number | null }) {
                 })}
               </div>
               <p className="hint">{t('my.alert.hint')}</p>
+            </div>
+            <SwitchRow checked={form.equityDropPct != null} onChange={v => set({ equityDropPct: v ? DROP_DEFAULT : null })}
+                       title={t('my.alert.dropTitle')} desc={t('my.alert.dropDesc')} />
+            <div className={cn('asub blk', form.equityDropPct == null && 'dim')}>
+              <div className="fld">
+                <div className="fl"><span>{t('my.alert.dropPct')}</span><span>{t('my.alert.dropPctSub')}</span></div>
+                <b className="bigv nf">{form.equityDropPct ?? DROP_DEFAULT}%</b>
+                <Slider nodes={DROP_T} value={form.equityDropPct ?? DROP_DEFAULT} onChange={v => set({ equityDropPct: v })}
+                        snap={snapDrop} step={(v, d) => snapDrop(v + d)} tick={v => `${v}%`}
+                        text={v => `${v}%`} label={t('my.alert.dropAria')} disabled={form.equityDropPct == null} />
+              </div>
+              <p className="hint">{t('my.alert.dropHint')}</p>
             </div>
             <div className="swg">
               <SwitchRow checked={form.reviewEnabled} onChange={v => set({ reviewEnabled: v })} title={t('cfg.reviewOn')} desc={t('my.alert.reviewDesc')} />

@@ -23,14 +23,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 /**
  * 波动哨兵（探测层）：feed markPrice tick（~1s）→ 每币 5 分钟滚动窗口振幅，超过
- * "币基准阈值 × trader 灵敏度系数"且该 trader（1h/4h 档）持有该币仓位/挂单时，
- * 广播一条 {@link TriggerFired}，调度器接住后触发一次警报唤醒（在跑则排队，结束后合成一轮）。
+ * "币基准阈值 × trader 灵敏度系数"且该 trader 持有该币仓位/挂单时，
+ * 广播一条 {@link TriggerFired}，调度器接住后交给处理这个币的那一轮（在跑就插进去，没有就起一轮单币轮）。
  * 例行 K 线唤醒的补充而非替代——只认"世界变了"级别的波动，空仓者不惊动。
  * <p>
  * 边沿触发：振幅从基准线下穿上去算一段行情开始，回落到基准线的八成以下算结束（{@link #REARM_RATIO}，
@@ -64,9 +63,6 @@ public class VolatilitySentinel implements MessageListener {
             "HYPEUSDT", new BigDecimal("1.2"),   // 1 / 18.2
             "ZECUSDT", new BigDecimal("1.6"));   // 2 / 16.2
 
-    /** 警报只服务 1h/4h：5m/15m 自身节奏已够密，被惊醒的边际价值撑不起被打断的成本 */
-    static final Set<String> ALERT_INTERVALS = Set.of("1h", "4h");
-
     static final long WINDOW_MS = 5 * 60_000L;
     private static final long SAMPLE_INTERVAL_MS = 1_000L;
     /** 回落余量：振幅跌到基准线的八成以下这段行情才算完；八成线到基准线之间既不开新段也不结束 */
@@ -93,8 +89,7 @@ public class VolatilitySentinel implements MessageListener {
     @PostConstruct
     public void init() {
         listenerContainer.addMessageListener(this, new ChannelTopic(MarketStreamChannels.PRICE));
-        log.info("[Sentinel] 订阅 {} 启动(type=markprice) 档位={} 基准={}",
-                MarketStreamChannels.PRICE, ALERT_INTERVALS, BASE_THRESHOLD_PCT);
+        log.info("[Sentinel] 订阅 {} 启动(type=markprice) 基准={}", MarketStreamChannels.PRICE, BASE_THRESHOLD_PCT);
     }
 
     @Override
@@ -161,12 +156,11 @@ public class VolatilitySentinel implements MessageListener {
         }
     }
 
-    /** 一段行情的名单：1h/4h 档 + 开关开 + 交易这个币的 RUNNING trader，各带自己的生效阈值 */
+    /** 一段行情的名单：开关开 + 交易这个币的 RUNNING trader，各带自己的生效阈值 */
     private Incident candidates(String symbol) {
         List<Candidate> out = new ArrayList<>();
         for (AiTrader t : traderMapper.selectList(new LambdaQueryWrapper<AiTrader>()
-                .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING)
-                .in(AiTrader::getIntervalCode, ALERT_INTERVALS))) {
+                .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING))) {
             if (Boolean.FALSE.equals(t.getAlertEnabled())) {
                 continue;
             }

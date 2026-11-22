@@ -39,7 +39,7 @@ class TraderWakeupRunnerAccountStateTest {
     /** 单笔复盘靠账户 JSON 是以 equity 开头的一整行，来认开场白里的账户段（DebriefMaterialAssembler.accountAt） */
     @Test
     void accountJsonIsOneLineStartingWithEquity() {
-        assertThat(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("1000"),
+        assertThat(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("1000"),
                 List.of(), List.of(), List.of(), BOUNDARY, Map.of())).startsWith("{\"equity\"").doesNotContain("\n");
     }
 
@@ -53,7 +53,7 @@ class TraderWakeupRunnerAccountStateTest {
         order.setCreatedAt(LocalDateTime.now());
         order.setStopLosses(List.of(new FuturesStopLoss("s", new BigDecimal("108"), new BigDecimal("4"))));
         order.setTakeProfits(List.of(new FuturesTakeProfit("t", new BigDecimal("90"), new BigDecimal("4"))));
-        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("1000"),
+        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("1000"),
                 List.of(), List.of(order), List.of(plan), BOUNDARY, Map.of()));
         assertThat(out.path("lossIfPendingFillPctOfEquity").asDecimal()).isEqualByComparingTo("1.6");
         var pending = out.path("pendingOrders").get(0);
@@ -85,7 +85,7 @@ class TraderWakeupRunnerAccountStateTest {
         order.setLeverage(50);
         order.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(placed), ZoneId.systemDefault()));
 
-        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("15833"),
                 List.of(), List.of(order), List.of(plan), BOUNDARY, Map.of());
 
         JsonNode planJson = MAPPER.readTree(json).get("pendingOrders")
@@ -109,7 +109,7 @@ class TraderWakeupRunnerAccountStateTest {
         p.setLiquidationPrice(new BigDecimal("58000"));
         p.setUnrealizedPnl(new BigDecimal("100"));
 
-        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("15833"),
                 List.of(p), List.of(), List.of(), BOUNDARY, Map.of());
 
         assertThat(json).contains("\"leverage\":10").contains("\"markPrice\":64000")
@@ -130,7 +130,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setStopLossPrice(new BigDecimal("96"));
         plan.setOpenedWakeTime(BOUNDARY - 3600_000L);
 
-        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("10000"),
+        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("10000"),
                 List.of(longPos, shortPos), List.of(), List.of(plan), BOUNDARY, Map.of()));
 
         JsonNode btc = out.get("positions").get(0);
@@ -149,7 +149,7 @@ class TraderWakeupRunnerAccountStateTest {
         FuturesPositionDTO pos = riskPosition(349L, "BTCUSDT", "LONG", "100", "104", "98", "10");
         pos.setQuantity(new BigDecimal("5"));
 
-        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("10000"),
+        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("10000"),
                 List.of(pos), List.of(), List.of(), BOUNDARY, Map.of()));
 
         assertThat(out.get("positions").get(0).get("lossAtStopPctOfEquity").decimalValue()).isEqualByComparingTo("0.10");
@@ -167,7 +167,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setTakeProfitsJson("[{\"price\":108,\"percent\":50}]");
         plan.setOpenedWakeTime(BOUNDARY - 3600_000L);
 
-        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("10000"),
+        JsonNode out = MAPPER.readTree(WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("10000"),
                 List.of(p), List.of(), List.of(plan), BOUNDARY, Map.of()));
 
         JsonNode row = out.get("positions").get(0);
@@ -206,7 +206,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setSide("LONG");
         plan.setOpenedWakeTime(BOUNDARY - 5 * 3600_000L);
 
-        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("15833"),
                 List.of(p), List.of(), List.of(plan), BOUNDARY, Map.of());
 
         JsonNode planJson = MAPPER.readTree(json).get("positions").get(0).get("plan");
@@ -231,7 +231,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setOpenedWakeTime(BOUNDARY - 3600_000L);
         plan.setRevisionsJson("[{\"time\":1785169800000,\"type\":\"移动止盈\",\"change\":\"66000→68000\",\"reason\":\"趋势加速\"}]");
 
-        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("15833"),
                 List.of(p), List.of(), List.of(plan), BOUNDARY, Map.of());
 
         assertThat(json).contains(FMT.format(Instant.ofEpochMilli(1785169800000L)))
@@ -254,7 +254,7 @@ class TraderWakeupRunnerAccountStateTest {
                 new BigDecimal("100190"), new BigDecimal("100420"), BOUNDARY - 2 * m5, new BigDecimal("99610"),
                 BOUNDARY - m5, new BigDecimal("99880"));
 
-        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, s -> true,new BigDecimal("15833"),
                 List.of(p, other), List.of(), List.of(), BOUNDARY, Map.of(349L, w));
 
         assertThat(json).contains("\"sinceLastWake\":{\"from\":\"" + FMT.format(Instant.ofEpochMilli(BOUNDARY - 3 * m5))

@@ -61,6 +61,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.atLeastOnce;
@@ -97,12 +98,18 @@ class TradeToolsTest {
     private final TraderWatchStore watchStore = new TraderWatchStore(watchMapper, mock(ApplicationEventPublisher.class));
     private final TraderPlanStore planStore = new TraderPlanStore(planMapper, PROMPTS, new TransactionTemplate(mock(PlatformTransactionManager.class)));
     private final AtomicBoolean openingAllowed = new AtomicBoolean(true);
+    private final AccountGate gate = new AccountGate();
     private final TradeTools tools = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
             sym -> new BigDecimal("100000"),
             planStore, watchStore,
             new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
-                    new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-            PROMPTS, MESSAGES, entryContext, openingAllowed::get);
+                    new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH, null),
+            PROMPTS, MESSAGES, entryContext, _ -> openingAllowed.get(), gate);
+
+    /** 布盯盘：这只 trader 只交易 BTCUSDT，条件都挂在它名下 */
+    private String setWatch(String symbol, List<WatchSpec> watches) {
+        return tools.setWatch(symbol, watches, "BTCUSDT");
+    }
 
     @BeforeEach
     void ladderFixtures() {
@@ -431,13 +438,201 @@ class TradeToolsTest {
     @Test
     void openingBeforeDecisionIsRecordedAndReverseDoesNotCloseFirst() {
         openingAllowed.set(false);
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
 
         assertThat(tools.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10, 95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000"))
                 .startsWith("REJECTED:").contains(PROMPTS.get(AgentLang.ZH, "trader.reject.openingStage"));
-        assertThat(reverseLong()).startsWith("REJECTED:");
+        assertThat(reverseLong()).startsWith("REJECTED:").contains(PROMPTS.get(AgentLang.ZH, "trader.reject.openingStage"));
 
         assertThat(tools.actions()).hasSize(2).allSatisfy(action -> assertThat(action.has("rejected")).isTrue());
-        verifyNoInteractions(simTradeClient, planMapper, watchMapper);
+        verify(simTradeClient, never()).closePosition(anyLong(), any());
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+        verifyNoInteractions(planMapper, watchMapper);
+    }
+
+    /** 单币轮只认自己那个币：对别的币开仓、平仓、改止损、撤单、布盯盘都被拒，拒因说明这一轮只处理哪个币；自己那个币照常 */
+    @Test
+    void singleSymbolRoundRejectsActionsOnOtherSymbols() {
+        TradeTools ethRound = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT", "ETHUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
+                sym -> new BigDecimal("100000"), planStore, watchStore,
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH, "ETHUSDT"),
+                PROMPTS, MESSAGES, mock(EntryContext.class), _ -> true, new AccountGate());
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+        FuturesOrderResponse btcOrder = new FuturesOrderResponse();
+        btcOrder.setOrderId(77L);
+        btcOrder.setSymbol("BTCUSDT");
+        when(simTradeClient.getPendingOrders(99L, null)).thenReturn(List.of(btcOrder));
+        String only = "这一轮只处理 ETHUSDT";
+
+        assertThat(ethRound.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10,
+                95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000")).startsWith("REJECTED:").contains(only);
+        assertThat(ethRound.closePosition(5L, 0.01, "到目标位")).startsWith("REJECTED:").contains(only);
+        assertThat(ethRound.setStopLoss(5L, 99000, "锁保本")).startsWith("REJECTED:").contains(only);
+        assertThat(ethRound.cancelOrder(List.of(77L), "计划失效")).contains(only);
+        assertThat(ethRound.setWatch("BTCUSDT", List.of(), "BTCUSDT")).startsWith("REJECTED:").contains(only);
+
+        verify(simTradeClient, never()).closePosition(anyLong(), any());
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+        verify(simTradeClient, never()).cancelOrder(anyLong(), anyLong());
+        verifyNoInteractions(watchMapper);
+    }
+
+    /** 同一个 trader 的一轮：onlySymbol 为 null 是整盘轮；几轮共用同一个账户闸 */
+    private TradeTools roundTools(String onlySymbol, AccountGate shared) {
+        return new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT", "ETHUSDT"), Set.of("BTCUSDT", "ETHUSDT"),
+                sym -> new BigDecimal("100000"), planStore, watchStore,
+                new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH, onlySymbol),
+                PROMPTS, MESSAGES, mock(EntryContext.class), _ -> true, shared);
+    }
+
+    private FuturesPositionDTO btcLong(String quantity) {
+        FuturesPositionDTO p = longPosition();
+        p.setQuantity(new BigDecimal(quantity));
+        return p;
+    }
+
+    /**
+     * 两轮同时管一个币：先动的直接生效；后动的那一轮手里是旧状态，动手时先收到说明（哪一轮做了什么、上次看到的和现在的），
+     * 这次不执行；看过说明按最新状态重新提交，才成交
+     */
+    @Test
+    void laterRoundIsToldTheSymbolChangedThenResubmits() {
+        AccountGate shared = new AccountGate();
+        TradeTools book = roundTools(null, shared);
+        TradeTools btc = roundTools("BTCUSDT", shared);
+        // 两轮开场白里看到的是同一份账户：BTC 多单 0.01
+        book.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(), 0);
+        btc.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(), 0);
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.01")));
+        // 平掉一半之后，sim 里剩 0.005
+        when(simTradeClient.closePosition(eq(99L), any())).thenAnswer(_ -> {
+            when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.005")));
+            return reverseCloseReceipt("FILLED");
+        });
+
+        assertThat(book.closePosition(5L, 0.005, "先减一半")).doesNotContain("REJECTED");
+        String told = btc.closePosition(5L, 0.01, "全平");
+
+        assertThat(told).startsWith("REJECTED:").contains("这次 close_position 没有执行")
+                .contains("BTCUSDT 在你上次查看之后变了").contains("看整盘的那一轮").contains("先减一半")
+                .contains("\"quantity\":0.01").contains("\"quantity\":0.005");
+        verify(simTradeClient, times(1)).closePosition(eq(99L), any());
+
+        assertThat(btc.closePosition(5L, 0.005, "按最新数量全平")).doesNotContain("REJECTED");
+        verify(simTradeClient, times(2)).closePosition(eq(99L), any());
+    }
+
+    /** 不是别的轮动的（止损止盈触发、限价成交、预案执行）一样拦：只给上次看到的和现在的，不带"谁做的" */
+    @Test
+    void changeNotMadeByAnotherRoundIsStillTold() {
+        TradeTools btc = roundTools("BTCUSDT", new AccountGate());
+        btc.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(), 0);
+        // 两次唤醒之间一档止盈平掉了一半
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.005")));
+
+        String told = btc.closePosition(5L, 0.01, "全平");
+
+        assertThat(told).startsWith("REJECTED:").contains("BTCUSDT 在你上次查看之后变了。你上次看到的");
+        verify(simTradeClient, never()).closePosition(anyLong(), any());
+    }
+
+    /** 开仓、加仓、反手另看别的币的仓位：别的币的仓位变了先说明；平仓不为别的币的变化拦 */
+    @Test
+    void openingIsHeldWhenOtherSymbolsPositionsChanged() {
+        TradeTools book = roundTools(null, new AccountGate());
+        book.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(), 0);
+        FuturesPositionDTO eth = longPosition();
+        eth.setId(6L);
+        eth.setSymbol("ETHUSDT");
+        // 另一轮刚开了 ETH
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.01"), eth));
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("FILLED"));
+
+        String told = book.openPosition("BTCUSDT", "LONG", List.of(new EntryRung(BigDecimal.valueOf(0.01), null)), 10,
+                95000.0, null, "TREND_FOLLOW", "趋势延续", "1h收盘跌破95000");
+
+        assertThat(told).startsWith("REJECTED:").contains("别的币的仓位在你上次查看之后变了").contains("ETHUSDT");
+        verify(simTradeClient, never()).openPosition(anyLong(), any());
+
+        // 换一轮：同样的变化，平 BTC 不拦
+        TradeTools closer = roundTools(null, new AccountGate());
+        closer.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(), 0);
+        assertThat(closer.closePosition(5L, 0.01, "到目标位")).doesNotContain("REJECTED");
+    }
+
+    /** 对一个币动手只算看到了那个币：别的币在这之前变了的，轮到动它时照样先说明 */
+    @Test
+    void actingOnOneSymbolLeavesOtherSymbolsUnseen() {
+        TradeTools book = roundTools(null, new AccountGate());
+        book.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(), 0);
+        // 开场白之后，别的轮开了一笔 ETH
+        FuturesPositionDTO eth = longPosition();
+        eth.setId(6L);
+        eth.setSymbol("ETHUSDT");
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.01"), eth));
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("FILLED"));
+
+        assertThat(book.closePosition(5L, 0.01, "到目标位")).doesNotContain("REJECTED");
+
+        assertThat(book.closePosition(6L, 0.01, "顺手平掉")).startsWith("REJECTED:")
+                .contains("ETHUSDT 在你上次查看之后变了");
+        verify(simTradeClient, times(1)).closePosition(eq(99L), any());
+    }
+
+    /** 同一个账户上的动作一次只做一个：前一个还在等 sim，后一个在闸外等着 */
+    @Test
+    void actionsOnTheSameAccountRunOneAtATime() throws Exception {
+        AccountGate shared = new AccountGate();
+        TradeTools book = roundTools(null, shared);
+        TradeTools eth = roundTools("ETHUSDT", shared);
+        FuturesPositionDTO ethPos = longPosition();
+        ethPos.setId(6L);
+        ethPos.setSymbol("ETHUSDT");
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.01"), ethPos));
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        when(simTradeClient.closePosition(eq(99L), any())).thenAnswer(_ -> {
+            entered.countDown();
+            release.await();
+            return reverseCloseReceipt("FILLED");
+        });
+
+        Thread first = Thread.startVirtualThread(() -> book.closePosition(5L, 0.01, "先来"));
+        entered.await();
+        Thread second = Thread.startVirtualThread(() -> eth.closePosition(6L, 0.01, "后到"));
+
+        verify(simTradeClient, after(300).times(1)).closePosition(eq(99L), any());
+        release.countDown();
+        first.join();
+        second.join();
+        verify(simTradeClient, times(2)).closePosition(eq(99L), any());
+    }
+
+    /**
+     * 盯盘条件挂在一个可交易币名下：盯别的币的价格要用 forSymbol 写明为哪个币布的；
+     * 被盯的币不可交易又没写，拒。只处理一个币的那种轮次里，不写就是那个币
+     */
+    @Test
+    void watchConditionsBelongToATradableSymbol() {
+        // tools 只交易 BTCUSDT：盯 ETH 的价格，不写为谁布的 → 拒
+        assertThat(tools.setWatch("ETHUSDT", List.of(watch("TOUCH_BELOW", 90000.0, null, null, "大盘破位")), null))
+                .startsWith("REJECTED").contains("ETHUSDT 不是可交易币").contains("forSymbol");
+        verify(watchMapper, never()).insert(any(AiTraderWatch.class));
+
+        // 写明为 BTCUSDT 布的 → 落库，两个币都记下
+        assertThat(tools.setWatch("ETHUSDT", List.of(watch("TOUCH_BELOW", 90000.0, null, null, "大盘破位")), "BTCUSDT"))
+                .contains("\"armed\":1");
+        // 单币轮里不写，就是这一轮的币
+        TradeTools ethRound = roundTools("ETHUSDT", new AccountGate());
+        assertThat(ethRound.setWatch("BTCUSDT", List.of(watch("TOUCH_BELOW", 90000.0, null, null, "大盘破位")), null))
+                .contains("\"armed\":1");
+
+        ArgumentCaptor<AiTraderWatch> rows = ArgumentCaptor.forClass(AiTraderWatch.class);
+        verify(watchMapper, times(2)).insert(rows.capture());
+        assertThat(rows.getAllValues()).extracting(AiTraderWatch::getSymbol).containsExactly("ETHUSDT", "BTCUSDT");
+        assertThat(rows.getAllValues()).extracting(AiTraderWatch::getForSymbol).containsExactly("BTCUSDT", "ETHUSDT");
     }
 
     private void mockReverseClose() {
@@ -510,8 +705,8 @@ class TradeToolsTest {
         TradeTools single = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT"),
                 sym -> new BigDecimal("100000"), planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), false, false), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), false, false), AgentLang.ZH, null),
+                PROMPTS, MESSAGES, mock(EntryContext.class), _ -> true, new AccountGate());
         String result = single.reversePosition(5L, 0.02, 10, 95000.0, null, "REVERSAL", "反弹突破", "跌回突破位");
         assertThat(MAPPER.readTree(result).path("status").asString()).isEqualTo("ok");
         ArgumentCaptor<FuturesOpenRequest> open = ArgumentCaptor.forClass(FuturesOpenRequest.class);
@@ -536,8 +731,8 @@ class TradeToolsTest {
         TradeTools noHedge = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"), Set.of("BTCUSDT"),
                 sym -> new BigDecimal("100000"), planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, false), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, false), AgentLang.ZH, null),
+                PROMPTS, MESSAGES, mock(EntryContext.class), _ -> true, new AccountGate());
         String result = noHedge.reversePosition(5L, 0.02, 10, 105000.0, oneRung("90000"),
                 "REVERSAL", "跌破支撑", "重回支撑");
         if (grouped) {
@@ -625,32 +820,32 @@ class TradeToolsTest {
     @Test
     void setWatchGuardAndReplace() {
         // 触及和收盘算同一路，向上、向下、到时刻各最多一条
-        assertThat(tools.setWatch("BTCUSDT", List.of(
+        assertThat(setWatch("BTCUSDT", List.of(
                 watch("TOUCH_ABOVE", 101000.0, null, null, "多"),
                 watch("CLOSE_ABOVE", 102000.0, "15m", null, "追"))))
                 .startsWith("REJECTED").contains("向上").contains("只能布一条");
-        assertThat(tools.setWatch("BTCUSDT", List.of(
+        assertThat(setWatch("BTCUSDT", List.of(
                 watch("TOUCH_BELOW", 99000.0, null, null, "回踩"),
                 watch("CLOSE_BELOW", 98000.0, "1h", null, "破位"))))
                 .startsWith("REJECTED").contains("向下");
-        assertThat(tools.setWatch("BTCUSDT", List.of(
+        assertThat(setWatch("BTCUSDT", List.of(
                 watch("AT_TIME", null, null, "2099-01-01 00:00", "公布前"),
                 watch("AT_TIME", null, null, "2099-01-01 01:00", "公布后"))))
                 .startsWith("REJECTED").contains("到时刻");
-        assertThat(tools.setWatch("BTCUSDT", List.of(watch("ABOVE", 101000.0, null, null, "")))).contains("kind 必须是");
-        assertThat(tools.setWatch("BTCUSDT", List.of(watch("CLOSE_ABOVE", 101000.0, "3h", null, "")))).contains("period");
+        assertThat(setWatch("BTCUSDT", List.of(watch("ABOVE", 101000.0, null, null, "")))).contains("kind 必须是");
+        assertThat(setWatch("BTCUSDT", List.of(watch("CLOSE_ABOVE", 101000.0, "3h", null, "")))).contains("period");
         // 现价 100000：TOUCH_ABOVE 99000 已被越过，布下去立刻触发
-        assertThat(tools.setWatch("BTCUSDT", List.of(watch("TOUCH_ABOVE", 99000.0, null, null, "")))).contains("已被现价");
-        assertThat(tools.setWatch("BTCUSDT", List.of(watch("AT_TIME", null, null, "2020-01-01 00:00", "")))).contains("已过去");
+        assertThat(setWatch("BTCUSDT", List.of(watch("TOUCH_ABOVE", 99000.0, null, null, "")))).contains("已被现价");
+        assertThat(setWatch("BTCUSDT", List.of(watch("AT_TIME", null, null, "2020-01-01 00:00", "")))).contains("已过去");
         // 平台没在采的币布不了；不可交易但平台在采的（ETHUSDT）可以，见下面
-        assertThat(tools.setWatch("PEPEUSDT", List.of())).startsWith("REJECTED").contains("平台没在采").contains("BTCUSDT, ETHUSDT");
+        assertThat(setWatch("PEPEUSDT", List.of())).startsWith("REJECTED").contains("平台没在采").contains("BTCUSDT, ETHUSDT");
         // 漏传 watches 不是清空，是拒
-        assertThat(tools.setWatch("BTCUSDT", null)).startsWith("REJECTED").contains("watches 必填");
+        assertThat(setWatch("BTCUSDT", null)).startsWith("REJECTED").contains("watches 必填");
         verify(watchMapper, never()).insert(any(AiTraderWatch.class));
         verify(watchMapper, never()).update(any(), any());
 
         // 向上、向下、到时刻各一条（心跳 1h 布 1h 收盘也行）
-        String ok = tools.setWatch("BTCUSDT", List.of(
+        String ok = setWatch("BTCUSDT", List.of(
                 watch("TOUCH_ABOVE", 101000.0, null, null, "突破看追多"),
                 watch("CLOSE_BELOW", 98000.0, "1h", null, "区间失守"),
                 watch("AT_TIME", null, null, "2099-01-01 00:00", "数据公布后复查")));
@@ -662,7 +857,7 @@ class TradeToolsTest {
             assertThat(a.path("status").asString(null)).isEqualTo("ok");
             assertThat(a.path("args").path("watches").size()).isEqualTo(3);
         });
-        assertThat(tools.setWatch("ETHUSDT", List.of(watch("CLOSE_BELOW", 2000.0, "1h", null, "大盘破位"))))
+        assertThat(setWatch("ETHUSDT", List.of(watch("CLOSE_BELOW", 2000.0, "1h", null, "大盘破位"))))
                 .contains("\"armed\":1");
     }
 
@@ -697,19 +892,19 @@ class TradeToolsTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
 
         // 形状不对：CLOSE 没给占比
-        assertThat(tools.setWatch("ETHUSDT", List.of(preset(new WatchAction("CLOSE", 5L, null, null, null)))))
+        assertThat(setWatch("ETHUSDT", List.of(preset(new WatchAction("CLOSE", 5L, null, null, null)))))
                 .startsWith("REJECTED").contains("action 不合规");
-        assertThat(tools.setWatch("ETHUSDT", List.of(preset(new WatchAction("CLOSE", 6L, null, new BigDecimal("50"), null)))))
+        assertThat(setWatch("ETHUSDT", List.of(preset(new WatchAction("CLOSE", 6L, null, new BigDecimal("50"), null)))))
                 .startsWith("REJECTED").contains("positionId不存在");
         // 现挂的止损 95000，预案要移到 94000 是放宽
-        assertThat(tools.setWatch("ETHUSDT", List.of(preset(new WatchAction("MOVE_STOP", 5L, new BigDecimal("94000"), null, null)))))
+        assertThat(setWatch("ETHUSDT", List.of(preset(new WatchAction("MOVE_STOP", 5L, new BigDecimal("94000"), null, null)))))
                 .startsWith("REJECTED").contains("只许收紧");
-        assertThat(tools.setWatch("ETHUSDT", List.of(preset(new WatchAction("CANCEL_ORDER", null, null, null, 600L)))))
+        assertThat(setWatch("ETHUSDT", List.of(preset(new WatchAction("CANCEL_ORDER", null, null, null, 600L)))))
                 .startsWith("REJECTED").contains("orderId不在");
         verify(watchMapper, never()).insert(any(AiTraderWatch.class));
 
         // ETH 跌破 1900 就把 BTC 多单的止损收到 97000：条件的币不是动作的币
-        String ok = tools.setWatch("ETHUSDT", List.of(preset(new WatchAction("MOVE_STOP", 5L, new BigDecimal("97000"), null, null))));
+        String ok = setWatch("ETHUSDT", List.of(preset(new WatchAction("MOVE_STOP", 5L, new BigDecimal("97000"), null, null))));
 
         assertThat(ok).contains("\"armed\":1");
         ArgumentCaptor<AiTraderWatch> row = ArgumentCaptor.forClass(AiTraderWatch.class);
@@ -988,8 +1183,8 @@ class TradeToolsTest {
                 sym -> new BigDecimal("100000"),
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, entryContext, () -> true);
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH, null),
+                PROMPTS, MESSAGES, entryContext, _ -> true, new AccountGate());
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setStatus("FILLED");
         resp.setUpdatedAt(LocalDateTime.now());
@@ -1134,8 +1329,8 @@ class TradeToolsTest {
                 sym -> new BigDecimal("100000"),
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, entryContext, () -> true);
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH, null),
+                PROMPTS, MESSAGES, entryContext, _ -> true, new AccountGate());
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setStatus("FILLED");
         resp.setUpdatedAt(LocalDateTime.now());
@@ -1240,8 +1435,8 @@ class TradeToolsTest {
                 sym -> new BigDecimal("100000"),
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, System.currentTimeMillis() - 1,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH, null),
+                PROMPTS, MESSAGES, mock(EntryContext.class), _ -> true, new AccountGate());
 
         assertThat(openOnce(late)).startsWith("REJECTED").contains("本轮已超时");
         assertThat(late.closePosition(5L, 0.01, "失效条件触发")).contains("本轮已超时");
@@ -1262,8 +1457,8 @@ class TradeToolsTest {
                 sym -> { throw new IllegalStateException("不该发起行情查询"); },
                 planStore, watchStore,
                 new TradeTools.WakeCtx(7L, 1, "1h", 1785171600000L, DEADLINE,
-                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH),
-                PROMPTS, MESSAGES, mock(EntryContext.class), () -> true);
+                        new TraderRiskConfig(1, 20, new BigDecimal("50"), true, true), AgentLang.ZH, null),
+                PROMPTS, MESSAGES, mock(EntryContext.class), _ -> true, new AccountGate());
 
         String r = strict.openPosition(null, "SHORT", List.of(new EntryRung(BigDecimal.valueOf(0.64), null)), 20, 64980.0, oneRung("64640"), "BREAKOUT", "突破", "收回箱体");
 

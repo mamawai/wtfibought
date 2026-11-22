@@ -23,13 +23,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 本局论点战绩统计（纯代码，可单测）：sim 已平仓位 ⟵配对⟶ 本局计划，按论点标签聚合成
- * 每次唤醒注入的统计块，另按入场方式、按币各分一次桶，附开仓后不动的重放汇总。配对复用 {@link TradePairing#pairAll}——复盘/竞技场/统计
+ * 统计块，另按入场方式、按币各分一次桶。两份：交易员每轮开场白的（{@link #assemble}），
+ * 复盘素材和指令生成器的多一段开仓后不动的重放汇总（{@link #assembleWithReplay}）。配对复用 {@link TradePairing#pairAll}——复盘/竞技场/统计
  * 三处必须同一套算法。事实裁定归代码，模型只许引用不许自算，与复盘战绩表同一条纪律。
  * <p>
  * stale 过滤在<b>配对之后</b>：被忽略的计划仍参与配对占位，先滤后配会让它的仓位
@@ -54,73 +57,97 @@ public class PlayStatsAssembler {
     private final PromptCatalog prompts;
     private final CaseFileBuilder caseFiles;
 
-    /** 统计块文本；本局无可统计交易或任何失败 → null（不注入） */
+    /** 一笔已了结、配上了计划的交易 */
+    private record Settled(FuturesPositionDTO pos, AiTraderPlan plan) {
+    }
+
+    /** 交易员每轮开场白的统计块；本局无可统计交易或任何失败 → null（不注入） */
     public String assemble(AiTrader t, AgentLang lang) {
+        return orAbsent(t, () -> block(settled(t), "", lang));
+    }
+
+    /** 复盘素材和指令生成器的统计块：比开场白那份多一段开仓后不动的重放汇总，样本够了才带 */
+    public String assembleWithReplay(AiTrader t, AgentLang lang) {
+        return orAbsent(t, () -> {
+            List<Settled> trades = settled(t);
+            List<CaseFileBuilder.Replay> replays = trades.stream()
+                    .map(s -> caseFiles.replay(s.pos(), s.plan())).filter(Objects::nonNull).toList();
+            return block(trades, replays.size() >= MIN_SAMPLE ? replayLines(replays, lang) : "", lang);
+        });
+    }
+
+    /** 取数、配对出错不挡调用方：这一块缺席 */
+    private String orAbsent(AiTrader t, Supplier<String> block) {
         try {
-            List<FuturesPositionDTO> closed = simTradeClient.getClosedPositions(t.getSimUserId(), FETCH_LIMIT);
-            if (closed.isEmpty()) {
-                return null;
-            }
-            List<AiTraderPlan> plans = planMapper.selectList(new LambdaQueryWrapper<AiTraderPlan>()
-                    .eq(AiTraderPlan::getTraderId, t.getId())
-                    .eq(AiTraderPlan::getRoundNo, t.getRoundNo()));
-            // 配对走 pairAll 统一入口；sim 按 updatedAt 倒序返回，顺序遍历即最近优先
-            Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
-            Map<String, List<BigDecimal>> byPlay = new LinkedHashMap<>();
-            // 同一批了结再按入场方式（限价 / 市价 / 分档）分一次桶；入场上下文里没记的另计笔数
-            Map<String, List<BigDecimal>> byEntry = new LinkedHashMap<>();
-            int unknownEntry = 0;
-            // 再按币分一次桶
-            Map<String, List<BigDecimal>> bySymbol = new LinkedHashMap<>();
-            List<CaseFileBuilder.Replay> replays = new ArrayList<>();
-            int taken = 0;
-            for (FuturesPositionDTO pos : closed) {
-                AiTraderPlan plan = planByPos.get(pos);
-                if (plan == null || plan.getPlayType() == null || pos.getClosedPnl() == null) {
-                    continue;
-                }
-                if (Boolean.TRUE.equals(plan.getStale())) {
-                    continue;
-                }
-                byPlay.computeIfAbsent(plan.getPlayType(), k -> new ArrayList<>()).add(pos.getClosedPnl());
-                String entry = entryType(plan);
-                if (entry == null) {
-                    unknownEntry++;
-                } else {
-                    byEntry.computeIfAbsent(entry, k -> new ArrayList<>()).add(pos.getClosedPnl());
-                }
-                bySymbol.computeIfAbsent(pos.getSymbol(), k -> new ArrayList<>()).add(pos.getClosedPnl());
-                CaseFileBuilder.Replay replay = caseFiles.replay(pos, plan);
-                if (replay != null) {
-                    replays.add(replay);
-                }
-                if (++taken >= MAX_TRADES) {
-                    break;
-                }
-            }
-            if (taken == 0) {
-                return null;
-            }
-            StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.label.playStatsHeader",
-                    Map.of("n", taken))).append('\n');
-            byPlay.entrySet().stream()
-                    .sorted((a, b) -> b.getValue().size() - a.getValue().size())
-                    .forEach(e -> sb.append(row(e.getKey(), e.getValue(), lang)).append('\n'));
-            if (!byEntry.isEmpty()) {
-                sb.append(entryLine(byEntry, unknownEntry, lang)).append('\n');
-            }
-            sb.append(prompts.get(lang, "trader.label.playStatsSymbolLine", Map.of("rows", bucketRows(
-                    bySymbol.entrySet().stream().sorted((a, b) -> b.getValue().size() - a.getValue().size()).toList(),
-                    symbol -> symbol, lang)))).append('\n');
-            if (replays.size() >= MIN_SAMPLE) {
-                sb.append(replayLines(replays, lang));
-            }
-            sb.append(prompts.get(lang, "trader.label.playStatsFooter")).append('\n');
-            return sb.toString();
+            return block.get();
         } catch (Exception e) {
             log.warn("[PlayStats] 论点战绩统计失败，本轮不注入 traderId={} msg={}", t.getId(), e.toString());
             return null;
         }
+    }
+
+    /** 本局最近了结、配上了计划的交易，最近的在前，最多 {@value #MAX_TRADES} 笔；主人标了不算数的不在里面 */
+    private List<Settled> settled(AiTrader t) {
+        List<FuturesPositionDTO> closed = simTradeClient.getClosedPositions(t.getSimUserId(), FETCH_LIMIT);
+        if (closed.isEmpty()) {
+            return List.of();
+        }
+        List<AiTraderPlan> plans = planMapper.selectList(new LambdaQueryWrapper<AiTraderPlan>()
+                .eq(AiTraderPlan::getTraderId, t.getId())
+                .eq(AiTraderPlan::getRoundNo, t.getRoundNo()));
+        // 配对走 pairAll 统一入口；sim 按 updatedAt 倒序返回，顺序遍历即最近优先
+        Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
+        List<Settled> out = new ArrayList<>();
+        for (FuturesPositionDTO pos : closed) {
+            AiTraderPlan plan = planByPos.get(pos);
+            if (plan == null || plan.getPlayType() == null || pos.getClosedPnl() == null
+                    || Boolean.TRUE.equals(plan.getStale())) {
+                continue;
+            }
+            out.add(new Settled(pos, plan));
+            if (out.size() >= MAX_TRADES) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    /** 成文：标签行、入场方式行、按币行，extra 接在后面，最后是 footer；一笔都没有返回 null */
+    private String block(List<Settled> trades, String extra, AgentLang lang) {
+        if (trades.isEmpty()) {
+            return null;
+        }
+        Map<String, List<BigDecimal>> byPlay = new LinkedHashMap<>();
+        // 同一批了结再按入场方式（限价 / 市价 / 分档）分一次桶；入场上下文里没记的另计笔数
+        Map<String, List<BigDecimal>> byEntry = new LinkedHashMap<>();
+        int unknownEntry = 0;
+        // 再按币分一次桶
+        Map<String, List<BigDecimal>> bySymbol = new LinkedHashMap<>();
+        for (Settled s : trades) {
+            BigDecimal pnl = s.pos().getClosedPnl();
+            byPlay.computeIfAbsent(s.plan().getPlayType(), k -> new ArrayList<>()).add(pnl);
+            String entry = entryType(s.plan());
+            if (entry == null) {
+                unknownEntry++;
+            } else {
+                byEntry.computeIfAbsent(entry, k -> new ArrayList<>()).add(pnl);
+            }
+            bySymbol.computeIfAbsent(s.pos().getSymbol(), k -> new ArrayList<>()).add(pnl);
+        }
+        StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.label.playStatsHeader",
+                Map.of("n", trades.size()))).append('\n');
+        byPlay.entrySet().stream()
+                .sorted((a, b) -> b.getValue().size() - a.getValue().size())
+                .forEach(e -> sb.append(row(e.getKey(), e.getValue(), lang)).append('\n'));
+        if (!byEntry.isEmpty()) {
+            sb.append(entryLine(byEntry, unknownEntry, lang)).append('\n');
+        }
+        sb.append(prompts.get(lang, "trader.label.playStatsSymbolLine", Map.of("rows", bucketRows(
+                bySymbol.entrySet().stream().sorted((a, b) -> b.getValue().size() - a.getValue().size()).toList(),
+                symbol -> symbol, lang)))).append('\n');
+        sb.append(extra);
+        sb.append(prompts.get(lang, "trader.label.playStatsFooter")).append('\n');
+        return sb.toString();
     }
 
     /** 首批档的入场方式；旧计划从入场上下文取。 */

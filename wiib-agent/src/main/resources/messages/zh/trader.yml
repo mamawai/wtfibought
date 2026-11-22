@@ -38,7 +38,7 @@ trader:
   config:
     nameRequired: 名字必填且不超过32字符
     nameTaken: 你名下已经有叫这个名字的 trader 了（不分大小写），换一个名字
-    badInterval: 心跳周期仅支持 15m/1h/4h
+    badInterval: 心跳周期仅支持 1h/4h
     windowNeverWakes: 唤醒时段内没有任何一根 {{interval}} K线收盘，等于永远不会醒；请放宽时段或换档位
     symbolRequired: 至少选择一个交易币种
     tooManySymbols: 交易币种最多 {{max}} 个（一次唤醒的工具预算与注意力都按币摊）
@@ -49,6 +49,7 @@ trader:
     marginRange: 单笔保证金占比上限须在 0.1~50% 之内
     hedgeNeedsTwoSlots: 只允许一个仓位时无法开启多空双开（双开本身需要两个仓位）
     alertMultTooLow: 警报灵敏度系数不能低于 1.0（阈值只能调高不能调低）
+    equityDropRange: 权益回落警报的比例须在 {{min}}~{{max}}% 之内（不用就关掉）
     # 唤醒时段的解析失败。WakeWindow.parse 抛的是这些 key，由 TraderService 渲染
     window:
       format: 唤醒时段格式须为 HH:mm-HH:mm，如 21:00-08:30
@@ -73,7 +74,7 @@ trader:
     liquidated: 本局已爆仓终局，要先在配置页重置开新一局才能继续交易
     intervalRetired: 该 trader 的唤醒档位已下线，无法唤醒
     budgetTooTight: 距下一根K线收盘不足{{seconds}}秒，这一轮时间预算不够，等这根K线收了再点
-    busy: 上一轮唤醒还在跑，本次手动唤醒跳过（同一 trader 不并行）
+    busy: 已经有一轮看整盘的唤醒在跑，本次手动唤醒跳过（看整盘的同时只跑一轮）
 
   # 点播复盘（统一复盘，随时点）
   review:

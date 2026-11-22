@@ -1,9 +1,13 @@
 package com.mawai.wiibagent.trader.wakeup;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.market.TradeEvent;
+import com.mawai.wiibquant.external.sim.SimTradeClient;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,13 +20,15 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价单开出新仓），
  * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就广播一条 {@link TriggerFired}；不是 trader 的用户直接忽略。
- * 准入（互斥 / 时段 / 交接）全在调度器，这里只认人。
+ * 止盈触发不叫醒，不广播：平掉一部分、仓位还在的记一行，下一轮开场白报；整仓平完的由唤醒开头的对账报结局。
+ * 准入（时段 / 交给哪一轮）全在调度器，这里只认人。
  */
 @Slf4j
 @Component
@@ -32,6 +38,12 @@ public class TradeEventListener implements MessageListener {
     private final RedisMessageListenerContainer listenerContainer;
     private final AiTraderMapper traderMapper;
     private final ApplicationEventPublisher events;
+    /** 止盈平掉一部分时查一下仓位还在不在 */
+    private final SimTradeClient simTradeClient;
+    /** 没叫醒它的事件记在这里，下一轮开场白报 */
+    private final UnreportedEvents unreported;
+    private final UserLangResolver userLangResolver;
+    private final PromptCatalog prompts;
 
     @PostConstruct
     public void init() {
@@ -63,7 +75,25 @@ public class TradeEventListener implements MessageListener {
                 .eq(AiTrader::getSimUserId, event.userId())
                 .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING));
         for (AiTrader t : traders) {
-            events.publishEvent(new TriggerFired(t.getId(), new EventTrigger(event)));
+            if (TradeEvent.TAKE_PROFIT.equals(event.type())) {
+                noteTakeProfit(t, event);
+            } else {
+                events.publishEvent(new TriggerFired(t.getId(), new EventTrigger(event)));
+            }
         }
+    }
+
+    /** 止盈平掉一部分、仓位还在：记一行等下一轮开场白报。整仓平完的不记，对账会报结局 */
+    private void noteTakeProfit(AiTrader trader, TradeEvent event) {
+        boolean stillOpen = simTradeClient.getAllPositions(trader.getSimUserId()).stream()
+                .anyMatch(p -> p.getId() != null && p.getId().equals(event.positionId()));
+        if (!stillOpen) {
+            return;
+        }
+        unreported.add(trader.getId(), List.of(new UnreportedEvents.Line(event.symbol(),
+                prompts.get(userLangResolver.of(trader.getUserId()), "trader.wake.eventTakeProfit", Map.of(
+                        "symbol", event.symbol(), "side", event.side(),
+                        "time", BeijingTime.shortFormat(event.at()),
+                        "qty", WatchText.num(event.quantity()), "price", WatchText.num(event.price()))) + '\n')));
     }
 }

@@ -34,7 +34,7 @@ async function reconnectLoop(connect: (signal: AbortSignal) => Promise<void>, si
 
 function startTrace(e: Extract<TraderLiveEvent, { type: 'run_start' }>): WakeTrace {
   return {
-    v: 1, kind: e.kind, wakeTime: e.wakeTime, startedAt: e.startedAt, budgetSeconds: e.budgetSeconds,
+    v: 1, kind: e.kind, symbol: e.symbol, wakeTime: e.wakeTime, startedAt: e.startedAt, budgetSeconds: e.budgetSeconds,
     equity: e.equity, positions: e.positions, pendingOrders: e.pendingOrders, calls: [],
   };
 }
@@ -46,8 +46,8 @@ function withCall(trace: WakeTrace, n: number, patch: (c: WakeCall) => WakeCall)
   return { ...trace, calls };
 }
 
-/** run_start 之后的帧逐个归约进轨迹 */
-function applyFrame(trace: WakeTrace, e: Exclude<TraderLiveEvent, { type: 'run_start' }>): WakeTrace {
+/** 一轮开始和结束之间的帧逐个归约进它的轨迹 */
+function applyFrame(trace: WakeTrace, e: Exclude<TraderLiveEvent, { type: 'run_start' | 'run_end' }>): WakeTrace {
   switch (e.type) {
     case 'prompt':
       return { ...trace, prompt: { system: e.system, instruction: e.instruction } };
@@ -63,41 +63,59 @@ function applyFrame(trace: WakeTrace, e: Exclude<TraderLiveEvent, { type: 'run_s
       return withCall(trace, e.call, c => ({
         ...c, results: [...c.results, { id: e.id, name: e.name, status: e.status, preview: e.preview }],
       }));
-    case 'run_end':
-      return {
-        ...trace,
-        end: { status: e.status, error: e.error, equity: e.equity, latencyMs: e.latencyMs, modelCalls: e.modelCalls, totalTokens: e.totalTokens },
-      };
   }
 }
 
+/** 正在跑的一轮：id 是它在现场流里的编号 */
+export interface LiveRun {
+  id: string;
+  trace: WakeTrace;
+}
+
 export interface TraderLive {
-  live: WakeTrace | null;
-  running: boolean;
+  /** 正在跑的几轮，按开始的先后：看整盘的一轮，和各自只处理一个币的几轮。一轮结束就从这里拿掉 */
+  runs: LiveRun[];
   /** 最近一轮结束的本地时刻，0=还没结束过；页面据此重拉净值/时间线 */
   endedAt: number;
 }
 
 /**
- * 一只 trader 的现场：帧归约成 WakeTrace，running 跟着 run_start/run_end 走。
- * 断线时那轮若还在跑就按结束算（结束帧可能在断线期间错过了）；重连后服务端回放，run_start 整个重建
+ * 一只 trader 的现场：帧按 run 归到各自那一轮的 WakeTrace，run_start 建、run_end 拿掉。
+ * 断线时还在跑的都按结束算（结束帧可能在断线期间错过了）；重连后服务端回放，每一轮从 run_start 整个重建
  */
 export function useTraderLive(traderId: number): TraderLive {
-  const [state, setState] = useState<TraderLive>({ live: null, running: false, endedAt: 0 });
+  const [state, setState] = useState<TraderLive>({ runs: [], endedAt: 0 });
 
   useEffect(() => {
     const ctrl = new AbortController();
-    // 本轮轨迹：run_start 建，之后每帧改它再整份下发
-    let trace: WakeTrace | undefined;
+    // 在跑的几轮：每帧改它那一轮再整份下发；Map 记着开始的先后
+    const traces = new Map<string, WakeTrace>();
+    const publish = (endedAt?: number) => setState(s => ({
+      runs: [...traces].map(([id, trace]) => ({ id, trace })),
+      endedAt: endedAt ?? s.endedAt,
+    }));
     const onFrame = (e: TraderLiveEvent) => {
-      // 没见过开场就来了过程帧（订阅正好卡在 run_start 扇出之后）：这一轮看不全，等下一轮
-      if (e.type !== 'run_start' && !trace) return;
-      const next = e.type === 'run_start' ? startTrace(e) : applyFrame(trace!, e);
-      trace = next;
-      if (e.type === 'run_end') setState({ live: next, running: false, endedAt: Date.now() });
-      else setState(s => ({ ...s, live: next, running: true }));
+      if (e.type === 'run_start') {
+        traces.set(e.run, startTrace(e));
+        publish();
+        return;
+      }
+      const trace = traces.get(e.run);
+      // 没见过开场就来了过程帧（订阅正好卡在 run_start 扇出之后）：等它的回放从 run_start 重来
+      if (!trace) return;
+      if (e.type === 'run_end') {
+        traces.delete(e.run);
+        publish(Date.now());
+        return;
+      }
+      traces.set(e.run, applyFrame(trace, e));
+      publish();
     };
-    const dropped = () => setState(s => s.running ? { ...s, running: false, endedAt: Date.now() } : s);
+    const dropped = () => {
+      if (!traces.size) return;
+      traces.clear();
+      publish(Date.now());
+    };
     void reconnectLoop(signal => traderApi.live(traderId, onFrame, signal).finally(dropped), ctrl.signal);
     return () => ctrl.abort();
   }, [traderId]);

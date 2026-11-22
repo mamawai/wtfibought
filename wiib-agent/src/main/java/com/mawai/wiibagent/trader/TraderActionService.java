@@ -40,7 +40,7 @@ public class TraderActionService {
 
     /** 留言长度上限：原样进下一轮系统提示词，太长会挤掉真正的交易上下文 */
     public static final int MAX_NOTE_CHARS = 500;
-    /** 留言轮次上限：15m 档 24 轮≈6 小时。更长的交代属于常驻规则，该写进配置页的自定义提示词 */
+    /** 留言轮次上限：1h 档 24 轮≈1 天。更长的交代属于常驻规则，该写进配置页的自定义提示词 */
     public static final int MAX_NOTE_ROUNDS = 24;
 
     private final TraderService traderService;

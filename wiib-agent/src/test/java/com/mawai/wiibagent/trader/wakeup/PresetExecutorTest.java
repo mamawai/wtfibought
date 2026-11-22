@@ -4,6 +4,7 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.trade.AccountGates;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
@@ -56,7 +57,7 @@ class PresetExecutorTest {
     private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
     private final PresetExecutor executor = new PresetExecutor(sim, traderMapper, decisionMapper, planStore, watchStore,
-            langResolver, new PromptCatalog(), new MessageCatalog());
+            langResolver, new PromptCatalog(), new MessageCatalog(), new AccountGates());
 
     {
         AiTrader t = new AiTrader();

@@ -89,7 +89,7 @@ public class TraderController {
 
     /**
      * 公开视图：任何登录用户可见的字段（model 是它当前用的端点的模型名，现解析）。key/baseUrl/自定义提示词绝不进公开视图。
-     * wakeWindow 进公开视图：观众要看得懂"15m 档为什么半天不出一条决策"，null=全天
+     * wakeWindow 进公开视图：观众要看得懂"1h 档为什么半天不出一条决策"，null=全天
      */
     public record TraderPublicView(long id, String name, String model, String status, String pausedReason,
                                    String symbols, String intervalCode, int roundNo,
@@ -98,11 +98,13 @@ public class TraderController {
 
     /**
      * 主人视图：公开视图 + 配置回显。llmEndpointId=这个 trader 选的端点，null=跟随默认端点；wakeWindow null=全天；
-     * learnedRestrictionHold=账本里限制型规律能否作为观望理由；webSearchEnabled=联网搜索开关，端点也开了才真搜
+     * learnedRestrictionHold=账本里限制型规律能否作为观望理由；webSearchEnabled=联网搜索开关，端点也开了才真搜；
+     * equityDropPct=权益回落警报的比例%，null=没启用
      */
     public record TraderOwnerView(TraderPublicView pub, Long llmEndpointId,
                                   String customPrompt,
                                   TraderSpec spec, boolean alertEnabled, BigDecimal alertThresholdMult,
+                                  BigDecimal equityDropPct,
                                   boolean reviewEnabled, boolean learnedRestrictionHold,
                                   boolean webSearchEnabled, String wakeWindow) {
     }
@@ -133,6 +135,7 @@ public class TraderController {
                 t.getCustomPrompt(), TraderSpec.of(t),
                 !Boolean.FALSE.equals(t.getAlertEnabled()),
                 t.getAlertThresholdMult() == null ? BigDecimal.ONE : t.getAlertThresholdMult(),
+                t.getEquityDropPct(),
                 !Boolean.FALSE.equals(t.getReviewEnabled()),
                 Boolean.TRUE.equals(t.getLearnedRestrictionHold()),
                 Boolean.TRUE.equals(t.getWebSearchEnabled()),
@@ -170,10 +173,10 @@ public class TraderController {
         return Result.ok(promptAssembler.defaultInstructions(userLangResolver.of(userId)));
     }
 
-    /** llmEndpointId：端点库里的一条，空=跟随用户默认端点 */
+    /** llmEndpointId：端点库里的一条，空=跟随用户默认端点；equityDropPct：权益回落警报的比例%，空=不启用 */
     public record UpsertRequest(String name, String symbols, String intervalCode, String customPrompt,
                                 Long llmEndpointId, TraderSpec spec,
-                                Boolean alertEnabled, BigDecimal alertThresholdMult,
+                                Boolean alertEnabled, BigDecimal alertThresholdMult, BigDecimal equityDropPct,
                                 Boolean reviewEnabled, Boolean learnedRestrictionHold,
                                 Boolean webSearchEnabled, String wakeWindow) {
         TraderService.UpsertReq toReq() {
@@ -183,7 +186,7 @@ public class TraderController {
                     s == null ? null : s.leverageMin(), s == null ? null : s.leverageMax(),
                     s == null ? null : s.marginPctMax(),
                     s == null ? null : s.allowMultiPosition(), s == null ? null : s.allowHedge(),
-                    alertEnabled, alertThresholdMult, reviewEnabled, learnedRestrictionHold,
+                    alertEnabled, alertThresholdMult, equityDropPct, reviewEnabled, learnedRestrictionHold,
                     webSearchEnabled, wakeWindow);
         }
     }

@@ -76,7 +76,7 @@
     "step1Title": "Add a model endpoint",
     "step1": "Put your API key in Settings. Claude, GPT, Gemini all work. Only the last four digits are stored for display; every wake-up calls your endpoint directly and no copy is kept here.",
     "step2Title": "Pick symbols and cadence",
-    "step2": "One to three of 8 coins, with a heartbeat anywhere from 15m to 4h. You can limit the wake window too, say only between 08:00 and 23:00.",
+    "step2": "One to three of 8 coins, with a 1h or 4h heartbeat. You can limit the wake window too, say only between 08:00 and 23:00.",
     "step3Title": "Start it and enter the arena",
     "step3": "Each gets a 10,000U virtual futures account. Wakes on every candle, reviews once a day. Blow up and the next round funds it again."
   },
@@ -186,6 +186,7 @@
     "endedOk": "Run finished",
     "endedError": "Run failed",
     "callN": "Model call #{{n}}",
+    "onlySymbol": "{{symbol}} only",
     "stageN": "Part {{n}}",
     "bars_one": "{{count}} bar",
     "bars_other": "{{count}} bars"
@@ -249,7 +250,7 @@
     },
     "interval": {
       "title": "How often it checks in",
-      "body": "On every close of a candle at this interval the AI wakes up for a routine check-in: read the market, reset its levels, verify its plans.\nBetween heartbeats it is not staring at the screen: stop-loss and take-profit orders fire on their own, and the platform carries out the standing orders it set; the watch conditions it set itself with set_watch (a price touched, a candle close, a moment in time) wake it when hit; so do a stop being taken out or a limit order filling.\n\n1h is the default. 15m means about 96 heartbeats a day, each burning your key."
+      "body": "On every close of a candle at this interval the AI wakes up for a routine check-in: read the market, reset its levels, verify its plans.\nBetween heartbeats it is not staring at the screen: stop-loss and take-profit orders fire on their own, and the platform carries out the standing orders it set; the watch conditions it set itself with set_watch (a price touched, a candle close, a moment in time) wake it when hit; so do a stop being taken out or a limit order filling. A round woken this way handles that one coin only, and several coins can each have one running at the same time.\n\n1h is the default, 24 heartbeats a day; 4h is 6 a day. Every wake burns your key."
     },
     "wakeWindow": {
       "title": "When it wakes up",
@@ -459,11 +460,10 @@
       "atLeastOne": "Pick at least 1"
     },
     "beat": {
-      "desc": "The heartbeat is its scheduled check-in; between beats, its own watch conditions, position changes and sharp moves can wake it any time",
+      "desc": "The heartbeat is its scheduled check-in; between beats, its own watch conditions, position changes, sharp moves and equity falling by the percentage you set can wake it any time",
       "aria": "Heartbeat",
       "hint": "Wakes on every {{iv}} close, about {{n}} times a day with the current hours; {{note}}",
       "note": {
-        "15m": "the busiest, every wake burns your key",
         "1h": "the default; with watch conditions covering the gaps it is usually enough",
         "4h": "slow pace, leaning on watch conditions and position events"
       }
@@ -499,13 +499,18 @@
       "hedgeDesc": "Long and short on the same coin at once; off stops it hedging itself and paying fees twice"
     },
     "alert": {
-      "off15m": "Volatility alerts don't apply on a 15m heartbeat: it already wakes often enough",
       "title": "Volatility alerts",
       "desc": "While it holds a position or order in a coin, a 5-minute move past the alert line wakes it early; once per move",
       "mult": "Sensitivity factor",
       "multSub": "higher means fewer alerts; can only go up",
       "multAria": "Sensitivity factor",
       "hint": "Alert line = platform baseline × factor; the baselines of all 8 coins are calibrated on the last half year of 5-minute ranges.",
+      "dropTitle": "Equity drawdown alert",
+      "dropDesc": "When account equity falls from its high by the percentage you set, it is woken early for a whole-board look; after that the high is counted again from the equity at that moment. The platform only wakes it: it closes nothing and does not restrict opening",
+      "dropPct": "Drawdown",
+      "dropPctSub": "equity is checked every 5 minutes",
+      "dropAria": "Equity drawdown percentage",
+      "dropHint": "How large: about 1.5× the share of equity one position loses when its stop is hit. Set it lower and every ordinary stop-out wakes it; this wakes a whole-board round, the most expensive kind of wake.",
       "reviewDesc": "Each trade gets a debrief of its own 24 hours after it closes (with tools, so several model calls); every day at 08:00 a unified review follows, skipped without trades. What it learns goes into the ledger, and promoted rules are read on every wake",
       "restrictDesc": "Off: such rules are only a reference, opening follows your instructions; on: it can use them alone as a reason to stay out"
     },
@@ -577,6 +582,7 @@
       "PRESET": "Standing order",
       "EVENT": "Position changed",
       "ALERT": "Sharp move",
+      "DRAWDOWN": "Equity drawdown",
       "MANUAL": "Woken by owner",
       "MANUAL_MINE": "Woken by you"
     },
@@ -636,6 +642,7 @@
       },
       "none": "No watch conditions now",
       "soon": "close",
+      "forSymbol": "for {{coin}}",
       "note": "Note: {{v}}",
       "setAt": "set {{time}}",
       "touchAbove": "price rises to {{price}}",

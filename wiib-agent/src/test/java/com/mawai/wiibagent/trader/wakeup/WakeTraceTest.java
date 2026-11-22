@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WakeTraceTest {
 
     private static WakeTrace trace() {
-        return new WakeTrace(7L, "TRADE", 1000L, 595, new BigDecimal("10000"), 1, 2);
+        return new WakeTrace(7L, "TRADE", null, 1000L, 595, new BigDecimal("10000"), 1, 2);
     }
 
     private static AssistantMessage.ToolCall call(String id, String name, String args) {

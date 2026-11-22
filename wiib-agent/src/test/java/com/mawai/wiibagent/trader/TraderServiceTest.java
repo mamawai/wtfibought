@@ -123,8 +123,8 @@ class TraderServiceTest {
                                                Integer levMin, Integer levMax,
                                                Boolean multi, Boolean hedge,
                                                Boolean alertEnabled, java.math.BigDecimal alertMult) {
-        return new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", customPrompt, null,
-                levMin, levMax, null, multi, hedge, alertEnabled, alertMult, null, null, null, null);
+        return new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", customPrompt, null,
+                levMin, levMax, null, multi, hedge, alertEnabled, alertMult, null, null, null, null, null);
     }
 
     /** 币种上限 3：单轮工具预算按币摊，4 个被拦；3 个过这道校验（后面才卡在端点上） */
@@ -133,10 +133,10 @@ class TraderServiceTest {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"));
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
-        String four = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT", "15m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null)).error();
-        String three = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT", "15m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null)).error();
+        String four = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT", "1h",
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null)).error();
+        String three = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT", "1h",
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null)).error();
 
         assertThat(four).isEqualTo(new MessageCatalog().get("trader.config.tooManySymbols", Map.of("max", 3)));
         assertThat(three).doesNotContain("最多").contains("模型端点");
@@ -150,6 +150,46 @@ class TraderServiceTest {
         String err = service.create(1L, req(null, null, null, null, null, true, new java.math.BigDecimal("0.5"))).error();
 
         assertThat(err).contains("不能低于 1.0");
+    }
+
+    /** 只填权益回落警报比例的请求 */
+    private static TraderService.UpsertReq dropReq(String pct) {
+        return new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", null, null, null, null, null, null, null,
+                null, null, pct == null ? null : new java.math.BigDecimal(pct), null, null, null, null);
+    }
+
+    /** 权益回落警报的比例只收 1~90%，不设（null）是不启用 */
+    @Test
+    void equityDropPctOutsideRangeRejected() {
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
+
+        assertThat(service.create(1L, dropReq("0.5")).error()).contains("权益回落警报");
+        assertThat(service.create(1L, dropReq("95")).error()).contains("权益回落警报");
+        // 范围内和不设的都过了这道校验，卡在后面的端点上
+        assertThat(service.create(1L, dropReq("15")).error()).isEqualTo(new MessageCatalog().get("trader.noEndpoint"));
+        assertThat(service.create(1L, dropReq(null)).error()).isEqualTo(new MessageCatalog().get("trader.noEndpoint"));
+    }
+
+    /** 关掉权益回落警报，参照点一起清；改比例不动参照点 */
+    @Test
+    void turningEquityDropAlertOffClearsItsReferencePoint() {
+        AiTrader t = named(7L, "小虎");
+        when(traderMapper.selectById(7L)).thenReturn(t);
+        when(traderMapper.selectList(any())).thenReturn(List.of(t));
+        when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
+        UserLlmEndpoint current = endpoint(5, "deepseek-chat");
+        when(endpointService.defaultOf(1L)).thenReturn(current);
+        when(modelFactory.endpointFor(t)).thenReturn(current);
+
+        assertThat(service.updateConfig(1L, 7L, dropReq("15"))).isNull();
+        assertThat(service.updateConfig(1L, 7L, dropReq(null))).isNull();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(traderMapper, times(2)).update(isNull(), cap.capture());
+        assertThat(cap.getAllValues().get(0).getSqlSet()).contains("equity_drop_pct").doesNotContain("equity_peak");
+        assertThat(cap.getAllValues().get(1).getSqlSet()).contains("equity_drop_pct").contains("equity_peak")
+                .contains("equity_peak_at");
     }
 
     /** 杠杆上界卡在 125：再往上 sim 的分档表也接不住 */
@@ -207,8 +247,8 @@ class TraderServiceTest {
         when(modelFactory.testConnection(chosen)).thenReturn(null);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        TraderService.CreateResult r = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
-                null, null, null, null, null, null, null, null, null, null, null));
+        TraderService.CreateResult r = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", null, 5L,
+                null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(r.error()).isNull();
         assertThat(r.id()).isEqualTo(7L);
@@ -260,8 +300,8 @@ class TraderServiceTest {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
         when(traderMapper.selectList(any())).thenReturn(List.of(named(8L, "Alpha")));
 
-        String err = service.create(1L, new TraderService.UpsertReq(" alpha ", "BTCUSDT", "15m", null, null,
-                null, null, null, null, null, null, null, null, null, null, null)).error();
+        String err = service.create(1L, new TraderService.UpsertReq(" alpha ", "BTCUSDT", "1h", null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null)).error();
 
         assertThat(err).isEqualTo(new MessageCatalog().get("trader.config.nameTaken"));
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -272,8 +312,8 @@ class TraderServiceTest {
     void wakeWindowBadFormatRejected() {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
 
-        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, null,
-                null, null, null, null, null, null, null, null, null, null, "21:03-08:30")).error();
+        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", null, null,
+                null, null, null, null, null, null, null, null, null, null, null, "21:03-08:30")).error();
 
         assertThat(err).contains("0/5");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -285,7 +325,7 @@ class TraderServiceTest {
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "4h", null, null,
-                null, null, null, null, null, null, null, null, null, null, "21:00-23:00")).error();
+                null, null, null, null, null, null, null, null, null, null, null, "21:00-23:00")).error();
 
         assertThat(err).contains("永远不会醒");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -300,8 +340,8 @@ class TraderServiceTest {
         when(modelFactory.testConnection(chosen)).thenReturn(null);
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
-                null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 ")).error();
+        String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", null, 5L,
+                null, null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 ")).error();
 
         assertThat(err).isNull();
         ArgumentCaptor<AiTrader> captor = ArgumentCaptor.forClass(AiTrader.class);
@@ -320,10 +360,10 @@ class TraderServiceTest {
         when(endpointService.get(1L, 6L)).thenReturn(endpoint(6, "deepseek-chat"));
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
-        service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 5L,
-                null, null, null, null, null, null, null, null, null, true, null));
-        service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 6L,
-                null, null, null, null, null, null, null, null, null, true, null));
+        service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", null, 5L,
+                null, null, null, null, null, null, null, null, null, null, true, null));
+        service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", null, 6L,
+                null, null, null, null, null, null, null, null, null, null, true, null));
 
         ArgumentCaptor<AiTrader> captor = ArgumentCaptor.forClass(AiTrader.class);
         verify(traderMapper, times(2)).insert(captor.capture());
@@ -613,8 +653,8 @@ class TraderServiceTest {
         when(endpointService.get(1L, 6L)).thenReturn(next);
         when(modelFactory.testConnection(next)).thenReturn(null);
 
-        String err = service.updateConfig(1L, 7L, new TraderService.UpsertReq("小虎", "BTCUSDT", "15m", null, 6L,
-                null, null, null, null, null, null, null, null, null, null, null));
+        String err = service.updateConfig(1L, 7L, new TraderService.UpsertReq("小虎", "BTCUSDT", "1h", null, 6L,
+                null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();
         verify(modelFactory).testConnection(next);
@@ -633,8 +673,8 @@ class TraderServiceTest {
         when(traderMapper.selectList(any())).thenReturn(List.of(self, named(8L, "Alpha")));
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
 
-        String err = service.updateConfig(1L, 7L, new TraderService.UpsertReq("ALPHA", "BTCUSDT", "15m", null, null,
-                null, null, null, null, null, null, null, null, null, null, null));
+        String err = service.updateConfig(1L, 7L, new TraderService.UpsertReq("ALPHA", "BTCUSDT", "1h", null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isEqualTo(new MessageCatalog().get("trader.config.nameTaken"));
         verify(traderMapper, never()).update(any(), any());
@@ -674,7 +714,8 @@ class TraderServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
         verify(traderMapper).update(isNull(), cap.capture());
-        assertThat(cap.getValue().getSqlSet()).contains("memory");
+        // 权益回落警报的参照点按局记，新局一起清
+        assertThat(cap.getValue().getSqlSet()).contains("memory").contains("equity_peak").contains("equity_peak_at");
     }
 
     /** 带入时本局账本条目连同名下单子复制到新局、memory 按新局条目重渲染（账本空着就不碰 memory，旧自由文本留给首次复盘迁移） */

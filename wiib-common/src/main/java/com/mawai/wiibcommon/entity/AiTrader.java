@@ -34,7 +34,7 @@ public class AiTrader {
     /** 交易币种白名单子集，逗号分隔，如 BTCUSDT,ETHUSDT */
     private String symbols;
 
-    /** 唤醒K线级别：5m/15m/1h/4h（1d 已下线） */
+    /** 心跳周期：1h/4h */
     private String intervalCode;
 
     /** 主人的交易指令（目标、边界、偏好，没写到的模型自己定），追加在平台系统提示词之后；每次唤醒现读现拼，改完下一根K线生效 */
@@ -64,7 +64,7 @@ public class AiTrader {
      */
     private Integer ownerNoteRounds;
 
-    /** 对账出来、还没成功告诉过模型的事件行（一条一行）；下一轮开场白接着报，那一轮成功了清空 */
+    /** 对账出来、还没成功告诉过模型的事件行，按币存的 JSON 数组；管那个币的那一轮在开场白里报，成功了才清 */
     private String unreportedEvents;
 
     /** 复盘开关：管单笔复盘和统一复盘两种；关掉只停复盘，已有笔记照常注入 */
@@ -73,11 +73,21 @@ public class AiTrader {
     /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
     private Boolean learnedRestrictionHold;
 
-    /** 波动哨兵警报开关（仅 1h/4h 档生效） */
+    /** 波动哨兵警报开关 */
     private Boolean alertEnabled;
 
     /** 警报灵敏度系数 ≥1.0 只能调高：生效阈值 = 每币基准 × 本系数 */
     private BigDecimal alertThresholdMult;
+
+    /** 权益回落警报的比例%：权益从参照点回落到这个比例，叫醒一轮整盘的；null=不启用。ALWAYS：关掉=写 null */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal equityDropPct;
+
+    /** 权益回落警报的参照点：上次报警之后权益到过的最高点，没报过警就是启用以来的最高点；没启用、还没查过为 null */
+    private BigDecimal equityPeak;
+
+    /** 权益到参照点的时刻 ms */
+    private Long equityPeakAt;
 
     /** 联网搜索开关：开了且所用端点也开了联网搜索，唤醒时才挂 web_search、才多问一句要不要搜 */
     private Boolean webSearchEnabled;

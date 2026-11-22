@@ -84,6 +84,7 @@ debrief:
       watch: 盯盘触发
       event: 持仓变动
       alert: 剧烈波动
+      drawdown: 权益回落警报
       manual: 手动唤醒
       preset: 预案执行
     # 开场白里账户段之前的原文

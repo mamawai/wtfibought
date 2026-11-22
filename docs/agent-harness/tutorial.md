@@ -20,7 +20,7 @@
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
-| **trader agent** | ReAct 循环（20 工具，开场白分两段） | ✓ | K 线收盘 / 波动警报 / 持仓事件 / 盯盘条件命中 / 手动 | `trader/`（现场流与轨迹见 5.7） |
+| **trader agent** | ReAct 循环（20 工具，一轮管整盘或只管一个币，几轮可并行） | ✓ | K 线收盘 / 盯盘条件命中 / 持仓事件 / 波动警报 / 权益回落警报 / 手动 | `trader/`（现场流与轨迹见 5.7） |
 | **chat agent** | 单 ReAct 主 agent + 后台子运行 | ✓ | 用户提问 | `chat/`（子运行在 `chat/run/`） |
 | **单笔复盘 agent** | ReAct 循环（6 个只读工具） | ✓ | 单子平仓满 24 小时 | `learning/DebriefRunner` |
 | **统一复盘 workflow** | 单次调用，无工具 | ✗ | 日线边界（新加坡 08:00）/ 点播 | `learning/ReviewRunner` |
@@ -335,20 +335,24 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 ### 5.1 谁来敲门 · `TraderScheduler`
 
-5m K 线收盘事件是唯一时钟（心跳档位只有 15m / 1h / 4h，5m、1d 已下线）。全部唤醒入口都在这个类里做准入治理：
+5m K 线收盘事件是唯一时钟（心跳档位只有 1h / 4h，5m、15m、1d 已下线）。全部唤醒入口都在这个类里做准入治理。
+
+一个 trader 可以同时跑几轮（`Desk.rounds`）：一轮整盘的（`WakeScope.book`，管全部可交易币），外加每个可交易币各一轮只处理它的单币轮（`WakeScope.of(trader, symbol)`）。每一轮有一个把手 `WakeRound`，调度器往里放这一轮进行中又到来的事，运行器的循环每次调模型前取走、插进对话。
 
 | 入口 | 方法 | 治理 |
 |---|---|---|
-| 例行 | `onKlineClosed` → `fireInterval` → `fireTrader` | 对齐 interval 边界 → `WakeWindow` 时段过滤（时段外静默跳过，**不写 SKIPPED**）→ 边界去重 → 每 trader 互斥 |
-| 波动警报 / 持仓事件 / 盯盘条件命中 | `tryTriggerWake` | 进队列 → 领的时候判仍是 RUNNING / 时段；上一轮在跑就先排着（先来后到，任何一轮结束都来领，排队期间的几条合成一轮）；没叫的持仓事件和盯盘命中由下一次唤醒的【自上次唤醒以来】兜底 |
-| 手动 | `tryManualWake` | `manualWakeBlockedReason` 预检（面板显示的拒因就是真点下去会拿到的那句）→ 再抢一次互斥 |
-| 重置 / 删除 | `tryOccupy` / `release` | 占住唤醒位，占着的时候它醒不过来；`TraderService` 同时还要拿到复盘位（见第 6 章），任一个在用就回绝 |
+| 例行 | `onKlineClosed` → `fireInterval` → `fireRoutine` | 对齐 interval 边界 → `WakeWindow` 时段过滤（时段外静默跳过，**不写 SKIPPED**）→ 边界去重 → 有整盘轮在跑就 `offerRoutine` 插进它，没有就起一轮整盘的；有单币轮在跑不影响，例行不再被跳过 |
+| 波动警报 / 持仓事件 / 盯盘条件命中 / 权益回落警报 | `onTrigger` → `dispatch` | 重新查库判仍是 RUNNING / 时段 → 先交给正在处理这个币的单币轮，没有就交给在跑的整盘轮（都是 `WakeRound.offer`，插话），都没有新起一轮单币轮；不归某一个可交易币的（全仓爆仓、权益回落警报）交给整盘轮，没有就起一轮整盘的；没叫的持仓事件和盯盘命中由下一次唤醒的【自上次唤醒以来】兜底 |
+| 手动 | `tryManualWake` | `manualWakeBlockedReason` 预检（面板显示的拒因就是真点下去会拿到的那句）→ 是一轮整盘的，已经有整盘轮在跑才拦，单币轮在跑不拦 |
+| 重置 / 删除 | `tryOccupy` / `release` | 有任何一轮在跑就占不上；占着的时候它起不了新轮，这期间来的触发先放着，放手后再分发；`TraderService` 同时还要拿到复盘位（见第 6 章），任一个在用就回绝 |
+
+一轮结束在 `start` 的 finally 里摘登记：这一轮已经在写结论、没再调模型，插进去的它读不到——到点的例行重新发，触发重新分发，不丢。
 
 **不做兜底补漏**：WS/事件断流丢的 K 线就丢了——陈旧信号唤醒没有意义。
 
 **日线边界在这里只是一根普通的边界**：以前 08:00 有一次全体停工的日线交接（先唤醒、等交易跑完、全体复盘、再开工），现在没有了。复盘有自己的调度和自己的互斥位（`learning/ReviewScheduler`，第 6 章），不占唤醒位、不挡唤醒，这个类里只剩类注释上一句"复盘不归这里管"。
 
-配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL；边沿触发，一段行情每人只报一次，回落到基准八成以下才算结束）、`AlertTrigger`、`TradeEventListener`（sim 在止损/止盈/强平/限价成交时发的 `TradeEvent` → `EventTrigger`，决策行 kind=EVENT）、`WatchSentinel`（模型 `set_watch` 布的条件：触及 / 到时刻看 tick，周期收盘看 5m 收盘落在哪个边界；命中是库里 ARMED→FIRED 的 CAS，赢了才叫 → `WatchTrigger`，kind=WATCH；名单在内存，`WatchesChanged` 事件整份重载）、`PresetExecutor`（条件带了动作就是预案：命中后由代码当场移止损 / 平仓 / 撤单，结果记到条件行、计划修订史和时间线上一行 kind=PRESET；移止损和撤单做成了不叫醒，平仓做成了或动作没做成才叫）、`WakeWindow`（新加坡时间写死 `Asia/Singapore`，不跟 systemDefault 漂）。
+配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL；边沿触发，一段行情每人只报一次，回落到基准八成以下才算结束）、`AlertTrigger`、`TradeEventListener`（sim 在止损/强平/限价成交时发的 `TradeEvent` → `EventTrigger`，决策行 kind=EVENT；止盈触发不叫醒，分档止盈平掉一部分、仓位还在的记一行事件，下一轮开场白报）、`EquityDropSentinel`（主人设了比例的，每根 5m 收盘查一次权益；参照点是上次报警之后到过的最高点，存在 `ai_trader.equity_peak`；回落到比例就发 `EquityDropTrigger`、参照点从当时的权益重新记，kind=DRAWDOWN，叫醒的是一轮整盘的；休眠时段里不报也不重新记）、`WatchSentinel`（模型 `set_watch` 布的条件：触及 / 到时刻看 tick，周期收盘看 5m 收盘落在哪个边界；命中是库里 ARMED→FIRED 的 CAS，赢了才叫 → `WatchTrigger`，kind=WATCH；名单在内存，`WatchesChanged` 事件整份重载）、`PresetExecutor`（条件带了动作就是预案：命中后由代码当场移止损 / 平仓 / 撤单，结果记到条件行、计划修订史和时间线上一行 kind=PRESET；移止损和撤单做成了不叫醒，平仓做成了或动作没做成才叫）、`WakeWindow`（新加坡时间写死 `Asia/Singapore`，不跟 systemDefault 漂）。
 
 ### 5.2 四层外生停止条件 · `TraderWakeupRunner` 顶部常量
 
@@ -381,19 +385,27 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 `recordFailure` 里 key 无效**不等连败当场停**：再攒够连败也只是原样重炸几轮，能修的人只有用户自己。
 
-`runAgentSession` 是会话本体：
+一轮拆成四个类，各管一段：`TraderWakeupRunner` 只管生命周期（算预算、判爆仓、落决策行、记成败），`WakeBriefing` 备料，`WakeFlows` 定这一轮怎么走、每段开场白怎么写，`WakeSession` 挂工具跑循环。
 
 ```text
-UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存的，装饰器不新建会跨轮累加）
-  → TradeTools 每轮 new（绑 sim 子账户 / 白名单 / 风险规格 / 本轮截止时刻）
-  → 计划对账（TraderPlanStore.reconcile：逐份 LIVE 计划对 sim 持仓/挂单，出 Reconcile(live, events)；已平仓位懒取）
-  → 组装系统提示词（promptAssembler.assemble）、第一段观察包（WakeObservation.assemble：事件 / 账户 / 上一轮结论 / 承诺）
-  → 两段还是一段：非例行唤醒、有留言、有承诺要处置就分两段（stageOneInstruction，ReactLoop.stages 追加 stageTwoInstruction），否则 routineInstruction 一段
-  → LlmClient（系统提示 + 20 工具，主人开了联网搜索、端点也开了的多挂一个 web_search；不强制 tool_choice，"先读事实、用工具求证"在开场白的问题里）
-     + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
-  → FutureTask 限时执行
-  → finally：动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
+WakeBriefing.reconcile：在账户闸里现取持仓挂单 + 计划对账（TraderPlanStore.reconcile），对出来的事件按币存进 UnreportedEvents
+  → 判爆仓（先对账再判：爆仓后没有下一轮来归档了）
+  → WakeBriefing.prepare：这一轮该报的事件（单币轮只取那个币的）、最近几轮、盯盘条件、报价、观察包（WakeObservation.assemble），
+     整盘轮带财经日历和主人留言（被触发叫醒的不带留言），单币轮带账户概况，拼成 WakeFlows.Brief
+  → 组装系统提示词（promptAssembler.assemble，所有轮同一份）
+  → WakeFlows.choose 选走法：单币轮一种（处理叫醒它的事 → 开了联网的回头搜 → 给这个币收尾）；
+     整盘轮开了联网走三段，没开的被触发叫醒、有留言或承诺要处置就分两段，其余一段问完
+  → TradeTools 每轮 new（绑 sim 子账户 / 风险规格 / 本轮截止时刻 / 账户闸；单币轮的只认自己那个币），
+     seeOpening 把开场白里给过的账户记成"这一轮看到过的"
+  → WakeSession.run：UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存的，装饰器不新建会跨轮累加）
+     + LlmClient（系统提示 + 20 工具，主人开了联网搜索、端点也开了的多挂一个 web_search）
+     + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹；
+       Listener.inbox 每次调模型前取一次 WakeRound.take()，由 TraderWakeupRunner.interject 成文插进对话）
+     + FutureTask 限时执行；finally 里动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
+  → 成功了才算告诉过模型：watchStore.markWoken 记盯盘命中，UnreportedEvents.clear 清报过的事件行
 ```
+
+插话（`TraderWakeupRunner.interject` + `TriggerText.interjection`）：到点的例行一段，每条触发一段，带那个币现在的持仓、挂单和盯盘条件；整盘的联网轮前两段本来不许开仓，这个币来了触发就当场放开（`Flow.unlock`）。盯盘命中在开场白里已经报过的不再说第二遍。
 
 `mergeActions` 的合并规则：顺序骨架来自轨迹收集器的全量记录（含数据工具），交易工具用 `TradeTools` 的富记录（带结果/拒因）按序替换轻量占位。
 
@@ -401,7 +413,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ### 5.4 注入面（最该细读的一段）
 
-一次唤醒喂给模型的东西分两块：**系统提示词**（`TraderPromptAssembler.assemble`）和**开场白**。分工是：system 只放"你是谁、怎么答"——模板 / 经验账本 / 主人风格指令 / 固定收尾格式 / 输出语言；开场白只放"这轮发生了什么，回答问题"，而且分两段先窄后宽：第一段「处置」（`stageOneInstruction`）= 为什么醒 + 观察包（`WakeObservation.assemble`：事件 / 账户 / 上一轮结论 / 承诺块）+ 留言 + 只处置承诺的问题；模型答完纯文本，`ReactLoop.stages` 追加第二段「布防与收尾」（`stageTwoInstruction`）= 各币摘要 + 轨迹 / 战绩 + 快照 / 日历 / 休眠提示 + 看整盘、布防、收尾的问题；这些整盘事实到追加那一刻才算，快照重拉一次。决策正文（`finalReasoning`）每段取最近一条有正文的助手消息、空行接起来，第一段为什么平仓和第二段的结论都进决策行。非例行唤醒的头是触发行，日历跟在第一段；没承诺、没留言、不是非例行的轮次并成一段（`routineInstruction`）。模型要"重建"的东西（上一轮等的是什么、仓位为什么不见了、现有杠杆几倍、布的条件离现价多远）全部由代码算好直接给。
+一次唤醒喂给模型的东西分两块：**系统提示词**（`TraderPromptAssembler.assemble`）和**开场白**。分工是：system 只放"你是谁、怎么答"——模板 / 经验账本 / 主人风格指令 / 固定收尾格式 / 输出语言；开场白只放"这轮发生了什么，回答问题"：为什么醒、这一轮管哪些币、分几段走，都在这里，system 里不按唤醒种类分。成文在 `WakeFlows`，每种走法是一个 `Flow` 的实现。整盘轮先窄后宽：第一段「处置」（`stageOneInstruction`）= 为什么醒 + 观察包（`WakeObservation.assemble`：事件 / 账户 / 上一轮结论 / 承诺块）+ 留言 + 只处置承诺的问题；模型答完纯文本，`Flow.next` 追加第二段「布防与收尾」（`stageTwoInstruction`）= 各币摘要 + 轨迹 / 战绩 + 快照 / 日历 / 休眠提示 + 看整盘、布防、收尾的问题；这些整盘事实到追加那一刻才算，快照重拉一次。没承诺、没留言、不是被触发叫醒的并成一段（`routineInstruction`）；开了联网的走三段（核查事实 → 要不要搜 → 交易与收尾），到第三段才许开仓、加仓、反手（`Flow.openingAllowed`）。被触发叫醒的整盘轮头换成那件事（`TriggerText.head`），权益回落警报的在第一段问题前面多问一句"你现在持有和挂着的方向，行情是不是已经变了"。单币轮（`singleInstruction`）= 把它叫醒的事 + 只处理哪个币 + 这个币的观察包和行情 + 账户概况（别的币只给数字，`accountOverview`）+ 一行 BTC 大盘参考 + 这种触发各自的问题（`TriggerText.questions`）；动作在前，开了联网的第二段回头搜，最后一段给这个币布盯盘、只写它那一段结论；不带财经日历、最近轨迹、论点战绩和主人留言。决策正文（`finalReasoning`）每段取最近一条有正文的助手消息、空行接起来，联网的走法只留最后一段。模型要"重建"的东西（上一轮等的是什么、仓位为什么不见了、现有杠杆几倍、布的条件离现价多远）全部由代码算好直接给。
 
 `TraderPromptAssembler` 的类注释里那**七条认知设计**是这套东西的设计文档，逐条对着代码读。特别注意第 ⑦ 条（最近改的）：
 
@@ -417,19 +429,27 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 | 块 | 来源 | 要点 |
 |---|---|---|
-| 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席 |
+| 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席。事件对出来先按币存进 `ai_trader.unreported_events`（`UnreportedEvents`），整盘轮全报，单币轮只报自己那个币的，那一轮成功了才清；止盈平掉一部分、仓位还在的，和休眠时段里命中没叫醒的盯盘条件，也在这一块报 |
 | 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、当前止损与各档止盈（价位和数量）、计划（开仓时的止盈分档 `targets`）与修订历史（时刻可读）、挂单带已挂时长。风险事实代码算好：每个持仓浮盈几 R（`unrealizedR`，R 按计划原始止损）、离最近一档止损百分之几（`stopDistancePct`）、止损打掉亏权益百分之几（`lossAtStopPctOfEquity`，止损挪过成本的是负数），顶层一行全部止损同时打掉的合计（`lossAtAllStopsPctOfEquity`）。持仓另带 `sinceLastWake`（`PositionPath` 算窗口，极值复用 `CaseFileBuilder.market`）：自本局最近一条 OK 决策行以来本地 5m 的首根开盘、最高最低各在何时、末根收盘、涨跌，from / to 是实际覆盖的起止；还没有 OK 行或仓位是那之后才开的，从开仓所在那根算；窗口里没收盘根就不带。一次给足，工具预算才能留给行情求证；盯盘条件不在这块，在承诺块里。账户块下面另有一行今天（新加坡时间 0 点起）净亏损了结的仓位数，按币和方向数，止损单触发的另数，主人标了不算数的不数（`WakeObservation.lossesToday`）；今天没有、或者已平仓位这次没取到，就不出这一行 |
-| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的，一次取最近 30 轮）：结论按币取最近一段（`latestSegments`）——模型每轮只写有变化的币，没写的币由代码往回翻、带着它最近一次写的那段和写下的时刻，翻不到的点名"还没有结论段"；最近一轮的总评照带，段身不截断。轨迹一行一轮，只列最近 5 轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL/EVENT，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
+| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 轨迹吃 `recentWakes` 查的那份 `List<RecentWake>`；结论按币取最近一段（`latestSegments`，一个币一次查询，按结论块里的 `[SYMBOL]` 找最近几行——几轮并行之后轮次变多，往回翻固定轮数不够用）——模型每轮只写有变化的币，没写的币带着它最近一次写的那段和写下的时刻，找不到的点名"还没有结论段"；最近一轮的总评照带，段身不截断。轨迹一行一轮，只列最近 5 轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL/EVENT/WATCH/DRAWDOWN，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 承诺块 + 各币摘要 | `WakeObservation.commitments` / `symbolsSummary` | 承诺块进第一段：持仓与挂单各一行（失效条件原文 + `PositionPath.lastClosedBar` 合成的刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（价格类按标记价算"在价位上方 / 下方 X%"，AT_TIME 算还有几分钟）、上一轮每个币的等待行（按结论块自己那门语言的 `mark.wait` / `waitLong` 认，写"无"的不算；那个币一条条件都没布就注明）。只列事实不下判断——失效条件是自由文本，代码判不了触发没触发。各币摘要进第二段：每个可交易币和 BTCUSDT（不可交易也给一行，标成大盘参考）自上次 OK 轮以来的开高低收（`PositionPath.symbol`）。承诺块非空、有事件或收盘命中就是"忙"（`Pack.busy`），运行器据此分两段 |
 | 行情快照 | `WakeObservation.snapshot` | 进第二段：每个可交易币和 BTCUSDT 的标记价、1h / 4h / 24h 涨跌（`CaseFileBuilder.changes` 按已收盘 5m 算，本地缺 K 线的那格写"—"）、资金费率；后面跟美股参考（纳指期货、标普期货、VIX 的现价与较昨收涨跌，取 `CrossAssetService` 的缓存，取不到整块不带） |
-| 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后**；样本够了带重放汇总（止损原样与放宽各档的结局、管理动作相对拿着不动的差） |
+| 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后**；开场白这份不带重放汇总，复盘素材和指令生成器取的那份样本够了才带（止损原样与放宽各档的结局、管理动作相对拿着不动的差） |
 | 财经日历 | `EconCalendarAssembler` | 只留美国的 High 级事件。三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
 | 经验账本 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本） | 只注入规律和破满 2 笔的执行缺口，假设转正成规律才注入；规律一行是代码按名下单子记的累计账（照做——限制型写违反——几笔、赚几亏几、合计多少 USDT，引用时情况不符的另记次数），执行缺口一行写碰到几次、做到几次；账本首行带用法说明，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
 | 休眠提示 | `sleepNotice` | 时段内末次唤醒才有。明说休眠本身不是任何方向动作的理由——"13 小时看不见"既诱导睡前减仓，也诱导赶在休眠前多开一笔 |
 
 ### 5.5 动手面
 
-`TradeTools` 9 个交易工具（`get_account` / `open_position` / `close_position` / `reverse_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`；平台在采的币都能布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）；条件可以带一个预案动作（`WatchAction`：移止损 / 平仓 / 撤单，指的仓位或挂单不必在这个币上，没有开仓）。止损必填、止盈可选：`open_position` 和 `set_take_profit` 的止盈是最多 3 档的 `TargetRung`（价位 + 平掉仓位的百分之几），计划里按同一个形状存。`set_stop_loss` 和预案的移止损两处改止损都走 `StopOrders.move`，只许收紧。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 20 个；行情类的可查任意 Binance USDT 永续。`market_snapshot` 只给各数据源的原始读数（`MarketReadings`），不打分、不贴行情标签；`news_search` 带关键词或小时数时查库里的历史快讯。主人在「我的 Trader」开了联网搜索（`ai_trader.web_search_enabled`）、所用端点也开了的 trader 另挂一个 `web_search`（两道都过才算开，见 `TraderModelFactory.webSearchEnabled`；`WebSearchTool`，单独发一次带搜索的请求，用量记在同一轮账上）；那次请求用 trader 自己的系统提示（`trader.wake.searchInstruction`：只留带日期和出处的事实，价格预测、别人的技术分析、喊单和营销不报）。例行轮看整盘的问题和波动警报的问题前面会多问一句本轮有没有要搜的（`trader.wake.searchQuestion`），盯盘命中和持仓事件的轮不问。
+`TradeTools` 9 个交易工具（`get_account` / `open_position` / `close_position` / `reverse_position` / `set_stop_loss` / `set_take_profit` / `write_plan` / `cancel_order` / `set_watch`）**不用逐个读**，挑两三个看形状即可；`set_watch` 是模型给自己布盯盘条件（触及价位 / 周期收盘 / 时刻），存 `ai_trader_watch`（`TraderWatchStore`），护栏在 `TradeGuard.validateWatch`；平台在采的币都能布，不限可交易的那几个（比如拿 BTCUSDT 盯大盘）；条件可以带一个预案动作（`WatchAction`：移止损 / 平仓 / 撤单，指的仓位或挂单不必在这个币上，没有开仓）。止损必填、止盈可选：`open_position` 和 `set_take_profit` 的止盈是最多 3 档的 `TargetRung`（价位 + 平掉仓位的百分之几），计划里按同一个形状存。`set_stop_loss` 和预案的移止损两处改止损都走 `StopOrders.move`，只许收紧。数据工具 11 个在 `toolkit/`（`klines` / `indicators` / `kline_structure` / `market_snapshot` / `option_iv` / `funding_history` / `orderbook_depth` / `derivatives_history` / `whale_positions` / `cross_asset_snapshot` / `news_search`），加起来正好 20 个；行情类的可查任意 Binance USDT 永续。`market_snapshot` 只给各数据源的原始读数（`MarketReadings`），不打分、不贴行情标签；`news_search` 带关键词或小时数时查库里的历史快讯。主人在「我的 Trader」开了联网搜索（`ai_trader.web_search_enabled`）、所用端点也开了的 trader 另挂一个 `web_search`（两道都过才算开，见 `TraderModelFactory.webSearchEnabled`；`WebSearchTool`，单独发一次带搜索的请求，用量记在同一轮账上）；那次请求用 trader 自己的系统提示（`trader.wake.searchInstruction`：只留带日期和出处的事实，价格预测、别人的技术分析、喊单和营销不报）。开了联网的轮多一段专门问要不要搜：整盘轮在核查事实之后、交易之前问（`trader.wake.searchQuestion`），单币轮在动作之后回头问（`trader.wake.single.search`），搜到的改变判断可以接着调整。
+
+几轮可以同时动一个账户，交易工具这一层有三样东西管着（单测在 `TradeToolsTest`）：
+
+- **单币轮只认自己那个币**（`WakeCtx.onlySymbol`）：对别的币开平仓、改止损、撤单、布盯盘都被拒并说明原因；查行情的工具不限币。
+- **账户闸**（`AccountGate`，`AccountGates` 按 trader 发）：每个写动作走 `TradeTools.acting`，在闸里排队，一次只执行一个；预案执行（`PresetExecutor`）和每轮开头的取账户加对账（`WakeBriefing.reconcile`）进的是同一把闸。做成了的动作在闸里记一笔（谁、哪个币、做了什么），给别的轮的提示用。
+- **后动的先收到提示**（`SeenAccount`）：每一轮记着它上次看到的每个币的持仓、挂单、盯盘条件——开场白里给的、`get_account` 查到的、自己上一次动作的回执、插话里带的都算看到。动手前现查一份和它比，变了这次不执行，回一句"这个币在你上次查看之后变了"加别的轮做了什么和最新状态，它重新提交才执行；平仓和撤单也比。开仓、加仓、反手另外比别的币的仓位。靠比对，不靠消息通知。
+
+`set_watch` 的每组条件挂在一个可交易币名下（`forSymbol`，存 `ai_trader_watch.for_symbol`；单币轮里默认就是自己那个币），按（为哪个币布的，盯哪个币的价格）整组替换，命中时叫醒的是那个币的单币轮。
 
 三个设计点：
 
@@ -450,10 +470,10 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | 文件 | 管什么 | 不认识什么 |
 |---|---|---|
 | `trader/WakeTrace` | 一次唤醒的过程状态（纯数据）。每个变更方法**返回要外发的帧**，`replay` 按当前状态合成回放帧，`toJson` 是落库形状 | 不认识 SSE、ReactLoop、Spring 容器 |
-| `trader/TraderLiveHub` | 订阅者管理、扇出、心跳。按 traderId 订阅，一次唤醒一个 `Run` 句柄，runner 只碰它 | 不认识 ReactLoop |
+| `trader/TraderLiveHub` | 订阅者管理、扇出、心跳。按 traderId 订阅，一次唤醒一个 `Run` 句柄，runner 只碰它；一个 trader 同时在跑几轮就有几个 `Run`，每帧带 `run`（这一轮的 id） | 不认识 ReactLoop |
 | `controller/TraderController` | 准入：谁能连 | — |
 
-帧序列：`run_start` → `prompt` → 每次模型调用的 `model_start` / `token…` / `model_end` → `tool_result…` → `run_end`；分过段的轮在第二段起始那次调用之前多一帧 `stage`（段号 / 起始调用号 / 该段开场白），落库多一个 `stages` 数组。中途连上按当前状态回放，空闲只有心跳。
+帧序列：`run_start` → `prompt` → 每次模型调用的 `model_start` / `token…` / `model_end` → `tool_result…` → `run_end`；分过段的轮在第二段起始那次调用之前多一帧 `stage`（段号 / 起始调用号 / 该段开场白），落库多一个 `stages` 数组。`run_start` 带 `symbol`（单币轮处理的币，整盘轮没有）。几轮同时在跑时各自的帧交错着推，前端 `hooks/useTraderLive.ts` 按 `run` 归约，`LiveRunCard` 一轮一张卡。中途连上按当前状态逐轮回放，空闲只有心跳。
 
 读的时候盯这几处：
 
@@ -507,7 +527,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | `ReviewMaterialAssembler.hasNewMaterial` | 有做完单笔复盘、还没进过统一复盘、sim 的已平仓位里还找得到的单子，或者窗口内有过 `open_position` 动作（被拒的也算）才复盘；都没有**静默跳过不烧钱**，窗口并入下次 |
 | `ReviewMaterialAssembler.assemble` | 纯代码算六块素材：战绩表 / 本局论点战绩（含按入场方式、按币分桶，开仓后不动的重放汇总）/ 本批单子（一篇最多 20 笔、取平仓最早的，按单子类型分组全部列出，每笔前面带仓位编号，先是事实表、下面跟这笔的单笔复盘正文；末尾附本批重放汇总、没成交就撤掉的限价单之后穿没穿过限价位——正好碰到不算，穿过的从那一根起按原止损和止盈档往后走）/ 本期行情 / 盯盘布防（期间布的条件、命中、得知命中那轮的动作与该币结论段）/ 经验账本（带名额占用，每条带代码按名下单子记的账，下面列本批单笔复盘把哪几笔归到了它那里）。另带一份本批单子（仓位编号 → 净盈亏、平仓日）、各笔单笔复盘合并出来的归类、要盖编号的计划行。**收哪些单子不看时间**，看有没有成功的 DEBRIEF、计划行盖没盖过编号；行情、布防、撤单、权益的窗口整体晚 24 小时：`(上一篇的 wake_time − 24h, 本篇的时刻 − 24h]`（`ReviewRunner.WINDOW_LAG_MS`） |
 | `CaseFileBuilder.path` | 一笔交易在 5m K 线上的路径指标：最大浮盈 / 最大逆向（各相当于几 R，R = 入场价到计划原始止损的距离）、到 +0.5R / +1R 用时、首次收回入场价、出场后 4h·24h 最有利价。配上 `EntryContext` 在开仓那一刻存下的 1h ADX / 布林带宽 / ATR / 离最近美国数据多久 / 时段 / 资金费，模型才答得出"赢单和亏单差在哪" |
-| `CaseFileBuilder.replay` | 开仓后不动的重放，单位 R = 入场价到原始止损的距离：从开仓后第一根 5m 逐根走到实际平仓后 24 小时（到那时还没全部了结的记未决；事实表里别的数也都落在这一段里，所以整张表在平仓满 24 小时那一刻就定格，谁再算都是同一份），同一根里止损和目标都碰到按止损算；分档入场的限价档（`LadderReplay`）和模拟盘一样，价格穿过限价才算成交，正好碰到不算。给出实际几 R（净盈亏 ÷ 开仓总数量 × R，开仓总数量由 sim 从订单流水聚合）、开仓后 24 小时的最大顺向 / 最大逆向 / 拿满的位置、止损原样与放宽到 1.5 / 2 / 3 倍各自先到目标还是先到止损。`summarize` 把一批合计成一行，trader 每轮的论点战绩块和复盘素材共用 |
+| `CaseFileBuilder.replay` | 开仓后不动的重放，单位 R = 入场价到原始止损的距离：从开仓后第一根 5m 逐根走到实际平仓后 24 小时（到那时还没全部了结的记未决；事实表里别的数也都落在这一段里，所以整张表在平仓满 24 小时那一刻就定格，谁再算都是同一份），同一根里止损和目标都碰到按止损算；分档入场的限价档（`LadderReplay`）和模拟盘一样，价格穿过限价才算成交，正好碰到不算。给出实际几 R（净盈亏 ÷ 开仓总数量 × R，开仓总数量由 sim 从订单流水聚合）、开仓后 24 小时的最大顺向 / 最大逆向 / 拿满的位置、止损原样与放宽到 1.5 / 2 / 3 倍各自先到目标还是先到止损。`summarize` 把一批合计成一行，复盘素材和指令生成器取的论点战绩在用，trader 每轮开场白不带 |
 | `ReviewRunner.review` | 一次调用进去出来，无工具无循环；模型输出里的编号归类行滤掉不认，落账（`apply`）的是"各笔单笔复盘合并出来的归类 + 本篇的新增、发现、删除"；落账后 `TraderPlanStore.markReviewed` 给本批计划行盖上这篇的编号，再由代码结账（`settle`：转正 / 降级 / 闲置退役），把账本渲染写回 memory，结账结果和名额满了没记上的新增追加在复盘正文末尾。时限 600 秒 |
 | `ExperienceOpParser` | 两套段标记：单笔复盘的【单笔复盘】/【归类】（`debriefBody` / `debriefClassifies`，两门语言的标记都认——统一复盘读到的 DEBRIEF 可能是换语言之前写的），统一复盘的【本期复盘】/【经验更新】。行的写法是同一套：归类行 `#id 名下 2238 ｜ 说明`、`#id 引用不符 2250`（执行缺口是 `守 …`、`破 …`，都不沾写 `#id 无`），更新行 `新增 … ｜ 名下 … ｜ 来源 #id`、`发现 …`、`删除 #id`，没有要记的单独写一行「本期无更新」。编号行从严，结构不对整行丢；标记段写成「守 无」「名下 无」算这一段一笔都没有；新增行认不出的尾段只丢那一段。**统一复盘一行都认不出、也没写「本期无更新」时 REVIEW 行照存（记成 ERROR）、账本不动、本批单子不盖编号**——一次格式失守不污染记忆，下次还在 |
 | `ExperienceLedger` | 记账规则全在代码：`mergeDebriefs` 把各笔单笔复盘的归类行合成每条经验一行（条目得是现役的假设、规律或执行缺口，标记对得上条目种类，仓位编号只能是那一笔自己的，同一笔对同一条只认第一行，不合的丢掉）；归类逐笔记进 `ai_trader_experience_trade`（净盈亏取案例行那个数、平仓日按新加坡日期、段号取条目当前段，同一条同一笔只记一次），标记和条目种类对不上、或有一笔不在本批的整行丢；主人标了不算数的单子读账时剔掉（标完 `TraderService.setPlanStale` 当场重渲染 memory），开新局带入时也不复制。`settle` 按挂在这篇复盘上的行认本篇新记的单子（引用不符不算）：入场条件、风险限制的假设当前段名下满 5 笔、来自 3 个平仓日、合计站在它这边（限制型看负数）转正；规律当前段满 5 笔、合计反过来降级（钉住的不降），各起一段；两样都只判本篇有新单子记进名下的，本篇新建的不判转正。连续 10 篇没有新单子退役，钉住的、本篇新建的、已转正的限制型不加一（有新单子照样清零）；本批一笔单子都没有的复盘什么都不动。新增只收入场条件 / 风险限制 / 执行缺口三种格子，现役 10 / 同类 3 / 限制型 2 的上限；删除只对没钉住的假设和执行缺口；退役不删行。`render` 把规律和破满 2 笔的执行缺口渲染成 trader 注入的文本并写回 `ai_trader.memory` |
@@ -607,7 +627,9 @@ trader 那条链的前端另在两处：
 | `ExperienceLedgerTest` / `ReviewRunnerTest` / `ReviewLoopTest` | 账本记账规则（归类逐笔记账 / 转正 / 降级 / 闲置退役 / 上限 / 带入 / 清理）、统一复盘回路的归类合并、落账、盖编号、结账与降级、真 assembler + 真账本 + mock 模型贯通一遍 |
 | `ReviewSchedulerTest` | 复盘位：5m 扫单笔复盘、日线边界改起统一复盘、三家共用一个位子各自抢不到时的做法、拿到位子后重读 trader |
 | `TraderWakeupLoopTest` | mock 模型跑通真 ReactLoop 唤醒回路 |
-| `TraderSchedulerTest` | 四个唤醒入口的准入、排队触发先来后到、日线边界和别的边界一样没有停工窗口 |
+| `TraderSchedulerTest` | 例行不被跳过、触发交给谁的几种情况、插话没被读到另起一轮、整盘轮不重复、权益回落警报撞上别的轮、占位与手动 |
+| `EquityDropSentinelTest` | 参照点怎么记、回落到比例叫一次、叫过之后从当时的权益重新记、休眠时段不报也不重新记 |
+| `TradeToolsTest` | 开仓硬校验之外，还有并行那几条：单币轮对别的币被拒、同一个币先动的生效后动的收到提示、重新提交后成交、动作排队 |
 | `TraderPromptAssemblerTest` / `WakeInstructionI18nTest` | 注入面成文、收尾标记两处同源 |
 | `PromptI18nTest` / `PromptParityTest` / `AgentMessageParityTest` | 两门语言词表的 key 对齐与占位符校验 |
 

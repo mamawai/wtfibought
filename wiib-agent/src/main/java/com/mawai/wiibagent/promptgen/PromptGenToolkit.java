@@ -61,7 +61,7 @@ public class PromptGenToolkit {
         if (run.trader() == null) {
             return MAPPER.writeValueAsString(MAPPER.createObjectNode().put("hasTrader", false));
         }
-        String block = playStats.assemble(run.trader(), run.lang());
+        String block = playStats.assembleWithReplay(run.trader(), run.lang());
         return block == null ? prompts.get(run.lang(), "promptgen.noPlayStats") : block;
     }
 

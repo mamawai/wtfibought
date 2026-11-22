@@ -45,7 +45,42 @@ class TraderLiveHubTest {
     }
 
     private TraderLiveHub.Run begin(long traderId) {
-        return hub.begin(trader(traderId), "TRADE", 1000L, 595, new BigDecimal("10000"), 0, 0);
+        return hub.begin(trader(traderId), "TRADE", null, 1000L, 595, new BigDecimal("10000"), 0, 0);
+    }
+
+    /** 同一个 trader 两轮同时在跑：每帧带着是哪一轮的，订阅者按它分开；中途接入两轮都回放 */
+    @Test
+    void 两轮同时在跑_帧带轮次编号_中途接入各自回放() {
+        Frames owner = new Frames();
+        hub.subscribeTrader(1L, owner);
+        TraderLiveHub.Run book = begin(1L);
+        TraderLiveHub.Run sol = hub.begin(trader(1L), "ALERT", "SOLUSDT", 2000L, 595, new BigDecimal("10000"), 1, 0);
+        book.callStart();
+        sol.callStart();
+        sol.token("只看 SOL");
+
+        assertThat(owner.events).containsExactly("run_start", "run_start", "model_start", "model_start", "token");
+        String bookId = owner.data.get(0).path("run").asString(null);
+        String solId = owner.data.get(1).path("run").asString(null);
+        assertThat(bookId).isNotBlank().isNotEqualTo(solId);
+        assertThat(owner.data.get(0).path("symbol").isNull()).isTrue();
+        assertThat(owner.data.get(1).path("symbol").asString(null)).isEqualTo("SOLUSDT");
+        assertThat(owner.data.get(2).path("run").asString(null)).isEqualTo(bookId);
+        assertThat(owner.last("token").path("run").asString(null)).isEqualTo(solId);
+
+        // 后来的订阅者：两轮各回放一遍，都从 run_start 起
+        Frames late = new Frames();
+        hub.subscribeTrader(1L, late);
+        assertThat(late.events.stream().filter("run_start"::equals)).hasSize(2);
+        assertThat(late.data.stream().map(d -> d.path("run").asString(null)).distinct())
+                .containsExactlyInAnyOrder(bookId, solId);
+
+        // 一轮结束只摘它自己，另一轮接着推
+        sol.finish("OK", null, BigDecimal.TEN, 1, 1, null);
+        sol.end(8L);
+        book.token("整盘还在想");
+        assertThat(owner.last("run_end").path("run").asString(null)).isEqualTo(solId);
+        assertThat(owner.last("token").path("run").asString(null)).isEqualTo(bookId);
     }
 
     private static AssistantMessage.ToolCall call(String id, String name, String args) {

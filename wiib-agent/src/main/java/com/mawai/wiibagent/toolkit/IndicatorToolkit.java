@@ -35,7 +35,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 窗口统一是硬要求，不只是省事：klines 与 kline_structure 的 idx 得能互相索引；
  * 而 ATR 走 Wilder RMA、记忆很长，同一个符号喂不同根数会算出不同的值——
  * 窗口一致，indicators 与 kline_structure 的 atr14 才逐位相同。
- * interval 由 AI 自选——交易 15m 的 trader 可以主动查 1h/4h 做多周期确认；根数不给它选。
+ * interval 由 AI 自选——心跳 1h 的 trader 可以主动查 15m/4h 做多周期确认；根数不给它选。
  * <p>
  * 这里只出中性的原始事实与公开标准指标，不替 trader 做任何形态/结构判读——
  * 用户的交易思路是从提示词灌进来的（缠论、道氏、量价各家都有），

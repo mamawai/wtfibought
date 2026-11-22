@@ -8,7 +8,6 @@ import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.wakeup.TraderWakeupRunner;
-import com.mawai.wiibagent.trader.wakeup.WakeObservation;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -194,7 +193,6 @@ public class TraderPromptAssembler {
                 Map.entry("leverageMin", risk.leverageMin()),
                 Map.entry("leverageMax", risk.leverageMax()),
                 Map.entry("marginPctMax", plain(risk.marginPctMax())),
-                Map.entry("conclusionLookback", WakeObservation.CONCLUSION_LOOKBACK),
                 Map.entry("positionRule", positionRule(lang, risk)),
                 Map.entry("hedgeRule", hedgeRule(lang, risk))));
     }

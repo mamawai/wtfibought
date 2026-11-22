@@ -94,6 +94,8 @@ public final class WakeTrace {
 
     final long traderId;
     private final String kind;
+    /** 这一轮只处理的那个币；整盘轮为 null */
+    private final String symbol;
     private final long wakeTime;
     private final long startedAt = System.currentTimeMillis();
     private final long budgetSeconds;
@@ -107,10 +109,11 @@ public final class WakeTrace {
     /** 收尾块，非空=本轮已结束 */
     private ObjectNode end;
 
-    public WakeTrace(long traderId, String kind, long wakeTime, long budgetSeconds,
+    public WakeTrace(long traderId, String kind, String symbol, long wakeTime, long budgetSeconds,
                      BigDecimal equity, int positions, int pendingOrders) {
         this.traderId = traderId;
         this.kind = kind;
+        this.symbol = symbol;
         this.wakeTime = wakeTime;
         this.budgetSeconds = budgetSeconds;
         this.equity = equity;
@@ -124,6 +127,7 @@ public final class WakeTrace {
     public synchronized Frame runStart() {
         return new Frame("run_start", MAPPER.createObjectNode()
                 .put("kind", kind)
+                .put("symbol", symbol)
                 .put("wakeTime", wakeTime)
                 .put("budgetSeconds", budgetSeconds)
                 .put("equity", equity)
@@ -289,6 +293,7 @@ public final class WakeTrace {
         ObjectNode out = MAPPER.createObjectNode()
                 .put("v", VERSION)
                 .put("kind", kind)
+                .put("symbol", symbol)
                 .put("wakeTime", wakeTime)
                 .put("startedAt", startedAt)
                 .put("budgetSeconds", budgetSeconds)

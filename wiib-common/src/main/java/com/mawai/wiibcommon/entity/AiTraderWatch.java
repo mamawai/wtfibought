@@ -14,7 +14,8 @@ import java.util.List;
 /**
  * 模型给自己布的盯盘条件，一条一行：到了就把它叫醒；带了动作的是预案，命中时代码先把动作做掉。
  * 类型：TOUCH_ABOVE / TOUCH_BELOW 标记价触及价位，CLOSE_ABOVE / CLOSE_BELOW 某周期收盘站上 / 跌破价位，AT_TIME 到某时刻。
- * set_watch 一次整组替换一个币的条件：旧的标 REPLACED，新的 ARMED；命中标 FIRED 并记下时刻与价。
+ * 每条记两个币：盯哪个币的价格（symbol），为哪个可交易币布的（forSymbol），多数时候是同一个。
+ * set_watch 一次整组替换"为某个币布的、盯某个币价格的"那一组：旧的标 REPLACED，新的 ARMED；命中标 FIRED 并记下时刻与价。
  * 只有 ARMED 的会被盯；FIRED / REPLACED 留着给时间线和复盘看。
  */
 @Data
@@ -43,7 +44,11 @@ public class AiTraderWatch {
 
     private Integer roundNo;
 
+    /** 盯的是哪个币的价格 */
     private String symbol;
+
+    /** 为哪个可交易币布的：整组替换按它和 symbol 分组，命中时叫醒处理这个币的那一轮 */
+    private String forSymbol;
 
     private String kind;
 

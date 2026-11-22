@@ -44,6 +44,7 @@ import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
+import com.mawai.wiibagent.trader.trade.AccountGates;
 import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeGuard;
 import com.mawai.wiibagent.trader.trade.TradeTools;
@@ -83,6 +84,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -167,30 +169,66 @@ class TraderWakeupLoopTest {
     private final WakeObservation wakeObservation =
             new WakeObservation(decisionMapper, decisionText, playStats, prompts, mock(PositionPath.class),
                     mock(CrossAssetService.class), binanceRestClient);
-    private final WakeFlows flows = new WakeFlows(prompts, wakeObservation);
-
-    private final TraderWakeupRunner runner = new TraderWakeupRunner(
-            modelFactory, new TraderPromptAssembler(traderMapper, prompts, ledger),
-            simTradeClient, binanceRestClient,
+    private final WakeFlows flows = new WakeFlows(prompts, wakeObservation, new TriggerText(prompts));
+    private final TraderPromptAssembler promptAssembler = new TraderPromptAssembler(traderMapper, prompts, ledger);
+    private final UnreportedEvents unreported = new UnreportedEvents(traderMapper);
+    private final AccountGates gates = new AccountGates();
+    private final WakeBriefing briefing = new WakeBriefing(simTradeClient, planStore, watchStore, gates, unreported,
+            wakeObservation, promptAssembler, mock(EconCalendarAssembler.class));
+    private final WakeSession session = new WakeSession(
             new IndicatorToolkit(new KlineFetcher(binanceRestClient, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
             mock(DerivativesToolkit.class), mock(WhaleToolkit.class),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
-            mock(CrossAssetToolkit.class),
-            traderMapper, decisionMapper, planStore, watchStore,
-            langResolver,
-            prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
-            wakeObservation, flows,
-            mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger,
-            mock(BinanceProperties.class), mock(PresetExecutor.class));
+            mock(CrossAssetToolkit.class), new LocalizedToolCallbacks(prompts), prompts);
+
+    private final TraderWakeupRunner runner = new TraderWakeupRunner(
+            modelFactory, promptAssembler, simTradeClient, binanceRestClient,
+            traderMapper, decisionMapper, planStore, watchStore, langResolver,
+            prompts, new MessageCatalog(), briefing, flows, session, new TriggerText(prompts), gates, unreported, hub,
+            mock(EntryContext.class), decisionText, ledger, mock(BinanceProperties.class), mock(PresetExecutor.class));
+
+    /** 例行轮：整盘 */
+    private void wake(AiTrader t, long boundary) {
+        runner.wake(t, boundary, round(t, null));
+    }
+
+    private void wakeManual(AiTrader t, long boundary) {
+        runner.wakeManual(t, boundary, round(t, null));
+    }
+
+    /** 被触发叫醒的单币轮：只处理 BTCUSDT */
+    private void wakeTriggered(AiTrader t, List<WakeTrigger> triggers) {
+        runner.wakeTriggered(t, triggers, round(t, "BTCUSDT"));
+    }
+
+    /** 在跑的一轮：symbol 为 null 是整盘轮；没有别的轮同时在跑 */
+    private static WakeRound round(AiTrader t, String symbol) {
+        return new WakeRound(WakeScope.of(t, symbol), Set::of);
+    }
+
+    /** 库里的那一行 trader，只有未报事件那一列跟着写入变 */
+    private final AiTrader stored = new AiTrader();
 
     {
         // 测试边界是固定历史时刻，墙钟钉在边界后 1s——预算充足，各用例不受真实时间影响
         runner.nowMs = () -> 1785171600000L + 1_000L;
         flows.nowMs = runner.nowMs;
+        briefing.nowMs = runner.nowMs;
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
         // 权益从余额明细里读，各用例只桩明细
         when(simTradeClient.getEquity(anyLong())).thenCallRealMethod();
+        // 库是 mock 的：未报事件那一列写进去什么，下一次就读到什么
+        when(traderMapper.selectById(7L)).thenReturn(stored);
+        when(traderMapper.update(any(), any())).thenAnswer(call -> {
+            com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<AiTrader> w = call.getArgument(1);
+            // 用例里再打桩时这里会被空参数调一次
+            if (w != null && w.getSqlSet().contains("unreported_events")) {
+                stored.setUnreportedEvents((String) w.getParamNameValuePairs().values().stream()
+                        .filter(String.class::isInstance).findFirst().orElse(null));
+            }
+            return 1;
+        });
     }
 
     private AiTrader trader() {
@@ -312,27 +350,34 @@ class TraderWakeupLoopTest {
         AiTraderWatch watch = new AiTraderWatch();
         watch.setId(31L);
         watch.setSymbol("BTCUSDT");
+        watch.setForSymbol("BTCUSDT");
         watch.setKind("CLOSE_ABOVE");
         watch.setLevel(new BigDecimal("99000"));
         watch.setPeriod("1h");
         watch.setNote("观察突破是否成立");
         WatchTrigger hit = new WatchTrigger(watch, new BigDecimal("100000"), at);
         switch (kind) {
-            case "ROUTINE" -> runner.wake(trader(), at);
-            case "MANUAL" -> runner.wakeManual(trader(), at);
-            case "ALERT" -> runner.wakeTriggered(trader(), List.of(alert));
-            case "EVENT" -> runner.wakeTriggered(trader(), List.of(event));
-            case "WATCH" -> runner.wakeTriggered(trader(), List.of(hit));
-            case "MIXED" -> runner.wakeTriggered(trader(), List.of(alert, event, hit));
+            case "ROUTINE" -> wake(trader(), at);
+            case "MANUAL" -> wakeManual(trader(), at);
+            case "ALERT" -> wakeTriggered(trader(),List.of(alert));
+            case "EVENT" -> wakeTriggered(trader(),List.of(event));
+            case "WATCH" -> wakeTriggered(trader(),List.of(hit));
+            case "MIXED" -> wakeTriggered(trader(),List.of(alert, event, hit));
         }
 
+        // 整盘轮：核查事实 → 要不要搜 → 交易；单币轮：处理触发 → 回头查外部信息 → 给这个币收尾
+        boolean book = kind.equals("ROUTINE") || kind.equals("MANUAL");
+        Map<String, Object> coin = Map.of("symbol", "BTCUSDT", "mark", prompts.get(AgentLang.ZH, "trader.mark.conclusion"));
+        String searchStage = book ? prompts.get(AgentLang.ZH, "trader.wake.searchQuestion")
+                : prompts.get(AgentLang.ZH, "trader.wake.single.search", coin);
         ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
         verify(model, times(3)).stream(sent.capture());
         List<Message> history = sent.getAllValues().getLast().getInstructions();
         assertThat(history.stream().filter(UserMessage.class::isInstance).map(Message::getText).toList())
-                .hasSize(3).filteredOn(text -> text.equals(prompts.get(AgentLang.ZH, "trader.wake.searchQuestion"))).hasSize(1);
-        assertThat(sent.getAllValues().getLast().getUserMessage().getText()).contains(prompts.get(AgentLang.ZH,
-                kind.equals("ROUTINE") || kind.equals("MANUAL") ? "trader.wake.routineScope" : "trader.wake.triggeredScope"));
+                .hasSize(3).filteredOn(text -> text.equals(searchStage)).hasSize(1);
+        assertThat(sent.getAllValues().getLast().getUserMessage().getText()).contains(book
+                ? prompts.get(AgentLang.ZH, "trader.wake.routineScope")
+                : prompts.get(AgentLang.ZH, "trader.wake.single.closing", coin));
         verify(model, never()).call(any(Prompt.class));
         ArgumentCaptor<AiTraderDecision> saved = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(saved.capture());
@@ -370,7 +415,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.cancelOrder(99L, 78L)).thenReturn(filledReceipt());
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(simTradeClient).openPosition(eq(99L), any());
         verify(simTradeClient, never()).closePosition(anyLong(), any());
@@ -415,7 +460,7 @@ class TraderWakeupLoopTest {
                 ChatGenerationMetadata.builder().metadata(SearchEvent.KEY, List.of(SearchEvent.searched("公告", List.of(
                         new SearchEvent.Source("https://example.com/notice", "公告"))))).build()))));
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
         verify(model, times(4)).stream(sent.capture());
@@ -460,7 +505,7 @@ class TraderWakeupLoopTest {
                     new AssistantMessage.ToolCall("account-" + n, "function", "get_account", "{}"))).build();
         });
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(model, times(expectedCalls)).stream(any(Prompt.class));
         ArgumentCaptor<AiTraderDecision> saved = ArgumentCaptor.forClass(AiTraderDecision.class);
@@ -522,7 +567,7 @@ class TraderWakeupLoopTest {
                     searchEnded.complete(Thread.currentThread().isInterrupted());
                 }
             });
-            Thread wake = Thread.startVirtualThread(() -> runner.wake(trader(), 1785171600000L));
+            Thread wake = Thread.startVirtualThread(() -> wake(trader(), 1785171600000L));
             try {
                 assertThat(received.await(5, TimeUnit.SECONDS)).isTrue();
                 wake.interrupt();
@@ -566,7 +611,7 @@ class TraderWakeupLoopTest {
         Frames owner = new Frames();
         hub.subscribeTrader(7L, owner);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         // 真开仓：请求带止损与止盈
         ArgumentCaptor<FuturesOpenRequest> open = ArgumentCaptor.forClass(FuturesOpenRequest.class);
@@ -646,7 +691,7 @@ class TraderWakeupLoopTest {
                 frameOf(new AssistantMessage("[本轮结论]\n[BTCUSDT]\n参考账本 #3，反手做空。")));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -679,7 +724,7 @@ class TraderWakeupLoopTest {
         when(modelFactory.modelFor(any())).thenReturn(model);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<java.util.Collection<Long>> ids = ArgumentCaptor.forClass((Class) java.util.Collection.class);
@@ -701,7 +746,7 @@ class TraderWakeupLoopTest {
                 frameOf(new AssistantMessage("[本轮结论]\n判断：账本 #12345678901234567890 说的\n动作：HOLD\n等待：无")));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(ledger, never()).recordCitations(anyLong(), org.mockito.ArgumentMatchers.anyInt(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
@@ -720,7 +765,7 @@ class TraderWakeupLoopTest {
                 frameOf(new AssistantMessage("先看 #9 不相关。[本轮结论]\n判断：账本 #2 说回踩没确认不追\n动作：HOLD\n等待：回踩 99000")));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(ledger).recordCitations(eq(7L), eq(1), eq(java.util.Set.of(2L)), eq(false));
     }
@@ -752,7 +797,7 @@ class TraderWakeupLoopTest {
         AiTrader twoCoins = trader();
         twoCoins.setSymbols("BTCUSDT,ETHUSDT");
 
-        runner.wake(twoCoins, 1785171600000L);
+        wake(twoCoins, 1785171600000L);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, org.mockito.Mockito.atLeastOnce()).stream(prompt.capture());
@@ -789,7 +834,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelLoopingToolCalls(i -> "再查一次(" + i + ")");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -814,7 +859,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelLoopingToolCalls(i -> i == 1 ? "账户没问题，倾向继续持有等突破确认。" : "");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -829,7 +874,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelLoopingToolCalls(i -> "");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -845,7 +890,7 @@ class TraderWakeupLoopTest {
                 "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(simTradeClient).closePosition(eq(99L), any());
     }
@@ -860,7 +905,7 @@ class TraderWakeupLoopTest {
                  "playType":"BREAKOUT","signalsUsed":"x","invalidationCondition":"跌回箱体"}""");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(simTradeClient, never()).openPosition(anyLong(), any());
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
@@ -876,7 +921,7 @@ class TraderWakeupLoopTest {
         when(modelFactory.modelFor(any())).thenThrow(
                 new SseChatModel.UpstreamRejected(401, "Responses API HTTP 401: invalid key"));
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<AiTrader>> u =
@@ -893,7 +938,7 @@ class TraderWakeupLoopTest {
         AiTrader t = trader();
         t.setConsecutiveFailures(4); // 本次是第5败
 
-        runner.wake(t, 1785171600000L);
+        wake(t, 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -909,7 +954,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "50", "frozenBalance", "0", "equity", "50"));
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(modelFactory, never()).modelFor(any());
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
@@ -942,7 +987,7 @@ class TraderWakeupLoopTest {
         when(modelFactory.modelFor(any())).thenReturn(model);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -964,7 +1009,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -997,7 +1042,7 @@ class TraderWakeupLoopTest {
         AiTrader t = trader();
         t.setConsecutiveFailures(2); // >0 才会真走 clearFailures 的列级更新
 
-        assertThatCode(() -> runner.wake(t, 1785171600000L)).doesNotThrowAnyException();
+        assertThatCode(() -> wake(t, 1785171600000L)).doesNotThrowAnyException();
 
         verify(decisionMapper, times(1)).insert(any(AiTraderDecision.class));
     }
@@ -1015,7 +1060,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
         when(planMapper.selectOne(any())).thenReturn(null);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderPlan> plan = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).insert(plan.capture());
@@ -1051,7 +1096,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompts.capture());
@@ -1095,7 +1140,7 @@ class TraderWakeupLoopTest {
         AiTrader fourCoins = trader();
         fourCoins.setSymbols("BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT");
 
-        runner.wake(fourCoins, boundary);
+        wake(fourCoins, boundary);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompt.capture());
@@ -1143,7 +1188,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompt.capture());
@@ -1201,7 +1246,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompt.capture());
@@ -1238,7 +1283,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompt.capture());
@@ -1264,7 +1309,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompt.capture());
@@ -1290,7 +1335,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).updateById(cap.capture());
@@ -1321,7 +1366,7 @@ class TraderWakeupLoopTest {
         AiTrader t = trader(); // 1h：边界+3580s 时触发 → 预算 15s < 30s
         runner.nowMs = () -> 1785171600000L + 3_580_000L;
 
-        runner.wake(t, 1785171600000L);
+        wake(t, 1785171600000L);
 
         verify(modelFactory, never()).modelFor(any());
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
@@ -1340,7 +1385,7 @@ class TraderWakeupLoopTest {
         AiTrader t = trader();
         runner.nowMs = () -> 1785171600000L + 3_580_000L; // 预算 15s < 30s → SKIPPED 落库
 
-        runner.wakeManual(t, 1785171600000L);
+        wakeManual(t, 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -1355,7 +1400,7 @@ class TraderWakeupLoopTest {
         long pressed = boundary + 37 * 60_000L;
         flows.nowMs = () -> pressed;
 
-        String opening = flows.routineInstruction(trader(), pressed, "", "", "", "", null, AgentLang.ZH);
+        String opening = flows.routineInstruction(trader(), List.of(), pressed, null, "", "", "", "", null, AgentLang.ZH);
 
         assertThat(opening).contains("已收盘（" + BeijingTime.shortFormat(boundary) + "）");
     }
@@ -1366,29 +1411,32 @@ class TraderWakeupLoopTest {
         TradeEvent e = new TradeEvent(TradeEvent.STOP_LOSS, 42L, 9L, null, "ETHUSDT", "SHORT",
                 new BigDecimal("0.50"), new BigDecimal("2377.0"), new BigDecimal("-13.1"), 1785171600000L + 600_000L);
 
-        String opening = flows.stageOneInstruction(trader(), List.of(new EventTrigger(e)), e.at(), null, "", null, "", AgentLang.ZH, false);
+        String opening = flows.singleInstruction(trader(), "ETHUSDT", List.of(new EventTrigger(e)), e.at(), null, "", "", "", AgentLang.ZH, false);
 
         assertThat(opening).contains("持仓事件（")
                 .contains("ETHUSDT SHORT 止损单已触发，平掉 0.5 @2377")
                 .contains("尚未收盘")
+                .contains("这一轮只处理 ETHUSDT")
+                .contains("这个币的仓位已经没了")
                 .doesNotContain("止损单仍在")
-                .doesNotContain("又发生了");
+                .doesNotContain("接连发生了");
         assertThat(new EventTrigger(e).kind()).isEqualTo(AiTraderDecision.KIND_EVENT);
     }
 
-    /** 排队期间攒下的几条合成一轮：开头说有几件事，逐条按先后列出，各带自己的时刻 */
+    /** 同一个币的几件事一起叫醒一轮：开头说有几件事，逐条按先后列出，各带自己的时刻；每种事各问一句 */
     @Test
     void batchedTriggersListedInOrder() {
         long base = 1785171600000L;
         AlertTrigger alert = new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("63120"), AlertTrigger.DOWN, base + 600_000L);
-        EventTrigger event = new EventTrigger(new TradeEvent(TradeEvent.LIMIT_FILLED, 99L, 9L, 100L, "ETHUSDT", "LONG",
-                new BigDecimal("0.5"), new BigDecimal("2300"), null, base + 660_000L));
+        EventTrigger event = new EventTrigger(new TradeEvent(TradeEvent.LIMIT_FILLED, 99L, 9L, 100L, "BTCUSDT", "LONG",
+                new BigDecimal("0.5"), new BigDecimal("63000"), null, base + 660_000L));
 
-        String opening = flows.stageOneInstruction(trader(), List.of(alert, event), base + 700_000L, null, "", null, "", AgentLang.ZH, false);
+        String opening = flows.singleInstruction(trader(), "BTCUSDT", List.of(alert, event), base + 700_000L, null, "", "", "", AgentLang.ZH, false);
 
-        assertThat(opening).contains("又发生了 2 件事");
+        assertThat(opening).contains("接连发生了 2 件事");
         assertThat(opening.indexOf("- 行情波动警报")).isLessThan(opening.indexOf("- 持仓事件（"));
-        assertThat(opening).contains("ETHUSDT LONG 限价开仓单已成交，0.5 @2300");
+        assertThat(opening).contains("BTCUSDT LONG 限价开仓单已成交，0.5 @63000");
+        assertThat(opening.indexOf("上面是这个币的波动警报")).isLessThan(opening.indexOf("上面是你挂的限价单成交"));
     }
 
     /** 数据工具（klines等）没有自己的记录点，必须经轨迹收集器进 actionsJson——"调用了哪些工具"要完整。 */
@@ -1406,7 +1454,7 @@ class TraderWakeupLoopTest {
                 frameOf(new AssistantMessage("看完K线，本轮 HOLD。")));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -1425,7 +1473,7 @@ class TraderWakeupLoopTest {
         long triggeredAt = 1785171600000L + 600_000L; // 1h 边界后 10 分钟哨兵触发
         runner.nowMs = () -> triggeredAt;
 
-        runner.wakeTriggered(trader(), List.of(new AlertTrigger("BTCUSDT", new BigDecimal("1.2"),
+        wakeTriggered(trader(),List.of(new AlertTrigger("BTCUSDT", new BigDecimal("1.2"),
                 new BigDecimal("63120"), AlertTrigger.DOWN, triggeredAt)));
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
@@ -1443,6 +1491,36 @@ class TraderWakeupLoopTest {
                 .contains("尚未收盘").contains("被叫醒本身不是动作的理由");
     }
 
+    /** 权益回落警报唤醒：kind=DRAWDOWN，是一轮整盘的；开场白开头是权益回落的事实，多问那一句，不带主人留言 */
+    @Test
+    void equityDropWakeIsAWholeBoardRoundWithoutTheOwnerNote() {
+        stubHealthyAccount();
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        long at = 1785171600000L + 600_000L;
+        runner.nowMs = () -> at;
+        AiTrader t = trader();
+        t.setOwnerNote("先别开新仓");
+        t.setOwnerNoteRounds(1);
+
+        runner.wakeTriggered(t, List.of(new EquityDropTrigger(new BigDecimal("10000"), at - 3_600_000L,
+                new BigDecimal("8500"), new BigDecimal("15"), new BigDecimal("15"), at)), round(t, null));
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getKind()).isEqualTo(AiTraderDecision.KIND_DRAWDOWN);
+        assertThat(dec.getValue().getWakeTime()).isEqualTo(at);
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(sent.capture());
+        assertThat(userText(sent.getAllValues().getFirst()))
+                .startsWith("权益回落警报（").contains("最高到过 10000 USDT").contains("回落 15%").contains("尚未收盘")
+                .contains("你现在持有和挂着的方向，行情是不是已经变了")
+                .contains("只处置你自己留下的事")
+                .doesNotContain("先别开新仓");
+    }
+
     /** 持仓事件唤醒：kind=EVENT、wake_time=事件时刻；开场白首行是事件本身，不带警报那句"止损单仍在保护你" */
     @Test
     void eventWakeUsesEventInstructionAndKind() {
@@ -1454,7 +1532,7 @@ class TraderWakeupLoopTest {
         long at = 1785171600000L + 600_000L; // 1h 边界后 10 分钟止损被打掉
         runner.nowMs = () -> at;
 
-        runner.wakeTriggered(trader(), List.of(new EventTrigger(new TradeEvent(TradeEvent.STOP_LOSS, 99L, 9L, null,
+        wakeTriggered(trader(),List.of(new EventTrigger(new TradeEvent(TradeEvent.STOP_LOSS, 99L, 9L, null,
                 "BTCUSDT", "LONG", new BigDecimal("0.01"), new BigDecimal("62800"), new BigDecimal("-13"), at))));
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
@@ -1487,12 +1565,13 @@ class TraderWakeupLoopTest {
         w.setTraderId(7L);
         w.setRoundNo(1);
         w.setSymbol("BTCUSDT");
+        w.setForSymbol("BTCUSDT");
         w.setKind("CLOSE_ABOVE");
         w.setLevel(new BigDecimal("63000"));
         w.setPeriod("1h");
         w.setNote("突破确认，看回踩做多");
 
-        runner.wakeTriggered(trader(), List.of(new WatchTrigger(w, new BigDecimal("63120"), at)));
+        wakeTriggered(trader(),List.of(new WatchTrigger(w, new BigDecimal("63120"), at)));
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -1506,25 +1585,142 @@ class TraderWakeupLoopTest {
                 .contains("突破确认，看回踩做多").contains("被叫醒本身不是动作的理由");
     }
 
-    /** 这根收盘刚命中的收盘类条件并进例行轮：开场白单起一块念，念过就在库里标成已告知 */
+    /** 这根收盘刚命中的收盘类条件：例行轮开场白的【自上次唤醒以来】里报，报过就在库里标成已告知 */
     @Test
-    void routineWakeFoldsInCloseHitsAtThisBoundary() {
+    void routineWakeReportsCloseHitsAtThisBoundary() {
         stubHealthyAccount();
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
         when(watchMapper.selectList(any())).thenReturn(List.of(closeHit()));
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompts.capture());
         String firstCall = prompts.getAllValues().get(0).getInstructions().stream()
                 .map(org.springframework.ai.chat.messages.Message::getText)
                 .reduce("", String::concat);
-        assertThat(firstCall).contains("【这根收盘命中了你布的盯盘条件】")
-                .contains("BTCUSDT 1h 收盘 63120 站上 63000").contains("突破确认，看回踩做多")
-                .doesNotContain("本轮才告诉你");
+        assertThat(firstCall).contains("【自上次唤醒以来】")
+                .contains("BTCUSDT 1h 收盘 63120 站上 63000").contains("突破确认，看回踩做多");
         verify(watchMapper).update(any(), any());
+    }
+
+    /**
+     * 整盘的联网轮进行中，一个币来了触发：作为一条新消息插进对话（那件事本身、这个币现在的样子），
+     * 并且当场放开这个币的开仓，不必等到交易段
+     */
+    @Test
+    void triggerArrivingMidRoundIsInterjectedAndUnlocksOpeningForThatSymbol() {
+        stubHealthyAccount();
+        String openArgs = """
+                {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":10,
+                 "stopLossPrice":95000,"playType":"BREAKOUT","signalsUsed":"突破前高",
+                 "invalidationCondition":"1h收盘跌破95000"}""";
+        WakeRound round = round(trader(), null);
+        AlertTrigger alert = new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("100000"),
+                AlertTrigger.UP, 1785171600000L + 60_000L);
+        ChatModel model = onlineModel(n -> switch (n) {
+            case 1 -> {
+                // 第一次调模型期间警报到了
+                round.offer(alert);
+                yield AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("acct", "function", "get_account", "{}"))).build();
+            }
+            case 2 -> AssistantMessage.builder().content("").toolCalls(List.of(
+                    new AssistantMessage.ToolCall("open", "function", "open_position", openArgs))).build();
+            case 3 -> new AssistantMessage("事实核查完成，已按警报开多。");
+            case 4 -> new AssistantMessage("不需要联网。");
+            default -> new AssistantMessage("[本轮结论]\n[BTCUSDT]\n判断：突破\n动作：开多\n等待：无");
+        });
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
+
+        runner.wake(trader(), 1785171600000L, round);
+
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, times(5)).stream(sent.capture());
+        // 第二次调模型之前插进去了
+        List<Message> second = sent.getAllValues().get(1).getInstructions();
+        assertThat(second.getLast()).isInstanceOf(UserMessage.class);
+        assertThat(second.getLast().getText()).contains("你这一轮进行中，又发生了一件事")
+                .contains("行情波动警报").contains("BTCUSDT 现在的持仓、挂单和为它布的盯盘条件")
+                .contains("BTCUSDT 的开仓、加仓、反手现在就可以做");
+        // 还在第一段，这个币的开仓没被"尚未进入交易决策阶段"拒
+        verify(simTradeClient).openPosition(eq(99L), any());
+        // 都读到了，没有剩下要另起一轮的
+        assertThat(round.take().isEmpty()).isTrue();
+    }
+
+    /** 调用预算只剩最后一次时到来的触发不取：这一轮已经调不了工具，留着等它结束后另起一轮 */
+    @Test
+    void triggerArrivingWhenOnlyTheFinalCallIsLeftStaysUnread() {
+        stubHealthyAccount();
+        WakeRound round = round(trader(), null);
+        AlertTrigger alert = new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("100000"),
+                AlertTrigger.UP, 1785171600000L + 60_000L);
+        int limit = TraderWakeupRunner.MAX_MODEL_CALLS;
+        ChatModel model = onlineModel(n -> {
+            if (n == limit - 1) {
+                // 最后一次能执行工具的调用期间警报到了
+                round.offer(alert);
+            }
+            return n < limit ? AssistantMessage.builder().content("").toolCalls(List.of(
+                    new AssistantMessage.ToolCall("acct" + n, "function", "get_account", "{}"))).build()
+                    : new AssistantMessage("[本轮结论]\n[BTCUSDT]\n判断：观望\n动作：无\n等待：无");
+        });
+
+        runner.wake(trader(), 1785171600000L, round);
+
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(sent.capture());
+        assertThat(userText(sent.getAllValues().getLast())).doesNotContain("你这一轮进行中，又发生了一件事");
+        assertThat(round.take().triggers()).containsExactly(alert);
+    }
+
+    /** 插话时这个币的现状没查到：话照发，只是不带现状，这一轮不作废 */
+    @Test
+    void interjectionStillGoesOutWhenTheAccountLookupFails() {
+        stubHealthyAccount();
+        WakeRound round = round(trader(), null);
+        AlertTrigger alert = new AlertTrigger("BTCUSDT", new BigDecimal("1.2"), new BigDecimal("100000"),
+                AlertTrigger.UP, 1785171600000L + 60_000L);
+        ChatModel model = onlineModel(n -> {
+            if (n == 1) {
+                round.offer(alert);
+                // 接下来取账户的那一下失败，之后恢复
+                when(simTradeClient.getAllPositions(99L)).thenThrow(new IllegalStateException("sim down"))
+                        .thenReturn(List.of());
+            }
+            return new AssistantMessage(n < 4 ? "这一段没有要做的。" : "[本轮结论]\n[BTCUSDT]\n判断：观望\n动作：无\n等待：无");
+        });
+
+        runner.wake(trader(), 1785171600000L, round);
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(sent.capture());
+        assertThat(userText(sent.getAllValues().get(1))).contains("你这一轮进行中，又发生了一件事").contains("行情波动警报")
+                .doesNotContain("BTCUSDT 现在的持仓、挂单和为它布的盯盘条件");
+    }
+
+    /** 开场白里已经报过的盯盘命中，再从插话那条路过来不说第二遍 */
+    @Test
+    void watchHitAlreadyInOpeningIsNotInterjectedAgain() {
+        stubHealthyAccount();
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        when(watchMapper.selectList(any())).thenReturn(List.of(closeHit()));
+        WakeRound round = round(trader(), null);
+        round.offer(new WatchTrigger(closeHit(), new BigDecimal("63120"), 1785171600000L));
+
+        runner.wake(trader(), 1785171600000L, round);
+
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(sent.capture());
+        List<Message> first = sent.getAllValues().getFirst().getInstructions();
+        assertThat(first.stream().filter(UserMessage.class::isInstance)).hasSize(1);
+        assertThat(first.getLast().getText()).contains("BTCUSDT 1h 收盘 63120 站上 63000").doesNotContain("又发生了一件事");
     }
 
     /** 这一轮失败了，开场白里念过的盯盘命中不算告诉过，库里不标 */
@@ -1535,7 +1731,7 @@ class TraderWakeupLoopTest {
         when(modelFactory.modelFor(any())).thenReturn(failing);
         when(watchMapper.selectList(any())).thenReturn(List.of(closeHit()));
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         verify(watchMapper, never()).update(any(), any());
     }
@@ -1555,24 +1751,16 @@ class TraderWakeupLoopTest {
         when(modelFactory.modelFor(any())).thenReturn(failing, ok);
         String line = prompts.get(AgentLang.ZH, "trader.wake.eventCancelled", Map.of("symbol", "BTCUSDT", "side", "LONG"));
 
-        AiTrader failed = trader();
-        runner.wake(failed, 1785171600000L);
-        assertThat(failed.getUnreportedEvents()).isEqualTo(line + "\n");
+        wake(trader(), 1785171600000L);
+        assertThat(stored.getUnreportedEvents()).contains("BTCUSDT").contains("计划归档");
 
-        AiTrader next = trader();
-        next.setUnreportedEvents(failed.getUnreportedEvents());
-        runner.wake(next, 1785175200000L);
+        wake(trader(), 1785175200000L);
 
         ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
         verify(ok, atLeastOnce()).stream(sent.capture());
         assertThat(sent.getAllValues().getFirst().getContents()).contains(line);
-        // 三次列级更新：存事件、记失败、成功后清事件
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<AiTrader>> u =
-                ArgumentCaptor.forClass((Class) com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
-        verify(traderMapper, times(3)).update(any(), u.capture());
-        assertThat(u.getAllValues().getLast().getSqlSet()).contains("unreported_events");
-        assertThat(u.getAllValues().getLast().getParamNameValuePairs().values()).containsNull();
+        // 成功的那一轮报完，库里清掉
+        assertThat(stored.getUnreportedEvents()).isNull();
     }
 
     /** 这根收盘刚命中、还没告诉过模型的一条收盘类盯盘条件 */
@@ -1582,6 +1770,7 @@ class TraderWakeupLoopTest {
         hit.setTraderId(7L);
         hit.setRoundNo(1);
         hit.setSymbol("BTCUSDT");
+        hit.setForSymbol("BTCUSDT");
         hit.setKind("CLOSE_ABOVE");
         hit.setLevel(new BigDecimal("63000"));
         hit.setPeriod("1h");
@@ -1601,7 +1790,7 @@ class TraderWakeupLoopTest {
         ObjectNode closeRetried = MAPPER.createObjectNode().put("tool", "close_position").put("callId", "c3");
         ObjectNode closeRich = MAPPER.createObjectNode().put("tool", "close_position").put("callId", "c3").put("status", "ok");
 
-        List<ObjectNode> merged = TraderWakeupRunner.mergeActions(
+        List<ObjectNode> merged = WakeSession.mergeActions(
                 List.of(klines, closeUnrecorded, closeRetried), List.of(closeRich));
 
         assertThat(merged).extracting(a -> a.path("callId").asString()).containsExactly("c1", "c2", "c3");
@@ -1626,7 +1815,7 @@ class TraderWakeupLoopTest {
                 frameOf(new AssistantMessage("平掉一部分，本轮结束。")));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
@@ -1656,7 +1845,7 @@ class TraderWakeupLoopTest {
         when(modelFactory.modelFor(any())).thenReturn(model);
         AiTrader trader = trader();
 
-        runner.doWake(trader, 1785171600000L, 2, TraderWakeupRunner.baseDecision(trader, 1785171600000L),
+        runner.doWake(trader, round(trader, null),1785171600000L, 2, TraderWakeupRunner.baseDecision(trader, 1785171600000L),
                 List.of(), AgentLang.ZH);
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
@@ -1667,7 +1856,7 @@ class TraderWakeupLoopTest {
         assertThat(action.path("status").asString()).isEqualTo("unknown");
     }
 
-    /** 会话线程卡在不理中断的调用里：最多再等 sessionStopWait 就收尾，唤醒不会一直挂着 */
+    /** 会话线程卡在不理中断的调用里：最多再等 stopWait 就收尾，唤醒不会一直挂着 */
     @Test
     void timeoutStopsWaitingForStuckSession() {
         stubHealthyAccount();
@@ -1688,10 +1877,10 @@ class TraderWakeupLoopTest {
                 "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}");
         when(modelFactory.modelFor(any())).thenReturn(model);
         AiTrader trader = trader();
-        runner.sessionStopWait = Duration.ofMillis(200);
+        session.stopWait = Duration.ofMillis(200);
 
         try {
-            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> runner.doWake(trader, 1785171600000L, 2,
+            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> runner.doWake(trader, round(trader, null),1785171600000L, 2,
                     TraderWakeupRunner.baseDecision(trader, 1785171600000L), List.of(), AgentLang.ZH));
         } finally {
             release.countDown();
@@ -1720,7 +1909,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AiTraderDecision>> q =
@@ -1730,7 +1919,8 @@ class TraderWakeupLoopTest {
             assertThat(wrapper.getSqlSegment()).contains("kind IN");
             var values = wrapper.getParamNameValuePairs().values();
             assertThat(values).contains(AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT,
-                    AiTraderDecision.KIND_MANUAL, AiTraderDecision.KIND_EVENT, AiTraderDecision.KIND_WATCH);
+                    AiTraderDecision.KIND_MANUAL, AiTraderDecision.KIND_EVENT, AiTraderDecision.KIND_WATCH,
+                    AiTraderDecision.KIND_DRAWDOWN);
             assertThat(values).doesNotContain(AiTraderDecision.KIND_REVIEW);
         }
     }
@@ -1785,13 +1975,13 @@ class TraderWakeupLoopTest {
         Frames owner = new Frames();
         hub.subscribeTrader(7L, owner);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, times(3)).stream(prompts.capture());
         // 第一段：承诺块在、问题是"处置"，整盘事实（快照）不在
         String first = userText(prompts.getAllValues().get(0));
-        assertThat(first).contains("【你的承诺】").contains("1h收盘跌破98000").contains("本段只处置")
+        assertThat(first).contains("【你的承诺】").contains("1h收盘跌破98000").contains("只处置你自己留下的事")
                 .doesNotContain("行情快照");
         // 第三次调用的输入：末尾是第二段开场白，前面第一段的答复还在
         List<Message> third = prompts.getAllValues().get(2).getInstructions();
@@ -1824,7 +2014,7 @@ class TraderWakeupLoopTest {
         Frames owner = new Frames();
         hub.subscribeTrader(7L, owner);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, times(2)).stream(prompts.capture());
@@ -1843,6 +2033,7 @@ class TraderWakeupLoopTest {
         w.setTraderId(7L);
         w.setRoundNo(1);
         w.setSymbol("BTCUSDT");
+        w.setForSymbol("BTCUSDT");
         w.setKind("TOUCH_BELOW");
         w.setLevel(new BigDecimal("95000"));
         w.setNote("回到前低看止跌");
@@ -1864,7 +2055,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, atLeastOnce()).stream(prompts.capture());
@@ -1889,7 +2080,7 @@ class TraderWakeupLoopTest {
         ChatModel model = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, times(3)).stream(prompts.capture());
@@ -1899,7 +2090,7 @@ class TraderWakeupLoopTest {
         prev.setReasoning("[本轮结论]\n[BTCUSDT]\n动作：HOLD\n等待：无。");
         ChatModel quiet = modelCheckingThenSummary();
         when(modelFactory.modelFor(any())).thenReturn(quiet);
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
         verify(quiet, times(2)).stream(any(Prompt.class));
     }
 
@@ -1919,7 +2110,7 @@ class TraderWakeupLoopTest {
         });
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.wake(trader(), 1785171600000L);
+        wake(trader(), 1785171600000L);
 
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, times(TraderWakeupRunner.MAX_MODEL_CALLS + 1)).stream(prompts.capture());
@@ -1929,14 +2120,5 @@ class TraderWakeupLoopTest {
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getReasoning()).contains("[本轮结论]");
         assertThat(dec.getValue().getError()).contains("上限");
-    }
-
-    @Test
-    void skippedWakeLeavesTrace() {
-        runner.recordSkipped(trader(), 1785171600000L);
-
-        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
-        verify(decisionMapper).insert(dec.capture());
-        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_SKIPPED);
     }
 }

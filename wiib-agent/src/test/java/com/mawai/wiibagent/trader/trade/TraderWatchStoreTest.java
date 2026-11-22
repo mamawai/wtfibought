@@ -42,7 +42,7 @@ class TraderWatchStoreTest {
     @Test
     void replaceRetiresOldAndInsertsNew() {
         String action = "{\"type\":\"CLOSE\",\"positionId\":5,\"closePercent\":50,\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"}";
-        store.replace(7L, 1, "BTCUSDT", List.of(
+        store.replace(7L, 1, "ETHUSDT", "BTCUSDT", List.of(
                 new WatchSpec("TOUCH_ABOVE", 65000.0, null, null, "突破前高看追多", null),
                 new WatchSpec("CLOSE_BELOW", 62000.0, "1h", null, "区间失守", null),
                 new WatchSpec("AT_TIME", null, null, "2026-07-27 20:20", "CPI 前看一眼", null)),
@@ -92,7 +92,7 @@ class TraderWatchStoreTest {
     /** 传空只清掉，不插任何行 */
     @Test
     void emptyListOnlyClears() {
-        store.replace(7L, 1, "BTCUSDT", List.of(), List.of(), 1785171600000L);
+        store.replace(7L, 1, "BTCUSDT", "BTCUSDT", List.of(), List.of(), 1785171600000L);
 
         verify(mapper).update(isNull(), any(LambdaUpdateWrapper.class));
         verify(mapper, never()).insert(any(AiTraderWatch.class));

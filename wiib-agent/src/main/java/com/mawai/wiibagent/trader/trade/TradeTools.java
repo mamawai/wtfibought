@@ -10,6 +10,7 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.ReactLoop;
+import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
@@ -23,14 +24,16 @@ import tools.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
-import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static com.mawai.wiibagent.trader.trade.StopOrders.pctOfEquity;
@@ -56,9 +59,10 @@ public class TradeTools {
      * wakeTime＝这一轮的唤醒时刻（例行轮是 K 线边界，手动和非例行轮是醒来那一刻），和决策行的 wake_time 是同一个值；
      * deadlineMs＝本轮预算耗尽的墙钟时刻。
      * lang＝这只 trader 主人的语言：拒因既回给模型也公开在竞技场时间线上，两处都得跟它走。
+     * onlySymbol＝单币轮只能动的那个币，对别的币的交易和盯盘动作一律拒；整盘轮为 null。
      */
     public record WakeCtx(long traderId, int roundNo, String interval, long wakeTime, long deadlineMs,
-                          TraderRiskConfig risk, AgentLang lang) {
+                          TraderRiskConfig risk, AgentLang lang, String onlySymbol) {
     }
 
     /** 改账户状态的工具名：同一批 tool_call 里有它们就整批串行，不和别的调用交错（ReactLoop.serialTools） */
@@ -82,8 +86,14 @@ public class TradeTools {
     private final MessageCatalog messages;
     /** 开仓那一套：护栏、逐档下单、立计划；普通开仓和反手的新仓共用 */
     private final PositionOpener opener;
-    /** 本轮是否已进入可以开仓的阶段 */
-    private final BooleanSupplier openingAllowed;
+    /** 这个币现在能不能开仓、加仓、反手（整盘的联网轮到交易段才许） */
+    private final Predicate<String> openingAllowed;
+    /** 这个 trader 的账户闸：几轮同时在跑，写动作在这里排队 */
+    private final AccountGate gate;
+    /** 这一轮上次看到的账户，动手前拿现状和它比 */
+    private final SeenAccount seen = new SeenAccount();
+    /** 正在做的这个写动作动了哪几个币：过了动手前的检查才记上，做完按它刷新看到的账户、在闸里记一笔 */
+    private final Set<String> touched = new LinkedHashSet<>();
     /** 本次唤醒的动作轨迹，唤醒回路收走序列化进 ai_trader_decision.actions_json */
     private final List<ObjectNode> actions = new ArrayList<>();
 
@@ -91,7 +101,8 @@ public class TradeTools {
                       Function<String, BigDecimal> markPrice,
                       TraderPlanStore planStore, TraderWatchStore watchStore, WakeCtx ctx,
                       PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext,
-                      BooleanSupplier openingAllowed) {
+                      Predicate<String> openingAllowed, AccountGate gate) {
+        this.gate = gate;
         this.simTradeClient = simTradeClient;
         this.simUserId = simUserId;
         this.symbolWhitelist = symbolWhitelist;
@@ -112,6 +123,113 @@ public class TradeTools {
         return List.copyOf(actions);
     }
 
+    // ==================== 几轮同时在跑：排队做，动手前比对 ====================
+
+    /**
+     * 开场白里给过的账户：持仓、挂单、全部在盯的条件，算这一轮看到过
+     *
+     * @param lastActionNo 取这份账户时账户闸里记到第几笔动作
+     */
+    public void seeOpening(List<FuturesPositionDTO> positions, List<FuturesOrderResponse> pending, List<AiTraderWatch> armed,
+                           long lastActionNo) {
+        seen.look(positions, pending, lastActionNo);
+        seen.lookWatches(armed);
+    }
+
+    /** 现查这个币的持仓、挂单和为它布的盯盘条件，成文给模型看，同时算这一轮看到过。中途插进来的话里带它 */
+    public String lookAt(String symbol) {
+        return gate.exclusive(() -> {
+            Account acct = account();
+            List<AiTraderWatch> armed = watchStore.armed(ctx.traderId(), ctx.roundNo());
+            seen.lookCoin(symbol, acct.positions(), acct.pending(), armed, gate.lastNo());
+            return SeenAccount.now(symbol, acct.positions(), acct.pending(), armed).text();
+        });
+    }
+
+    /**
+     * 写动作都从这里进：在账户闸里排队做。动作真碰了账户（{@link #touched} 记了币）的，做完把这几个币现在的样子记成这一轮看到的，
+     * 别的币不动——回执里只有动过的币；做成了的另在闸里记一笔，给别的轮看
+     */
+    private String acting(String tool, ObjectNode args, Supplier<String> body) {
+        return gate.exclusive(() -> {
+            touched.clear();
+            String reply = body.get();
+            if (!touched.isEmpty()) {
+                try {
+                    Account acct = account();
+                    List<AiTraderWatch> armed = watchStore.armed(ctx.traderId(), ctx.roundNo());
+                    long lastNo = gate.lastNo();
+                    touched.forEach(symbol -> seen.lookCoin(symbol, acct.positions(), acct.pending(), armed, lastNo));
+                } catch (Exception e) {
+                    // 动作已经做了，这里出错不回给模型：回错会诱导它再做一次。下一次动手前会比出不一致、先提示再重新提交
+                    log.warn("[TradeTools] 动作后刷新账户失败 traderId={} {} msg={}", ctx.traderId(), tool, e.getMessage());
+                }
+                if (!reply.startsWith(replyPrefix(REJECTED)) && !reply.startsWith(replyPrefix(ERROR))) {
+                    String action = tool + " " + args;
+                    String line = prompts.get(ctx.lang(), "trader.reject.changedLine", Map.of(
+                            "round", ctx.onlySymbol() == null ? prompts.get(ctx.lang(), "trader.reject.roundBook")
+                                    : prompts.get(ctx.lang(), "trader.reject.roundSingle", Map.of("symbol", ctx.onlySymbol())),
+                            "time", BeijingTime.shortFormat(System.currentTimeMillis()),
+                            "action", action.length() > 200 ? action.substring(0, 200) + "…" : action));
+                    touched.forEach(symbol -> gate.record(this, symbol, line));
+                }
+            }
+            return reply;
+        });
+    }
+
+    /**
+     * 动手前比一下：这个币现在的持仓、挂单、盯盘条件和这一轮上次看到的不一样（别的轮动过、限价单成交、止损止盈触发、预案执行），
+     * 这次就不执行，把变化告诉模型，由它按最新状态重新提交。开仓、加仓、反手另看别的币的仓位变没变。
+     * 说了哪样就算它看到了哪样，重新提交不再为它拦。没变返回 null，并记下这次动作要动这个币
+     */
+    private String changedSince(String tool, String symbol, boolean opening, Account acct) {
+        if (!seen.looked()) {
+            touched.add(symbol);
+            return null;
+        }
+        List<AiTraderWatch> armed = watchStore.armed(ctx.traderId(), ctx.roundNo());
+        SeenAccount.Coin before = seen.seen(symbol);
+        SeenAccount.Coin now = SeenAccount.now(symbol, acct.positions(), acct.pending(), armed);
+        String othersBefore = seen.seenOthers(symbol);
+        String othersNow = SeenAccount.holdingsOf(acct.positions(), symbol);
+        List<String> notices = new ArrayList<>();
+        if (!before.equals(now)) {
+            notices.add(prompts.get(ctx.lang(), "trader.reject.changed", Map.of("tool", tool, "symbol", symbol,
+                    "by", changedBy(symbol, false), "before", before.text(), "now", now.text())));
+            seen.lookCoin(symbol, acct.positions(), acct.pending(), armed, gate.lastNo());
+        }
+        if (opening && !othersBefore.equals(othersNow)) {
+            notices.add(prompts.get(ctx.lang(), "trader.reject.othersChanged", Map.of("tool", tool,
+                    "by", changedBy(symbol, true), "before", othersBefore, "now", othersNow)));
+            seen.lookHoldings(acct.positions());
+        }
+        if (notices.isEmpty()) {
+            touched.add(symbol);
+            return null;
+        }
+        return String.join("\n", notices);
+    }
+
+    /** 这个币这一轮能不能动：不归这一轮管给拒因，上次查看之后变了给变化说明；都没问题返回 null */
+    private String blocked(String tool, String symbol, Account acct) {
+        String other = otherSymbol(symbol);
+        return other != null ? other : changedSince(tool, symbol, false, acct);
+    }
+
+    /**
+     * 这一轮上次看到之后别的轮做过什么，接在"变了"后面；没有记录返回空串
+     *
+     * @param others false 只要 symbol 这个币上的，true 要除它以外各币上的
+     */
+    private String changedBy(String symbol, boolean others) {
+        List<String> lines = gate.changes(this).stream()
+                .filter(c -> others != symbol.equals(c.symbol()) && c.no() > seen.actionNo(c.symbol()))
+                .map(AccountGate.Change::text).toList();
+        return lines.isEmpty() ? "" : prompts.get(ctx.lang(), "trader.reject.changedBy",
+                Map.of("changes", String.join("；", lines)));
+    }
+
     // 本类工具的描述都在词表 tool.<工具名>（见 LocalizedToolCallbacks）
     @Tool(name = "get_account")
     public String getAccount() {
@@ -122,9 +240,11 @@ public class TradeTools {
         }
     }
 
-    /** 只读账户快照，不增加模型的工具调用记录 */
+    /** 只读账户快照，不增加模型的工具调用记录；给出去的持仓和挂单算这一轮看到过 */
     public String accountSnapshot() {
         ObjectNode out = MAPPER.createObjectNode();
+        // 这里不进账户闸：先记下闸里记到第几笔，再取账户，取的过程中别的轮做的动作算没看到
+        long lastActionNo = gate.lastNo();
         Map<String, Object> balance = simTradeClient.getBalanceDetail(simUserId);
         List<FuturesPositionDTO> positions = simTradeClient.getAllPositions(simUserId);
         // 权益是 sim 算好的，和开场白同一个数；available 是 sim 全仓账本的下单额度，钱包余额里还躺着已占用的保证金，不能当可用
@@ -162,6 +282,7 @@ public class TradeTools {
         out.set("pendingOrders", orders);
         out.put("lossIfPendingFillPctOfEquity", pctOfEquity(pending.stream().map(StopOrders::lossAtStops)
                 .reduce(BigDecimal.ZERO, BigDecimal::add), equity));
+        seen.look(positions, pending, lastActionNo);
         return MAPPER.writeValueAsString(out);
     }
 
@@ -186,31 +307,41 @@ public class TradeTools {
                 takeProfits == null ? List.of() : takeProfits,
                 playType, signalsUsed, invalidationCondition);
         ObjectNode argSummary = openArgs(req);
-        if (roundExpired()) {
-            return expired("open_position", argSummary);
-        }
-        if (!openingAllowed.getAsBoolean()) {
-            return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.openingStage"));
-        }
-        // 白名单挡在行情查询之前：模型重试时会丢参数（真实发生过），空 symbol 打到上游
-        // 会拉回全市场 premiumIndex 数组炸掉解析，模型收到的就不是可修正的拒因了
-        if (symbol == null || !symbolWhitelist.contains(symbol)) {
-            return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.symbolNotWhitelisted",
-                    Map.of("whitelist", symbolWhitelist, "given", String.valueOf(symbol))));
-        }
-        try {
-            BigDecimal mark = markPrice.apply(symbol);
-            Account acct = account();
-            BigDecimal equity = simTradeClient.getEquity(simUserId);
-            String reject = opener.validate(req, acct, equity, mark);
-            if (reject != null) {
-                // rejected() 自己入轨迹，不许再包一层 record——否则拒绝动作双计
-                return rejected("open_position", argSummary, reject);
+        return acting("open_position", argSummary, () -> {
+            if (roundExpired()) {
+                return expired("open_position", argSummary);
             }
-            return openResult(argSummary, opener.execute(req, acct, equity, mark));
-        } catch (Exception e) {
-            return fail("open_position", argSummary, e);
-        }
+            // 白名单挡在行情查询之前：模型重试时会丢参数（真实发生过），空 symbol 打到上游
+            // 会拉回全市场 premiumIndex 数组炸掉解析，模型收到的就不是可修正的拒因了
+            if (symbol == null || !symbolWhitelist.contains(symbol)) {
+                return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.symbolNotWhitelisted",
+                        Map.of("whitelist", symbolWhitelist, "given", String.valueOf(symbol))));
+            }
+            String other = otherSymbol(symbol);
+            if (other != null) {
+                return rejected("open_position", argSummary, other);
+            }
+            if (!openingAllowed.test(symbol)) {
+                return rejected("open_position", argSummary, prompts.get(ctx.lang(), "trader.reject.openingStage"));
+            }
+            try {
+                BigDecimal mark = markPrice.apply(symbol);
+                Account acct = account();
+                BigDecimal equity = simTradeClient.getEquity(simUserId);
+                String reject = opener.validate(req, acct, equity, mark);
+                if (reject != null) {
+                    // rejected() 自己入轨迹，不许再包一层 record——否则拒绝动作双计
+                    return rejected("open_position", argSummary, reject);
+                }
+                String changed = changedSince("open_position", symbol, true, acct);
+                if (changed != null) {
+                    return rejected("open_position", argSummary, changed);
+                }
+                return openResult(argSummary, opener.execute(req, acct, equity, mark));
+            } catch (Exception e) {
+                return fail("open_position", argSummary, e);
+            }
+        });
     }
 
     /**
@@ -240,30 +371,37 @@ public class TradeTools {
                 .put("positionId", positionId)
                 .put("quantity", quantity)
                 .put("reason", reason);
-        if (roundExpired()) {
-            return expired("close_position", args);
-        }
-        try {
-            // 先查仓位：拒因与 sl/tp 工具同一句，留痕也要靠它的币向找计划
-            FuturesPositionDTO pos = findPosition(positionId);
-            if (pos == null) {
-                return rejected("close_position", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
+        return acting("close_position", args, () -> {
+            if (roundExpired()) {
+                return expired("close_position", args);
             }
-            FuturesCloseRequest req = new FuturesCloseRequest();
-            req.setPositionId(positionId);
-            req.setQuantity(BigDecimal.valueOf(quantity));
-            req.setOrderType("MARKET");
-            req.setClientRequestId(UUID.randomUUID().toString());
-            FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.closePosition(simUserId, req));
-            // 平掉的数量进修订史，理由是模型给的；全平后计划到下轮开头对账归档
-            revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.close"),
-                    BigDecimal.valueOf(quantity).stripTrailingZeros().toPlainString(), reason);
-            return ok("close_position", args, MAPPER.writeValueAsString(resp));
-        } catch (SimOrderRetry.UnknownOutcome e) {
-            return unknown("close_position", args, e);
-        } catch (Exception e) {
-            return fail("close_position", args, e);
-        }
+            try {
+                // 先查仓位：拒因与 sl/tp 工具同一句，留痕也要靠它的币向找计划
+                Account acct = account();
+                FuturesPositionDTO pos = acct.position(positionId);
+                if (pos == null) {
+                    return rejected("close_position", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
+                }
+                String blocked = blocked("close_position", pos.getSymbol(), acct);
+                if (blocked != null) {
+                    return rejected("close_position", args, blocked);
+                }
+                FuturesCloseRequest req = new FuturesCloseRequest();
+                req.setPositionId(positionId);
+                req.setQuantity(BigDecimal.valueOf(quantity));
+                req.setOrderType("MARKET");
+                req.setClientRequestId(UUID.randomUUID().toString());
+                FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.closePosition(simUserId, req));
+                // 平掉的数量进修订史，理由是模型给的；全平后计划到下轮开头对账归档
+                revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.close"),
+                        BigDecimal.valueOf(quantity).stripTrailingZeros().toPlainString(), reason);
+                return ok("close_position", args, MAPPER.writeValueAsString(resp));
+            } catch (SimOrderRetry.UnknownOutcome e) {
+                return unknown("close_position", args, e);
+            } catch (Exception e) {
+                return fail("close_position", args, e);
+            }
+        });
     }
 
     @Tool(name = "reverse_position")
@@ -281,6 +419,13 @@ public class TradeTools {
                 .put("playType", playType).put("signalsUsed", signalsUsed)
                 .put("invalidationCondition", invalidationCondition);
         args.set("takeProfits", MAPPER.valueToTree(takeProfits));
+        return acting("reverse_position", args, () -> reverse(positionId, quantity, leverage, stopLossPrice, takeProfits,
+                playType, signalsUsed, invalidationCondition, args));
+    }
+
+    /** 反手：先全平旧仓，再按新论点反向开仓；两条腿各记各的结果 */
+    private String reverse(long positionId, double quantity, int leverage, Double stopLossPrice, List<TargetRung> takeProfits,
+                           String playType, String signalsUsed, String invalidationCondition, ObjectNode args) {
         ObjectNode legs = MAPPER.createObjectNode();
         ObjectNode activeLeg = null;
         boolean closed = false;
@@ -288,14 +433,21 @@ public class TradeTools {
             if (roundExpired()) {
                 return expired("reverse_position", args);
             }
-            if (!openingAllowed.getAsBoolean()) {
-                return rejected("reverse_position", args, prompts.get(ctx.lang(), "trader.reject.openingStage"));
-            }
             Account before = account();
-            FuturesPositionDTO pos = before.positions().stream()
-                    .filter(p -> p.getId() != null && p.getId() == positionId).findFirst().orElse(null);
+            FuturesPositionDTO pos = before.position(positionId);
             if (pos == null) {
                 return rejected("reverse_position", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
+            }
+            String other = otherSymbol(pos.getSymbol());
+            if (other != null) {
+                return rejected("reverse_position", args, other);
+            }
+            if (!openingAllowed.test(pos.getSymbol())) {
+                return rejected("reverse_position", args, prompts.get(ctx.lang(), "trader.reject.openingStage"));
+            }
+            String changed = changedSince("reverse_position", pos.getSymbol(), true, before);
+            if (changed != null) {
+                return rejected("reverse_position", args, changed);
             }
             TradeGuard.OpenReq req = new TradeGuard.OpenReq(pos.getSymbol(), "LONG".equals(pos.getSide()) ? "SHORT" : "LONG",
                     List.of(new EntryRung(BigDecimal.valueOf(quantity), null)), leverage,
@@ -391,16 +543,25 @@ public class TradeTools {
                 .put("positionId", positionId)
                 .put("stopLossPrice", stopLossPrice)
                 .put("reason", reason);
+        return acting("set_stop_loss", args, () -> moveStop(positionId, stopLossPrice, reason, args));
+    }
+
+    private String moveStop(long positionId, double stopLossPrice, String reason, ObjectNode args) {
         if (roundExpired()) {
             return expired("set_stop_loss", args);
         }
         try {
-            FuturesPositionDTO pos = findPosition(positionId);
+            Account acct = account();
+            FuturesPositionDTO pos = acct.position(positionId);
             if (pos == null) {
                 return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
             }
             if (reason == null || reason.isBlank()) {
                 return rejected("set_stop_loss", args, prompts.get(ctx.lang(), "trader.reject.stopReasonRequired"));
+            }
+            String blocked = blocked("set_stop_loss", pos.getSymbol(), acct);
+            if (blocked != null) {
+                return rejected("set_stop_loss", args, blocked);
             }
             boolean isLong = "LONG".equals(pos.getSide());
             BigDecimal newStop = BigDecimal.valueOf(stopLossPrice);
@@ -446,13 +607,18 @@ public class TradeTools {
                 .put("positionId", positionId)
                 .put("reason", reason);
         args.set("takeProfits", MAPPER.valueToTree(rungs));
+        return acting("set_take_profit", args, () -> moveTargets(positionId, rungs, reason, args));
+    }
+
+    private String moveTargets(long positionId, List<TargetRung> rungs, String reason, ObjectNode args) {
         if (roundExpired()) {
             return expired("set_take_profit", args);
         }
         FuturesPositionDTO pos = null;
         String partial = "";
         try {
-            pos = findPosition(positionId);
+            Account acct = account();
+            pos = acct.position(positionId);
             if (pos == null) {
                 return rejected("set_take_profit", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
             }
@@ -462,6 +628,10 @@ public class TradeTools {
             String invalid = TradeGuard.validateTargets(rungs, prompts, ctx.lang());
             if (invalid != null) {
                 return rejected("set_take_profit", args, invalid);
+            }
+            String blocked = blocked("set_take_profit", pos.getSymbol(), acct);
+            if (blocked != null) {
+                return rejected("set_take_profit", args, blocked);
             }
             boolean isLong = "LONG".equals(pos.getSide());
             if (!rungs.isEmpty()) {
@@ -574,10 +744,18 @@ public class TradeTools {
                 .put("playType", playType)
                 .put("signalsUsed", signalsUsed)
                 .put("invalidationCondition", invalidationCondition);
+        return acting("write_plan", args, () -> filePlan(positionId, playType, signalsUsed, invalidationCondition, args));
+    }
+
+    private String filePlan(long positionId, String playType, String signalsUsed, String invalidationCondition, ObjectNode args) {
         try {
             FuturesPositionDTO pos = findPosition(positionId);
             if (pos == null) {
                 return rejected("write_plan", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
+            }
+            String other = otherSymbol(pos.getSymbol());
+            if (other != null) {
+                return rejected("write_plan", args, other);
             }
             if (planStore.liveFor(ctx.traderId(), ctx.roundNo(), pos.getSymbol(), pos.getSide()) != null) {
                 return rejected("write_plan", args,
@@ -641,6 +819,11 @@ public class TradeTools {
             return out;
         }
 
+        /** 按仓位编号找持仓，没有给 null */
+        FuturesPositionDTO position(long positionId) {
+            return positions.stream().filter(p -> p.getId() != null && p.getId() == positionId).findFirst().orElse(null);
+        }
+
         /** 同币同向的已成交仓位＝本次开仓是加仓（sim 会并入这一仓） */
         FuturesPositionDTO sameSide(String symbol, String side) {
             return positions.stream()
@@ -683,6 +866,13 @@ public class TradeTools {
         }
     }
 
+    /** 单币轮只能动自己那个币：这个币不归这一轮管就给拒因，归这一轮管返回 null */
+    private String otherSymbol(String symbol) {
+        return ctx.onlySymbol() == null || ctx.onlySymbol().equals(symbol) ? null
+                : prompts.get(ctx.lang(), "trader.reject.otherSymbol",
+                        Map.of("symbol", ctx.onlySymbol(), "given", String.valueOf(symbol)));
+    }
+
     /** 本轮预算已耗尽：唤醒回路那边正在超时作废，这时候再下单就是给下一轮留没人认领的仓位。 */
     private boolean roundExpired() {
         return System.currentTimeMillis() > ctx.deadlineMs();
@@ -714,6 +904,10 @@ public class TradeTools {
                               @ToolParam(description = "Why these pending orders should be cancelled") String reason) {
         ObjectNode args = MAPPER.createObjectNode().put("reason", reason);
         args.set("orderIds", MAPPER.valueToTree(orderIds));
+        return acting("cancel_order", args, () -> cancel(orderIds, reason, args));
+    }
+
+    private String cancel(List<Long> orderIds, String reason, ObjectNode args) {
         if (roundExpired()) {
             return expired("cancel_order", args);
         }
@@ -727,8 +921,30 @@ public class TradeTools {
         ArrayNode orders = receipt.putArray("orders");
         List<FuturesOrderResponse> cancelled = new ArrayList<>();
         List<String> failures = new ArrayList<>();
+        // 先认一遍这几张单各是哪个币的：不归这一轮管的币、上次查看之后变了的币，它的单这次不撤。一个币只比一次
+        Account acct;
+        try {
+            acct = account();
+        } catch (Exception e) {
+            return fail("cancel_order", args, e);
+        }
+        Map<Long, String> symbolOf = new HashMap<>();
+        acct.pending().forEach(o -> symbolOf.put(o.getOrderId(), o.getSymbol()));
+        Map<String, String> blockedOn = new HashMap<>();
+        int held = 0;
         for (long orderId : new LinkedHashSet<>(orderIds)) {
             ObjectNode row = orders.addObject().put("orderId", orderId);
+            String symbol = symbolOf.get(orderId);
+            if (symbol != null && !blockedOn.containsKey(symbol)) {
+                blockedOn.put(symbol, blocked("cancel_order", symbol, acct));
+            }
+            String blocked = symbol == null ? null : blockedOn.get(symbol);
+            if (blocked != null) {
+                row.put("status", "failed").put("reason", blocked);
+                failures.add("#" + orderId + " " + blocked);
+                held++;
+                continue;
+            }
             try {
                 FuturesOrderResponse response = simTradeClient.cancelOrder(simUserId, orderId);
                 cancelled.add(response);
@@ -752,6 +968,10 @@ public class TradeTools {
             return ok("cancel_order", args, receipt);
         }
         String error = String.join(" / ", failures);
+        // 一张都没发给 sim：全是被拦下的，按拒绝回，模型看过说明可以重新提交
+        if (held == failures.size()) {
+            return rejected("cancel_order", args, error);
+        }
         if (cancelled.isEmpty()) {
             return fail("cancel_order", args, error);
         }
@@ -760,16 +980,35 @@ public class TradeTools {
     }
 
     @Tool(name = "set_watch")
-    public String setWatch(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
-                           @ToolParam(description = "The whole new list for this symbol (at most one upward, one downward, one AT_TIME); an empty array clears it") List<WatchSpec> watches) {
+    public String setWatch(@ToolParam(description = "Symbol whose price or candle these conditions watch, e.g. BTCUSDT") String symbol,
+                           @ToolParam(description = "The whole new list for this symbol (at most one upward, one downward, one AT_TIME); an empty array clears it") List<WatchSpec> watches,
+                           @ToolParam(required = false, description = "The tradable symbol these conditions are set for: a hit wakes the round that handles that symbol. Leave it out when it is the watched symbol itself") String forSymbol) {
         ObjectNode args = MAPPER.createObjectNode().put("symbol", symbol);
         args.set("watches", MAPPER.valueToTree(watches));
+        if (forSymbol != null && !forSymbol.isBlank()) {
+            args.put("forSymbol", forSymbol);
+        }
+        return acting("set_watch", args, () -> arm(symbol, watches, forSymbol, args));
+    }
+
+    private String arm(String symbol, List<WatchSpec> watches, String forSymbol, ObjectNode args) {
         if (roundExpired()) {
             return expired("set_watch", args);
         }
         if (symbol == null || !watchSymbols.contains(symbol)) {
             return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.watchSymbolInvalid",
                     Map.of("symbols", new TreeSet<>(watchSymbols))));
+        }
+        // 为哪个币布的：写明了用写明的；没写，单币轮就是这一轮的币，整盘轮就是被盯的币自己
+        String owner = forSymbol != null && !forSymbol.isBlank() ? forSymbol
+                : ctx.onlySymbol() != null ? ctx.onlySymbol() : symbol;
+        if (!symbolWhitelist.contains(owner)) {
+            return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.watchForInvalid",
+                    Map.of("given", owner, "whitelist", new TreeSet<>(symbolWhitelist))));
+        }
+        String other = otherSymbol(owner);
+        if (other != null) {
+            return rejected("set_watch", args, other);
         }
         if (watches == null) {
             return rejected("set_watch", args, prompts.get(ctx.lang(), "trader.guard.watchListRequired"));
@@ -782,9 +1021,9 @@ public class TradeTools {
             if (reason != null) {
                 return rejected("set_watch", args, reason);
             }
-            // 预案动作对着账户查一遍，落库时带上那个仓位 / 挂单的币和方向；没带动作的条件不查账户
+            // 预案动作对着账户查一遍，落库时带上那个仓位 / 挂单的币和方向
+            Account acct = account();
             List<String> presets = new ArrayList<>();
-            Account acct = watches.stream().anyMatch(s -> s.action() != null) ? account() : null;
             for (WatchSpec s : watches) {
                 if (s.action() == null) {
                     presets.add(null);
@@ -797,7 +1036,11 @@ public class TradeTools {
                 }
                 presets.add(MAPPER.writeValueAsString(action));
             }
-            watchStore.replace(ctx.traderId(), ctx.roundNo(), symbol, watches, presets, ctx.wakeTime());
+            String changed = changedSince("set_watch", owner, false, acct);
+            if (changed != null) {
+                return rejected("set_watch", args, changed);
+            }
+            watchStore.replace(ctx.traderId(), ctx.roundNo(), owner, symbol, watches, presets, ctx.wakeTime());
             return ok("set_watch", args, "{\"ok\":true,\"armed\":" + watches.size() + "}");
         } catch (Exception e) {
             return fail("set_watch", args, e);
@@ -816,12 +1059,16 @@ public class TradeTools {
                 return prompts.get(ctx.lang(), "trader.reject.orderIdNotFound");
             }
             stored.put("symbol", order.getSymbol()).put("side", order.getOrderSide());
-            return null;
+            return otherSymbol(order.getSymbol());
         }
         FuturesPositionDTO pos = acct.positions().stream()
                 .filter(p -> a.positionId().equals(p.getId())).findFirst().orElse(null);
         if (pos == null) {
             return prompts.get(ctx.lang(), "trader.reject.positionIdNotFound");
+        }
+        String other = otherSymbol(pos.getSymbol());
+        if (other != null) {
+            return other;
         }
         if (AiTraderWatch.ACTION_MOVE_STOP.equals(a.type())) {
             BigDecimal tightest = StopOrders.tightest(pos);

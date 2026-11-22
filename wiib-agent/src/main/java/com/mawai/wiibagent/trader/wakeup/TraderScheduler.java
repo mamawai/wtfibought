@@ -14,21 +14,27 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
 
 /**
- * trader 调度器：5m K线收盘事件当唯一时钟，对齐到各 trader 的 interval 边界触发唤醒。
- * 每 trader 互斥（上一唤醒未完 → 记 SKIPPED，要最新信号不排陈旧任务），不设全局并发上限；
+ * trader 调度器：5m K线收盘事件当唯一时钟，对齐到各 trader 的 interval 边界发例行唤醒；
+ * 四个触发源（波动哨兵、盯盘哨兵、持仓事件监听、权益回落哨兵）广播来的非例行触发在这里分发。
+ * <p>
+ * 一个 trader 可以同时跑几轮：一轮整盘的（例行、手动、不归某一个币的触发），外加每个可交易币各一轮只处理它的单币轮。
+ * 一条触发交给谁：先交给正在处理这个币的单币轮（插进它的对话）；没有就交给正在跑的整盘轮；都没有，新起一个单币轮。
+ * 例行到点时有整盘轮在跑就插进它，不另起第二轮整盘的；有单币轮在跑不影响，例行轮照常开始。
+ * 一轮结束时没被读到的触发另起一轮，不丢。
+ * <p>
  * 事件是 per-symbol 的，同一边界多币多次触发靠 firedBoundary 去重。
  * 不做兜底补漏：WS/事件断流丢的K线就丢了——陈旧信号唤醒没有意义。收盘超过 5 分钟的事件（停机后重放的积压）
  * 只判收盘类盯盘条件，不发例行；5 分钟内迟到的由唤醒预算兜底：距下一边界不足 30s 直接放弃，见 TraderWakeupRunner。
- * 唤醒时段（ai_trader.wake_window，见 {@link WakeWindow}）只在这里过滤：例行/警报/持仓事件时段外静默跳过（不写 SKIPPED，
- * 15m 档一天会写 96 行"休眠中"），手动唤醒不拦。
+ * 唤醒时段（ai_trader.wake_window，见 {@link WakeWindow}）只在这里过滤：例行/警报/持仓事件时段外静默跳过，手动唤醒不拦。
  * 边界撞上 High 级数据公布时刻，例行触发先过 {@link EconCalendarGate}（最多等 30s 拿实际值）再发。
  * <p>
  * 复盘不归这里管：单笔复盘和统一复盘有自己的调度和位子（{@code ReviewScheduler}），不占唤醒位，日线边界和别的边界一样只发例行唤醒。
@@ -40,25 +46,40 @@ public class TraderScheduler {
 
     /** 收盘超过这么久（一根 5m）的 K 线事件算旧事件 */
     static final long STALE_EVENT_MS = 300_000L;
+    /** 整盘轮在 {@link Desk#rounds} 里的键；单币轮的键是币码 */
+    private static final String BOOK = "*";
 
     private final AiTraderMapper traderMapper;
     private final TraderWakeupRunner runner;
     /** 手动唤醒的拦因当场回给用户，跟界面语言 */
     private final MessageCatalog messages;
     private final EconCalendarGate calendarGate;
-    /** 盯盘哨兵：5m 收盘时问它这根收盘命中了哪些收盘类条件，命中先落库，同一刻的例行轮开场白就能并进去念 */
+    /** 盯盘哨兵：5m 收盘时问它这根收盘命中了哪些收盘类条件 */
     private final WatchSentinel watchSentinel;
-    /** 领排队触发时，别的轮已经告诉过模型的盯盘命中不再单独叫 */
+    /** 起新一轮之前，别的轮已经告诉过模型的盯盘命中不再单独叫 */
     private final TraderWatchStore watchStore;
 
-    private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+    /**
+     * 一个 trader 手上的几轮。读写都锁这个对象。
+     * rounds：正在跑的轮，整盘轮至多一轮，每个币的单币轮至多一轮；
+     * occupied：重置或删除占着，这期间不起新轮；parked：占着的时候来的触发，放手后再分发
+     */
+    private static final class Desk {
+        final Map<String, WakeRound> rounds = new HashMap<>();
+        final List<WakeTrigger> parked = new ArrayList<>();
+        boolean occupied;
+    }
+
+    private final Map<Long, Desk> desks = new ConcurrentHashMap<>();
     /** 每 trader 最近已触发的边界时刻：多个 watch 币在同一刻收盘会各发一次事件，靠它去重 */
     private final Map<Long, Long> firedBoundary = new ConcurrentHashMap<>();
-    /** 每 trader 排队中的非例行触发（警报/持仓事件）：上一轮在跑时先攒着，它一结束就合成一轮叫醒，先来后到 */
-    private final Map<Long, Queue<WakeTrigger>> pendingTriggers = new ConcurrentHashMap<>();
 
     /** 墙钟注入点：手动唤醒的预算预检、休眠时段判断要可测 */
     java.util.function.LongSupplier nowMs = System::currentTimeMillis;
+
+    private Desk desk(long traderId) {
+        return desks.computeIfAbsent(traderId, _ -> new Desk());
+    }
 
     /** 主触发：任意 watch 币的 5m 收盘都是一次时钟滴答。 */
     @EventListener
@@ -66,7 +87,7 @@ public class TraderScheduler {
         if (!"5m".equalsIgnoreCase(event.interval())) {
             return;
         }
-        // 收盘类盯盘命中先落库，再发例行：同一刻醒的例行轮开场白里就带着它们；排进队列的那份等例行轮念过后被过滤掉。
+        // 收盘类盯盘命中先落库，再发例行，最后分发命中：例行轮已经登记在跑，同一刻的命中交给它，不另起一轮。
         // 每个币的收盘事件都要评估
         List<WatchTrigger> hits = closeHits(event);
         // 停机后重放的积压：命中已落库，下一轮开场白补报；不发例行
@@ -82,26 +103,10 @@ public class TraderScheduler {
                     fireInterval(ic, boundary);
                 }
             }
-            hits.forEach(t -> tryTriggerWake(t.watch().getTraderId(), t));
+            hits.forEach(t -> dispatch(t.watch().getTraderId(), t));
         }).exceptionally(e -> {
             log.error("[TraderSched] 例行触发失败 closeTime={} msg={}", event.closeTime(), e.toString());
             return null;
-        });
-    }
-
-    /** 抢这个 trader 的互斥位，抢到就起虚拟线程跑；抢不到返回 null，怎么处理归调用方 */
-    private Thread runIfFree(long traderId, Runnable work) {
-        return inFlight.add(traderId) ? runHolding(traderId, work) : null;
-    }
-
-    /** 互斥位已经在手：起虚拟线程跑，跑完放位并领排队的触发。漏了放位这个 trader 就再也醒不过来，所以只写这一处 */
-    private Thread runHolding(long traderId, Runnable work) {
-        return Thread.startVirtualThread(() -> {
-            try {
-                work.run();
-            } finally {
-                release(traderId);
-            }
         });
     }
 
@@ -110,41 +115,51 @@ public class TraderScheduler {
                 .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING)
                 .eq(AiTrader::getIntervalCode, intervalCode));
         for (AiTrader trader : traders) {
-            // 时段外静默跳过：不占 firedBoundary、不写 SKIPPED——休眠就是没这回事
+            // 时段外静默跳过：不占 firedBoundary——休眠就是没这回事
             WakeWindow window = WakeWindow.of(trader);
             if (window != null && !window.contains(boundary)) {
                 continue;
             }
-            fireTrader(trader, boundary);
+            // 这里可能并发进来，同一边界只发一次
+            boolean[] won = new boolean[1];
+            firedBoundary.compute(trader.getId(), (_, prev) -> {
+                if (prev == null || prev < boundary) {
+                    won[0] = true;
+                    return boundary;
+                }
+                return prev;
+            });
+            if (won[0]) {
+                fireRoutine(trader, boundary);
+            }
         }
     }
 
-    /** 这里可能会并发firTrader，所以要做去重 */
-    private void fireTrader(AiTrader trader, long boundary) {
-        boolean[] won = new boolean[1];
-        firedBoundary.compute(trader.getId(), (_, prev) -> {
-            if (prev == null || prev < boundary) {
-                won[0] = true;
-                return boundary;
+    /** 例行到点：有整盘轮在跑就插进它，没有就起一轮；重置或删除占着的时候这根不发 */
+    private void fireRoutine(AiTrader trader, long boundary) {
+        Desk desk = desk(trader.getId());
+        synchronized (desk) {
+            if (desk.occupied) {
+                log.info("[TraderSched] 重置或删除进行中，这根例行不发 traderId={} boundary={}", trader.getId(), boundary);
+                return;
             }
-            return prev;
-        });
-        if (!won[0]) {
-            return;
-        }
-        if (runIfFree(trader.getId(), () -> runner.wake(trader, boundary)) == null) {
-            runner.recordSkipped(trader, boundary); // 上次唤醒还在跑，本次边界作废并留痕，等下一根K线的新鲜信号
-            log.info("[TraderSched] 上轮未完跳过 traderId={} boundary={}", trader.getId(), boundary);
+            WakeRound book = desk.rounds.get(BOOK);
+            if (book != null) {
+                book.offerRoutine(boundary);
+                log.info("[TraderSched] 整盘轮在跑，例行插进去 traderId={} boundary={}", trader.getId(), boundary);
+                return;
+            }
+            start(desk, trader, WakeScope.book(trader), round -> runner.wake(trader, boundary, round));
         }
     }
 
     /**
-     * 三个触发源（波动哨兵、盯盘哨兵、持仓事件监听）广播过来的非例行触发都从这里进。
-     * 广播的那条线程可能是行情订阅线程，领触发要查库，统一挪到虚拟线程
+     * 四个触发源（波动哨兵、盯盘哨兵、持仓事件监听、权益回落哨兵）广播过来的非例行触发都从这里进。
+     * 广播的那条线程可能是行情订阅线程，分发要查库，统一挪到虚拟线程
      */
     @EventListener
     public void onTrigger(TriggerFired fired) {
-        Thread.startVirtualThread(() -> tryTriggerWake(fired.traderId(), fired.trigger()));
+        Thread.startVirtualThread(() -> dispatch(fired.traderId(), fired.trigger()));
     }
 
     /** 这根 5m 收盘命中的收盘类盯盘条件（CAS 已标 FIRED）；哨兵那边出错不许连累例行唤醒 */
@@ -158,65 +173,83 @@ public class TraderScheduler {
     }
 
     /**
-     * 非例行唤醒（波动警报 / 持仓事件 / 盯盘命中）：进队列，然后立刻尝试领走。只有主人配的休眠时段不叫，
-     * 在领的时候判。上一轮还在跑就先排着，先来后到，它一结束立刻补醒；
-     * 排队期间攒下的几条合成一轮一起报。跑过例行边界时那根的例行轮跳过（SKIPPED 留痕）——突发行情里这一轮比按点醒更要紧。
+     * 分发一条非例行触发（波动警报 / 持仓事件 / 盯盘命中 / 权益回落警报）。只有主人配的休眠时段不叫；
+     * 分发时重新查库：它可能已经爆仓、被暂停或进了休眠时段。
      * 没叫的持仓事件和盯盘命中不会丢：下一次唤醒开头照样报。
+     * 归某个可交易币的：先交给正在处理这个币的单币轮，没有就交给正在跑的整盘轮，都没有新起一个单币轮。
+     * 不归某一个可交易币的（全仓爆仓、权益回落警报）：交给正在跑的整盘轮，没有就起一轮整盘的。
      */
-    public void tryTriggerWake(long traderId, WakeTrigger trigger) {
-        pendingTriggers.computeIfAbsent(traderId, _ -> new ConcurrentLinkedQueue<>()).add(trigger);
-        drainTriggers(traderId);
+    public void dispatch(long traderId, WakeTrigger trigger) {
+        AiTrader trader = traderMapper.selectById(traderId);
+        if (trader == null || !AiTrader.STATUS_RUNNING.equals(trader.getStatus())
+                || !WakeIntervals.CODES.contains(trader.getIntervalCode())) {
+            log.info("[TraderSched] trader 已不在运行或档位已下线，丢弃触发 traderId={} {}", traderId, trigger);
+            return;
+        }
+        WakeWindow window = WakeWindow.of(trader);
+        if (window != null && !window.contains(nowMs.getAsLong())) {
+            // 休眠时段：警报和持仓事件都不叫——"其他时间段就不唤醒"的另一半
+            log.info("[TraderSched] 休眠时段，丢弃触发 traderId={} {}", traderId, trigger);
+            return;
+        }
+        WakeScope scope = WakeScope.of(trader, trigger.symbol());
+        Desk desk = desk(traderId);
+        synchronized (desk) {
+            if (desk.occupied) {
+                desk.parked.add(trigger);
+                return;
+            }
+            WakeRound own = scope.single() ? desk.rounds.get(scope.symbol()) : null;
+            WakeRound taker = own != null ? own : desk.rounds.get(BOOK);
+            if (taker != null) {
+                taker.offer(trigger);
+                log.info("[TraderSched] 触发插进在跑的{}轮 traderId={} {}", own != null ? "单币" : "整盘", traderId, trigger);
+                return;
+            }
+            // 别的轮已经把这条盯盘命中告诉过模型的，不再单独叫
+            if (trigger instanceof WatchTrigger hit && !watchStore.wokenIds(List.of(hit.watch().getId())).isEmpty()) {
+                return;
+            }
+            log.info("[TraderSched] 非例行唤醒 traderId={} 范围={} {}", traderId, scope.single() ? scope.symbol() : "整盘", trigger);
+            start(desk, trader, scope, round -> runner.wakeTriggered(trader, List.of(trigger), round));
+        }
     }
 
     /**
-     * 把该 trader 排队中的触发一次性领走叫醒；每一轮（例行/手动/非例行）结束时也来领一次。
-     * 抢不到互斥位就算了：在跑的那轮结束时会再来。领的时候重新查库：排队这几分钟里它可能已经爆仓、被暂停或进了休眠时段。
+     * 登记一轮并起虚拟线程跑；跑完摘掉登记，没被读到的触发和例行另行处理。调用方已经锁着 desk。
+     * 漏了摘登记这个范围就再也起不了轮，所以只写这一处
      */
-    private void drainTriggers(long traderId) {
-        Queue<WakeTrigger> queue = pendingTriggers.get(traderId);
-        if (queue == null || queue.isEmpty()) {
-            return;
-        }
-        if (!inFlight.add(traderId)) {
-            return;
-        }
-        // 没真正开跑的所有出口都要放掉互斥位，不然这个 trader 从此醒不过来
-        boolean started = false;
-        try {
-            List<WakeTrigger> batch = new ArrayList<>();
-            for (WakeTrigger t; (t = queue.poll()) != null; ) {
-                batch.add(t);
-            }
-            // 排队期间别的轮（多半是同一刻的例行轮）已经把这条盯盘命中告诉过模型的，不再单独叫
-            Set<Long> told = watchStore.wokenIds(batch.stream()
-                    .filter(t -> t instanceof WatchTrigger).map(t -> ((WatchTrigger) t).watch().getId()).toList());
-            batch.removeIf(t -> t instanceof WatchTrigger w && told.contains(w.watch().getId()));
-            if (batch.isEmpty()) {
-                return;
-            }
-            AiTrader trader = traderMapper.selectById(traderId);
-            if (trader == null || !AiTrader.STATUS_RUNNING.equals(trader.getStatus())
-                    || !WakeIntervals.CODES.contains(trader.getIntervalCode())) {
-                log.info("[TraderSched] trader 已不在运行或档位已下线，丢弃触发 traderId={} {}", traderId, batch);
-                return;
-            }
-            WakeWindow window = WakeWindow.of(trader);
-            if (window != null && !window.contains(nowMs.getAsLong())) {
-                // 休眠时段：警报和持仓事件都不叫——"其他时间段就不唤醒"的另一半
-                log.info("[TraderSched] 休眠时段，丢弃触发 traderId={} {}", traderId, batch);
-                return;
-            }
-            log.info("[TraderSched] 非例行唤醒 traderId={} 触发 {} 条 {}", traderId, batch.size(), batch);
-            runHolding(traderId, () -> runner.wakeTriggered(trader, batch));
-            started = true;
-        } finally {
-            if (!started) {
-                inFlight.remove(traderId);
-                // 领的过程里又来了触发、它抢位失败：这里再领一次，不然要等下一轮结束才有人领
-                if (!queue.isEmpty()) {
-                    drainTriggers(traderId);
+    private void start(Desk desk, AiTrader trader, WakeScope scope, Consumer<WakeRound> work) {
+        String key = scope.single() ? scope.symbol() : BOOK;
+        WakeRound round = new WakeRound(scope, () -> singleSymbols(desk));
+        desk.rounds.put(key, round);
+        Thread.startVirtualThread(() -> {
+            try {
+                work.accept(round);
+            } finally {
+                WakeRound.Arrivals unread;
+                synchronized (desk) {
+                    desk.rounds.remove(key);
+                    unread = round.take();
                 }
+                // 这一轮已经在写结论、没再调模型，插进去的它读不到：例行重新发，触发重新分发
+                if (unread.routineBoundary() != null) {
+                    AiTrader now = traderMapper.selectById(trader.getId());
+                    if (now != null && AiTrader.STATUS_RUNNING.equals(now.getStatus())) {
+                        fireRoutine(now, unread.routineBoundary());
+                    }
+                }
+                unread.triggers().forEach(t -> dispatch(trader.getId(), t));
             }
+        });
+    }
+
+    /** 此刻有单币轮在处理的币 */
+    private static Set<String> singleSymbols(Desk desk) {
+        synchronized (desk) {
+            Set<String> out = new TreeSet<>(desk.rounds.keySet());
+            out.remove(BOOK);
+            return out;
         }
     }
 
@@ -225,7 +258,7 @@ public class TraderScheduler {
      * 动作面板拿它决定按钮点不点得动，与 {@link #tryManualWake} 共用同一份判断——
      * 面板显示的拒因就是真点下去会拿到的那一句。
      * <p>
-     * inFlight 这条只查不占：面板是轮询刷新的，占位会把 trader 锁死。
+     * 只查不占：面板是轮询刷新的，占位会把 trader 锁死。有单币轮在跑不拦，已经有一轮整盘的在跑才拦。
      * 拒因文案按 lang 取：chat 的 trader_overview 在非请求线程上调它，取不到请求语言。
      */
     public String manualWakeBlockedReason(AiTrader trader, AgentLang lang) {
@@ -241,29 +274,43 @@ public class TraderScheduler {
             return messages.get(lang, "trader.wake.budgetTooTight",
                     Map.of("seconds", TraderWakeupRunner.MIN_WAKE_SECONDS));
         }
-        if (inFlight.contains(trader.getId())) {
-            return messages.get(lang, "trader.wake.busy");
+        Desk desk = desk(trader.getId());
+        synchronized (desk) {
+            return desk.occupied || desk.rounds.containsKey(BOOK) ? messages.get(lang, "trader.wake.busy") : null;
         }
-        return null;
     }
 
     /**
-     * 占住这个 trader 的唤醒位——重置和删除走这里，占着的时候它醒不过来。
-     * 抢到必须在 finally 里 {@link #release}，否则这个 trader 从此醒不过来。
+     * 占住这个 trader——重置和删除走这里，占着的时候它起不了新轮。有任何一轮在跑就占不上。
+     * 占上必须在 finally 里 {@link #release}，否则这个 trader 从此醒不过来。
      */
     public boolean tryOccupy(long traderId) {
-        return inFlight.add(traderId);
+        Desk desk = desk(traderId);
+        synchronized (desk) {
+            if (desk.occupied || !desk.rounds.isEmpty()) {
+                return false;
+            }
+            desk.occupied = true;
+            return true;
+        }
     }
 
+    /** 放手：占着的时候来的触发现在分发 */
     public void release(long traderId) {
-        inFlight.remove(traderId);
-        drainTriggers(traderId);
+        Desk desk = desk(traderId);
+        List<WakeTrigger> parked;
+        synchronized (desk) {
+            desk.occupied = false;
+            parked = List.copyOf(desk.parked);
+            desk.parked.clear();
+        }
+        parked.forEach(t -> dispatch(traderId, t));
     }
 
-    /** trader 已删：摘掉两份 traderId 记账。inFlight 不在这摘——删除那边全程 {@link #tryOccupy} 占着唤醒位，删完在 finally 里 {@link #release} */
+    /** trader 已删：摘掉两份 traderId 记账。删除那边全程 {@link #tryOccupy} 占着，删完在 finally 里 {@link #release} */
     public void forget(long traderId) {
         firedBoundary.remove(traderId);
-        pendingTriggers.remove(traderId);
+        desks.remove(traderId);
     }
 
     /**
@@ -286,8 +333,7 @@ public class TraderScheduler {
     }
 
     /**
-     * 手动唤醒（动作面板的按钮扣扳机）：走与例行/警报同一套治理——
-     * 预算预检 → 每 trader 互斥，然后虚拟线程上异步跑。
+     * 手动唤醒（动作面板的按钮扣扳机）：和例行轮一样是一轮整盘的，虚拟线程上异步跑。
      * <p>
      * <b>异步而不是同步等结果</b>：唤醒预算最长 900s，同步等于把调用方的连接压死几分钟；
      * trader 本来就是"后台醒来做完事睡去"的回路，面板只负责扣扳机，结果去竞技场看。
@@ -304,11 +350,14 @@ public class TraderScheduler {
             return blocked;
         }
         long intervalMs = WakeIntervals.MS.get(trader.getIntervalCode());
-        long now = nowMs.getAsLong();
-        long boundary = WakeIntervals.align(now, intervalMs);
-        // 预检只是"看一眼"不占位；真占位要在这里再抢一次——预检到现在之间可能有别人先进来了
-        if (runIfFree(trader.getId(), () -> runner.wakeManual(trader, boundary)) == null) {
-            return messages.get("trader.wake.busy");
+        long boundary = WakeIntervals.align(nowMs.getAsLong(), intervalMs);
+        Desk desk = desk(trader.getId());
+        synchronized (desk) {
+            // 预检只是"看一眼"不占位；预检到现在之间可能有别的整盘轮先起来了
+            if (desk.occupied || desk.rounds.containsKey(BOOK)) {
+                return messages.get("trader.wake.busy");
+            }
+            start(desk, trader, WakeScope.book(trader), round -> runner.wakeManual(trader, boundary, round));
         }
         log.info("[TraderSched] 手动唤醒 traderId={} boundary={}", trader.getId(), boundary);
         return null;
