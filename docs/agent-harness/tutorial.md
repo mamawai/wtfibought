@@ -352,7 +352,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 **日线边界在这里只是一根普通的边界**：以前 08:00 有一次全体停工的日线交接（先唤醒、等交易跑完、全体复盘、再开工），现在没有了。复盘有自己的调度和自己的互斥位（`learning/ReviewScheduler`，第 6 章），不占唤醒位、不挡唤醒，这个类里只剩类注释上一句"复盘不归这里管"。
 
-配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL；边沿触发，一段行情每人只报一次，回落到基准八成以下才算结束）、`AlertTrigger`、`TradeEventListener`（sim 在止损/强平/限价成交时发的 `TradeEvent` → `EventTrigger`，决策行 kind=EVENT；止盈触发不叫醒，分档止盈平掉一部分、仓位还在的记一行事件，下一轮开场白报）、`EquityDropSentinel`（主人设了比例的，每根 5m 收盘查一次权益；参照点是上次报警之后到过的最高点，存在 `ai_trader.equity_peak`；回落到比例就发 `EquityDropTrigger`、参照点从当时的权益重新记，kind=DRAWDOWN，叫醒的是一轮整盘的；休眠时段里不报也不重新记）、`WatchSentinel`（模型 `set_watch` 布的条件：触及 / 到时刻看 tick，周期收盘看 5m 收盘落在哪个边界；命中是库里 ARMED→FIRED 的 CAS，赢了才叫 → `WatchTrigger`，kind=WATCH；名单在内存，`WatchesChanged` 事件整份重载）、`PresetExecutor`（条件带了动作就是预案：命中后由代码当场移止损 / 平仓 / 撤单，结果记到条件行、计划修订史和时间线上一行 kind=PRESET；移止损和撤单做成了不叫醒，平仓做成了或动作没做成才叫）、`WakeWindow`（新加坡时间写死 `Asia/Singapore`，不跟 systemDefault 漂）。
+配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL；边沿触发，一段行情每人只报一次，回落到基准八成以下才算结束）、`AlertTrigger`、`TradeEventListener`（sim 在止损/强平/限价成交时发的 `TradeEvent` → `EventTrigger`，决策行 kind=EVENT；止盈触发不叫醒，分档止盈平掉一部分、仓位还在的记一行事件，下一轮开场白报）、`EquityDropSentinel`（主人设了比例的，每根 5m 收盘查一次权益；参照点是上次报警之后到过的最高点，存在 `ai_trader.equity_peak`；回落到比例就发 `EquityDropTrigger`、参照点从当时的权益重新记，kind=DRAWDOWN，叫醒的是一轮整盘的；休眠时段里不报也不重新记；那一轮没跑成的，`TraderWakeupRunner` 记一行未报事件，下一次整盘轮补报）、`WatchSentinel`（模型 `set_watch` 布的条件：触及 / 到时刻看 tick，周期收盘看 5m 收盘落在哪个边界；命中是库里 ARMED→FIRED 的 CAS，赢了才叫 → `WatchTrigger`，kind=WATCH；名单在内存，`WatchesChanged` 事件整份重载）、`PresetExecutor`（条件带了动作就是预案：命中后由代码当场移止损 / 平仓 / 撤单，结果记到条件行、计划修订史和时间线上一行 kind=PRESET；移止损和撤单做成了不叫醒，平仓做成了或动作没做成才叫）、`WakeWindow`（新加坡时间写死 `Asia/Singapore`，不跟 systemDefault 漂）。
 
 ### 5.2 四层外生停止条件 · `TraderWakeupRunner` 顶部常量
 

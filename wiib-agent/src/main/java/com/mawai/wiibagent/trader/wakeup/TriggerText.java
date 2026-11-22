@@ -61,14 +61,23 @@ class TriggerText {
                     "time", BeijingTime.format(w.triggeredAt()),
                     "detail", WatchText.detail(w.watch(), w.price(), prompts, lang),
                     "note", WatchText.note(w.watch(), prompts, lang)));
-            case EquityDropTrigger d -> prompts.get(lang, "trader.wake.equityDropHeader", Map.of(
-                    "time", time,
-                    "equity", WatchText.num(d.equity().setScale(2, RoundingMode.HALF_UP)),
-                    "peak", WatchText.num(d.peak().setScale(2, RoundingMode.HALF_UP)),
-                    "peakTime", BeijingTime.shortFormat(d.peakAt()),
-                    "drop", d.dropPct().stripTrailingZeros().toPlainString(),
-                    "threshold", d.thresholdPct().stripTrailingZeros().toPlainString()));
+            case EquityDropTrigger d -> prompts.get(lang, "trader.wake.equityDropHeader", equityDropFacts(d));
         };
+    }
+
+    /** 权益回落警报叫醒的那一轮没跑成：留给下一次整盘轮在【自上次唤醒以来】里补报的那一行 */
+    String missedEquityDrop(EquityDropTrigger d, AgentLang lang) {
+        return prompts.get(lang, "trader.wake.eventEquityDropMissed", equityDropFacts(d)) + '\n';
+    }
+
+    private static Map<String, Object> equityDropFacts(EquityDropTrigger d) {
+        return Map.of(
+                "time", BeijingTime.shortFormat(d.triggeredAt()),
+                "equity", WatchText.num(d.equity().setScale(2, RoundingMode.HALF_UP)),
+                "peak", WatchText.num(d.peak().setScale(2, RoundingMode.HALF_UP)),
+                "peakTime", BeijingTime.shortFormat(d.peakAt()),
+                "drop", d.dropPct().stripTrailingZeros().toPlainString(),
+                "threshold", d.thresholdPct().stripTrailingZeros().toPlainString());
     }
 
     /** 整盘轮被触发叫醒时，排在第一段的问题前面多问的话：权益回落警报问一句，别的触发没有，空串 */

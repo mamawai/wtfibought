@@ -1521,6 +1521,31 @@ class TraderWakeupLoopTest {
                 .doesNotContain("先别开新仓");
     }
 
+    /** 权益回落警报叫醒的那一轮没跑成：记一行，下一次整盘轮的开场白补报，那一轮成功了清掉 */
+    @Test
+    void failedEquityDropRoundIsReportedByTheNextWholeBoardRound() {
+        stubHealthyAccount();
+        when(modelFactory.modelFor(any())).thenThrow(new IllegalStateException("上游 502"));
+        long at = 1785171600000L + 600_000L;
+        runner.nowMs = () -> at;
+
+        runner.wakeTriggered(trader(), List.of(new EquityDropTrigger(new BigDecimal("10000"), at - 3_600_000L,
+                new BigDecimal("8500"), new BigDecimal("15"), new BigDecimal("15"), at)), round(trader(), null));
+
+        assertThat(stored.getUnreportedEvents()).contains("权益回落警报在").contains("没跑成");
+
+        ChatModel ok = modelCheckingThenSummary();
+        org.mockito.Mockito.doReturn(ok).when(modelFactory).modelFor(any());
+        runner.nowMs = () -> 1785175200000L + 1_000L;
+        wake(trader(), 1785175200000L);
+
+        ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
+        verify(ok, atLeastOnce()).stream(sent.capture());
+        assertThat(userText(sent.getAllValues().getFirst())).contains("【自上次唤醒以来】")
+                .contains("权益回落警报在").contains("最高到过 10000 USDT").contains("回落 15%");
+        assertThat(stored.getUnreportedEvents()).isNull();
+    }
+
     /** 持仓事件唤醒：kind=EVENT、wake_time=事件时刻；开场白首行是事件本身，不带警报那句"止损单仍在保护你" */
     @Test
     void eventWakeUsesEventInstructionAndKind() {

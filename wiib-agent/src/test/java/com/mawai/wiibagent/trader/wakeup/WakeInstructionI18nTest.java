@@ -573,6 +573,7 @@ class WakeInstructionI18nTest {
             assertThat(interjection).contains(line).endsWith(prompts.get(lang, "trader.wake.interject.equityDrop"));
             if (lang == AgentLang.EN) {
                 PromptI18nAssertions.assertNoCjk("英文权益回落警报插话", interjection);
+                PromptI18nAssertions.assertNoCjk("英文权益回落警报补报", triggerText.missedEquityDrop(equityDrop(), lang));
             }
         }
     }

@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 import java.util.function.LongSupplier;
 
@@ -180,6 +181,8 @@ public class TraderWakeupRunner {
         long start = System.currentTimeMillis();
         // 本轮截止时刻：备料、下单护栏、超时计时都在这一份预算里
         long deadline = start + budgetSeconds * 1000;
+        // 交给这一轮的触发：把它叫醒的，和进行中插进来的（会话线程往里加）
+        List<WakeTrigger> taken = new CopyOnWriteArrayList<>(triggers);
         // begin 之前出的异常没有这一轮现场
         TraderLiveHub.Run run = null;
         try {
@@ -198,7 +201,7 @@ public class TraderWakeupRunner {
                     ledger.positions().size(), ledger.pendingOrders().size());
             WakeBriefing.Prepared prepared = briefing.prepare(trader, round.scope(), wakeTime, ledger, equity, triggers,
                     round.busyElsewhere(), lang);
-            decision.setReasoning(runSession(trader, round, ledger, prepared, deadline, decision, lang, run));
+            decision.setReasoning(runSession(trader, round, ledger, prepared, taken, deadline, decision, lang, run));
             decision.setStatus(AiTraderDecision.STATUS_OK);
             try {
                 decision.setEquity(simTradeClient.getEquity(trader.getSimUserId()));
@@ -231,6 +234,9 @@ public class TraderWakeupRunner {
             if (decision.getId() != null) {
                 return;
             }
+            // 这一轮没跑成，交给它的权益回落警报记一行，下一次整盘轮的开场白补报
+            unreported.add(trader.getId(), taken.stream().filter(EquityDropTrigger.class::isInstance)
+                    .map(t -> new UnreportedEvents.Line(null, triggerText.missedEquityDrop((EquityDropTrigger) t, lang))).toList());
             decision.setStatus(AiTraderDecision.STATUS_ERROR);
             decision.setError(msg.length() > 500 ? msg.substring(0, 500) : msg);
             decision.setLatencyMs((int) (System.currentTimeMillis() - start));
@@ -250,7 +256,8 @@ public class TraderWakeupRunner {
      * 选走法、建交易工具、跑会话，返回决策正文。动作轨迹和用量由会话记到 decision 上
      */
     private String runSession(AiTrader trader, WakeRound round, WakeBriefing.Ledger ledger, WakeBriefing.Prepared prepared,
-                              long deadline, AiTraderDecision decision, AgentLang lang, TraderLiveHub.Run run) throws Exception {
+                              List<WakeTrigger> taken, long deadline, AiTraderDecision decision, AgentLang lang,
+                              TraderLiveHub.Run run) throws Exception {
         WakeFlows.Brief brief = prepared.brief();
         // 用量统计装饰器 每轮新建
         UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
@@ -266,7 +273,11 @@ public class TraderWakeupRunner {
         // 整盘的联网轮前两段不许开仓，中途这个币来了触发才放开，插话里要说一声
         boolean unlocks = !brief.scope().single() && webSearch;
         WakeSession.Outcome outcome = session.run(model, webSearch, prompt, flow, tradeTools, lang, deadline, decision, run,
-                () -> interject(trader, round.take(), flow, tradeTools, prepared.watchHits(), unlocks, lang));
+                () -> {
+                    WakeRound.Arrivals arrivals = round.take();
+                    taken.addAll(arrivals.triggers());
+                    return interject(trader, arrivals, flow, tradeTools, prepared.watchHits(), unlocks, lang);
+                });
         if (outcome.modelCalls() >= MAX_MODEL_CALLS) {
             // 保险丝收束不算失败（已有动作真实生效），但必须留痕——否则时间线上像正常决策
             decision.setError(prompts.get(lang, "trader.error.callLimit", Map.of("limit", MAX_MODEL_CALLS)));
