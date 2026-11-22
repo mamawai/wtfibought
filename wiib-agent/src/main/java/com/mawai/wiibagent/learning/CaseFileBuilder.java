@@ -27,7 +27,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 复盘的事实表：一笔已了结交易在 5m K 线上走出的路径（最大浮盈、最大逆向各几 R、到 +0.5R / +1R 用时、
- * 第一次收回入场价、出场后 4h/24h 最有利价）、开仓后不动的重放，加计划与入场上下文，按单子类型分组给模型做案例。
+ * 第一次收回入场价、出场后 4h/24h 最有利价）、开仓后不动的重放，加计划与入场上下文；统一复盘里按单子类型分组。
  * 纯代码，数字全来自本地 kline_history。
  */
 @Component
@@ -36,16 +36,13 @@ public class CaseFileBuilder {
 
     static final long BAR_MS = KlineHistoryStore.DEFAULT_BAR_MILLIS;
     static final long AFTER_SHORT_MS = 4 * 3_600_000L;
+    /** 出场后看多久；一笔单子的 K 线和重放也都到这里为止 */
     static final long AFTER_LONG_MS = 24 * 3_600_000L;
-    /** 重放最远走到开仓后多久 */
-    static final long REPLAY_MS = 72 * 3_600_000L;
     /** 方向指标看开仓后多久 */
     static final long DIRECTION_MS = 24 * 3_600_000L;
     /** 重放的几档止损宽度：原样、1.5 倍、2 倍、3 倍 */
     static final List<BigDecimal> STOP_WIDTHS = List.of(
             BigDecimal.ONE, new BigDecimal("1.5"), new BigDecimal("2"), new BigDecimal("3"));
-    /** 每期最多几个案例 */
-    public static final int MAX_CASES = 2;
 
     private final KlineHistoryStore historyStore;
 
@@ -151,18 +148,26 @@ public class CaseFileBuilder {
         long closeMs = TradePairing.msOf(pos.getUpdatedAt());
         long openBar = openMs - Math.floorMod(openMs, BAR_MS);
         long closeBar = closeMs - Math.floorMod(closeMs, BAR_MS);
-        List<KlineBar> bars = historyStore.load(pos.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
-                replayStart(plan, openBar), Math.max(closeBar + AFTER_LONG_MS, openBar + BAR_MS + REPLAY_MS));
+        List<KlineBar> bars = bars(pos, plan, openBar);
         return new TradeCase(pos, plan, entryCtx(plan),
                 path(pos, plan, bars.stream().filter(b -> b.openTime() >= openBar).toList(), openMs, openBar, closeBar), replay(pos, plan, bars, openBar));
     }
 
-    /** 只要重放：论点战绩每轮都算，不取出场后那一段 */
+    /** 只要重放：论点战绩每轮都算 */
     public Replay replay(FuturesPositionDTO pos, AiTraderPlan plan) {
         long openMs = TradePairing.msOf(pos.getCreatedAt());
         long openBar = openMs - Math.floorMod(openMs, BAR_MS);
-        return replay(pos, plan, historyStore.load(pos.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
-                replayStart(plan, openBar), openBar + BAR_MS + REPLAY_MS), openBar);
+        return replay(pos, plan, bars(pos, plan, openBar), openBar);
+    }
+
+    /**
+     * 一笔单子的 5m K 线：从首批最早挂出那根（没有逐档记录的是开仓那根）到平仓后 24 小时。
+     * 路径和重放都只看这一段，平仓满 24 小时后这一段不再变
+     */
+    private List<KlineBar> bars(FuturesPositionDTO pos, AiTraderPlan plan, long openBar) {
+        long closeMs = TradePairing.msOf(pos.getUpdatedAt());
+        return historyStore.load(pos.getSymbol(), KlineHistoryStore.DEFAULT_INTERVAL,
+                replayStart(plan, openBar), closeMs - Math.floorMod(closeMs, BAR_MS) + AFTER_LONG_MS);
     }
 
     private static long replayStart(AiTraderPlan plan, long openBar) {
@@ -271,7 +276,7 @@ public class CaseFileBuilder {
         return plan == null || plan.getEntryCtxJson() == null ? null : MAPPER.readTree(plan.getEntryCtxJson());
     }
 
-    /** 按单子类型分组；排序：本期两笔以上的在前，再按净额绝对值 */
+    /** 按单子类型分组；排序：两笔以上的在前，再按净额绝对值 */
     public static List<SetupGroup> groups(List<TradeCase> cases) {
         Map<String, List<TradeCase>> byPlay = new LinkedHashMap<>();
         for (TradeCase c : cases) {
@@ -287,11 +292,6 @@ public class CaseFileBuilder {
         out.sort(Comparator.comparing((SetupGroup g) -> g.trades().size() >= 2 ? 0 : 1)
                 .thenComparing(g -> g.net().abs(), Comparator.reverseOrder()));
         return out;
-    }
-
-    /** 本期案例：排序后取前 {@link #MAX_CASES} 组 */
-    public static List<SetupGroup> select(List<SetupGroup> groups) {
-        return groups.size() <= MAX_CASES ? groups : groups.subList(0, MAX_CASES);
     }
 
     /** 窗口内该币的 OHLC；没 K 线返回 null */
@@ -332,8 +332,7 @@ public class CaseFileBuilder {
         if (!initial.isEmpty()) return LadderReplay.replay(pos, initial, bars, hasFilledAdds(plan));
         BigDecimal entry = pos.getEntryPrice();
         BigDecimal r = dist(entry, plan == null ? null : plan.getStopLossPrice());
-        List<KlineBar> after = bars.stream()
-                .filter(b -> b.openTime() > openBar && b.openTime() < openBar + REPLAY_MS).toList();
+        List<KlineBar> after = bars.stream().filter(b -> b.openTime() > openBar).toList();
         if (r == null || after.isEmpty()) {
             return null;
         }

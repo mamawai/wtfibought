@@ -42,7 +42,7 @@ public class AiTrader {
     private String customPrompt;
 
     /**
-     * 复盘笔记：由 reviewer 每日复盘整理写入（限长文本），每次唤醒注入提示词。
+     * 复盘笔记：统一复盘落账后由代码渲染写入（限长文本），每次唤醒注入提示词。
      * trader 侧只读只注入——本字段即记忆学习的接口。ALWAYS：清空笔记=写 null
      */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
@@ -67,7 +67,7 @@ public class AiTrader {
     /** 对账出来、还没成功告诉过模型的事件行（一条一行）；下一轮开场白接着报，那一轮成功了清空 */
     private String unreportedEvents;
 
-    /** 每日复盘开关：reviewer 日线边界复盘并整理 memory；关掉只停复盘，已有笔记照常注入 */
+    /** 复盘开关：管单笔复盘和统一复盘两种；关掉只停复盘，已有笔记照常注入 */
     private Boolean reviewEnabled;
 
     /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
@@ -84,7 +84,7 @@ public class AiTrader {
 
     /**
      * 唤醒时段（北京时间）"HH:mm-HH:mm"，5 分钟粒度、两端含、可跨午夜；null=全天。
-     * 只管交易类唤醒（例行/警报），手动唤醒不拦；日线交接的复盘不看它——夜里交易了就该复盘夜里的交易。
+     * 只管交易类唤醒（例行/警报），手动唤醒不拦；单笔复盘和统一复盘不看它——夜里交易了就该复盘夜里的交易。
      * 解析与判断见 WakeWindow。改回全天=写 null（updateConfig 列级 set）
      */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)

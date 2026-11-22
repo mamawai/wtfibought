@@ -100,6 +100,9 @@ public class AiTraderPlan {
     /** 逐档原始安排与执行状态，首批档的 add 为 false。 */
     private String entriesJson;
 
+    /** 这笔单子进了哪篇统一复盘（ai_trader_decision 的 REVIEW 行 id）；null=还没进 */
+    private Long reviewId;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

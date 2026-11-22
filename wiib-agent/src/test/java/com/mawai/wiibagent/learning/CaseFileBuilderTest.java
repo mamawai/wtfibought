@@ -33,7 +33,7 @@ import static org.mockito.Mockito.verify;
 
 /**
  * 事实表的路径指标：多空两向、到 +0.5R/+1R 用时、第一次收回入场价、出场后最有利价与是否到过目标；
- * 没 K 线时全空；分组排序与案例选择。
+ * 没 K 线时全空；分组排序。
  */
 class CaseFileBuilderTest {
 
@@ -66,8 +66,8 @@ class CaseFileBuilderTest {
         bars.add(bar(T0 + 13 * M5, new double[]{95, 98, 94.8, 97}));
         bars.add(bar(T0 + 36 * M5, new double[]{97, 111, 96, 110.5}));
         bars.add(bar(T0 + 120 * M5, new double[]{110, 112, 109, 111}));
-        // 出场根是 T0+55m，这根覆盖到出场后 24h
-        bars.add(bar(T0 + 299 * M5, new double[]{111, 111.5, 110, 111}));
+        // 出场根是 T0+55m，这根收盘正好是出场后 24h
+        bars.add(bar(T0 + 298 * M5, new double[]{111, 111.5, 110, 111}));
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(bars);
 
         FuturesPositionDTO pos = position("LONG", "100", "95", T0, T0 + 57 * 60_000L);
@@ -313,6 +313,7 @@ class CaseFileBuilderTest {
     /**
      * 拿线上真 K 线对一遍 beta 那 16 笔（计划附录 B）：每行是 币 方向 开仓日 时:分（北京）入场 原止损 原目标 止损原样的结局 止损两倍的结局。
      * K 线到 11-10 09:25 为止，之后没数据的记未决。
+     * 手工核对时是从开仓走 72 小时，这里把平仓时刻取成开仓后 48 小时，重放走的还是这一段。
      */
     @Test
     void replayMatchesHandCheckedTradesOnRealBars() throws Exception {
@@ -351,7 +352,7 @@ class CaseFileBuilderTest {
             String[] hm = f[3].split(":");
             long openMs = ZonedDateTime.of(2026, 11, Integer.parseInt(f[2]), Integer.parseInt(hm[0]), Integer.parseInt(hm[1]),
                     0, 0, ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli();
-            FuturesPositionDTO pos = position(f[1], f[4], f[4], openMs, openMs + M5);
+            FuturesPositionDTO pos = position(f[1], f[4], f[4], openMs, openMs + 48 * 3_600_000L);
             pos.setSymbol(f[0]);
 
             CaseFileBuilder.Replay r = builder.replay(pos, plan(f[5], f[6], null));
@@ -374,7 +375,6 @@ class CaseFileBuilderTest {
         assertThat(groups).extracting(CaseFileBuilder.SetupGroup::playType).containsExactly("PULLBACK", "BREAKOUT", null);
         assertThat(groups.getFirst().wins()).isEqualTo(1);
         assertThat(groups.getFirst().net()).isEqualByComparingTo("-50");
-        assertThat(CaseFileBuilder.select(groups)).hasSize(2);
     }
 
     @Test
@@ -570,20 +570,40 @@ class CaseFileBuilderTest {
         assertThat(replay.fav24R()).isNull();
     }
 
+    /**
+     * 重放走到平仓后 24 小时为止：拿了 83 小时的单子，平仓那根之后第 287 根打到止损还算，第 288 根不取。
+     * 没有逐档记录的旧计划和有逐档记录的各走一遍
+     */
     @ParameterizedTest
-    @CsvSource({"false,863,STOP", "false,864,OPEN", "true,863,STOP", "true,864,OPEN"})
-    void seventyTwoHourLimitStartsAtFirstFill(boolean market, int offset, CaseFileBuilder.Outcome expected) {
-        long fill = T0 + 1000 * M5;
-        long actualFill = market ? fill - M5 : fill;
+    @CsvSource({"false,287,STOP", "false,288,OPEN", "true,287,STOP", "true,288,OPEN"})
+    void replayWalksUntilTwentyFourHoursAfterClose(boolean ladder, int offset, CaseFileBuilder.Outcome expected) {
+        long closeBar = T0 + 1000 * M5;
         List<KlineBar> bars = List.of(
-                bar(T0, new double[]{100, 101, 97, 100}), bar(fill, new double[]{100, 101, 99, 100}),
-                bar(fill + offset * M5, new double[]{100, 101, 97, 98}));
+                bar(T0 + M5, new double[]{100, 101, 99, 100}),
+                bar(closeBar + offset * M5, new double[]{100, 101, 97, 98}));
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenAnswer(call -> bars.stream()
                 .filter(b -> b.openTime() >= call.<Long>getArgument(2) && b.openTime() < call.<Long>getArgument(3)).toList());
-        var replay = builder.replay(position("LONG", "100", "98", actualFill, fill + M5),
-                ladder(market ? entry(null, "1", "98", null, "FILLED", actualFill, "0.04")
-                        : entry("100", "1", "98", null, "CANCELLED", T0 + M5, "0")));
+        var replay = builder.replay(position("LONG", "100", "98", T0, closeBar + 60_000L),
+                ladder ? ladder(entry(null, "1", "98", null, "FILLED", T0, "0.04")) : plan("98", null, null));
         assertThat(replay.untouched().outcome()).isEqualTo(expected);
+    }
+
+    /** 市价开仓、同一根 5m 里就平掉：K 线只取到那根开盘后 24 小时，拿满 24 小时的位置照样算得出来 */
+    @Test
+    void marketTradeClosedInItsEntryBarStillHasTheHoldPosition() {
+        long day = 288 * M5;
+        List<KlineBar> bars = new ArrayList<>();
+        for (long t = T0; t < T0 + day + 12 * M5; t += M5) {
+            // 第 24 小时最后一根收在 101，别的都收在 100
+            bars.add(bar(t, new double[]{100, 100.5, 99.5, t == T0 + day - M5 ? 101 : 100}));
+        }
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenAnswer(call -> bars.stream()
+                .filter(b -> b.openTime() >= call.<Long>getArgument(2) && b.openTime() < call.<Long>getArgument(3)).toList());
+
+        var replay = builder.replay(position("LONG", "100", "99.9", T0 + 60_000L, T0 + 180_000L),
+                ladder(entry(null, "1", "98", null, "FILLED", T0 + 60_000L, "0.04")));
+
+        assertThat(replay.hold24R()).isEqualByComparingTo("0.50");
     }
 
     private static KlineBar bar(long openTime, double[] ohlc) {

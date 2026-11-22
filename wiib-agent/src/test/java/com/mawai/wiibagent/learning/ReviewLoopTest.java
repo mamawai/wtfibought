@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.learning;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -11,7 +12,6 @@ import com.mawai.wiibagent.mapper.AiTraderExperienceTradeMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
-import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
@@ -57,8 +57,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 复盘回路贯通：真 assembler + 真事实表 + 真账本 + 真解析器，只 mock 库与模型——
- * 组装出的事实真进了提示词，模型按仓位编号的归类真记成了名下单子，结账和渲染进 memory 都走真代码。
+ * 统一复盘回路贯通：真 assembler + 真事实表 + 真账本 + 真解析器，只 mock 库与模型——
+ * 组装出的事实和单笔复盘正文真进了提示词，单笔复盘的归类和本篇的新增真记成了名下单子，
+ * 本批单子盖上了这篇的编号，结账和渲染进 memory 都走真代码。
  */
 class ReviewLoopTest {
 
@@ -83,16 +84,16 @@ class ReviewLoopTest {
     private final AiTraderExperienceMapper expMapper = mock(AiTraderExperienceMapper.class);
     private final AiTraderExperienceTradeMapper tradeMapper = mock(AiTraderExperienceTradeMapper.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
+    private final TraderPlanStore planStore = mock(TraderPlanStore.class);
     private final ExperienceLedger ledger = new ExperienceLedger(expMapper, tradeMapper, traderMapper,
-            mock(TraderPlanStore.class), prompts);
+            planStore, prompts);
 
     private final ReviewRunner runner = new ReviewRunner(
             new ReviewMaterialAssembler(decisionMapper, planMapper, simTradeClient, prompts,
-                    new CaseFileBuilder(historyStore), ledger,
+                    new CaseFileBuilder(historyStore), new CaseFileRenderer(prompts), ledger,
                     new PlayStatsAssembler(simTradeClient, planMapper, prompts, new CaseFileBuilder(historyStore)),
-                    mock(TraderWatchStore.class), new DecisionText(prompts),
-                    new TradeRecordService(simTradeClient, planMapper, decisionMapper)),
-            modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts));
+                    mock(TraderWatchStore.class), new DecisionText(prompts), new ExperienceOpParser(prompts)),
+            modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), planStore);
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
@@ -180,12 +181,27 @@ class ReviewLoopTest {
         plan.setOpenedWakeTime(openMs);
         plan.setClosedWakeTime(closeMs + 300_000L);
         plan.setPositionId(42L);
+        plan.setId(77L);
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
 
-        // decisionMapper：lastReview(selectOne#1)→战绩前值(selectOne#2)→权益序列(selectList)
+        // 这笔的单笔复盘：正文加归类，#5 名下
+        AiTraderDecision debrief = new AiTraderDecision();
+        debrief.setId(850L);
+        debrief.setPositionId(42L);
+        debrief.setReasoning("""
+                【单笔复盘】
+                路径：10 分钟到目标 45%，第 3 根收回入场价，第 4 根止损
+                方向错了还是被洗掉：方向错了
+                【归类】
+                #4 无
+                #5 名下 42 ｜ 等 1h 收稳后才进""");
+        // decisionMapper：lastReview(selectOne#1)→战绩前值(selectOne#2)；selectList 查单笔复盘的给 debrief，其余给权益序列
         when(decisionMapper.selectOne(any())).thenReturn(null, null);
-        when(decisionMapper.selectList(any())).thenReturn(List.of(
-                equityRow(openMs, "10000"), equityRow(closeMs, "9989")));
+        when(decisionMapper.selectList(any())).thenAnswer(inv -> {
+            LambdaQueryWrapper<AiTraderDecision> w = inv.getArgument(0);
+            return String.valueOf(w.getSqlSelect()).contains("position_id")
+                    ? List.of(debrief) : List.of(equityRow(openMs, "10000"), equityRow(closeMs, "9989"));
+        });
         // 5m 路径：第二根冲到 100900（目标距离的 45%），第三根收回入场价下方，之后被打到 98900
         List<KlineBar> bars = new ArrayList<>();
         long t = openMs;
@@ -224,23 +240,23 @@ class ReviewLoopTest {
                 new AssistantMessage("""
                         【本期复盘】
                         战绩：起始权益 10000.00 → 期末权益 9989.00，期间收益率 -0.11%
-                        案例一：BREAKOUT（1 笔，净 -11）
-                        路径：10 分钟到目标 45%，第 3 根收回入场价，第 4 根止损
+                        BREAKOUT（1 笔，0 胜，净 -11）
+                        分界线：样本不足
                         机会：BTC 窗口低到高 1.0%，没有可做的单边
                         【经验更新】
-                        #4 无
-                        #5 名下 42 ｜ 等 1h 收稳后才进
                         新增 BREAKOUT 入场条件 限制型 ｜ 突破前高后不等回踩 → 不市价追 ｜ BTC 100000 市价追多 -11 ｜ 名下 42""")))));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
         runner.review(trader(), DAY_BOUNDARY);
 
-        // 提示词里是代码算的事实原文，每笔前面带仓位编号，账本行带代码记的账
+        // 提示词里是代码算的事实原文，每笔前面带仓位编号、下面跟着单笔复盘正文，账本行带代码记的账和本批的归类
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model).call(prompt.capture());
         String all = prompt.getValue().getInstructions().stream().map(Message::getText).reduce("", String::concat);
         assertThat(all).contains("起始权益 10000.00").contains("-0.11%");                       // 战绩表
-        assertThat(all).contains("★ BREAKOUT（1 笔，0 胜，净 -11）").contains("- [42] BTCUSDT LONG"); // 案例组
+        assertThat(all).contains("\nBREAKOUT（1 笔，0 胜，净 -11）\n").contains("- [42] BTCUSDT LONG"); // 单子组
+        assertThat(all).contains("  单笔复盘：\n    路径：10 分钟到目标 45%，第 3 根收回入场价，第 4 根止损\n    方向错了还是被洗掉：方向错了\n");
+        assertThat(all).contains("证据 ETH 09:32\n  本批单笔复盘归到它这里的单子：名下 [42] BTCUSDT LONG BREAKOUT ");
         assertThat(all).contains("最大浮盈 100900").contains("+0.90R")                            // 路径
                 .contains("最大逆向 98850（-1.15R）")
                 .contains("出场后 4h / 24h 最有利 — / —，出场后数据不足");
@@ -250,7 +266,8 @@ class ReviewLoopTest {
         assertThat(all).contains("#5 假设 入场条件 执行型 BREAKOUT ｜ 突破前高 → 等 1h 收稳再进 ｜ "
                 + "名下 0 笔，赚 0 亏 0，合计 +0.00，0 天；当前段 0 笔，合计 +0.00，0 天 ｜ 证据 ETH 09:32");
 
-        // 名下单子按仓位记：净盈亏取案例行那个数，平仓日是北京日期；#5 和新增的 #6 各一行
+        // 名下单子按仓位记：净盈亏取事实表那个数，平仓日是北京日期；单笔复盘归的 #5 和本篇新增的 #6 各一行
+        verify(planStore).markReviewed(List.of(77L), 900L);
         assertThat(trades).extracting(AiTraderExperienceTrade::getExperienceId, AiTraderExperienceTrade::getPositionId,
                 AiTraderExperienceTrade::getReviewId, AiTraderExperienceTrade::getMark)
                 .containsExactly(tuple(5L, 42L, 900L, AiTraderExperienceTrade.MARK_UNDER),
@@ -270,7 +287,7 @@ class ReviewLoopTest {
         // REVIEW 行存全文；memory_after 与 ai_trader.memory 是渲染后的账本
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
-        assertThat(dec.getValue().getReasoning()).contains("案例一").contains("#5 名下 42");
+        assertThat(dec.getValue().getReasoning()).contains("分界线").contains("新增 BREAKOUT");
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<LambdaUpdateWrapper<AiTraderDecision>> snap = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
         verify(decisionMapper).update(isNull(), snap.capture());

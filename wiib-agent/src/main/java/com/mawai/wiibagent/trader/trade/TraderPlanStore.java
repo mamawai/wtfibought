@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader.trade;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.TradePairing;
@@ -20,6 +21,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -693,6 +695,16 @@ public class TraderPlanStore {
     }
 
     // ==================== 治理 ====================
+
+    /** 这几笔单子进了这篇统一复盘：只写 review_id 一列 */
+    public void markReviewed(Collection<Long> planIds, long reviewId) {
+        if (planIds.isEmpty()) {
+            return;
+        }
+        mapper.update(null, new LambdaUpdateWrapper<AiTraderPlan>()
+                .in(AiTraderPlan::getId, planIds)
+                .set(AiTraderPlan::getReviewId, reviewId));
+    }
 
     /** 主人标记忽略/取消：只动 stale 列，计划本体不碰。 */
     public void setStale(long planId, boolean stale) {

@@ -12,7 +12,8 @@
     "backToArena": "Back to arena",
     "manualWake": "Manual wake-up",
     "reviewNow": "Review now",
-    "dailyReview": "Daily review",
+    "dailyReview": "Unified review",
+    "debrief": "Debrief",
     "reject": "Reject"
   },
   "tab": {
@@ -98,14 +99,14 @@
     "rangeAll": "All",
     "historyRoundBanner": "Viewing R{{viewing}} (past round): equity and timeline are its own; holdings, watches and closed trades are live data from the current round R{{cur}}",
     "lastAt": "Last {{time}}",
-    "noMemory": "The experience ledger is still empty — it fills after the first daily review with trades",
+    "noMemory": "The experience ledger is still empty — it fills after the first unified review with trades",
     "tradesTitle": "Closed trades",
     "noTrades": "No closed trades in this round yet",
     "timeline": "Every wake",
     "allDays": "All days",
     "prevDay": "Previous day",
     "nextDay": "Next day",
-    "noDecisions": "No decisions yet. Once started it wakes on every candle, plus one daily review.",
+    "noDecisions": "No decisions yet. Once started it wakes on every candle; each debrief and each unified review adds a row of its own.",
     "noDecisionsDay": "No decisions on this day",
     "loadMore": "Load earlier",
     "round": "Round",
@@ -141,6 +142,9 @@
     "orderbookDepth": "Order book",
     "optionIv": "Option IV",
     "newsSearch": "News",
+    "newsArchive": "News archive",
+    "roundDetail": "Round detail",
+    "tradeHistory": "Past trades",
     "klineStructure": "Structure",
     "derivativesHistory": "Derivatives history",
     "whalePositions": "Whale positions",
@@ -168,7 +172,9 @@
   "decision": {
     "error": "Failed",
     "skipped": "Skipped",
-    "reviewFailed": "Review failed"
+    "reviewFailed": "Unified review failed",
+    "debriefFailed": "Debrief failed",
+    "position": "Position #{{id}}"
   },
   "live": {
     "prompt": "Prompt",
@@ -228,7 +234,7 @@
     "staleMark": "Ignore this trade",
     "staleUnmark": "Unignore",
     "staleBadge": "Ignored",
-    "staleHint": "Once ignored, your AI no longer references this trade in thesis stats, reviews or its narrative; lessons already written into its notes fade out through the rolling daily review. The equity curve is the real record and stays untouched. Public record and leaderboard carry on as usual. Reversible anytime."
+    "staleHint": "Once ignored, your AI no longer references this trade in thesis stats, reviews or its narrative; lessons already written into its notes fade out through the rolling unified review. The equity curve is the real record and stays untouched. Public record and leaderboard carry on as usual. Reversible anytime."
   },
   "trader": {
     "tourBtn": "Setup guide",
@@ -247,7 +253,7 @@
     },
     "wakeWindow": {
       "title": "When it wakes up",
-      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window scheduled wake-ups, volatility alerts, watch hits and position events all stop; positions rely on the stop-loss and take-profit orders and standing orders it left. Manual wake-ups are never blocked.\nDaily review ignores the window and still runs at 08:00."
+      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window scheduled wake-ups, volatility alerts, watch hits and position events all stop; positions rely on the stop-loss and take-profit orders and standing orders it left. Manual wake-ups are never blocked.\nDebriefs and the unified review ignore the window: a trade is debriefed 24 hours after it closes, and the unified review still runs at 08:00."
     },
     "symbols": {
       "title": "Which coins it may trade",
@@ -282,7 +288,7 @@
     "multiPos": "Allow multiple positions",
     "hedge": "Allow hedging",
     "hedgeNeedMulti": "Turn on multiple positions first: hedging needs two slots",
-    "reviewOn": "Daily review",
+    "reviewOn": "Review (debriefs + unified review)",
     "restrictionHold": "Let it use learned \"do not open\" rules as a reason to stay flat",
     "manageEndpoints": "Manage endpoints (AI page · Model config)",
     "customPromptPh": "e.g. Goal: maximise net PnL; risk at most 2% of equity per trade and 6% in total; long only; prefer swings held 4 to 24 hours.",
@@ -298,7 +304,7 @@
     "helpOpen": "How it works",
     "helpClose": "Hide guide",
     "tab": { "active": "Lessons", "findings": "Notes for you", "retired": "Switched off" },
-    "empty": "The ledger is still empty — it fills after the first daily review with trades",
+    "empty": "The ledger is still empty — it fills after the first unified review with trades",
     "emptyTab": { "active": "No lessons in use yet", "findings": "No notes for you", "retired": "Nothing switched off" },
     "loadFailed": "Could not load the ledger",
     "retry": "Retry",
@@ -356,12 +362,12 @@
       "use2Title": "You see how it thinks",
       "use2": "What it has learned, which lessons really make it money, and where your instructions may be costing it — all here.",
       "flowTitle": "How a lesson is born",
-      "step1": "Daily review at 08:00",
-      "step1Sub": "Looks back at yesterday's trades; skipped if none",
-      "step2": "A pattern is noted as \"unproven\"",
+      "step1": "24 hours after a trade closes, it gets a debrief of its own",
+      "step1Sub": "Judges that one trade only: how it went, where it went wrong, and which existing lessons it belongs under",
+      "step2": "The unified review at 08:00 notes a pattern as \"unproven\"",
       "step2Sub": "Just a guess; it can't see it, so orders are unaffected",
       "step3": "Later trades are filed under it",
-      "step3Sub": "The review only files them; code adds up the money",
+      "step3Sub": "The debrief only files them; code adds up the money",
       "step4": "If the books hold up, it becomes a \"rule\"",
       "step4Sub": "Read on every wake from then on",
       "under": "Which trades go under a lesson: for \"says go\" and \"discipline\", the ones that met the situation and followed it, and a positive total is on its side; for \"says don't open\", the ones that ignored it and opened anyway, and a negative total is on its side. When it cites a lesson on a trade that does not fit the situation, only the count is kept, not the money.",
@@ -382,7 +388,7 @@
         "deleteTitle": "Want it gone for good",
         "delete": "Delete removes it along with the record of trades under it, and the review may propose it again; switching off is usually enough."
       },
-      "foot": "The daily review switch is in \"04 Alerts & review\": off means no new lessons, existing rules still apply. The same section decides whether a \"don't open\" rule alone is a reason to stay out. When you reset to a new round you choose whether to carry the ledger over."
+      "foot": "The review switch is in \"04 Alerts & review\": off means no more debriefs or unified reviews and no new lessons, existing rules still apply. The same section decides whether a \"don't open\" rule alone is a reason to stay out. When you reset to a new round you choose whether to carry the ledger over."
     }
   },
   "my": {
@@ -470,7 +476,7 @@
       "now": "now {{time}}",
       "fromAria": "Start {{time}}",
       "toAria": "End {{time}}",
-      "review": "08:00 daily review (ignores the hours)",
+      "review": "08:00 unified review (ignores the hours)",
       "readAll": "Around the clock: every {{iv}} close, {{n}} times a day.",
       "readSame": "Start and end can't be the same; turn the hours off for all day.",
       "readNone": "Not a single {{iv}} beat falls in these hours, so saving will be refused: widen them or change the heartbeat.",
@@ -500,11 +506,11 @@
       "multSub": "higher means fewer alerts; can only go up",
       "multAria": "Sensitivity factor",
       "hint": "Alert line = platform baseline × factor; the baselines of all 8 coins are calibrated on the last half year of 5-minute ranges.",
-      "reviewDesc": "Every day at 08:00 it looks back at yesterday's trades, one model call; skipped without trades. What it learns goes into the ledger, and promoted rules are read on every wake",
+      "reviewDesc": "Each trade gets a debrief of its own 24 hours after it closes (with tools, so several model calls); every day at 08:00 a unified review follows, skipped without trades. What it learns goes into the ledger, and promoted rules are read on every wake",
       "restrictDesc": "Off: such rules are only a reference, opening follows your instructions; on: it can use them alone as a reason to stay out"
     },
     "model": {
-      "hint": "Every wake and daily review burns this endpoint's key; switching endpoints tests the connection when you save.",
+      "hint": "Every wake and every review (debriefs and the unified review) burns this endpoint's key; switching endpoints tests the connection when you save.",
       "search": "Web search",
       "searchDesc": "On: it gets a web_search tool and every wake-up runs in three parts: check the facts and cut risk where needed, then decide whether to search, and only then decide on new trades and watches. The three parts run even when nothing is searched, so there are usually more model requests than with this off; each search sends one more model request",
       "searchNeedEndpoint": "The selected endpoint doesn't have web search on, so this can't be turned on; tick web search for it under Model config first"
@@ -581,7 +587,8 @@
       "all": "All",
       "acted": "Touched positions",
       "woken": "Woken up",
-      "review": "Reviews",
+      "debrief": "Debriefs",
+      "review": "Unified reviews",
       "none": "None of this kind among what's loaded; load earlier ones to look further"
     },
     "move": { "up": "up {{pct}}%", "down": "down {{pct}}%" },
@@ -844,7 +851,7 @@
     "agoDays_other": "{{count}} days ago",
     "lastWake": "Last wake-up",
     "nextWake": "Next scheduled",
-    "lastReview": "Last review",
+    "lastReview": "Last unified review",
     "material": "New material",
     "loading": "Loading…",
     "loadFailed": "Load failed",
@@ -865,7 +872,7 @@
     "yes": "Yes",
     "no": "No",
     "skipHint": "Clicking skips it — no model call is spent",
-    "reviewAdvice": "1~2 a day is plenty: a review feeds on closed trades — no new trades, nothing new to write",
+    "reviewAdvice": "Usually no need: the unified review runs by itself at 08:00 every day. It feeds on trades that have had their debrief (24 hours after closing) — no new ones, nothing new to write",
     "reviewAction": "Start review",
     "multiHint": "You have several traders — press the button, then pick which one",
     "chooseNote": "Which trader gets the note",
@@ -911,7 +918,7 @@
     "noEndpoint": "(no endpoint available)",
     "editInMyTrader": "Change it in My Trader",
     "noTrader": "No AI trader yet — pick one when you <0>create</0> it",
-    "traderHint": "Every wake-up and daily review of this trader burns this one",
+    "traderHint": "Every wake-up and every review of this trader burns this one",
     "coach": "Review coach",
     "coachValue": "Chosen in the backtest console before each round, defaults to the default endpoint",
     "coachHint": "AI chart hints during a manual review and the post-settlement assessment",

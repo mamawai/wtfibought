@@ -55,7 +55,7 @@ public class TraderPromptAssembler {
 
         if (trader.getMemory() != null && !trader.getMemory().isBlank()) {
             sb.append('\n').append(prompts.get(lang, "trader.label.memory")).append('\n');
-            // 账本的用法说明按主人的观望理由开关二选一；还没迁移的旧文本不加
+            // 账本的用法说明按主人的观望理由开关二选一；memory 不是账本渲染文本就不加
             if (ledger.isRendered(trader.getMemory())) {
                 sb.append(prompts.get(lang, Boolean.TRUE.equals(trader.getLearnedRestrictionHold())
                         ? "trader.label.ledgerHoldAllowed" : "trader.label.ledgerHoldDenied")).append('\n');

@@ -69,9 +69,9 @@ public class NewsFlashLocalizer {
         }).toList();
     }
 
-    /** 查存档：fromMs 之后标题或正文含关键字的快讯（keyword 为 null 不筛），按语言取一份，新的在前 */
-    public List<LocalizedFlash> search(String keyword, long fromMs, int limit, AgentLang lang) {
-        return newsEventMapper.search(keyword, fromMs, limit).stream().map(e -> {
+    /** 查存档：[fromMs, toMs) 里标题或正文含关键字的快讯（keyword 为 null 不筛），按语言取一份，新的在前 */
+    public List<LocalizedFlash> search(String keyword, long fromMs, long toMs, int limit, AgentLang lang) {
+        return newsEventMapper.search(keyword, fromMs, toMs, limit).stream().map(e -> {
             boolean en = lang == AgentLang.EN;
             return new LocalizedFlash(e.getId(), en ? pick(e.getTitleEn(), e.getTitle()) : e.getTitle(),
                     en ? pick(e.getContentEn(), e.getContent()) : e.getContent(), e.getUrl(),

@@ -66,6 +66,42 @@ public class ExperienceOpParser {
         return ops(text, new Words(lang));
     }
 
+    /**
+     * 单笔复盘正文里【归类】之后的归类行，写法和【经验更新】的编号行一样。
+     * 段标记两门语言都认，标记词跟着认到的那一门；没有段标记返回 null
+     */
+    public List<ExperienceLedger.Classify> debriefClassifies(String text) {
+        for (AgentLang lang : AgentLang.values()) {
+            String mark = prompts.get(lang, "debrief.mark.classify");
+            int idx = text.lastIndexOf(mark);
+            if (idx >= 0) {
+                return ops(text.substring(idx + mark.length()), new Words(lang)).stream()
+                        .filter(ExperienceLedger.Classify.class::isInstance)
+                        .map(ExperienceLedger.Classify.class::cast).toList();
+            }
+        }
+        return null;
+    }
+
+    /** 单笔复盘正文：【归类】之前的部分，去掉开头的【单笔复盘】标记；两门语言的标记都认 */
+    public String debriefBody(String text) {
+        String body = text;
+        for (AgentLang lang : AgentLang.values()) {
+            int idx = body.lastIndexOf(prompts.get(lang, "debrief.mark.classify"));
+            if (idx >= 0) {
+                body = body.substring(0, idx);
+            }
+        }
+        body = body.strip();
+        for (AgentLang lang : AgentLang.values()) {
+            String mark = prompts.get(lang, "debrief.mark.body");
+            if (body.startsWith(mark)) {
+                body = body.substring(mark.length()).strip();
+            }
+        }
+        return body;
+    }
+
     private static List<ExperienceLedger.Op> ops(String text, Words w) {
         List<ExperienceLedger.Op> ops = new ArrayList<>();
         for (String raw : normalize(text).split("\\R")) {

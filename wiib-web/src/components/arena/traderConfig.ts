@@ -22,7 +22,7 @@ export const ALERT_INTERVALS = ['1h', '4h'];
 export const MAX_MODEL_CALLS = 16;
 /** 每局注资 */
 export const BASE_EQUITY = 10_000;
-/** 每日复盘在北京时间 08:00 */
+/** 统一复盘在北京时间 08:00 */
 export const REVIEW_MIN = 8 * 60;
 
 const DAY_MIN = 1440;

@@ -317,7 +317,7 @@ trader:
       limit: limit
       market: market
     # Replay of "left untouched after entry" (CaseFileBuilder.summarize): one segment per stop width, then actual vs untouched
-    playStatsReplayLine: "Original-plan replay, {{n}} trades (assumes nothing is changed after the order: each entry rung waits to fill at its original price, and the stop and take-profit rungs stay as placed. 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop. Walked on 5m candles from the first fill out to 72h later; a bar touching both the stop and a take-profit rung counts as the stop; laddered take-profits settle rung by rung at their own quantities; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled, and a trade with no take-profit can only end as stopped or unresolved; at a wider stop the rungs are unchanged and size shrinks to keep the same risk amount. Trading fees deducted; funding and slippage not included): {{rows}}"
+    playStatsReplayLine: "Original-plan replay, {{n}} trades (assumes nothing is changed after the order: each entry rung waits to fill at its original price, and the stop and take-profit rungs stay as placed. 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop. Walked on 5m candles from the first fill until 24h after the actual close, and whatever has not fully settled by then is unresolved; a bar touching both the stop and a take-profit rung counts as the stop; laddered take-profits settle rung by rung at their own quantities; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled, and a trade with no take-profit can only end as stopped or unresolved; at a wider stop the rungs are unchanged and size shrinks to keep the same risk amount. Trading fees deducted; funding and slippage not included): {{rows}}"
     playStatsReplayRow: "stop {{width}}: target {{target}}, stopped {{stop}}, unresolved {{open}}, total {{r}}R"
     playStatsReplayOriginal: as placed
     playStatsReplayWidth: "{{width}}x"
@@ -515,7 +515,7 @@ trader:
     eventCancelled: "- {{symbol}} {{side}} no position or pending entry remains; plan archived"
     eventEntryFilled: "- {{symbol}} {{side}} entry {{price}} × {{qty}} filled at {{detail}}; {{total}} entries, {{filled}} filled, {{pending}} pending"
     eventEntryCancelled: "- {{symbol}} {{side}} entry {{price}} × {{qty}} cancelled: {{detail}}; {{total}} entries, {{filled}} filled, {{pending}} pending"
-    # A watch condition that hit and no round has told you about yet (hit during the handover / sleep window, or queued while the previous round ran)
+    # A watch condition that hit and no round has told you about yet (hit during the sleep window, or queued while the previous round ran)
     eventWatchFired: "- Watch condition hit at {{time}} (you are hearing it now): {{detail}}; your note: {{note}}"
     # Routine round: close conditions that this very close just met, in a block of their own
     watchHitsHeader: "[This close met your watch conditions]"

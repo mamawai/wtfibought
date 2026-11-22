@@ -181,7 +181,8 @@ public class TraderChatService {
         // stale 教材过滤（口径3：chat 跟随忽略）：新格式剔段、错误格式落在 stale 生命期内整轮剔，与复盘时间线同一套识别
         List<AiTraderPlan> allPlans = planStore.listAll(t.getId(), t.getRoundNo());
         ArrayNode arr = MAPPER.createArrayNode();
-        for (AiTraderDecision d : traderService.decisions(t.getId(), n, null, null, null, null, kindFilter)) {
+        for (AiTraderDecision d : traderService.decisions(t.getId(), n, null, null, null, null,
+                kindFilter == null ? null : List.of(kindFilter))) {
             String reasoning = d.getReasoning();
             boolean tradeRow = AiTraderDecision.WAKE_KINDS.contains(d.getKind());
             if (tradeRow) {

@@ -193,12 +193,15 @@ const equityCurve = () => {
 /** 一条决策行的 actionsJson：数据工具进"看了什么"，交易工具独立成行 */
 const actions = (rows: unknown[]) => JSON.stringify(rows);
 
+/** 那条单笔复盘行的编号：时间线、交易卡的跳转、轨迹接口都认它 */
+const DEBRIEF_ID = 8990;
+
 const decisions = () => {
   const t = now();
   return [
     {
       id: 9001, traderId: 1, roundNo: 3, wakeTime: t - 12 * MIN, intervalCode: '4h',
-      kind: 'TRADE', status: 'OK', equity: 11842.36,
+      kind: 'TRADE', status: 'OK', equity: 11842.36, positionId: null,
       reasoning: '4h 站稳 EMA20，MACD 柱连续三根走扩，62,900 前高转支撑。在现有多单上加一档，止损同步上移到 62,300。ETH 还在区间中轨，本轮不动。',
       actionsJson: actions([
         { tool: 'klines', status: 'ok', args: { symbol: 'BTCUSDT', interval: '4h', limit: 200 } },
@@ -213,7 +216,7 @@ const decisions = () => {
     },
     {
       id: 9000, traderId: 1, roundNo: 3, wakeTime: t - 3 * HOUR, intervalCode: '4h',
-      kind: 'ALERT', status: 'OK', equity: 11510,
+      kind: 'ALERT', status: 'OK', equity: 11510, positionId: null,
       reasoning: 'SOL 15 分钟内拉了 3.2%，触发哨兵。看了一眼盘口，是单笔大买单打上去的，深度没跟上，判断是假突破。空单止损从 205 放宽到 208.5，给插针留空间。',
       actionsJson: actions([
         { tool: 'orderbook_depth', status: 'ok', args: { symbol: 'SOLUSDT' } },
@@ -225,7 +228,7 @@ const decisions = () => {
     },
     {
       id: 8999, traderId: 1, roundNo: 3, wakeTime: t - 6 * HOUR, intervalCode: '4h',
-      kind: 'MANUAL', status: 'OK', equity: 11320,
+      kind: 'MANUAL', status: 'OK', equity: 11320, positionId: null,
       reasoning: '主人问要不要减仓避风险。看了下 BTC 4h 结构没坏，未实现盈利 +226，止损已在保本上方——最坏情况是保本出局，不构成需要减仓的风险。维持不动。',
       actionsJson: actions([
         { tool: 'get_account', status: 'ok', args: {} },
@@ -236,7 +239,7 @@ const decisions = () => {
     },
     {
       id: 8998, traderId: 1, roundNo: 3, wakeTime: t - 10 * HOUR, intervalCode: '4h',
-      kind: 'TRADE', status: 'ERROR', equity: null,
+      kind: 'TRADE', status: 'ERROR', equity: null, positionId: null,
       reasoning: null,
       actionsJson: actions([
         { tool: 'klines', status: 'ok', args: { symbol: 'BTCUSDT', interval: '4h', limit: 200 } },
@@ -247,17 +250,46 @@ const decisions = () => {
     },
     {
       id: 8997, traderId: 1, roundNo: 3, wakeTime: t - 14 * HOUR, intervalCode: '4h',
-      kind: 'REVIEW', status: 'OK', equity: null,
-      reasoning: `## 今日复盘（R3 第 3 天）
+      kind: 'REVIEW', status: 'OK', equity: null, positionId: null,
+      // 统一复盘：只做跨单子的事，归类行在各笔的单笔复盘里
+      reasoning: `【本期复盘】
+战绩：本期了结 1 笔，0 胜 1 负，净 -167.40
+突破跟随（1 笔，0 胜，净 -167.40）
+分界线：样本不足。这一笔追在前高上方 1.1%，突破那根量比只有 1.2；名下赚钱的 #402、#417 量比都在 1.8 以上。
+机会：本期最大波段是 BTC 从 61,200 到 63,900。趋势跟随的多单抓到了后半段，前半段没抓到是条件没出现：4h 还没站稳 EMA20。
+布防：SOL 205 的收盘条件命中后那轮没有照备注平仓，多等了一根，是漏了，不是情况变了。
 
-**做对的**：BTC 这笔多单从 62,480 拿到现在 +226，止损两次上移都跟着结构走，没有拍脑袋。
-
-**做错的**：SOL 空单开在 198.4，理由是"RSI 顶背离"，但当时 4h 结构还是上升的——**背离不是反转信号，只是动能减弱**。这单现在 -39，属于逆势单，应该等结构破了再进。
-
-**下一步**：SOL 空单不加仓，触到 208.5 就认。BTC 单继续拿，65,000 上方考虑分批止盈。`,
+【经验更新】
+本期无更新`,
       actionsJson: null,
       toolCalls: 0, modelCalls: 1, promptTokens: 22400, completionTokens: 2100, totalTokens: 24500, cachedTokens: 18900,
       latencyMs: 18900, error: null, createdAt: '2026-09-04 22:00:00', hasTrace: false,
+    },
+    {
+      // 单笔复盘：#465 平仓满 24 小时后只判这一笔，带工具查当时的情况，末尾是归类行
+      id: DEBRIEF_ID, traderId: 1, roundNo: 3, wakeTime: t - DAY - 8 * HOUR + 10 * MIN, intervalCode: '4h',
+      kind: 'DEBRIEF', status: 'OK', equity: null, positionId: 465,
+      reasoning: `【单笔复盘】
+路径：日线新高后 212.4 追多，4 小时内最高到 214.9，之后一路回落，4h 收盘跌破 205 后多拿了一根，203.1 止损带走。
+方向错了还是被洗掉：方向错了。出场后 24 小时最高只回到 207.6，止损放宽到 3 倍也是先到止损。
+问题出在哪：进场方式。突破那根的量比只有 1.2，追在前高上方 1.1%。
+管理动作：减分。计划写的失效条件触发后没有当根平仓，又等了一根。
+有没有写下要做却没照做的：有。失效条件「4h 收盘回落到 205 下方」触发后没有当根平。
+
+【归类】
+#1 无
+#2 无
+#3 无
+#4 破 465 ｜ 计划是开完仓才补写的
+#7 破 465 ｜ 失效条件触发后多拿了一根
+#8 名下 465 ｜ 日线新高、放量突破前高，没等回踩`,
+      actionsJson: actions([
+        { tool: 'round_detail', status: 'ok', args: { decisionId: 8790 } },
+        { tool: 'klines', status: 'ok', args: { symbol: 'SOLUSDT', interval: '4h', endTime: '2026-09-02 12:00' } },
+        { tool: 'news_archive', status: 'ok', args: { from: '2026-09-02 00:00', to: '2026-09-02 12:00', keyword: 'SOL' } },
+      ]),
+      toolCalls: 3, modelCalls: 3, promptTokens: 31200, completionTokens: 2900, totalTokens: 34100, cachedTokens: 20400,
+      latencyMs: 58300, error: null, createdAt: '2026-09-04 04:10:00', hasTrace: true,
     },
   ];
 };
@@ -280,6 +312,7 @@ const trades = () => {
       },
       openDecision: { id: 8880, wakeTime: t - 2 * DAY, kind: 'TRADE', reasoning: 'ETH 缩量回踩 4h EMA60，进场做多，止损放结构低点下方。', reason: null },
       closeDecision: { id: 8920, wakeTime: t - DAY - 6 * HOUR, kind: 'TRADE', reasoning: null, reason: '触及计划目标位 2510，按计划止盈' },
+      debrief: null,
     },
     {
       positionId: 465, symbol: 'SOLUSDT', side: 'LONG', leverage: 3,
@@ -294,6 +327,7 @@ const trades = () => {
       },
       openDecision: { id: 8790, wakeTime: t - 3 * DAY, kind: 'TRADE', reasoning: 'SOL 放量突破 210 前高，跟随进场。', reason: null },
       closeDecision: null,
+      debrief: { id: DEBRIEF_ID, wakeTime: t - DAY - 8 * HOUR + 10 * MIN, kind: 'DEBRIEF', reasoning: null, reason: null },
     },
     {
       positionId: 442, symbol: 'BTCUSDT', side: 'SHORT', leverage: 2,
@@ -302,6 +336,7 @@ const trades = () => {
       plan: null,
       openDecision: { id: 8700, wakeTime: t - 4 * DAY, kind: 'ALERT', reasoning: '哨兵报 BTC 急跌，顺势做空一小档。', reason: null },
       closeDecision: { id: 8740, wakeTime: t - 3 * DAY - 4 * HOUR, kind: 'TRADE', reasoning: null, reason: '下跌动能衰竭，主动了结，不等目标位' },
+      debrief: null,
     },
   ];
 };
@@ -496,6 +531,42 @@ const decisionTrace = () => {
       },
     ],
     end: { status: 'OK', error: null, equity: 11842.36, latencyMs: 42800, modelCalls: 3, totalTokens: 18420 },
+  };
+};
+
+/** 单笔复盘那一行的轨迹：没有权益和持仓，工具全是只读的 */
+const debriefTrace = () => {
+  const startedAt = now() - DAY - 8 * HOUR + 10 * MIN;
+  return {
+    v: 1, kind: 'DEBRIEF', wakeTime: startedAt, startedAt, budgetSeconds: 900,
+    equity: null, positions: 0, pendingOrders: 0,
+    prompt: {
+      system: '你是一名职业加密货币合约交易员。现在复盘你自己的一笔已经了结的单子：它平仓已满 24 小时，之后的走势已经看得到。只判这一笔。',
+      instruction: '【复盘对象】仓位 #465 SOLUSDT LONG\n\n【这笔单子的事实表】\n[465] SOLUSDT LONG 入场 212.4 止损 203.5 目标 232 出场 203.1 止损带走 净 -167.40\n\n【各轮决策】\n#8790 开仓那轮：SOL 放量突破 210 前高，跟随进场。\n\n【经验账本】\n#8 假设 突破跟随：日线新高且放量突破前高时跟进做多，不等回踩。',
+    },
+    calls: [
+      {
+        n: 1, text: '先看开仓那轮当时看到了什么，再看入场前的 4h 结构。', startedAt: startedAt + 800, endedAt: startedAt + 7400,
+        toolCalls: [
+          { id: 'tc_1a', name: 'round_detail', args: { decisionId: 8790 } },
+          { id: 'tc_1b', name: 'klines', args: { symbol: 'SOLUSDT', interval: '4h', endTime: '2026-09-02 12:00' } },
+        ],
+        results: [
+          { id: 'tc_1a', name: 'round_detail', status: 'ok', preview: '#8790 例行唤醒\n结论：SOL 放量突破 210 前高，跟随进场。\n调过的工具：klines、indicators、open_position' },
+          { id: 'tc_1b', name: 'klines', status: 'ok', preview: KLINES_PREVIEW },
+        ],
+      },
+      {
+        n: 2, text: '看看那几个小时有没有消息。', startedAt: startedAt + 8000, endedAt: startedAt + 15200,
+        toolCalls: [{ id: 'tc_2a', name: 'news_archive', args: { from: '2026-09-02 00:00', to: '2026-09-02 12:00', keyword: 'SOL' } }],
+        results: [{ id: 'tc_2a', name: 'news_archive', status: 'ok', preview: '这段时间没有匹配的快讯' }],
+      },
+      {
+        n: 3, text: '【单笔复盘】\n路径：日线新高后 212.4 追多……\n\n【归类】\n#8 名下 465', startedAt: startedAt + 15800, endedAt: startedAt + 58300,
+        toolCalls: [], results: [],
+      },
+    ],
+    end: { status: 'OK', error: null, equity: null, latencyMs: 58300, modelCalls: 3, totalTokens: 34100 },
   };
 };
 
@@ -1114,8 +1185,12 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
             bankrupt: false, bankruptCount: 0, totalAssets: 11842.36, profit: 1842.36, profitPct: 18.42,
           });
         }
+        if (path.endsWith(`/decisions/${DEBRIEF_ID}/trace`)) return ok(res, debriefTrace());
         if (/^\/api\/ai\/trader\/\d+\/decisions\/\d+\/trace$/.test(path)) return ok(res, decisionTrace());
-        if (/^\/api\/ai\/trader\/\d+\/decisions$/.test(path)) return ok(res, decisions());
+        if (/^\/api\/ai\/trader\/\d+\/decisions$/.test(path)) {
+          // wakeOnly：只要真醒来的那几种行
+          return ok(res, decisions().filter(d => q.get('wakeOnly') !== 'true' || !['REVIEW', 'DEBRIEF', 'PRESET'].includes(d.kind)));
+        }
         if (/^\/api\/ai\/trader\/\d+\/equity-curve$/.test(path)) return ok(res, equityCurve());
         if (/^\/api\/ai\/trader\/\d+\/trades$/.test(path)) return ok(res, trades());
         if (/^\/api\/ai\/trader\/\d+\/token-usage$/.test(path)) return ok(res, 96560);

@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -259,8 +260,29 @@ class TradeRecordServiceTest {
         assertThat(out.get(0).plan()).isNull();
         assertThat(out.get(0).openDecision()).isNull();
         assertThat(out.get(0).closeDecision()).isNull();
-        // 无计划 → 开仓决策不查；只剩平仓决策那一次
-        verify(decisionMapper).selectList(any());
+        assertThat(out.get(0).debrief()).isNull();
+        // 无计划 → 开仓决策不查；只剩平仓决策和单笔复盘那两次
+        verify(decisionMapper, times(2)).selectList(any());
+    }
+
+    /** 这笔有成功的单笔复盘：卡上挂它的决策编号和时刻，点了跳到时间线那一行 */
+    @Test
+    void debriefRowIsLinkedByPositionId() {
+        FuturesPositionDTO pos = closedLong(3L, "108");
+        pos.setClosedBy("STOP_LOSS");
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(pos));
+        when(planMapper.selectList(any())).thenReturn(List.of());
+        AiTraderDecision debrief = decision(500L, CLOSE_MS + 86_700_000L, null, null);
+        debrief.setKind(AiTraderDecision.KIND_DEBRIEF);
+        debrief.setPositionId(3L);
+        // 第一次 selectList 是平仓决策查询，第二次是单笔复盘查询
+        when(decisionMapper.selectList(any())).thenReturn(List.of(), List.of(debrief));
+
+        TradeRecordService.DecisionRef ref = service.closedTrades(trader()).getFirst().debrief();
+
+        assertThat(ref.id()).isEqualTo(500L);
+        assertThat(ref.wakeTime()).isEqualTo(CLOSE_MS + 86_700_000L);
+        assertThat(ref.kind()).isEqualTo(AiTraderDecision.KIND_DEBRIEF);
     }
 
     /** sim 无已平仓位：不查计划不查决策 */

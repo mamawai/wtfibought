@@ -16,6 +16,7 @@ import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.learning.ReviewScheduler;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
@@ -37,6 +38,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -78,6 +80,8 @@ public class TraderService {
     private final TraderWatchStore watchStore;
     /** 删除时拦在途唤醒、清进程内那两份按 traderId 的记账 */
     private final TraderScheduler scheduler;
+    /** 重置和删除还要拿到复盘位：复盘跑到一半局号变了，会把旧局的账本渲染盖到新局的 memory 上 */
+    private final ReviewScheduler reviewScheduler;
     private final TraderLiveHub hub;
     /** 暂停原因落库即公开展示，跟 trader 主人的语言写入——与 TraderWakeupRunner 那几种同一口径 */
     private final PromptCatalog prompts;
@@ -295,15 +299,32 @@ public class TraderService {
         if (t == null) {
             return messages.get("trader.notFound");
         }
-        // 占住这个 trader 的位子：有唤醒或复盘在跑就拒，重置期间新的也进不来
-        if (!scheduler.tryOccupy(t.getId())) {
+        // 唤醒位和复盘位都要占住：有唤醒或复盘在跑就拒，重置期间新的也进不来
+        if (!occupyBoth(t.getId())) {
             return messages.get("trader.reset.busy");
         }
         try {
             return openNewRound(t, userId, carryNotes);
         } finally {
-            scheduler.release(t.getId());
+            releaseBoth(t.getId());
         }
+    }
+
+    /** 同时拿唤醒位和复盘位；任一个在用就都不占 */
+    private boolean occupyBoth(long traderId) {
+        if (!scheduler.tryOccupy(traderId)) {
+            return false;
+        }
+        if (!reviewScheduler.tryOccupy(traderId)) {
+            scheduler.release(traderId);
+            return false;
+        }
+        return true;
+    }
+
+    private void releaseBoth(long traderId) {
+        reviewScheduler.release(traderId);
+        scheduler.release(traderId);
     }
 
     private String openNewRound(AiTrader t, long userId, boolean carryNotes) {
@@ -372,8 +393,8 @@ public class TraderService {
         if (!t.getName().equals(confirmName)) {
             return messages.get("trader.delete.nameMismatch");
         }
-        // 占住这个 trader 的位子：有唤醒或复盘在跑就拒，删除期间新的也进不来
-        if (!scheduler.tryOccupy(t.getId())) {
+        // 唤醒位和复盘位都要占住：有唤醒或复盘在跑就拒，删除期间新的也进不来
+        if (!occupyBoth(t.getId())) {
             return messages.get("trader.delete.busy");
         }
         try {
@@ -398,7 +419,7 @@ public class TraderService {
                 }
             }
         } finally {
-            scheduler.release(t.getId());
+            releaseBoth(t.getId());
         }
         log.info("[Trader] 删除 traderId={} userId={} rounds={}", t.getId(), userId, t.getRoundNo());
         return null;
@@ -450,10 +471,10 @@ public class TraderService {
     /**
      * 决策时间线。必须按局过滤：局与局之间是两个互不相干的 sim 子账户（各自注资 10000），
      * 混排会出现"曲线上没有的决策"，权益数字也在两条基线之间跳。round 传空=当前局。
-     * from/to 是 wakeTime 区间 [from, to)，竞技场按天翻看用；与 before 分页可叠加。kind 传空=全部类型。
+     * from/to 是 wakeTime 区间 [from, to)，竞技场按天翻看用；与 before 分页可叠加。kinds 传空=全部类型。
      */
     public List<AiTraderDecision> decisions(long traderId, int limit, Long before, Integer round,
-                                            Long from, Long to, String kind) {
+                                            Long from, Long to, Collection<String> kinds) {
         AiTrader t = traderMapper.selectById(traderId);
         if (t == null) {
             return List.of();
@@ -463,8 +484,8 @@ public class TraderService {
                 .eq(AiTraderDecision::getRoundNo, round != null ? round : t.getRoundNo())
                 .orderByDesc(AiTraderDecision::getWakeTime)
                 .last("LIMIT " + Math.clamp(limit, 1, 100));
-        if (kind != null) {
-            q.eq(AiTraderDecision::getKind, kind);
+        if (kinds != null) {
+            q.in(AiTraderDecision::getKind, kinds);
         }
         if (before != null) {
             q.lt(AiTraderDecision::getWakeTime, before);

@@ -676,6 +676,9 @@ export const traderApi = {
    */
   decisions: (id: number, limit = 50, before?: number, round?: number, from?: number, to?: number) =>
     api.get<unknown, AiTraderDecisionView[]>(`/ai/trader/${id}/decisions`, { params: { limit, before, round, from, to } }),
+  /** 最近几次真醒来的轮（新的在前）：复盘、预案执行这些行不在里面，跳过的轮在 */
+  recentWakes: (id: number, limit: number) =>
+    api.get<unknown, AiTraderDecisionView[]>(`/ai/trader/${id}/decisions`, { params: { limit, wakeOnly: true } }),
   /** 决策 token 合计；三参数与 decisions 同义（round 空=当前局），整段都没 usage 时返回 null */
   tokenUsage: (id: number, round?: number, from?: number, to?: number) =>
     api.get<unknown, number | null>(`/ai/trader/${id}/token-usage`, { params: { round, from, to } }),

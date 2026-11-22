@@ -840,7 +840,7 @@ export interface TraderOwnerView {
   alertEnabled: boolean;
   /** 警报灵敏度系数 >=1 只能调高：生效阈值 = 每币基准 x 系数 */
   alertThresholdMult: number;
-  /** 每日复盘开关：reviewer 日线边界复盘写 REVIEW 行并整理记忆笔记 */
+  /** 复盘开关：管单笔复盘（DEBRIEF 行）和统一复盘（REVIEW 行）两种 */
   reviewEnabled: boolean;
   /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
   learnedRestrictionHold: boolean;
@@ -963,11 +963,11 @@ export interface AiTraderPlanView {
   stale: boolean | null;
 }
 
-/** 交易记录里引用的那一轮决策：id 对应时间线卡；reason 只有平仓有（close_position 的一句话理由） */
+/** 交易记录里引用的那一行决策：id 对应时间线卡；reason 只有平仓有（close_position 的一句话理由） */
 export interface TradeDecisionRef {
   id: number;
   wakeTime: number;
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DEBRIEF';
   reasoning: string | null;
   reason: string | null;
 }
@@ -992,6 +992,8 @@ export interface TradeRecordView {
   openDecision: TradeDecisionRef | null;
   /** 只有主动平仓才有：止损/止盈带走的依据就是计划里的原始止损/目标 */
   closeDecision: TradeDecisionRef | null;
+  /** 这笔的单笔复盘（时间线上的 DEBRIEF 行，只带 id 和时刻）；平仓满 24 小时复盘成功后才有 */
+  debrief: TradeDecisionRef | null;
 }
 
 /** trader 详情：公开视图 + 实时持仓/挂单 + 本局生效中的交易计划 + 经验账本 */
@@ -1000,7 +1002,7 @@ export interface TraderDetailView {
   positions: FuturesPosition[];
   pendingOrders: FuturesOrder[];
   plans: AiTraderPlanView[];
-  /** 经验账本渲染文本：reviewer 每日复盘后由代码渲染；trader 每次唤醒都读 */
+  /** 经验账本渲染文本：统一复盘落账后由代码渲染；trader 每次唤醒都读 */
   memory: string | null;
   /** 最近一次复盘写 memory 的 wakeTime(ms)，没有=null */
   lastReviewAt: number | null;
@@ -1042,10 +1044,13 @@ export interface AiTraderDecisionView {
   /**
    * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader）
    * EVENT=持仓事件唤醒（止损/止盈/强平/限价成交当场叫醒） WATCH=它自己布的盯盘条件命中
-   * REVIEW=每日复盘（reasoning=复盘全文，无equity）
+   * REVIEW=统一复盘（每天一篇，reasoning=复盘全文，无equity）
+   * DEBRIEF=单笔复盘（一笔单子平仓满 24 小时后复盘一次，reasoning=复盘全文，无equity）
    * PRESET=预案命中后平台代它执行的动作（没跑模型，reasoning=条件与执行结果，无equity）
    */
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'REVIEW' | 'PRESET';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'REVIEW' | 'DEBRIEF' | 'PRESET';
+  /** 仅 DEBRIEF 行：这篇单笔复盘对应的仓位编号 */
+  positionId: number | null;
   status: 'OK' | 'ERROR' | 'SKIPPED';
   equity: number | null;
   reasoning: string | null;
@@ -1115,7 +1120,7 @@ export interface WakeStage {
 export interface WakeEnd {
   status: 'OK' | 'ERROR';
   error: string | null;
-  equity: number;
+  equity: number | null;
   latencyMs: number;
   modelCalls: number;
   totalTokens: number | null;
@@ -1127,11 +1132,12 @@ export interface WakeEnd {
  */
 export interface WakeTrace {
   v: number;
-  kind: WakeKind;
+  /** 落库轨迹里还有单笔复盘的（DEBRIEF）：它不是唤醒，没有权益、持仓、挂单 */
+  kind: WakeKind | 'DEBRIEF';
   wakeTime: number;
   startedAt: number;
   budgetSeconds: number;
-  equity: number;
+  equity: number | null;
   positions: number;
   pendingOrders: number;
   prompt?: { system: string; instruction: string };

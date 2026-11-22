@@ -8,7 +8,6 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
-import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.toolkit.BeijingTime;
@@ -16,6 +15,7 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
+import com.mawai.wiibcommon.entity.AiTraderExperienceTrade;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.trade.TargetRung;
@@ -47,6 +47,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -83,9 +84,32 @@ class ReviewMaterialAssemblerTest {
     private final CaseFileBuilder caseFiles = new CaseFileBuilder(historyStore);
 
     private final ReviewMaterialAssembler assembler = new ReviewMaterialAssembler(
-            decisionMapper, planMapper, simTradeClient, prompts, caseFiles, ledger,
+            decisionMapper, planMapper, simTradeClient, prompts, caseFiles, new CaseFileRenderer(prompts), ledger,
             new PlayStatsAssembler(simTradeClient, planMapper, prompts, caseFiles), watchStore, new DecisionText(prompts),
-            new TradeRecordService(simTradeClient, planMapper, decisionMapper));
+            new ExperienceOpParser(prompts));
+
+    /** 一笔单子的单笔复盘行：正文两行，加归类段 */
+    private static AiTraderDecision debrief(long positionId, String classifyLines) {
+        AiTraderDecision d = new AiTraderDecision();
+        d.setId(5000 + positionId);
+        d.setPositionId(positionId);
+        d.setReasoning("【单笔复盘】\n路径：第 " + positionId + " 笔的路径\n管理动作：没动过\n【归类】\n" + classifyLines);
+        return d;
+    }
+
+    /** 查单笔复盘的那次，从 debriefs 里按查询带的仓位编号给；其余的 selectList（权益序列）给 equity */
+    private void stubDecisionLists(List<AiTraderDecision> debriefs, List<AiTraderDecision> equity) {
+        doAnswer(inv -> {
+            LambdaQueryWrapper<AiTraderDecision> w = inv.getArgument(0);
+            if (!String.valueOf(w.getSqlSelect()).contains("position_id")) {
+                return equity;
+            }
+            // MP 条件值懒求值：先拼一次 SQL，参数才落进 paramNameValuePairs
+            w.getTargetSql();
+            var values = w.getParamNameValuePairs().values();
+            return debriefs.stream().filter(d -> values.contains(d.getPositionId())).toList();
+        }).when(decisionMapper).selectList(any());
+    }
 
     /** 名下一笔都没有的账 */
     private static final ExperienceLedger.Tally NO_TRADES =
@@ -158,6 +182,14 @@ class ReviewMaterialAssemblerTest {
         return plan;
     }
 
+    /** 绑了仓位、已归档的计划行 */
+    private static AiTraderPlan boundPlan(long positionId, String playType, long openedWakeTime) {
+        AiTraderPlan plan = planOf("BTCUSDT", playType, openedWakeTime, false);
+        plan.setId(100 + positionId);
+        plan.setPositionId(positionId);
+        return plan;
+    }
+
     /** 5m bar 造数：一根 5m 的 OHLC */
     private static KlineBar bar5m(long openTime, String o, String h, String l, String c) {
         return new KlineBar(openTime, openTime + M5 - 1,
@@ -187,6 +219,7 @@ class ReviewMaterialAssemblerTest {
         FuturesPositionDTO position = closedPos("LONG", "102", "104", "8", opened, opened + H); position.setId(1L);
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(position));
+        stubDecisionLists(List.of(debrief(1L, "")), List.of());
         when(historyStore.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
                 bar5m(opened, "100", "101", "99", "100"), bar5m(opened + 4 * M5, "100", "106", "97", "105")));
         String zh = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
@@ -207,24 +240,29 @@ class ReviewMaterialAssemblerTest {
 
     // ==================== 战绩表 ====================
 
+    /** 权益和回撤按窗口内的决策行算；笔数胜负合计数的是本批单子，不管它们哪天平的 */
     @Test
-    void statsComputedFromEquitySeriesAndClosedTrades() {
+    void statsComputedFromEquitySeriesAndBatchTrades() {
         // 窗口起点前最后一条权益 10000；窗口内 10200 → 9800 → 10500
         when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM - H, "10000"));
-        when(decisionMapper.selectList(any())).thenReturn(List.of(
+        stubDecisionLists(List.of(debrief(1L, ""), debrief(2L, "")), List.of(
                 equityRow(FROM + H, "10200"),
                 equityRow(FROM + 2 * H, "9800"),
                 equityRow(FROM + 3 * H, "10500")));
-        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(
-                closedPos("LONG", "100000", "103000", "300", FROM + H, FROM + 2 * H),
-                closedPos("LONG", "100000", "99000", "-100", FROM + 2 * H, FROM + 3 * H)));
+        FuturesPositionDTO win = closedPos("LONG", "100000", "103000", "300", FROM - 30 * H, FROM - 29 * H);
+        win.setId(1L);
+        FuturesPositionDTO loss = closedPos("LONG", "100000", "99000", "-100", FROM + 2 * H, FROM + 3 * H);
+        loss.setId(2L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(win, loss));
+        when(planMapper.selectList(any())).thenReturn(List.of(
+                boundPlan(1L, "PULLBACK", FROM - 30 * H), boundPlan(2L, "PULLBACK", FROM + 2 * H)));
 
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
         // 收益率 (10500-10000)/10000=+5%；回撤峰10200谷9800=3.92%；2笔1胜1负
         assertThat(m.statsBlock()).contains("10000.00").contains("10500.00").contains("+5.00%");
         assertThat(m.statsBlock()).contains("3.92%");
-        assertThat(m.statsBlock()).contains("已了结 2 笔：1 胜 1 负（胜率 50%），合计净盈亏 +200.00");
+        assertThat(m.statsBlock()).contains("本批单子 2 笔：1 胜 1 负（胜率 50%），合计净盈亏 +200.00");
     }
 
     @Test
@@ -238,41 +276,14 @@ class ReviewMaterialAssemblerTest {
         assertThat(m.statsBlock()).contains("+1.00%");
     }
 
-    /**
-     * 已平仓位是先取最近 200 条再按窗口过滤，取回条数顶到上限时这份"硬事实"可能不全，
-     * 而模型被明令不许核算——块头必须说清楚这是不完全统计。
-     */
-    @Test
-    void statsWarnsWhenClosedFetchHitsLimit() {
-        List<FuturesPositionDTO> full = new ArrayList<>();
-        for (int i = 0; i < ReviewMaterialAssembler.CLOSED_FETCH_LIMIT; i++) {
-            full.add(closedPos("LONG", "100000", "100100", "10", FROM + 60_000, FROM + 120_000));
-        }
-        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(full);
-
-        ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
-
-        assertThat(m.statsBlock()).contains("不完全统计").contains("200");
-    }
-
-    @Test
-    void statsHasNoTruncationWarningBelowLimit() {
-        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(
-                closedPos("LONG", "100000", "103000", "300", FROM + H, FROM + 2 * H)));
-
-        ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
-
-        assertThat(m.statsBlock()).doesNotContain("不完全统计");
-    }
-
-    // ==================== 案例素材：一笔的事实表 ====================
+    // ==================== 本批单子：一笔的事实表和单笔复盘正文 ====================
 
     /**
-     * 一笔多单的完整事实表：交易行、路径指标、1h 收盘、计划（含修订）、入场上下文。
+     * 一笔多单的完整事实表：交易行、路径指标、1h 收盘、计划（含修订）、入场上下文，下面跟着它的单笔复盘正文（归类段不带）。
      * 路径数字全从 5m 算：浮盈/逆向占比以计划原始目标/止损距离为分母。
      */
     @Test
-    void caseRendersTradePathPlanAndEntryContext() {
+    void caseRendersTradePathPlanEntryContextAndDebriefText() {
         long openMs = FROM + H;
         long closeMs = FROM + 6 * H;
         FuturesPositionDTO pos = closedPos("LONG", "100000", "95000", "-50", openMs, closeMs);
@@ -292,6 +303,7 @@ class ReviewMaterialAssemblerTest {
         plan.setEntryCtxJson("{\"adx1h\":31.2,\"bollBw1h\":2.8,\"atr1h\":350.5,\"stopAtr\":12.8,\"stopPct\":4.5,\"hourBj\":9,"
                 + "\"orderType\":\"MARKET\",\"leverage\":10,\"eventMin\":-90,\"eventTitle\":\"CPI\",\"funding\":0.0001}");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        stubDecisionLists(List.of(debrief(42L, "#75 名下 42")), List.of());
 
         // 目标距离 10000、止损距离 4500
         when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(List.of(
@@ -305,7 +317,10 @@ class ReviewMaterialAssemblerTest {
 
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
-        assertThat(cases).contains("★ BREAKOUT（1 笔，0 胜，净 -50）");
+        assertThat(cases).startsWith("【本批单子】").contains("\nBREAKOUT（1 笔，0 胜，净 -50）\n");
+        // 事实表下面是单笔复盘正文，段标记和归类行不带
+        assertThat(cases).contains("  单笔复盘：\n    路径：第 42 笔的路径\n    管理动作：没动过\n")
+                .doesNotContain("【归类】").doesNotContain("#75 名下 42");
         assertThat(cases).contains("- [42] BTCUSDT LONG " + TIME.format(Instant.ofEpochMilli(openMs)) + " → "
                 + TIME.format(Instant.ofEpochMilli(closeMs))
                 + "（持有 5小时）｜ 入场 100000 止损 95500 目标 110000(100%) 出场 95000，止损带走 ｜ 净 -50，资金费 —");
@@ -316,7 +331,7 @@ class ReviewMaterialAssemblerTest {
         // R = 4500：净 -50 ÷（0.01 × 4500）；24h 内最高 102500、最低 95000、第 20 小时那根收 98000；止损原样在 95000 那根被打，放宽后都没碰到
         assertThat(cases).contains("  重放：实际 -1.11R ｜ 首档成交后 24h 内最大顺向 +0.56R、最大逆向 -1.11R，不设止损拿满 24h -0.44R"
                 + " ｜ 止损原样 止损（-1.02R）、1.5 倍 未决、2 倍 未决、3 倍 未决");
-        assertThat(cases).contains("本期重放汇总：\n原计划不动重放 1笔（")
+        assertThat(cases).contains("本批重放汇总：\n原计划不动重放 1笔（")
                 .contains("：止损原样 到目标0 止损1 未决0 合计-1.02R ｜ 止损1.5倍 到目标0 止损0 未决1 合计+0R ｜ ")
                 .contains("管理动作 1笔：实际合计-1.11R，原计划不动合计-1.02R");
         assertThat(cases).contains("  1h 收盘：102000 99700 95200");
@@ -339,28 +354,31 @@ class ReviewMaterialAssemblerTest {
         plan.setStopLossPrice(new BigDecimal("101000"));
         plan.setTakeProfitsJson("[{\"price\":98000,\"percent\":100}]");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        stubDecisionLists(List.of(debrief(43L, "")), List.of());
         when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(List.of(
                 bar5m(openMs, "100000", "100400", "99200", "99300"),
                 bar5m(closeMs + M5, "99300", "99500", "97900", "98000")));
 
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
-        assertThat(cases).contains("★ RANGE（1 笔，1 胜，净 +10）");
+        assertThat(cases).contains("RANGE（1 笔，1 胜，净 +10）");
         assertThat(cases).contains("出场后 4h / 24h 最有利 — / —，出场后数据不足");
     }
 
-    /** 没有 K 线：路径全部留空、没有 1h 收盘行，其余事实照出 */
+    /** 没有 K 线：路径全部留空、没有 1h 收盘行，其余事实照出；计划没标类型的归到"未标类型" */
     @Test
     void caseWithoutBarsLeavesPathBlank() {
         FuturesPositionDTO pos = closedPos("LONG", "100000", "101000", "10", FROM + H, FROM + 2 * H);
+        pos.setId(45L);
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
+        when(planMapper.selectList(any())).thenReturn(List.of(boundPlan(45L, null, FROM + H)));
+        stubDecisionLists(List.of(debrief(45L, "")), List.of());
 
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
-        assertThat(cases).contains("★ 未标类型（1 笔，1 胜，净 +10）");
+        assertThat(cases).contains("未标类型（1 笔，1 胜，净 +10）");
         assertThat(cases).contains("  价格路径（以最终均价为参照）：最大浮盈 —（—，—）｜ 最大逆向 —（—）｜ 到 +0.5R / +1R 用时 — / — 分 ｜ 首次收回入场价 — ｜ 出场后 4h / 24h 最有利 — / —，没设止盈");
         assertThat(cases).doesNotContain("1h 收盘");
-        assertThat(cases).contains("  计划：（无计划记录）");
         assertThat(cases).doesNotContain("入场上下文");
     }
 
@@ -375,6 +393,7 @@ class ReviewMaterialAssemblerTest {
         plan.setPositionId(44L);
         plan.setEntryCtxJson("{\"orderType\":\"LIMIT\",\"leverage\":10,\"placedAt\":" + (openMs - 35 * 60_000L) + "}");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        stubDecisionLists(List.of(debrief(44L, "")), List.of());
 
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
@@ -399,17 +418,20 @@ class ReviewMaterialAssemblerTest {
 
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
-        assertThat(cases).contains("窗口内无已了结交易");
+        assertThat(cases).contains("本批没有单子");
         assertThat(cases).contains("没成交就撤掉的限价档（撤单后 24 小时内的 5m K线）：\n- BTCUSDT LONG 限价 99000 止损 98000 目标 102000(100%)，"
                 + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 结束：撤单原因未知 ｜ 之后价格没穿过限价位，到过原目标 1/1 档");
     }
 
-    // ==================== 案例素材：分组与选案 ====================
+    // ==================== 本批单子：收哪些、怎么分组 ====================
 
-    /** 只有前两组展开（★）带交易行，其余组只列每笔一行：仓位编号、币、方向、开平时刻、净盈亏；没标类型的组叫"未标类型" */
+    /**
+     * 收的是做完单笔复盘、还没进过统一复盘的单子，不看平仓在不在窗口里：窗口之前平的也收；
+     * 没有成功的单笔复盘的、已经进过统一复盘的不收。每个单子类型的组里每笔都给完整事实表
+     */
     @Test
-    void onlyTwoGroupsExpanded() {
-        FuturesPositionDTO p1 = closedPos("LONG", "100000", "99960", "-40", FROM + H, FROM + 2 * H);
+    void batchIsDebriefedTradesNotYetReviewedAndEveryGroupIsListedInFull() {
+        FuturesPositionDTO p1 = closedPos("LONG", "100000", "99960", "-40", FROM - 40 * H, FROM - 39 * H);
         p1.setId(1L);
         FuturesPositionDTO p2 = closedPos("LONG", "100000", "100010", "10", FROM + 3 * H, FROM + 4 * H);
         p2.setId(2L);
@@ -417,67 +439,92 @@ class ReviewMaterialAssemblerTest {
         p3.setId(3L);
         FuturesPositionDTO p4 = closedPos("LONG", "100000", "99995", "-5", FROM + 7 * H, FROM + 8 * H);
         p4.setId(4L);
-        FuturesPositionDTO p5 = closedPos("LONG", "100000", "99997", "-3", FROM + 9 * H, FROM + 10 * H);
-        p5.setId(5L);
-        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(p1, p2, p3, p4, p5));
-        AiTraderPlan a = planOf("BTCUSDT", "PULLBACK", FROM + H, false);
-        a.setPositionId(1L);
-        AiTraderPlan b = planOf("BTCUSDT", "PULLBACK", FROM + 3 * H, false);
-        b.setPositionId(2L);
-        AiTraderPlan c = planOf("BTCUSDT", "BREAKOUT", FROM + 5 * H, false);
-        c.setPositionId(3L);
-        AiTraderPlan d = planOf("BTCUSDT", "RANGE", FROM + 7 * H, false);
-        d.setPositionId(4L);
-        when(planMapper.selectList(any())).thenReturn(List.of(a, b, c, d));
+        FuturesPositionDTO notDebriefed = closedPos("LONG", "100000", "99997", "-3", FROM + 9 * H, FROM + 10 * H);
+        notDebriefed.setId(5L);
+        FuturesPositionDTO reviewed = closedPos("LONG", "100000", "99111", "-9", FROM + 9 * H, FROM + 10 * H);
+        reviewed.setId(6L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(p1, p2, p3, p4, notDebriefed, reviewed));
+        AiTraderPlan alreadyReviewed = boundPlan(6L, "RANGE", FROM + 9 * H);
+        alreadyReviewed.setReviewId(800L);
+        when(planMapper.selectList(any())).thenReturn(List.of(
+                boundPlan(1L, "PULLBACK", FROM - 40 * H), boundPlan(2L, "PULLBACK", FROM + 3 * H),
+                boundPlan(3L, "BREAKOUT", FROM + 5 * H), boundPlan(4L, "RANGE", FROM + 7 * H),
+                boundPlan(5L, "RANGE", FROM + 9 * H), alreadyReviewed));
+        // 5 号还没有成功的单笔复盘
+        stubDecisionLists(List.of(debrief(1L, ""), debrief(2L, ""), debrief(3L, ""), debrief(4L, "")), List.of());
 
-        String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
-
-        assertThat(cases).contains("★ PULLBACK（2 笔，1 胜，净 -30）").contains("★ BREAKOUT（1 笔，1 胜，净 +500）");
-        assertThat(cases).contains("RANGE（1 笔，0 胜，净 -5）").doesNotContain("★ RANGE");
-        assertThat(cases).contains("未标类型（1 笔，0 胜，净 -3）").doesNotContain("★ 未标类型");
-        // 没展开的组没有事实表：RANGE 那笔的出场价不出现，只有一行编号和净盈亏
-        assertThat(cases).doesNotContain("99995").doesNotContain("99997");
-        assertThat(cases).contains("99960").contains("100500");
-        assertThat(cases).contains("RANGE（1 笔，0 胜，净 -5）\n- [4] BTCUSDT LONG " + TIME.format(Instant.ofEpochMilli(FROM + 7 * H))
-                + " → " + TIME.format(Instant.ofEpochMilli(FROM + 8 * H)) + " ｜ 净 -5\n");
-        assertThat(cases).contains("- [5] BTCUSDT LONG ").contains(" ｜ 净 -3\n");
-    }
-
-    @Test
-    void noClosedTradesSaysSo() {
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
-        assertThat(m.casesBlock()).startsWith("【案例素材】").contains("窗口内无已了结交易");
-        assertThat(m.statsBlock()).contains("期间无已了结交易");
-        assertThat(m.trades()).isEmpty();
+        String cases = m.casesBlock();
+        assertThat(cases).contains("PULLBACK（2 笔，1 胜，净 -30）").contains("BREAKOUT（1 笔，1 胜，净 +500）")
+                .contains("RANGE（1 笔，0 胜，净 -5）").doesNotContain("★");
+        // 四笔都有事实表（出场价都在）和各自的单笔复盘正文；没复盘的、进过统一复盘的不出现
+        assertThat(cases).contains("出场 99960").contains("出场 100010").contains("出场 100500").contains("出场 99995")
+                .contains("路径：第 1 笔的路径").contains("路径：第 4 笔的路径")
+                .doesNotContain("99997").doesNotContain("99111");
+        assertThat(m.statsBlock()).contains("本批单子 4 笔：2 胜 2 负");
+        assertThat(m.trades()).containsOnlyKeys(1L, 2L, 3L, 4L);
+        // 落账后要盖编号的计划行
+        assertThat(m.planIds()).containsExactlyInAnyOrder(101L, 102L, 103L, 104L);
     }
 
-    /**
-     * stale 交易从案例与了结统计整体消失；权益/回撤线来自决策行序列，不动。
-     * 过滤必须在配对之后：stale 计划提前拿掉的话，它的仓位会错配到同 symbol/side 的
-     * 别的计划上——所以正常那笔配的必须还是自己的 PULLBACK（带 +30），不能被 -50 顶包。
-     */
+    /** 一篇最多收 20 笔，取平仓最早的；收不下的不盖编号，留给下一篇 */
     @Test
-    void staleTradeVanishesFromCasesAndStatsButNotEquity() {
+    void batchTakesTheEarliestClosedTradesUpToTheCap() {
+        List<FuturesPositionDTO> closed = new ArrayList<>();
+        List<AiTraderPlan> plans = new ArrayList<>();
+        List<AiTraderDecision> debriefs = new ArrayList<>();
+        for (long id = 1; id <= ReviewMaterialAssembler.MAX_BATCH + 2; id++) {
+            FuturesPositionDTO p = closedPos("LONG", "100000", "100010", "10", FROM + id * H, FROM + id * H + M5);
+            p.setId(id);
+            // sim 给的是新的在前
+            closed.addFirst(p);
+            plans.add(boundPlan(id, "PULLBACK", FROM + id * H));
+            debriefs.add(debrief(id, ""));
+        }
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(closed);
+        when(planMapper.selectList(any())).thenReturn(plans);
+        stubDecisionLists(debriefs, List.of());
+
+        ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
+
+        assertThat(m.planIds()).hasSize(ReviewMaterialAssembler.MAX_BATCH).contains(101L, 120L).doesNotContain(121L, 122L);
+        assertThat(m.trades()).hasSize(ReviewMaterialAssembler.MAX_BATCH);
+        assertThat(m.casesBlock()).contains("路径：第 20 笔的路径").doesNotContain("路径：第 21 笔的路径");
+    }
+
+    @Test
+    void noBatchTradesSaysSo() {
+        ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
+
+        assertThat(m.casesBlock()).startsWith("【本批单子】").contains("本批没有单子");
+        assertThat(m.statsBlock()).contains("本批没有单子");
+        assertThat(m.trades()).isEmpty();
+        assertThat(m.classifies()).isEmpty();
+        assertThat(m.planIds()).isEmpty();
+    }
+
+    /** 主人标了不算数的单子不进本批：单子块、笔数统计、可记账的单子里都没有它；权益/回撤线来自决策行序列，不动 */
+    @Test
+    void staleTradeIsNotInTheBatchButEquityIsUntouched() {
         when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM - H, "10000"));
-        when(decisionMapper.selectList(any())).thenReturn(List.of(equityRow(FROM + 3 * H, "10500")));
+        stubDecisionLists(List.of(debrief(1L, ""), debrief(2L, "")), List.of(equityRow(FROM + 3 * H, "10500")));
         FuturesPositionDTO stalePos = closedPos("LONG", "100000", "99000", "-50", FROM + H, FROM + 2 * H);
         stalePos.setId(1L);
         FuturesPositionDTO keptPos = closedPos("LONG", "100000", "101000", "30", FROM + 3 * H, FROM + 4 * H);
         keptPos.setId(2L);
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(stalePos, keptPos));
-        when(planMapper.selectList(any())).thenReturn(List.of(
-                planOf("BTCUSDT", "REVERSAL", FROM + H, true),
-                planOf("BTCUSDT", "PULLBACK", FROM + 3 * H, false)));
+        AiTraderPlan stale = boundPlan(1L, "REVERSAL", FROM + H);
+        stale.setStale(true);
+        when(planMapper.selectList(any())).thenReturn(List.of(stale, boundPlan(2L, "PULLBACK", FROM + 3 * H)));
 
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
-        assertThat(m.casesBlock()).contains("★ PULLBACK（1 笔，1 胜，净 +30）")
+        assertThat(m.casesBlock()).contains("PULLBACK（1 笔，1 胜，净 +30）")
                 .doesNotContain("REVERSAL").doesNotContain("-50");
-        assertThat(m.statsBlock()).contains("已了结 1 笔");
+        assertThat(m.statsBlock()).contains("本批单子 1 笔");
         // 权益线不许跟着变：钱账是决策行权益序列算的，stale 只动教材
         assertThat(m.statsBlock()).contains("+5.00%");
-        // 复盘归类也认不到它
         assertThat(m.trades()).containsOnlyKeys(2L);
     }
 
@@ -662,43 +709,70 @@ class ReviewMaterialAssemblerTest {
     }
 
     /**
-     * 开仓那轮结论里该币那一段引用了某条经验：这笔单子带着仓位编号列在那条的账本行下面（不管单子类型）。
-     * 那一轮没开过的币（续立行对上的对账轮就是这样），它那段里的引用不算。本期单子按仓位编号带出净盈亏和平仓日
+     * 各笔单笔复盘的归类行合并成每条经验一行：账本块里列在那条下面（按标记分开），同一份随素材交出去落账。
+     * 写了别的仓位编号的行、标记和条目种类对不上的行不算。本批单子按仓位编号带出净盈亏和平仓日
      */
     @Test
-    void ledgerRowListsTradesWhoseOpeningRoundCitedIt() {
+    void ledgerRowListsTradesTheDebriefsSortedUnderItAndTheMergedRowsGoOut() {
         long opened = FROM + H;
         FuturesPositionDTO pos = closedPos("LONG", "100000", "99000", "-293.29", opened, opened + H);
         pos.setId(42L);
-        AiTraderPlan plan = planOf("BTCUSDT", "BREAKOUT", opened, false);
-        plan.setPositionId(42L);
-        // ETH 这笔的计划行也对到这一轮，但这一轮没开 ETH
-        FuturesPositionDTO carried = closedPos("LONG", "2000", "1990", "-50", opened + M5, opened + H);
-        carried.setSymbol("ETHUSDT");
-        carried.setId(43L);
-        AiTraderPlan carriedPlan = planOf("ETHUSDT", "PULLBACK", opened, false);
-        carriedPlan.setPositionId(43L);
-        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos, carried));
-        when(planMapper.selectList(any())).thenReturn(List.of(plan, carriedPlan));
-        AiTraderDecision open = equityRow(opened, "10000");
-        open.setReasoning("求证过程\n[本轮结论]\n总评：遵 #75 续持\n[BTCUSDT]\n动作：遵 #62 市价开多\n[ETHUSDT]\n判断：遵 #75 保留挂单");
-        open.setActionsJson("[{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"},\"status\":\"ok\"}]");
-        when(decisionMapper.selectList(any())).thenReturn(List.of(open));
+        FuturesPositionDTO other = closedPos("LONG", "2000", "1990", "-50", opened + M5, opened + 2 * H);
+        other.setSymbol("ETHUSDT");
+        other.setId(43L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos, other));
+        AiTraderPlan otherPlan = boundPlan(43L, "PULLBACK", opened);
+        otherPlan.setSymbol("ETHUSDT");
+        when(planMapper.selectList(any())).thenReturn(List.of(boundPlan(42L, "BREAKOUT", opened), otherPlan));
+        // 42 号：#62 名下、#61 破；#75 写了别人的编号，不算。43 号：#62 引用不符；#61 用了名下，和执行缺口对不上，不算
+        stubDecisionLists(List.of(
+                debrief(42L, "#62 名下 42 ｜ 条件对得上\n#61 破 42\n#75 名下 43"),
+                debrief(43L, "#62 引用不符 43\n#61 名下 43\n#75 无")), List.of());
         when(ledger.active(7L, 1)).thenReturn(List.of(
                 exp(62L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
                         AiTraderExperience.DIR_RESTRICTION, "PULLBACK", "破位不挂内侧限价"),
                 exp(75L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
-                        AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "保留原主阻力限价单")));
+                        AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "保留原主阻力限价单"),
+                exp(61L, AiTraderExperience.KIND_GAP, AiTraderExperience.SLOT_EXEC,
+                        AiTraderExperience.DIR_EXECUTION, null, "止损不小于缓冲")));
 
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
-        assertThat(m.ledgerBlock()).contains("证据 证据-62\n  本期开仓那轮引用了它的单子：[42] BTCUSDT LONG BREAKOUT "
-                + TIME.format(Instant.ofEpochMilli(opened)) + " 净 -293.29\n");
-        // #75 出现在总评和 ETH 那段：总评不绑币，ETH 这一轮没开，都不算引用
-        assertThat(m.ledgerBlock()).doesNotContain("证据 证据-75\n  本期开仓那轮");
+        assertThat(m.ledgerBlock()).contains("证据 证据-62\n  本批单笔复盘归到它这里的单子：名下 [42] BTCUSDT LONG BREAKOUT "
+                + TIME.format(Instant.ofEpochMilli(opened)) + " 净 -293.29；引用不符 [43] ETHUSDT LONG PULLBACK "
+                + TIME.format(Instant.ofEpochMilli(opened + M5)) + " 净 -50\n");
+        assertThat(m.ledgerBlock()).contains("证据 证据-61\n  本批单笔复盘归到它这里的单子：破 [42] BTCUSDT LONG BREAKOUT ");
+        assertThat(m.ledgerBlock()).doesNotContain("证据 证据-75\n  本批单笔复盘");
+        assertThat(m.classifies()).containsExactly(
+                new ExperienceLedger.Classify(62L, List.of(
+                        new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 42L),
+                        new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_MISCITED, 43L))),
+                new ExperienceLedger.Classify(61L, List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_BROKEN, 42L))));
         assertThat(m.trades()).containsOnlyKeys(42L, 43L);
         assertThat(m.trades().get(42L)).isEqualTo(new ExperienceLedger.PeriodTrade(new BigDecimal("-293.29"),
                 LocalDate.of(2026, 7, 27)));
+    }
+
+    /** 没有平仓盈亏的单子记不了账：它的归类不并进去，同一条经验名下别的单子照记 */
+    @Test
+    void tradeWithoutNetIsLeftOutOfTheMergedRows() {
+        long opened = FROM + H;
+        FuturesPositionDTO pos = closedPos("LONG", "100000", "99000", "-293.29", opened, opened + H);
+        pos.setId(42L);
+        FuturesPositionDTO noNet = closedPos("LONG", "100000", "99500", "0", opened + M5, opened + 2 * H);
+        noNet.setId(43L);
+        noNet.setClosedPnl(null);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos, noNet));
+        when(planMapper.selectList(any())).thenReturn(List.of(boundPlan(42L, "BREAKOUT", opened), boundPlan(43L, "BREAKOUT", opened)));
+        stubDecisionLists(List.of(debrief(42L, "#62 名下 42"), debrief(43L, "#62 名下 43")), List.of());
+        when(ledger.active(7L, 1)).thenReturn(List.of(exp(62L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
+                AiTraderExperience.DIR_OPPORTUNITY, "BREAKOUT", "破位后挂限价")));
+
+        ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
+
+        assertThat(m.trades()).containsOnlyKeys(42L);
+        assertThat(m.classifies()).containsExactly(new ExperienceLedger.Classify(62L,
+                List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 42L))));
     }
 
     // ==================== 素材有无与上次复盘定位 ====================
@@ -712,17 +786,24 @@ class ReviewMaterialAssemblerTest {
         verify(simTradeClient, never()).getClosedPositions(anyLong(), anyInt());
     }
 
-    /** 没有开仓动作才查 sim：窗口内有了结仓位算素材，了结在窗口外不算 */
+    /**
+     * 没有开仓动作时看有没有可收的单子：做完单笔复盘、还没进过统一复盘、sim 的已平仓位里还找得到的算素材；
+     * 还没复盘成功的不算，sim 那边已经找不到的也不算
+     */
     @Test
-    void closedTradesCheckedOnlyWhenNoOpens() {
+    void debriefedTradesAreMaterialWhenNoOpens() {
         when(decisionMapper.selectCount(any())).thenReturn(0L);
-        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(
-                closedPos("LONG", "100000", "101000", "10", FROM + H, FROM + 2 * H)));
-        assertThat(assembler.hasNewMaterial(trader(), FROM, TO)).isTrue();
-
-        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(
-                closedPos("LONG", "100000", "101000", "10", FROM - 2 * H, FROM - H)));
+        when(planMapper.selectList(any())).thenReturn(List.of(boundPlan(1L, "PULLBACK", FROM - 40 * H)));
+        stubDecisionLists(List.of(), List.of());
         assertThat(assembler.hasNewMaterial(trader(), FROM, TO)).isFalse();
+
+        stubDecisionLists(List.of(debrief(1L, "")), List.of());
+        assertThat(assembler.hasNewMaterial(trader(), FROM, TO)).as("sim 的已平仓位里没有这一笔").isFalse();
+
+        FuturesPositionDTO pos = closedPos("LONG", "100000", "99960", "-40", FROM - 40 * H, FROM - 39 * H);
+        pos.setId(1L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
+        assertThat(assembler.hasNewMaterial(trader(), FROM, TO)).isTrue();
     }
 
     /** 开仓动作只数交易行白名单（TRADE/ALERT/MANUAL）且 actions 里带 open_position；REVIEW 行天天有，不许充当素材 */

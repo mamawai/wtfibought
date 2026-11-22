@@ -916,6 +916,8 @@ class TraderWakeupLoopTest {
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getReasoning()).contains("爆仓终局");
         verify(traderMapper).update(any(), any()); // LIQUIDATED 列级更新
+        // 爆仓后不会再有下一轮来对账：这一轮就把计划对一遍，了结的单子才归得了档、进得了复盘
+        verify(planStore).reconcile(eq(7L), eq(1), any(), any(), any(), any(), eq(1785171600000L), eq(AgentLang.ZH));
     }
 
     /** 权益要在动作落地后记录：本轮的开平仓立刻体现在净值曲线上，不许滞后一根K线。 */

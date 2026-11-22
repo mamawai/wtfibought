@@ -218,6 +218,22 @@ class PromptMarkParsingTest {
         return new ExperienceLedger.Mark(mark, positionId);
     }
 
+    // ==================== 单笔复盘的归类段 ====================
+
+    /** 两门语言的【归类】段标记都认，标记词跟着认到的那一门；没有段标记是 null；正文不带段标记和归类行 */
+    @Test
+    void 单笔复盘归类段两门语言都认() {
+        assertThat(parser.debriefClassifies("【单笔复盘】\n路径：甲\n【归类】\n#75 名下 42 ｜ 条件对得上\n#61 无"))
+                .containsExactly(new ExperienceLedger.Classify(75L, List.of(mark(MARK_UNDER, 42L))),
+                        new ExperienceLedger.Classify(61L, List.of()));
+        assertThat(parser.debriefClassifies("[DEBRIEF]\nPath: a\n[SORTING]\n#61 KEPT 42 | stop was wide enough"))
+                .containsExactly(new ExperienceLedger.Classify(61L, List.of(mark(MARK_KEPT, 42L))));
+        assertThat(parser.debriefClassifies("【单笔复盘】\n路径：甲")).isNull();
+
+        assertThat(parser.debriefBody("【单笔复盘】\n路径：甲\n管理动作：乙\n【归类】\n#75 名下 42")).isEqualTo("路径：甲\n管理动作：乙");
+        assertThat(parser.debriefBody("[DEBRIEF]\nPath: a\n[SORTING]\n#75 NONE")).isEqualTo("Path: a");
+    }
+
     // ==================== 输出语言硬收尾：恒在用户消息最末一行 ====================
 
     /**
@@ -231,12 +247,12 @@ class PromptMarkParsingTest {
         t.setRoundNo(1);
         t.setMemory("【经验账本】\n#1 规律");
         ReviewMaterialAssembler.ReviewMaterial material = new ReviewMaterialAssembler.ReviewMaterial(
-                "stats", "plays", "cases", "market", "watches", "ledger", Map.of());
+                "stats", "plays", "cases", "market", "watches", "ledger", Map.of(), List.of(), List.of());
         ReviewRunner review = new ReviewRunner(mock(ReviewMaterialAssembler.class), null, null,
-                prompts, mock(UserLangResolver.class), mock(ExperienceLedger.class), parser);
+                prompts, mock(UserLangResolver.class), mock(ExperienceLedger.class), parser, null);
 
         for (AgentLang lang : AgentLang.values()) {
-            assertThat(review.userPrompt(t, material, 0, 86_400_000L, lang).stripTrailing())
+            assertThat(review.userPrompt(t, material, 0, 86_400_000L, 2 * 86_400_000L, lang).stripTrailing())
                     .as("%s 复盘用户消息", lang.code())
                     .endsWith(prompts.get(lang, "reviewer.label.outputLanguage"));
         }

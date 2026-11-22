@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibagent.learning.ReviewRunner;
+import com.mawai.wiibagent.learning.ReviewScheduler;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.toolkit.BeijingTime;
@@ -44,6 +45,7 @@ public class TraderActionService {
 
     private final TraderService traderService;
     private final TraderScheduler scheduler;
+    private final ReviewScheduler reviewScheduler;
     private final ReviewRunner reviewRunner;
     private final AiTraderMapper traderMapper;
     private final AiTraderDecisionMapper decisionMapper;
@@ -189,36 +191,32 @@ public class TraderActionService {
             // 成功而不是失败：跳过是一次省下模型调用的正确决定，界面上不该是红的
             return new ActionResult(true, messages.get("trader.review.noMaterial"));
         }
-        // 占的是调度侧同一个位子：只挡点播与点播之间的话，日线交接阶段1 会对同一个 trader
-        // 再排一篇复盘，两条都落 REVIEW 行、ai_trader.memory 被覆盖写两次，后完成的赢
-        if (!scheduler.tryOccupy(t.getId())) {
+        // 占的是复盘位：和单笔复盘、08:00 的统一复盘共用，同一个 trader 一次只跑一篇，账本和 memory 才不会被两篇同时写
+        if (!reviewScheduler.tryOccupy(t.getId())) {
             return new ActionResult(false, messages.get("trader.review.busy"));
         }
         Thread.startVirtualThread(() -> {
             try {
-                reviewRunner.review(t, at);
+                // 拿到复盘位之后重新读一遍：前面查素材这一会儿它可能刚重置开了新局，或者已经删了
+                AiTrader fresh = traderMapper.selectById(t.getId());
+                if (fresh != null) {
+                    reviewRunner.review(fresh, at);
+                }
             } catch (Exception e) {
                 // review() 自己兜住模型调用的失败并留 ERROR 行；这里兜的是它之前那几步库查询，
                 // 异步之后没人接得住，不打日志就彻底无声
                 log.warn("[TraderAction] 点播复盘异常逃逸 traderId={} msg={}", t.getId(), e.getMessage());
             } finally {
-                scheduler.release(t.getId());
+                reviewScheduler.release(t.getId());
             }
         });
         return new ActionResult(true, messages.get("trader.review.started"));
     }
 
 
-    /** 不能复盘的原因，null=可以。素材有无另看 {@link ReviewRunner#hasMaterial} */
+    /** 不能复盘的原因，null=可以：只看复盘位，唤醒在跑不挡复盘。素材有无另看 {@link ReviewRunner#hasMaterial} */
     public String reviewBlockedReason(AiTrader t) {
-        if (scheduler.isHandoverActive()) {
-            // 交接期间点播会抢掉日线复盘的 inFlight 位子，日线那篇就被跳过了
-            return messages.get("trader.review.handover");
-        }
-        if (scheduler.isBusy(t.getId())) {
-            return messages.get("trader.review.busy");
-        }
-        return null;
+        return reviewScheduler.isBusy(t.getId()) ? messages.get("trader.review.busy") : null;
     }
 
     // ========== 面板状态 ==========

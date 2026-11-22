@@ -15,7 +15,6 @@ import java.util.List;
 import static com.mawai.wiibagent.learning.CaseFileBuilder.BAR_MS;
 import static com.mawai.wiibagent.learning.CaseFileBuilder.DIRECTION_MS;
 import static com.mawai.wiibagent.learning.CaseFileBuilder.Outcome;
-import static com.mawai.wiibagent.learning.CaseFileBuilder.REPLAY_MS;
 import static com.mawai.wiibagent.learning.CaseFileBuilder.Replay;
 import static com.mawai.wiibagent.learning.CaseFileBuilder.STOP_WIDTHS;
 import static com.mawai.wiibagent.learning.CaseFileBuilder.WidthOutcome;
@@ -32,7 +31,7 @@ final class LadderReplay {
 
     /**
      * @param initial  首批档（add=false）
-     * @param bars     从首批最早挂出那根起的 5m K 线
+     * @param bars     从首批最早挂出那根起、到平仓后 24 小时为止的 5m K 线，重放走到末尾
      * @param withAdds 这笔实际里有没有加过仓，只是带出去做标记
      * @return 首批里有下单结果未知的档、或没有 K 线时为 null
      */
@@ -55,22 +54,24 @@ final class LadderReplay {
         boolean isLong = "LONG".equals(pos.getSide());
         List<Walk> walks = STOP_WIDTHS.stream()
                 .map(width -> walk(initial, bars, pos.getSymbol(), isLong, entry, distance, budget, width)).toList();
-        // 首档成交后 24 小时内的顺向、逆向和拿满的位置，以加权均价为参照
+        // 首档成交后 24 小时内的顺向、逆向和拿满的位置，以加权均价为参照。
+        // 24 小时从首档成交所在那根的开盘算：平仓不会早于那一根，取到平仓后 24 小时的 K 线一定盖得住这一段
         Long firstFill = walks.getFirst().firstFill();
         BigDecimal fav = null;
         BigDecimal adv = null;
         BigDecimal hold = null;
         if (firstFill != null) {
+            long end = walks.getFirst().fillBar() + DIRECTION_MS;
             BigDecimal favourable = BigDecimal.ZERO;
             BigDecimal adverse = BigDecimal.ZERO;
             for (KlineBar bar : bars) {
-                if (bar.openTime() < firstFill || bar.openTime() >= firstFill + DIRECTION_MS) {
+                if (bar.openTime() < firstFill || bar.openTime() >= end) {
                     continue;
                 }
                 favourable = favourable.max(isLong ? bar.high().subtract(entry) : entry.subtract(bar.low()));
                 adverse = adverse.max(isLong ? entry.subtract(bar.low()) : bar.high().subtract(entry));
                 // K 线覆盖到 24 小时才有拿满的位置
-                if (bar.openTime() + BAR_MS >= firstFill + DIRECTION_MS) {
+                if (bar.openTime() + BAR_MS >= end) {
                     hold = ratio(isLong ? bar.close().subtract(entry) : entry.subtract(bar.close()), distance);
                 }
             }
@@ -114,8 +115,11 @@ final class LadderReplay {
         }
     }
 
-    /** 一档止损宽度走完的结局，和重放里首档成交的那根 */
-    private record Walk(WidthOutcome outcome, Long firstFill) {
+    /**
+     * 一档止损宽度走完的结局。firstFill 是重放里首档成交后开始算的那根，fillBar 是首档成交所在的那根：
+     * 限价档两个是同一根，实际市价档从成交那根的下一根才开始算，差一根。没成交过两个都是 null
+     */
+    private record Walk(WidthOutcome outcome, Long firstFill, Long fillBar) {
     }
 
     /**
@@ -130,12 +134,9 @@ final class LadderReplay {
         BigDecimal gain = BigDecimal.ZERO;
         BigDecimal fees = BigDecimal.ZERO;
         Long firstFill = null;
+        Long fillBar = null;
         boolean touchedTarget = false;
         for (KlineBar bar : bars) {
-            // 从首档成交那根起最远走 72 小时
-            if (firstFill != null && bar.openTime() >= firstFill + REPLAY_MS) {
-                break;
-            }
             // 入场：实际市价档从成交那根的下一根起，实际限价档从成交那根起，用实际成交价和手续费；
             // 其余限价档从挂出那根的下一根起，穿过限价就按限价成交、手续费按 maker 估
             for (Entry entry : entries) {
@@ -157,6 +158,7 @@ final class LadderReplay {
                         : entry.price.multiply(entry.left).multiply(FuturesFeeRates.MAKER));
                 if (firstFill == null) {
                     firstFill = bar.openTime();
+                    fillBar = entry.filledBar;
                 }
             }
             if (firstFill == null) {
@@ -173,7 +175,7 @@ final class LadderReplay {
                     fees = fees.add(stop.multiply(entry.left).multiply(FuturesFeeRates.TAKER));
                 }
                 Outcome outcome = touchedTarget ? Outcome.TARGET : Outcome.STOP;
-                return new Walk(new WidthOutcome(width, outcome, ratio(gain.subtract(fees), risk)), firstFill);
+                return new Walk(new WidthOutcome(width, outcome, ratio(gain.subtract(fees), risk)), firstFill, fillBar);
             }
             // 止盈：这一根刚成交的档不参与
             for (Entry entry : entries) {
@@ -195,10 +197,10 @@ final class LadderReplay {
             }
             // 成交过的都了结了：计划了结，还没成交的档作废
             if (entries.stream().allMatch(e -> e.left.signum() == 0)) {
-                return new Walk(new WidthOutcome(width, Outcome.TARGET, ratio(gain.subtract(fees), risk)), firstFill);
+                return new Walk(new WidthOutcome(width, Outcome.TARGET, ratio(gain.subtract(fees), risk)), firstFill, fillBar);
             }
         }
-        return new Walk(new WidthOutcome(width, Outcome.OPEN, null), firstFill);
+        return new Walk(new WidthOutcome(width, Outcome.OPEN, null), firstFill, fillBar);
     }
 
     /** 这根有没有穿过这档的限价；市价档、挂出时刻所在的那根不算 */

@@ -81,17 +81,33 @@ class NewsToolkitTest {
         hit.setUrl("https://z");
         hit.setPublishedAt(1794283200000L);
         long before = System.currentTimeMillis();
-        when(newsEventMapper.search(eq("ZEC"), anyLong(), eq(30))).thenReturn(List.of(hit));
+        when(newsEventMapper.search(eq("ZEC"), anyLong(), anyLong(), eq(30))).thenReturn(List.of(hit));
 
         String json = toolkit.newsSearch(AgentLang.EN, " ZEC ", null);
 
         // 标题有译文、正文没有：正文回落原文；时刻按北京时间
         assertThat(json).contains("ZEC halving nears").contains("区块奖励将减半").contains("2026-11-10 12:00:00");
         ArgumentCaptor<Long> from = ArgumentCaptor.forClass(Long.class);
-        verify(newsEventMapper).search(eq("ZEC"), from.capture(), eq(30));
+        verify(newsEventMapper).search(eq("ZEC"), from.capture(), anyLong(), eq(30));
         assertThat(from.getValue()).isBetween(before - 24 * 3_600_000L, System.currentTimeMillis() - 24 * 3_600_000L);
         verify(newsCache, never()).getFlashes();
 
         assertThat(toolkit.newsSearch(AgentLang.ZH, "没有这个词", 6)).isEqualTo("[]");
+    }
+
+    /** 带起止时刻的存档视图：两头按北京时间读成毫秒传给查询，右端不含 */
+    @Test
+    void archiveViewSearchesBetweenTwoBeijingTimes() {
+        NewsEventItem hit = new NewsEventItem();
+        hit.setId(9L);
+        hit.setTitle("ZEC 减半临近");
+        hit.setContent("区块奖励将减半");
+        hit.setUrl("https://z");
+        hit.setPublishedAt(1794283200000L);
+        when(newsEventMapper.search(null, 1794279600000L, 1794286800000L, 30)).thenReturn(List.of(hit));
+
+        String json = toolkit.archiveFor(AgentLang.ZH).newsArchive("2026-11-10 11:00", "2026-11-10 13:00", null);
+
+        assertThat(json).contains("ZEC 减半临近").contains("2026-11-10 12:00:00");
     }
 }

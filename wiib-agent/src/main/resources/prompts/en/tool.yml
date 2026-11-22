@@ -260,7 +260,7 @@ tool:
 
   trader_decisions: |-
     Get the recent decision timeline of the user's AI trader, newest first. Each entry has
-    kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / EVENT=position-event wake / WATCH=watch-condition hit / REVIEW=daily retrospective),
+    kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / EVENT=position-event wake / WATCH=watch-condition hit / REVIEW=unified review),
     status, equity, the tools it called, and its FULL reasoning text. A trade action that did not go through
     carries its outcome in brackets after the tool name, e.g. open_position(rejected), close_position(not_attempted).
     Can be narrowed to one kind.
@@ -442,3 +442,25 @@ tool:
   write_draft: |-
     Have the writer produce the next version of the instruction from the Q&A so far. The body is streamed
     to the user; when done you get the body and notes back.
+
+  # ===== Tools the debrief uses to look into the past =====
+  round_detail: |-
+    Look into one of this trader's decision rounds; decisionId is the number after # in the rounds list.
+    Without call: the round's opening message (opening: the account, positions, plans and previous conclusion it woke up to),
+    and for each model call its text, the tools it called, their arguments and results (results carry the first 300 characters only).
+    In a staged round, the call that starts a new stage carries stageOpening.
+    With call (the call number from the overview): that call's tool results in full (as stored, at most 2000 characters each).
+    Point-in-time readings such as market snapshots, order book or fund flows are visible only if that round called the tool itself.
+    Rounds with no stored trace (old records, preset executions) only have the text and the actions.
+
+  trade_history: |-
+    The closed trades of this round. Without positionId: the list, newest first, at most 50, each with position id, symbol,
+    side, setup type, open and close times (Beijing time), close manner (closeManner: stopLoss/takeProfit/manual/liquidated) and net P&L.
+    With positionId: that trade's fact sheet (factSheet, written the same way as the fact sheet in the opening material) and
+    its debrief text (debrief; absent if the trade has not been debriefed yet).
+
+  news_archive: |-
+    News flashes published in a time range, from the local archive (title + body + source + publication time). from and to are
+    Beijing time yyyy-MM-dd HH:mm, from inclusive and to exclusive; keyword optionally keeps only those whose title or body contains it
+    (Chinese and English both searched). Newest first, at most 30: exactly 30 means earlier ones in the range were left out, so move to earlier and query again.
+    Each flash's publication time is the moment it became visible.

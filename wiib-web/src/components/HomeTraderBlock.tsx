@@ -34,12 +34,12 @@ function firstLine(reasoning: string | null | undefined): string | null {
   return s.length > 40 ? `${s.slice(0, 40)}…` : s;
 }
 
-/** 一个 trader 的战报数：详情、净值曲线、最新一条决策三个接口拉齐算好 */
+/** 一个 trader 的战报数：详情、净值曲线、最近一次唤醒三个接口拉齐算好 */
 async function statsOf(pub: TraderPublicView): Promise<Stats> {
   const [detail, curve, decisions] = await Promise.all([
     traderApi.detail(pub.id).catch(() => null),
     traderApi.equityCurve(pub.id).catch(() => []),
-    traderApi.decisions(pub.id, 1).catch(() => []),
+    traderApi.recentWakes(pub.id, 1).catch(() => []),
   ]);
   // 今日盈亏 = 现在的权益 − 今天 0 点（东八区）之前最后一个点；本局刚开就拿第一个点当基准
   const todayStart = new Date(`${fmtDate()}T00:00:00+08:00`).getTime();

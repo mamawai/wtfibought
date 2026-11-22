@@ -18,8 +18,8 @@ const CLOSE_MANNER_TONE: Record<string, string> = {
 
 /**
  * 一笔做完的交易（样式见 ArenaDetail.css .tc）：头行（币种·多空·了结方式·入场→出场·盈亏）→ 开/平时刻
- * → 计划（打法和依据、失效条件、入场/下单时止损/目标、逐档安排、修订史）→ 开仓/平仓决策的跳转钮。
- * 决策全文不在这里重复——时间线才是它的家，onJump 把人带过去。
+ * → 计划（打法和依据、失效条件、入场/下单时止损/目标、逐档安排、修订史）→ 开仓/平仓决策和单笔复盘的跳转钮。
+ * 决策和复盘的全文不在这里重复——时间线才是它的家，onJump 把人带过去。
  * onToggleStale 只有主人视角才传：忽略开关只治理自己 AI 的教材，公开记录不动。
  */
 export function TradeCard({ r, onJump, onToggleStale }: {
@@ -82,10 +82,12 @@ export function TradeCard({ r, onJump, onToggleStale }: {
           <PlanRevisions json={plan.revisionsJson} labelKey="plan.revisions" />
         </>
       ) : <div className="tm">{t('trade.noPlan')}</div>}
-      {(r.openDecision || r.closeDecision) && (
+      {(r.openDecision || r.closeDecision || r.debrief) && (
         <div className="jp">
           {r.openDecision && <DecisionLink label={t('trade.openDecision')} d={r.openDecision} onJump={onJump} />}
           {r.closeDecision && <DecisionLink label={t('trade.closeDecision')} d={r.closeDecision} onJump={onJump} />}
+          {/* 平仓满 24 小时后的单笔复盘，复盘成功了才有 */}
+          {r.debrief && <DecisionLink label={t('term.debrief')} d={r.debrief} onJump={onJump} />}
           {/* 平仓那一轮的一句话理由：止损/止盈带走没有这一轮，头行的了结方式标签已经说明 */}
           {r.closeDecision?.reason && <span>—— {r.closeDecision.reason}</span>}
         </div>

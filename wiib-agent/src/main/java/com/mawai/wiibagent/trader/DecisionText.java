@@ -111,6 +111,18 @@ public class DecisionText {
         return out;
     }
 
+    /** 一轮结论里该币的那一段，压成一行；没写结论块、没按币分段或没有这个币的段给 null */
+    public String symbolSection(String reasoning, String symbol) {
+        String block = conclusionBlock(reasoning);
+        if (block == null) {
+            return null;
+        }
+        return splitSegments(block).stream()
+                .filter(s -> symbol.equals(s.symbol()))
+                .map(s -> s.body().strip().replaceAll("\\s+", " "))
+                .findFirst().orElse(null);
+    }
+
     /** 账本编号的写法：#后面跟数字 */
     private static final Pattern LEDGER_REF = Pattern.compile("#(\\d{1,18})(?!\\d)");
 

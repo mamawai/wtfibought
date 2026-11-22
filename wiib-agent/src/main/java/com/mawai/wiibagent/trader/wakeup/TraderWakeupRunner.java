@@ -222,6 +222,11 @@ public class TraderWakeupRunner {
             BigDecimal equity = simTradeClient.getEquity(trader.getSimUserId());
             decision.setEquity(equity);
             if (equity.compareTo(BUST_OUT_FLOOR) < 0) {
+                // 爆仓后不会再有下一轮来对账：这一轮就把计划对一遍，了结的单子才归得了档、进得了复盘
+                planStore.reconcile(trader.getId(), trader.getRoundNo(), positions,
+                        simTradeClient.getPendingOrders(trader.getSimUserId(), null),
+                        () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT),
+                        group -> simTradeClient.getGroupOrders(trader.getSimUserId(), group), wakeTime, lang);
                 markBustOut(trader, decision, lang);
                 return;
             }

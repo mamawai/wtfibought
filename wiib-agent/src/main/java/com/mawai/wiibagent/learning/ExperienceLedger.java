@@ -198,7 +198,7 @@ public class ExperienceLedger {
     // ==================== 复盘落账 ====================
 
     /**
-     * 逐行独立生效；不合法的行丢弃记日志，不中断。reviewId 为空＝迁移产生，没有复盘行可挂，也带不了单子。
+     * 逐行独立生效；不合法的行丢弃记日志，不中断。reviewId 是这篇统一复盘的决策行编号。
      * 同一条经验一篇只认第一行归类。新增排到最后落账，同一篇里的删除先腾出名额。
      * trades：本期单子，归类和新增里的仓位编号只认这些
      */
@@ -231,15 +231,52 @@ public class ExperienceLedger {
     /** 现役条目的归类：标记对得上种类、编号都在本期，才逐笔记下 */
     private boolean classify(long traderId, int roundNo, Long reviewId, Classify c, Map<Long, PeriodTrade> trades) {
         AiTraderExperience e = owned(traderId, c.id());
-        if (e == null || reviewId == null || !Objects.equals(e.getRoundNo(), roundNo)
+        if (e == null || !Objects.equals(e.getRoundNo(), roundNo)
                 || !AiTraderExperience.STATUS_ACTIVE.equals(e.getStatus())
                 || AiTraderExperience.KIND_FINDING.equals(e.getKind())
-                || !fits(AiTraderExperience.KIND_GAP.equals(e.getKind())
-                        ? Set.of(MARK_KEPT, MARK_BROKEN) : Set.of(MARK_UNDER, MARK_MISCITED), c.marks(), trades)) {
+                || !fits(classifyMarks(e), c.marks(), trades)) {
             return false;
         }
         record(e, reviewId, c.marks(), trades);
         return true;
+    }
+
+    /** 这条经验的归类行能用哪几个标记：执行缺口是守、破，假设和规律是名下、引用不符 */
+    private static Set<String> classifyMarks(AiTraderExperience e) {
+        return AiTraderExperience.KIND_GAP.equals(e.getKind())
+                ? Set.of(MARK_KEPT, MARK_BROKEN) : Set.of(MARK_UNDER, MARK_MISCITED);
+    }
+
+    /**
+     * 各笔单笔复盘的归类行合成每条经验一行，交给 {@link #apply}。
+     * 先逐笔筛：条目得是现役的假设、规律或执行缺口，标记对得上条目种类，仓位编号只能是这一笔自己的，
+     * 同一笔对同一条目只认第一行；不合的行丢掉。再按 actives 的顺序把各笔的标记并到一起，一笔都没有的条目不出行
+     *
+     * @param byPosition 仓位编号 → 这一笔单笔复盘写的归类行
+     */
+    public static List<Classify> mergeDebriefs(Map<Long, List<Classify>> byPosition, List<AiTraderExperience> actives) {
+        Map<Long, List<Mark>> merged = new LinkedHashMap<>();
+        for (AiTraderExperience e : actives) {
+            if (!AiTraderExperience.KIND_FINDING.equals(e.getKind())) {
+                merged.put(e.getId(), new ArrayList<>());
+            }
+        }
+        Map<Long, AiTraderExperience> byId = actives.stream().collect(Collectors.toMap(AiTraderExperience::getId, e -> e));
+        byPosition.forEach((positionId, lines) -> {
+            Set<Long> seen = new HashSet<>();
+            for (Classify c : lines) {
+                List<Mark> marks = merged.get(c.id());
+                if (marks == null || !seen.add(c.id())) {
+                    continue;
+                }
+                Set<String> allowed = classifyMarks(byId.get(c.id()));
+                if (c.marks().stream().allMatch(m -> m.positionId() == positionId && allowed.contains(m.mark()))) {
+                    marks.addAll(c.marks());
+                }
+            }
+        });
+        return merged.entrySet().stream().filter(e -> !e.getValue().isEmpty())
+                .map(e -> new Classify(e.getKey(), List.copyOf(e.getValue()))).toList();
     }
 
     /** 标记都是认的那几个，编号都在本期单子里 */
@@ -494,17 +531,9 @@ public class ExperienceLedger {
                         ? prompts.get(lang, "trader.label.ledgerMiscited", Map.of("m", t.miscited())) : ""));
     }
 
-    /**
-     * 渲染现役账本并按列写回 ai_trader.memory（trader 一条都看不到就写 null）；返回渲染文本。
-     * 本局账本一条都没有、memory 还是没迁移的旧文本时不写库，旧文本留给迁移，返回 null
-     */
+    /** 渲染现役账本并按列写回 ai_trader.memory（trader 一条都看不到就写 null）；返回渲染文本 */
     public String writeMemory(AiTrader trader, AgentLang lang) {
         String rendered = render(trader.getId(), trader.getRoundNo(), lang);
-        String memory = trader.getMemory();
-        if (rendered == null && memory != null && !memory.isBlank() && !isRendered(memory)
-                && all(trader.getId(), trader.getRoundNo()).isEmpty()) {
-            return null;
-        }
         traderMapper.update(null, new LambdaUpdateWrapper<AiTrader>()
                 .eq(AiTrader::getId, trader.getId())
                 .set(AiTrader::getMemory, rendered)
@@ -663,9 +692,21 @@ public class ExperienceLedger {
         return (int) rows.stream().filter(r -> mark.equals(r.getMark())).count();
     }
 
+    /** 格子在词表里的键（reviewer.op.slot.*） */
+    static String slotKey(String slot) {
+        return switch (slot) {
+            case AiTraderExperience.SLOT_ENTRY -> "entry";
+            case AiTraderExperience.SLOT_FAIL_DEF -> "failDef";
+            case AiTraderExperience.SLOT_FAIL_HANDLE -> "failHandle";
+            case AiTraderExperience.SLOT_PROFIT_HANDLE -> "profitHandle";
+            case AiTraderExperience.SLOT_RISK -> "risk";
+            default -> "exec";
+        };
+    }
+
     /** 金额：两位小数，带正负号 */
     static String money(BigDecimal v) {
-        return ReviewMaterialAssembler.signed(v.setScale(2, RoundingMode.HALF_UP));
+        return CaseFileRenderer.signed(v.setScale(2, RoundingMode.HALF_UP));
     }
 
     /** 由新增行造一条：类型大写、格子是执行缺口就是 GAP 否则假设、正文证据按语言截 */

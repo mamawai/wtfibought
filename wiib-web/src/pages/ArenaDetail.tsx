@@ -30,8 +30,8 @@ const PAGE = 50;
 const RANGES = [3, 7, 14, 30, 0] as const;
 type Range = typeof RANGES[number];
 type Tab = 'timeline' | 'trades';
-/** 时间线筛选：全部 / 动过仓位的 / 被叫醒的（例行心跳之外） / 复盘 */
-const FILTERS = ['all', 'acted', 'woken', 'review'] as const;
+/** 时间线筛选：全部 / 动过仓位的 / 被叫醒的（例行心跳之外） / 单笔复盘 / 统一复盘 */
+const FILTERS = ['all', 'acted', 'woken', 'debrief', 'review'] as const;
 type Filter = typeof FILTERS[number];
 const WOKEN_KINDS = new Set(['WATCH', 'EVENT', 'ALERT', 'MANUAL']);
 
@@ -260,7 +260,7 @@ export function ArenaDetail() {
   // 没选日期时从今天起步
   const shiftDay = (delta: number) => changeDay(fmtDate(dayBounds(day ?? today).from + delta * DAY_MS));
 
-  // 做完的交易 → 它的开/平仓那一轮：切回时间线、筛到那一天、当前局（做完的交易只有当前局的）。
+  // 做完的交易 → 它的开/平仓那一轮，或它的单笔复盘：切回时间线、筛到那一天、当前局（做完的交易只有当前局的）。
   // 总是整页重拉（同一天也拉）：目标可能在还没翻到的页里，重拉时一路翻到它
   const jumpToDecision = (d: TradeDecisionRef) => {
     jumpTargetRef.current = d.id;
@@ -317,7 +317,10 @@ export function ArenaDetail() {
   // 时间线筛选：每条只解析一次动作
   const actedIds = useMemo(() => new Set(decisions.filter(d => doneTrades(d).length > 0).map(d => d.id)), [decisions]);
   const passes = (d: AiTraderDecisionView, f: Filter) =>
-    f === 'all' || (f === 'review' ? d.kind === 'REVIEW' : f === 'woken' ? WOKEN_KINDS.has(d.kind) : actedIds.has(d.id));
+    f === 'all' || (f === 'review' ? d.kind === 'REVIEW' : f === 'debrief' ? d.kind === 'DEBRIEF'
+      : f === 'woken' ? WOKEN_KINDS.has(d.kind) : actedIds.has(d.id));
+  // 单笔复盘卡上写明是哪一笔：按仓位编号找做完的交易
+  const tradeByPosition = useMemo(() => new Map(trades.map(r => [r.positionId, r])), [trades]);
   const shown = decisions.filter(d => passes(d, filter));
 
   // tr=这只 trader（不叫 t，那是词表查询函数）
@@ -498,7 +501,10 @@ export function ArenaDetail() {
                   </div>
                 ) : (
                   <div>
-                    {shown.map(d => <DecisionCard key={d.id} d={d} mine={tr?.mine} highlight={d.id === focusId} />)}
+                    {shown.map(d => (
+                      <DecisionCard key={d.id} d={d} mine={tr?.mine} highlight={d.id === focusId}
+                                    trade={d.positionId != null ? tradeByPosition.get(d.positionId) : undefined} />
+                    ))}
                   </div>
                 )}
                 {hasMore && decisions.length > 0 && (

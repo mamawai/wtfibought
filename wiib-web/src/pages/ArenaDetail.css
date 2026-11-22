@@ -170,6 +170,8 @@
   .p-tw .lk .linkb[aria-expanded="true"]{color:var(--color-foreground);text-decoration-color:var(--color-foreground)}
   .p-tw .dc .trace{margin-top:14px;padding-top:14px;border-top:1px dashed var(--color-line2)}
   .p-tw .rvb{margin-top:12px;padding:16px 20px;border-radius:16px;background:var(--color-fill);font-size:15px;line-height:1.7}
+  /* 复盘正文是一行一项的固定格式，段内的换行照原样显示 */
+  .p-tw .rvb p{white-space:pre-line}
   .p-tw .more{margin-top:8px}
 
   /* ---- 做完的交易 ---- */

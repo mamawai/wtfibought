@@ -583,29 +583,6 @@ class ExperienceLedgerTest {
         assertThat(cap.getAllValues().get(1).getParamNameValuePairs().containsValue(null)).isTrue();
     }
 
-    /**
-     * memory 还是没迁移的旧文本：本局账本一条都没有时不写库，旧文本留给迁移；
-     * 账本里有了条目（迁移过了），哪怕 trader 一条都还看不到，也写 null，旧文本不再注入
-     */
-    @Test
-    void writeMemoryKeepsLegacyTextOnlyWhileLedgerIsEmpty() {
-        AiTrader t = new AiTrader();
-        t.setId(7L);
-        t.setRoundNo(1);
-        t.setMemory("【已验证纪律】\n1. 旧记忆");
-        when(expMapper.selectList(any())).thenReturn(List.of(), List.of(), List.of(exp(1L, KIND_HYPOTHESIS, DIR_OPPORTUNITY, "BREAKOUT")));
-
-        assertThat(ledger.writeMemory(t, AgentLang.ZH)).isNull();
-        verify(traderMapper, never()).update(any(), any());
-
-        assertThat(ledger.writeMemory(t, AgentLang.ZH)).isNull();
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
-        verify(traderMapper).update(isNull(), cap.capture());
-        assertThat(cap.getValue().getSqlSet()).contains("memory");
-        assertThat(cap.getValue().getParamNameValuePairs().containsValue(null)).isTrue();
-    }
-
     // ==================== 开新局 / 清理 / 主人操作 ====================
 
     /**

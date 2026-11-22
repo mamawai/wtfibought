@@ -16,6 +16,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.learning.ReviewScheduler;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
@@ -73,6 +74,7 @@ class TraderServiceTest {
 
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
     private final TraderScheduler scheduler = mock(TraderScheduler.class);
+    private final ReviewScheduler reviewScheduler = mock(ReviewScheduler.class);
     private final TraderLiveHub hub = mock(TraderLiveHub.class);
     private final ExperienceLedger ledger = mock(ExperienceLedger.class);
     /** 创建用的事务：看它收到 commit 还是 rollback */
@@ -80,12 +82,13 @@ class TraderServiceTest {
 
     private final TraderService service = new TraderService(
             traderMapper, decisionMapper, modelFactory, endpointService,
-            simTradeClient, binanceProperties, planStore, watchStore, scheduler, hub,
+            simTradeClient, binanceProperties, planStore, watchStore, scheduler, reviewScheduler, hub,
             new PromptCatalog(), langResolver, new MessageCatalog(), ledger, new TransactionTemplate(txManager));
 
     {
-        // 重置、删除要占 trader 的位子，默认占得到
+        // 重置、删除要占 trader 的唤醒位和复盘位，默认都占得到
         when(scheduler.tryOccupy(anyLong())).thenReturn(true);
+        when(reviewScheduler.tryOccupy(anyLong())).thenReturn(true);
         // 插行时库发 id
         when(traderMapper.insert(any(AiTrader.class))).thenAnswer(inv -> {
             inv.<AiTrader>getArgument(0).setId(7L);
@@ -381,6 +384,23 @@ class TraderServiceTest {
         verify(simTradeClient, never()).ensureAccount(any(), any());
         verify(planStore, never()).archiveRound(anyLong(), anyInt(), anyLong());
         verify(scheduler, never()).release(anyLong());
+    }
+
+    /** 唤醒位拿到了、复盘位被占着（单笔复盘或统一复盘在跑）：照样不重置，拿到的唤醒位放回去 */
+    @Test
+    void resetRefusedWhileReviewingAndGivesTheWakeSlotBack() {
+        AiTrader t = new AiTrader();
+        t.setId(7L);
+        t.setUserId(1L);
+        t.setRoundNo(3);
+        when(traderMapper.selectById(7L)).thenReturn(t);
+        when(reviewScheduler.tryOccupy(7L)).thenReturn(false);
+
+        assertThat(service.reset(1L, 7L, true)).contains("等这一轮跑完再重置");
+
+        verify(simTradeClient, never()).ensureAccount(any(), any());
+        verify(scheduler).release(7L);
+        verify(reviewScheduler, never()).release(anyLong());
     }
 
     /** 重置先给旧账户收尾：挂单全撤、仓位市价全平，然后才开新账户；位子用完放掉 */

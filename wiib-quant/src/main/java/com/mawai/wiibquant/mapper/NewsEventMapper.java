@@ -113,13 +113,13 @@ public interface NewsEventMapper {
     List<NewsEventItem> selectInRange(@Param("fromMs") long fromMs, @Param("toMs") long toMs,
                                       @Param("limit") int limit);
 
-    /** fromMs 之后标题或正文含关键字的快讯：中英两套都搜、不分大小写，keyword 为 null 不筛；新的在前 */
+    /** [fromMs, toMs) 里标题或正文含关键字的快讯：中英两套都搜、不分大小写，keyword 为 null 不筛；新的在前 */
     @Select("""
             <script>
             SELECT id, title, content, title_en AS titleEn, content_en AS contentEn,
                    url, published_at AS publishedAt
               FROM news_event
-             WHERE published_at &gt;= #{fromMs}
+             WHERE published_at &gt;= #{fromMs} AND published_at &lt; #{toMs}
             <if test="keyword != null">
                AND (title ILIKE '%' || #{keyword} || '%' OR content ILIKE '%' || #{keyword} || '%'
                  OR title_en ILIKE '%' || #{keyword} || '%' OR content_en ILIKE '%' || #{keyword} || '%')
@@ -129,5 +129,5 @@ public interface NewsEventMapper {
             </script>
             """)
     List<NewsEventItem> search(@Param("keyword") String keyword, @Param("fromMs") long fromMs,
-                               @Param("limit") int limit);
+                               @Param("toMs") long toMs, @Param("limit") int limit);
 }

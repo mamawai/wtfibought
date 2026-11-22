@@ -48,10 +48,12 @@ public class TradeRecordService {
     public record DecisionRef(long id, long wakeTime, String kind, String reasoning, String reason) {
     }
 
+    /** debrief 是这笔的单笔复盘（时间线上的 DEBRIEF 行，只带 id 和时刻），还没复盘成功就是 null */
     public record TradeRecord(long positionId, String symbol, String side, Integer leverage,
                               BigDecimal entryPrice, BigDecimal closedPrice, BigDecimal closedPnl,
                               long openedAt, long closedAt, String closeMannerKey,
-                              AiTraderPlan plan, DecisionRef openDecision, DecisionRef closeDecision) {
+                              AiTraderPlan plan, DecisionRef openDecision, DecisionRef closeDecision,
+                              DecisionRef debrief) {
     }
 
     public List<TradeRecord> closedTrades(AiTrader t) {
@@ -66,6 +68,7 @@ public class TradeRecordService {
         Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
         Map<Long, AiTraderDecision> openByWake = openDecisions(t, planByPos.values());
         Map<Long, DecisionRef> closeByPos = closeDecisions(t, closed);
+        Map<Long, DecisionRef> debriefByPos = debriefs(t, closed);
 
         List<TradeRecord> out = new ArrayList<>(closed.size());
         for (FuturesPositionDTO pos : closed) {
@@ -82,9 +85,27 @@ public class TradeRecordService {
                             : new DecisionRef(open.getId(), open.getWakeTime(), open.getKind(), open.getReasoning(), null),
                     // 止损/止盈带走的依据就是计划里的原始止损/目标，不挂平仓决策
                     TradePairing.MANNER_MANUAL.equals(mannerKey)
-                            ? closeByPos.get(pos.getId()) : null));
+                            ? closeByPos.get(pos.getId()) : null,
+                    debriefByPos.get(pos.getId())));
         }
         return out;
+    }
+
+    /** 这些仓位各自成功的单笔复盘（有几篇取最新的），键是仓位编号；只带 id 和时刻，正文在时间线上看 */
+    private Map<Long, DecisionRef> debriefs(AiTrader t, List<FuturesPositionDTO> closed) {
+        Map<Long, DecisionRef> byPos = new HashMap<>();
+        for (AiTraderDecision d : decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                .select(AiTraderDecision::getId, AiTraderDecision::getWakeTime, AiTraderDecision::getKind,
+                        AiTraderDecision::getPositionId)
+                .eq(AiTraderDecision::getTraderId, t.getId())
+                .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
+                .eq(AiTraderDecision::getKind, AiTraderDecision.KIND_DEBRIEF)
+                .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
+                .in(AiTraderDecision::getPositionId, closed.stream().map(FuturesPositionDTO::getId).toList())
+                .orderByAsc(AiTraderDecision::getId))) {
+            byPos.put(d.getPositionId(), new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), null, null));
+        }
+        return byPos;
     }
 
     /**

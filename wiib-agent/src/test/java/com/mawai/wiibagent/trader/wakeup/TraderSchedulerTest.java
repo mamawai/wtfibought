@@ -7,7 +7,6 @@ import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import java.util.Set;
-import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
 import com.mawai.wiibquant.task.EconCalendarCollector;
@@ -20,9 +19,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -46,7 +43,6 @@ class TraderSchedulerTest {
 
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final TraderWakeupRunner runner = mock(TraderWakeupRunner.class);
-    private final ReviewRunner reviewRunner = mock(ReviewRunner.class);
     private final WatchSentinel watchSentinel = mock(WatchSentinel.class);
     private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
 
@@ -56,7 +52,7 @@ class TraderSchedulerTest {
     }
 
     private TraderScheduler sched(EconCalendarGate gate) {
-        return new TraderScheduler(traderMapper, runner, reviewRunner, new MessageCatalog(), gate, watchSentinel, watchStore);
+        return new TraderScheduler(traderMapper, runner, new MessageCatalog(), gate, watchSentinel, watchStore);
     }
 
     private AiTrader trader1h() {
@@ -72,7 +68,7 @@ class TraderSchedulerTest {
         return new KlineClosedEvent(this, symbol, "5m", closeTime);
     }
 
-    /** 收盘超过 5 分钟的旧事件（停机后重放的积压）：收盘类盯盘照常判，不发例行、不留 SKIPPED、不启动交接 */
+    /** 收盘超过 5 分钟的旧事件（停机后重放的积压）：收盘类盯盘照常判，不发例行、不留 SKIPPED */
     @Test
     void staleKlineEventsDoNotWake() {
         when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
@@ -86,8 +82,6 @@ class TraderSchedulerTest {
         verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(DAY_BOUNDARY - 1), any());
         verify(runner, after(300).never()).wake(any(), anyLong());
         verify(runner, never()).recordSkipped(any(), anyLong());
-        verify(reviewRunner, never()).review(any(), anyLong());
-        assertThat(s.isHandoverActive()).isFalse();
     }
 
     private AlertTrigger trig() {
@@ -166,20 +160,6 @@ class TraderSchedulerTest {
         assertThat(s.nextRoutineWakeAt(trader1h())).isEqualTo(bj(13, 0));
     }
 
-    /** 时段不覆盖 08:00（21:00-07:00）：日线交接照样复盘，只是 08:00 那根不做交易唤醒 */
-    @Test
-    void dailyHandoverIgnoresWindowButPhase0Respects() {
-        AiTrader t = trader1h();
-        t.setWakeWindow("21:00-07:00");
-        when(traderMapper.selectList(any())).thenReturn(List.of(t));
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-
-        verify(reviewRunner, timeout(2_000)).review(any(AiTrader.class), eq(DAY_BOUNDARY));
-        verify(runner, never()).wake(any(), anyLong());
-    }
-
     // ---------- 财经日历等待闸 ----------
 
     /** 撞上数据公布：闸没放行前不发唤醒，放行后本轮照发 */
@@ -196,23 +176,6 @@ class TraderSchedulerTest {
         verify(runner, after(300).never()).wake(any(), anyLong());
         release.complete(null);
         verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(H1_BOUNDARY));
-    }
-
-    /** 日线交接的阶段0同样过闸 */
-    @Test
-    void dailyHandoverWaitsForCalendarGate() throws Exception {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        EconCalendarGate gate = mock(EconCalendarGate.class);
-        CompletableFuture<Void> release = new CompletableFuture<>();
-        when(gate.released(DAY_BOUNDARY)).thenReturn(release);
-        TraderScheduler s = sched(gate);
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-
-        verify(runner, after(300).never()).wake(any(), anyLong());
-        release.complete(null);
-        verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
-        awaitWindowClosed(s);
     }
 
     // ---------- 警报唤醒准入 ----------
@@ -306,7 +269,7 @@ class TraderSchedulerTest {
         verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(trig())));
     }
 
-    /** 点播复盘占着位子（tryOccupy）时来的触发排队，release 一放手就补醒 */
+    /** 重置占着唤醒位（tryOccupy）时来的触发排队，release 一放手就补醒 */
     @Test
     void triggerQueuedBehindOccupiedSlotRunsOnRelease() {
         traderInDb();
@@ -385,9 +348,9 @@ class TraderSchedulerTest {
         verify(runner, never()).wake(any(), anyLong());
     }
 
-    /** 日线边界：每个币的收盘事件都要评估收盘类命中，不只抢到交接启动权的那个 */
+    /** 每个币的收盘事件都要评估收盘类命中，同一边界的例行唤醒只发一次 */
     @Test
-    void dailyBoundaryEvaluatesCloseHitsForEverySymbol() throws Exception {
+    void everySymbolsCloseIsEvaluatedButTheBoundaryWakesOnce() {
         when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
         TraderScheduler s = sched();
 
@@ -396,7 +359,7 @@ class TraderSchedulerTest {
 
         verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(DAY_BOUNDARY - 1), any());
         verify(watchSentinel).closeHits(eq("ETHUSDT"), eq(DAY_BOUNDARY - 1), any());
-        awaitWindowClosed(s);
+        verify(runner, after(300).times(1)).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
     }
 
     /** 档位已下线的 trader（没迁的存量 5m）非例行也不叫 */
@@ -477,74 +440,18 @@ class TraderSchedulerTest {
         verify(runner, after(300).never()).wakeManual(any(), anyLong());
     }
 
-    // ---------- 日线交接：两阶段 + 停工窗口 ----------
-
-    /** 日线边界走两阶段交接：交易→复盘都发生，且边界一致 */
-    @Test
-    void dailyBoundaryRunsTradeThenReview() {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-
-        verify(reviewRunner, timeout(2_000)).review(any(AiTrader.class), eq(DAY_BOUNDARY));
-        verify(runner).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
-    }
-
-    /** 非日线边界（普通整点）只有例行唤醒，没有复盘 */
-    @Test
-    void nonDailyBoundaryDoesNotReview() {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",H1_CLOSE));
-
-        verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(H1_BOUNDARY));
-        verify(reviewRunner, after(300).never()).review(any(), anyLong());
-    }
-
-    /** review_enabled=false：交易照常，复盘不跑 */
-    @Test
-    void reviewDisabledSkipsReview() {
-        AiTrader t = trader1h();
-        t.setReviewEnabled(false);
-        when(traderMapper.selectList(any())).thenReturn(List.of(t));
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-
-        verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
-        verify(reviewRunner, after(300).never()).review(any(), anyLong());
-    }
-
-    /** 阶段0是屏障：交易没跑完，复盘不许开始（复盘读的是定格的一天，交易还在写就是脏读） */
-    @Test
-    void reviewWaitsForTradingToFinish() throws Exception {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        TraderScheduler s = sched();
-        CountDownLatch tradeHold = new CountDownLatch(1);
-        doAnswer(inv -> {
-            tradeHold.await();
-            return null;
-        }).when(runner).wake(any(), anyLong());
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-
-        verify(runner, timeout(2_000)).wake(any(), anyLong());
-        verify(reviewRunner, after(300).never()).review(any(), anyLong());
-        tradeHold.countDown();
-        verify(reviewRunner, timeout(2_000)).review(any(), eq(DAY_BOUNDARY));
-    }
+    // ---------- 日线边界：和别的边界一样，没有停工窗口 ----------
 
     /**
-     * 停工窗口在阶段0发出后就开：交易还在跑时，同币的下一根 15m 边界事件被整个丢弃——
-     * 既不再唤醒一次（占住 inFlight 让复盘被跳过），也不记 SKIPPED（那是互斥跳过的痕迹，说明窗口没开）
+     * 日线边界只发例行唤醒。上一轮还在跑时，下一根 15m 边界照常按互斥跳过留 SKIPPED，
+     * 手动唤醒的拒因是"上一轮还在跑"，警报排队等它跑完补醒
      */
     @Test
-    void windowOpensWhileTradingStillRunning() throws Exception {
-        AiTrader t = trader1h();
+    void dailyBoundaryIsAnOrdinaryBoundaryWithNoStopWindow() {
+        AiTrader t = runningTrader();
         t.setIntervalCode("15m");
         when(traderMapper.selectList(any())).thenReturn(List.of(t));
+        when(traderMapper.selectById(7L)).thenReturn(t);
         TraderScheduler s = sched();
         CountDownLatch tradeHold = new CountDownLatch(1);
         doAnswer(inv -> {
@@ -553,128 +460,16 @@ class TraderSchedulerTest {
         }).when(runner).wake(any(), anyLong());
 
         s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-
-        verify(runner, timeout(2_000)).wake(any(), anyLong());
-        awaitWindowOpen(s);
-        assertThat(tradeHold.getCount()).isEqualTo(1);   // 交易还卡着，窗口已经开了
+        verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
         s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY + 900_000L - 1));
-        verify(runner, after(300).times(1)).wake(any(), anyLong());
-        verify(runner, never()).recordSkipped(any(), anyLong());
+        s.nowMs = () -> DAY_BOUNDARY + 1_000_000L;
+        s.tryTriggerWake(7L, trig());
+
+        verify(runner, timeout(2_000)).recordSkipped(any(AiTrader.class), eq(DAY_BOUNDARY + 900_000L));
+        assertThat(s.tryManualWake(t)).contains("上一轮唤醒还在跑");
+        verify(runner, after(300).never()).wakeTriggered(any(), any());
         tradeHold.countDown();
-        awaitWindowClosed(s);
-    }
-
-    /** 停工窗口拒绝例行：窗口内的K线事件整个丢弃不补跑；窗口关闭后例行恢复 */
-    @Test
-    void handoverWindowDropsKlineEventsAndRecovers() throws Exception {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        TraderScheduler s = sched();
-        CountDownLatch reviewHold = new CountDownLatch(1);
-        doAnswer(inv -> {
-            reviewHold.await();
-            return null;
-        }).when(reviewRunner).review(any(), anyLong());
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-        verify(reviewRunner, timeout(2_000)).review(any(), anyLong());   // 复盘在跑=窗口已开
-
-        // 窗口内的下一根 1h 边界事件被整个丢弃——连 SKIPPED 都不记。
-        // 只断言"没 wake"不够：复盘占着 inFlight 也能挡 wake 但会记 SKIPPED，
-        // 分不清是窗口丢弃还是互斥跳过（变异测试实抓过这个盲区）
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY + 3_600_000L - 1));
-        verify(runner, after(300).times(1)).wake(any(), anyLong());
-        verify(runner, never()).recordSkipped(any(), anyLong());
-
-        reviewHold.countDown();
-        awaitWindowClosed(s);
-        // 窗口关闭后例行恢复如常
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY + 7_200_000L - 1));
-        verify(runner, timeout(2_000).times(2)).wake(any(), anyLong());
-    }
-
-    /** 停工窗口内的 5m 收盘照样评估收盘类命中（哨兵落库），窗口内不叫，留给下一轮开场白补报 */
-    @Test
-    void handoverWindowStillEvaluatesCloseHits() throws Exception {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        TraderScheduler s = sched();
-        CountDownLatch reviewHold = new CountDownLatch(1);
-        doAnswer(inv -> {
-            reviewHold.await();
-            return null;
-        }).when(reviewRunner).review(any(), anyLong());
-        long inWindow = DAY_BOUNDARY + 300_000L - 1;   // 08:05 那根 5m 收盘
-        when(watchSentinel.closeHits(eq("BTCUSDT"), eq(inWindow), any()))
-                .thenReturn(List.of(closeHit(31L, DAY_BOUNDARY + 300_000L)));
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-        verify(reviewRunner, timeout(2_000)).review(any(), anyLong());   // 复盘在跑=窗口已开
-        s.onKlineClosed(fresh(s, "BTCUSDT",inWindow));
-
-        verify(watchSentinel).closeHits(eq("BTCUSDT"), eq(inWindow), any());
-        verify(runner, after(300).never()).wakeTriggered(any(), any());
-        reviewHold.countDown();
-        awaitWindowClosed(s);
-    }
-
-    /** 停工窗口拒绝警报与手动：三个唤醒入口一个都不许漏 */
-    @Test
-    void handoverWindowBlocksAlertAndManualWake() throws Exception {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        TraderScheduler s = sched();
-        s.nowMs = () -> DAY_BOUNDARY + 600_000L;
-        CountDownLatch reviewHold = new CountDownLatch(1);
-        doAnswer(inv -> {
-            reviewHold.await();
-            return null;
-        }).when(reviewRunner).review(any(), anyLong());
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-        verify(reviewRunner, timeout(2_000)).review(any(), anyLong());
-
-        s.tryTriggerWake(7L,trig());
-        String why = s.tryManualWake(trader1h());
-
-        verify(runner, after(300).never()).wakeTriggered(any(), any());
-        assertThat(why).contains("日线交接");
-        reviewHold.countDown();
-        awaitWindowClosed(s);
-    }
-
-    /** 一个人的复盘异常逃逸不许卡死窗口也不许拖垮别人：另一个照常复盘、窗口最终关闭 */
-    @Test
-    void reviewExceptionDoesNotJamWindowOrOthers() throws Exception {
-        AiTrader broken = trader1h();
-        AiTrader other = trader1h();
-        other.setId(8L);
-        when(traderMapper.selectList(any())).thenReturn(List.of(broken, other));
-        doThrow(new RuntimeException("复盘炸了")).when(reviewRunner).review(argThat(t -> t.getId() == 7L), anyLong());
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(fresh(s, "BTCUSDT",DAY_BOUNDARY - 1));
-
-        verify(reviewRunner, timeout(2_000)).review(argThat(t -> t.getId() == 8L), eq(DAY_BOUNDARY));
-        awaitWindowClosed(s);
-    }
-
-    /** 自旋等停工窗口打开 */
-    private static void awaitWindowOpen(TraderScheduler s) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 2_000;
-        while (!s.isHandoverActive()) {
-            if (System.currentTimeMillis() > deadline) {
-                throw new AssertionError("停工窗口2s内没有打开");
-            }
-            Thread.sleep(10);
-        }
-    }
-
-    /** 自旋等停工窗口关闭（编排线程在后台收尾，verify 不适合等一个布尔位） */
-    private static void awaitWindowClosed(TraderScheduler s) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 2_000;
-        while (s.isHandoverActive()) {
-            if (System.currentTimeMillis() > deadline) {
-                throw new AssertionError("停工窗口2s内没有关闭");
-            }
-            Thread.sleep(10);
-        }
+        verify(runner, timeout(2_000)).wakeTriggered(any(), eq(List.of(trig())));
     }
 
     @Test

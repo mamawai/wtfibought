@@ -9,6 +9,7 @@ import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.TraderModelFactory;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
@@ -19,6 +20,7 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -27,27 +29,30 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * reviewer 复盘回路：代码备料（战绩 / 论点战绩 / 案例事实表 / 行情 / 账本）→ 一次模型调用写案例分析 + 经验更新表
- * → 解析落账（{@link ExperienceLedger}：本期单子按仓位编号记到经验名下）→ 代码结账（转正、降级、闲置退役）
- * → 账本渲染写回 ai_trader.memory。
+ * 统一复盘回路：代码备料（战绩 / 论点战绩 / 本批单子的事实表和单笔复盘正文 / 行情 / 布防 / 账本）
+ * → 一次模型调用写跨单子的分析 + 经验更新表（新增、发现、删除）
+ * → 落账（{@link ExperienceLedger}：各笔单笔复盘的归类行合并后按仓位编号记到经验名下，连同本篇的新增、发现、删除）
+ * → 给本批单子盖上这篇复盘的编号 → 代码结账（转正、降级、闲置退役）→ 账本渲染写回 ai_trader.memory。
  * REVIEW 决策行公开上时间线：正文 + 更新表 + 代码记账段；memory_after 存账本渲染快照。
  * <p>
- * 没有素材（窗口内无了结、无开仓动作）静默跳过，窗口并入下次。旧的自由文本记忆第一次跑时压成账本行（一次迁移调用）。
- * 迁移 / 复盘两次调用共用一份总预算。
- * 失败语义：ERROR 行留痕、账本不动、不计连败；经验更新一行都认不出、也没写「本期无更新」也算失败，只是正文照存。
- * 只写了「本期无更新」的算成功，后面照常落行、结账、渲染。
+ * 收哪些单子不看时间，看有没有做完单笔复盘、进没进过统一复盘；行情、布防、撤单、权益的窗口整体晚 24 小时
+ * （见 {@link #WINDOW_LAG_MS}）。归类只来自单笔复盘，这篇输出里的编号归类行不认。
+ * 没有素材（没有可收的单子、窗口内也无开仓动作）静默跳过，窗口并入下次。
+ * 失败语义：ERROR 行留痕、账本不动、本批单子不盖编号下次还在、不计连败；
+ * 经验更新一行都认不出、也没写「本期无更新」也算失败，只是正文照存。
+ * 只写了「本期无更新」的算成功，后面照常落行、落账、结账、渲染。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class ReviewRunner {
 
-    /** 整篇复盘的总预算：迁移 / 复盘两次调用各用剩余的部分 */
+    /** 一篇复盘最多跑多久 */
     static final int REVIEW_TIMEOUT_SECONDS = 600;
     /** REVIEW 行的 interval 标记复盘节奏（wake_time=日线边界），与 trader 唤醒档位无关 */
     static final String REVIEW_INTERVAL_CODE = "1d";
-    /** 迁移时最多压出几条 */
-    static final int MIGRATE_MAX = 10;
+    /** 行情、布防、撤单、权益的窗口右端比复盘时刻早多久：和单子等单笔复盘的时间一样，窗口才对得上这批单子 */
+    static final long WINDOW_LAG_MS = DebriefRunner.WAIT_MS;
 
     private final ReviewMaterialAssembler assembler;
     private final TraderModelFactory modelFactory;
@@ -56,22 +61,28 @@ public class ReviewRunner {
     private final UserLangResolver userLangResolver;
     private final ExperienceLedger ledger;
     private final ExperienceOpParser parser;
+    private final TraderPlanStore planStore;
 
-    /** 总预算注入点：测试把默认预算缩短 */
+    /** 时限注入点：测试把它调短 */
     int timeoutSeconds = REVIEW_TIMEOUT_SECONDS;
 
     /** 点播与动作面板的准入预检：有没有素材要当场答复；查不动就当没有 */
-    public boolean hasMaterial(AiTrader trader, long toMs) {
+    public boolean hasMaterial(AiTrader trader, long nowMs) {
         try {
             AiTraderDecision last = assembler.lastReview(trader.getId(), trader.getRoundNo());
-            return assembler.hasNewMaterial(trader, last == null ? 0 : last.getWakeTime(), toMs);
+            return assembler.hasNewMaterial(trader, windowFrom(last), nowMs - WINDOW_LAG_MS);
         } catch (Exception e) {
             log.warn("[Review] 素材预检失败 traderId={} msg={}", trader.getId(), e.toString());
             return false;
         }
     }
 
-    /** 日线边界复盘入口：素材窗口=(上次成功 REVIEW, 本边界]；无素材静默跳过 */
+    /** 窗口左端接上一篇的右端；本局首篇从头 */
+    private static long windowFrom(AiTraderDecision last) {
+        return last == null ? 0 : last.getWakeTime() - WINDOW_LAG_MS;
+    }
+
+    /** 统一复盘入口，boundaryMs 是这篇的时刻（08:00 边界，或点播的那一刻）；无素材静默跳过 */
     public void review(AiTrader trader, long boundaryMs) {
         long start = System.currentTimeMillis();
         long deadline = start + timeoutSeconds * 1000L;
@@ -85,24 +96,16 @@ public class ReviewRunner {
         d.setKind(AiTraderDecision.KIND_REVIEW);
         d.setToolCalls(0);
         try {
-            AiTraderDecision last = assembler.lastReview(trader.getId(), trader.getRoundNo());
-            long fromMs = last == null ? 0 : last.getWakeTime();
-            if (!assembler.hasNewMaterial(trader, fromMs, boundaryMs)) {
+            long fromMs = windowFrom(assembler.lastReview(trader.getId(), trader.getRoundNo()));
+            long toMs = boundaryMs - WINDOW_LAG_MS;
+            if (!assembler.hasNewMaterial(trader, fromMs, toMs)) {
                 log.info("[Review] 无新交易素材跳过 traderId={} boundary={}", trader.getId(), boundaryMs);
                 return;
             }
             UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
-            if (needsMigration(trader)) {
-                // 迁出 0 条先不动 memory；这篇复盘要是新增了条目，落账后写 memory 就把旧文本清掉了，之后不再迁
-                if (migrate(trader, lang, model, d, deadline) > 0) {
-                    ledger.writeMemory(trader, lang);
-                } else {
-                    log.warn("[Review] 旧记忆一条都没压出来 traderId={}", trader.getId());
-                }
-            }
-            ReviewMaterialAssembler.ReviewMaterial material = assembler.assemble(trader, fromMs, boundaryMs, lang);
+            ReviewMaterialAssembler.ReviewMaterial material = assembler.assemble(trader, fromMs, toMs, lang);
             String output = call(model, prompts.get(lang, "reviewer.system"),
-                    userPrompt(trader, material, fromMs, boundaryMs, lang), d, deadline);
+                    userPrompt(trader, material, fromMs, toMs, boundaryMs, lang), d, deadline);
             if (output == null || output.isBlank()) {
                 d.setStatus(AiTraderDecision.STATUS_ERROR);
                 d.setError(prompts.get(lang, "reviewer.error.emptyOutput"));
@@ -112,10 +115,13 @@ public class ReviewRunner {
                 return;
             }
             ExperienceOpParser.ReviewParsed parsed = parser.parse(output, lang);
+            // 归类只来自单笔复盘，这篇输出里的编号归类行不认
+            List<ExperienceLedger.Op> written = parsed.ops().stream()
+                    .filter(op -> !(op instanceof ExperienceLedger.Classify)).toList();
             d.setReasoning(output.strip());
             d.setLatencyMs((int) (System.currentTimeMillis() - start));
-            if (parsed.ops().isEmpty() && !parsed.noUpdates()) {
-                // 一行都认不出、也没写「本期无更新」：记成 ERROR，正文照存，账本不动；这段素材下次复盘还在窗口里
+            if (written.isEmpty() && !parsed.noUpdates()) {
+                // 一行都认不出、也没写「本期无更新」：记成 ERROR，正文照存，账本不动；本批单子没盖编号，下次复盘还在
                 d.setStatus(AiTraderDecision.STATUS_ERROR);
                 d.setError(prompts.get(lang, "reviewer.error.noOps"));
                 decisionMapper.insert(d);
@@ -125,12 +131,16 @@ public class ReviewRunner {
             d.setStatus(AiTraderDecision.STATUS_OK);
             // 先落行拿 id
             decisionMapper.insert(d);
-            ExperienceLedger.Applied applied = ledger.apply(trader.getId(), trader.getRoundNo(), d.getId(), parsed.ops(), lang,
+            // 各笔单笔复盘合并出来的归类在前，本篇的新增、发现、删除在后
+            List<ExperienceLedger.Op> ops = new ArrayList<>(material.classifies());
+            ops.addAll(written);
+            ExperienceLedger.Applied applied = ledger.apply(trader.getId(), trader.getRoundNo(), d.getId(), ops, lang,
                     material.trades());
+            planStore.markReviewed(material.planIds(), d.getId());
             List<ExperienceLedger.Change> changes = ledger.settle(trader.getId(), trader.getRoundNo(), d.getId(),
                     !material.trades().isEmpty(), lang);
-            log.info("[Review] 复盘落账 traderId={} 本期单子{}笔 生效{}条 丢弃{}条 代码结账{}条",
-                    trader.getId(), material.trades().size(), applied.applied(), applied.dropped(), changes.size());
+            log.info("[Review] 复盘落账 traderId={} 本批单子{}笔 生效{}条 丢弃{}条 代码结账{}条",
+                    trader.getId(), material.planIds().size(), applied.applied(), applied.dropped(), changes.size());
             writeMemory(trader, d, lang);
             // 展示用的追加段放最后，出错不耽误前面的账本渲染
             if (!changes.isEmpty() || !applied.overCap().isEmpty()) {
@@ -198,34 +208,7 @@ public class ReviewRunner {
                 .set(AiTraderDecision::getMemoryAfter, rendered));
     }
 
-    /** 账本空着、memory 非空且不是账本渲染出来的：旧的自由文本记忆要先压成账本行 */
-    private boolean needsMigration(AiTrader trader) {
-        String memory = trader.getMemory();
-        return memory != null && !memory.isBlank() && !ledger.isRendered(memory)
-                && ledger.active(trader.getId(), trader.getRoundNo()).isEmpty()
-                && ledger.retired(trader.getId(), trader.getRoundNo()).isEmpty();
-    }
-
-    /** 旧的自由文本记忆压成账本行，返回生效条数；压出来的条目没有复盘行可挂，created_review_id 为空 */
-    private int migrate(AiTrader trader, AgentLang lang, UsageTrackingChatModel model,
-                        AiTraderDecision d, long deadline) throws Exception {
-        StringBuilder user = new StringBuilder();
-        user.append(prompts.get(lang, "reviewer.label.ownerInstructions")).append('\n')
-                .append(trader.getCustomPrompt() == null || trader.getCustomPrompt().isBlank()
-                        ? prompts.get(lang, "reviewer.label.ownerInstructionsEmpty") : trader.getCustomPrompt())
-                .append("\n\n")
-                .append(prompts.get(lang, "reviewer.migrate.opening")).append('\n').append(trader.getMemory()).append("\n\n")
-                .append(prompts.get(lang, "reviewer.migrate.closing")).append('\n')
-                .append(prompts.get(lang, "reviewer.label.outputLanguage"));
-        String output = call(model, prompts.get(lang, "reviewer.migrate.system", Map.of("max", MIGRATE_MAX)),
-                user.toString(), d, deadline);
-        List<ExperienceLedger.Op> ops = parser.parseOps(output == null ? "" : output, lang);
-        ExperienceLedger.Applied applied = ledger.apply(trader.getId(), trader.getRoundNo(), null, ops, lang, Map.of());
-        log.info("[Review] 旧记忆迁移 traderId={} 生效{}条 丢弃{}条", trader.getId(), applied.applied(), applied.dropped());
-        return applied.applied();
-    }
-
-    /** 虚拟线程承载超时，预算＝总截止时刻剩下的秒数；用量落 finally——超时作废的调用 token 也真烧了。同一 model 实例多次调用用量累加 */
+    /** 虚拟线程承载超时，等到截止时刻为止；用量落 finally——超时作废的调用 token 也真烧了 */
     private String call(UsageTrackingChatModel model, String system, String user, AiTraderDecision d,
                         long deadline) throws Exception {
         LlmClient client = LlmClient.builder().model(model).systemPrompt(system).build();
@@ -247,14 +230,15 @@ public class ReviewRunner {
         }
     }
 
-    /** 复盘的用户消息：主人指令 + 战绩 + 论点战绩 + 案例素材 + 行情 + 盯盘布防 + 账本 + 收尾 */
+    /** 复盘的用户消息：窗口 + 主人指令 + 战绩 + 论点战绩 + 本批单子 + 行情 + 盯盘布防 + 账本 + 收尾 */
     // 包私有非 private：输出语言硬收尾那条钉子（PromptMarkParsingTest）要拿成文验它在末尾
-    String userPrompt(AiTrader trader, ReviewMaterialAssembler.ReviewMaterial m, long fromMs, long toMs, AgentLang lang) {
+    String userPrompt(AiTrader trader, ReviewMaterialAssembler.ReviewMaterial m, long fromMs, long toMs, long nowMs,
+                      AgentLang lang) {
         String from = fromMs == 0 ? prompts.get(lang, "reviewer.label.windowStart")
                 : BeijingTime.shortFormat(fromMs);
         StringBuilder sb = new StringBuilder();
         sb.append(prompts.get(lang, "reviewer.label.window", Map.of(
-                "from", from, "to", BeijingTime.shortFormat(toMs)))).append("\n\n");
+                "from", from, "to", BeijingTime.shortFormat(toMs), "now", BeijingTime.shortFormat(nowMs)))).append("\n\n");
         // 主人的交易指令是目标与边界，排在硬事实之前；主人亲笔原样注入不翻译
         sb.append(prompts.get(lang, "reviewer.label.ownerInstructions")).append('\n');
         sb.append(trader.getCustomPrompt() == null || trader.getCustomPrompt().isBlank()

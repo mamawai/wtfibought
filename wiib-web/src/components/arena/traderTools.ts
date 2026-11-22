@@ -25,6 +25,8 @@ const TOOL_KEY: Record<string, string> = {
   cross_asset_snapshot: 'tool.crossAssetSnapshot', web_search: 'tool.webSearch',
   // 不是模型调的工具：预案命中后平台执行的那一下，时间线上按一条动作显示
   preset: 'tool.preset',
+  // 单笔复盘查历史用的三个
+  round_detail: 'tool.roundDetail', trade_history: 'tool.tradeHistory', news_archive: 'tool.newsArchive',
 };
 
 /** 工具的展示名；表里没有的（后端加了新工具）原样显示 id */

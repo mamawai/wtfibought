@@ -44,10 +44,11 @@ public class NewsToolkit {
     public String newsSearch(AgentLang lang, String keyword, Integer hours) {
         boolean hasKeyword = keyword != null && !keyword.isBlank();
         boolean archive = hasKeyword || hours != null;
+        long now = System.currentTimeMillis();
         List<LocalizedFlash> flashes = archive
                 ? localizer.search(hasKeyword ? keyword.strip() : null,
-                        System.currentTimeMillis() - Math.clamp(hours == null ? DEFAULT_HOURS : hours, 1, MAX_HOURS) * 3_600_000L,
-                        ARCHIVE_LIMIT, lang)
+                        now - Math.clamp(hours == null ? DEFAULT_HOURS : hours, 1, MAX_HOURS) * 3_600_000L,
+                        now + 1, ARCHIVE_LIMIT, lang)
                 : localizer.localize(newsCache.getFlashes(), lang);
         log.info("[NewsTool] news_search 被调用（{}，keyword={} hours={}），快讯 {} 条", lang.code(), keyword, hours, flashes.size());
         if (flashes.isEmpty() && !archive) {
@@ -56,6 +57,22 @@ public class NewsToolkit {
             out.put("reason", "news feed unavailable");
             return MAPPER.writeValueAsString(out);
         }
+        return rows(flashes);
+    }
+
+    /**
+     * 存档里 [from, to) 这段时间发布的快讯，时刻是北京时间 yyyy-MM-dd HH:mm；
+     * 可以再按关键字筛。新的在前，最多 30 条
+     */
+    public String newsArchive(AgentLang lang, String from, String to, String keyword) {
+        boolean hasKeyword = keyword != null && !keyword.isBlank();
+        List<LocalizedFlash> flashes = localizer.search(hasKeyword ? keyword.strip() : null,
+                BeijingTime.parse(from), BeijingTime.parse(to), ARCHIVE_LIMIT, lang);
+        log.info("[NewsTool] news_archive 被调用（{}，{} → {} keyword={}），快讯 {} 条", lang.code(), from, to, keyword, flashes.size());
+        return rows(flashes);
+    }
+
+    private static String rows(List<LocalizedFlash> flashes) {
         ArrayNode arr = MAPPER.createArrayNode();
         for (LocalizedFlash f : flashes) {
             ObjectNode o = MAPPER.createObjectNode();
@@ -91,6 +108,30 @@ public class NewsToolkit {
                 @ToolParam(required = false, description = "Look back this many hours in the archive (1-168; 24 when only a keyword is given)")
                 Integer hours) {
             return toolkit.newsSearch(lang, keyword, hours);
+        }
+    }
+
+    /** 带起止时刻的存档视图，给单笔复盘查某段历史时间的快讯 */
+    public NewsArchiveTool archiveFor(AgentLang lang) {
+        return new NewsArchiveTool(this, lang);
+    }
+
+    @RequiredArgsConstructor
+    public static class NewsArchiveTool {
+
+        private final NewsToolkit toolkit;
+        private final AgentLang lang;
+
+        // 描述在词表 tool.news_archive（见 LocalizedToolCallbacks）
+        @Tool(name = "news_archive")
+        public String newsArchive(
+                @ToolParam(description = "Range start, \"yyyy-MM-dd HH:mm\" in UTC+8 (Beijing time), inclusive")
+                String from,
+                @ToolParam(description = "Range end, same format, exclusive")
+                String to,
+                @ToolParam(required = false, description = "Keyword to match in title or body, Chinese or English, case-insensitive (e.g. ETH, 解锁, hack)")
+                String keyword) {
+            return toolkit.newsArchive(lang, from, to, keyword);
         }
     }
 }

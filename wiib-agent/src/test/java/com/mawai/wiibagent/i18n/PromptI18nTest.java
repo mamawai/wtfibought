@@ -4,6 +4,7 @@ import java.util.Map;
 import com.mawai.wiibagent.replay.ReplayCoachRequest;
 import com.mawai.wiibagent.replay.ReplayCoachPrompts;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -14,10 +15,11 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
+import com.mawai.wiibagent.learning.CaseFileRenderer;
 import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.learning.ExperienceOpParser;
 import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
 import com.mawai.wiibagent.trader.DecisionText;
-import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
@@ -107,7 +109,6 @@ class PromptI18nTest {
     @Test
     void 英文reviewer提示词与素材块全文无中文() {
         assertNoCjk("英文 reviewer 系统提示词", prompts.get(AgentLang.EN, "reviewer.system"));
-        assertNoCjk("英文 reviewer 迁移提示词", prompts.get(AgentLang.EN, "reviewer.migrate.system", Map.of("max", 10)));
         assertNoCjk("英文 reviewer 收尾指令", prompts.get(AgentLang.EN, "reviewer.label.closing"));
         assertNoCjk("英文 reviewer 输出语言硬收尾",
                 prompts.get(AgentLang.EN, "reviewer.label.outputLanguage"));
@@ -115,9 +116,26 @@ class PromptI18nTest {
         ReviewMaterialAssembler.ReviewMaterial m = enMaterial();
         assertNoCjk("英文战绩表", m.statsBlock());
         assertNoCjk("英文论点战绩", m.playStatsBlock());
-        assertNoCjk("英文案例素材", m.casesBlock());
+        assertNoCjk("英文本批单子", m.casesBlock());
         assertNoCjk("英文行情", m.marketBlock());
         assertNoCjk("英文账本", m.ledgerBlock());
+        // 单笔复盘正文和它的归类都进了素材
+        assertThat(m.casesBlock()).contains("  Debrief:\n    Path: ran straight to the target\n");
+        assertThat(m.ledgerBlock()).contains("This batch's trades the debriefs sorted here: UNDER [1] BTCUSDT LONG BREAKOUT ");
+    }
+
+    @Test
+    void 英文debrief提示词与标签全文无中文() {
+        for (String key : List.of("debrief.system", "debrief.mark.body", "debrief.mark.classify",
+                "debrief.label.ownerInstructions", "debrief.label.ownerInstructionsEmpty", "debrief.label.closing",
+                "debrief.label.outputLanguage", "debrief.label.roundsHeader", "debrief.label.roundsNone",
+                "debrief.label.noAction", "debrief.label.ledgerEmpty", "debrief.label.citedNone",
+                "debrief.error.emptyOutput", "debrief.error.noClassify",
+                "tool.round_detail", "tool.trade_history", "tool.news_archive")) {
+            assertNoCjk("英文 " + key, prompts.get(AgentLang.EN, key));
+        }
+        assertNoCjk("英文事实表块头", prompts.get(AgentLang.EN, "debrief.label.factsHeader",
+                Map.of("guide", prompts.get(AgentLang.EN, "reviewer.label.caseGuide"))));
     }
 
     @Test
@@ -278,23 +296,34 @@ class PromptI18nTest {
                 .doesNotContain("Discipline:").doesNotContain("Analysis flow");
     }
 
-    /** reviewer 的事实纪律三件套 */
+    /** 统一复盘的事实纪律三件套 */
     @Test
     void 中文reviewer保住事实纪律三条() {
         String p = prompts.get(AgentLang.ZH, "reviewer.system");
         assertThat(p)
                 .as("① 数字只许引用事实表").contains("所有数字只许引用事实表里的，禁止自算或美化")
                 .contains("战绩一行只许原样复述")
-                .as("② 界定与处理必须可观察").contains("必须是可观察的价格、根数或时间")
+                .as("② 不逐笔重做、不写编号归类行").contains("不要逐笔重做").contains("你不写编号归类行，写了也不算数")
                 .as("③ 不抄指令、不继承旧教训").contains("主人指令里的规定不能当假设写进账本")
                 .contains("上期的教训不许重抄")
                 .contains("【本期复盘】").contains("【经验更新】");
     }
 
+    /** 单笔复盘的纪律：数字只许引用、分清当时和之后、只判这一笔、归类不看赚亏 */
+    @Test
+    void 中文debrief保住四条纪律() {
+        assertThat(prompts.get(AgentLang.ZH, "debrief.system"))
+                .as("① 数字只许引用").contains("数字只许引用事实表和工具回执里的，禁止自算或美化")
+                .as("② 当时和之后分开").contains("平仓之后的走势和消息只能用来解释结果，不能用来说当时该怎么做")
+                .as("③ 只判这一笔").contains("不提\"下次改什么\"，不提新规矩")
+                .as("④ 归类不看赚亏").contains("不看这笔最后赚了还是亏了")
+                .contains("【单笔复盘】").contains("【归类】");
+    }
+
     /** 不提运气：复盘赢单只问对在哪；论点战绩脚注（trader 和复盘都会看到）只说小样本不能当规律 */
     @Test
     void 复盘与论点战绩脚注不提运气() {
-        for (String key : List.of("reviewer.system", "trader.label.playStatsFooter")) {
+        for (String key : List.of("reviewer.system", "debrief.system", "trader.label.playStatsFooter")) {
             assertThat(prompts.get(AgentLang.ZH, key)).as(key).doesNotContain("运气");
             assertThat(prompts.get(AgentLang.EN, key)).as(key).doesNotContainIgnoringCase("luck");
         }
@@ -573,10 +602,21 @@ class PromptI18nTest {
         ExperienceLedger ledger = mock(ExperienceLedger.class);
 
         when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM - 3600_000, "10000"));
-        when(decisionMapper.selectList(any())).thenReturn(List.of(equityRow(FROM + 3600_000, "10500")));
+        // 这笔的单笔复盘：正文加一行归类，账本块里那条下面要列出它
+        AiTraderDecision debrief = new AiTraderDecision();
+        debrief.setId(50L);
+        debrief.setPositionId(1L);
+        debrief.setReasoning("[DEBRIEF]\nPath: ran straight to the target\n[SORTING]\n#1 UNDER 1");
+        when(decisionMapper.selectList(any())).thenAnswer(inv -> {
+            LambdaQueryWrapper<AiTraderDecision> w = inv.getArgument(0);
+            return String.valueOf(w.getSqlSelect()).contains("position_id")
+                    ? List.of(debrief) : List.of(equityRow(FROM + 3600_000, "10500"));
+        });
         when(sim.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(
                 closedPos("300", FROM + 3600_000, FROM + 7200_000)));
         AiTraderPlan plan = plan(AiTraderPlan.STATUS_CLOSED);
+        plan.setId(11L);
+        plan.setPositionId(1L);
         plan.setStopLossPrice(new BigDecimal("99000"));
         plan.setTakeProfitsJson("[{\"price\":104000,\"percent\":100}]");
         plan.setRevisionsJson("[{\"time\":\"x\",\"type\":\"stop_loss\",\"change\":\"99000->99500\",\"reason\":\"lock\"}]");
@@ -613,9 +653,9 @@ class PromptI18nTest {
         AiTrader t = enTrader();
         t.setSymbols("BTCUSDT");
         CaseFileBuilder caseFiles = new CaseFileBuilder(store);
-        return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, prompts, caseFiles,
+        return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, prompts, caseFiles, new CaseFileRenderer(prompts),
                 ledger, new PlayStatsAssembler(sim, planMapper, prompts, caseFiles), mock(TraderWatchStore.class), new DecisionText(prompts),
-                new TradeRecordService(sim, planMapper, decisionMapper))
+                new ExperienceOpParser(prompts))
                 .assemble(t, FROM, TO, AgentLang.EN);
     }
 

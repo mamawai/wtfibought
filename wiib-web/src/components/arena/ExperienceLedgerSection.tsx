@@ -36,7 +36,7 @@ function stateOf(e: TraderExperience): string {
 
 /**
  * 配置台的「经验账本」一节（样式见 MyTrader.css .le / .lhelp）：三个页签（经验 / 给你的提醒 / 已停用）+ 一块能收起的说明。
- * 每日复盘后代码记账，这里只管不写——条目正文来自模型的复盘
+ * 统一复盘后代码记账，这里只管不写——条目正文来自模型的复盘
  *
  * @param traderId 看的是哪个 trader 的账本（只有主人能看能改）
  */

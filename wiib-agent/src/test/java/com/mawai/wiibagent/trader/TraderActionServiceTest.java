@@ -8,7 +8,9 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
+import com.mawai.wiibagent.learning.DebriefRunner;
 import com.mawai.wiibagent.learning.ReviewRunner;
+import com.mawai.wiibagent.learning.ReviewScheduler;
 import com.mawai.wiibagent.trader.TraderActionService.ActionPanel;
 import com.mawai.wiibagent.trader.TraderActionService.ActionResult;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
@@ -17,7 +19,6 @@ import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -30,8 +31,6 @@ import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -41,6 +40,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -80,23 +80,12 @@ class TraderActionServiceTest {
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final AiTraderDecisionMapper decisionMapper = mock(AiTraderDecisionMapper.class);
 
-    private final TraderActionService service = new TraderActionService(
-            traderService, scheduler, reviewRunner, traderMapper, decisionMapper, new MessageCatalog());
+    /** 复盘位用真的：桩成固定 true/false 就测不出"占了之后第二次会被拦"这条 */
+    private final ReviewScheduler reviewScheduler = new ReviewScheduler(
+            mock(AiTraderMapper.class), mock(DebriefRunner.class), mock(ReviewRunner.class));
 
-    /**
-     * 调度器的 inFlight 是点播复盘与例行唤醒共用的互斥位，拿真集合当替身——
-     * 桩成固定 true/false 就测不出"占了之后第二次会被拦"这条。
-     */
-    @BeforeEach
-    void stubOccupancy() {
-        Set<Long> occupied = ConcurrentHashMap.newKeySet();
-        when(scheduler.tryOccupy(anyLong())).thenAnswer(inv -> occupied.add(inv.getArgument(0)));
-        when(scheduler.isBusy(anyLong())).thenAnswer(inv -> occupied.contains(inv.getArgument(0)));
-        doAnswer(inv -> {
-            occupied.remove(inv.<Long>getArgument(0));
-            return null;
-        }).when(scheduler).release(anyLong());
-    }
+    private final TraderActionService service = new TraderActionService(
+            traderService, scheduler, reviewScheduler, reviewRunner, traderMapper, decisionMapper, new MessageCatalog());
 
     // ---------- 夹具 ----------
 
@@ -113,9 +102,10 @@ class TraderActionServiceTest {
         return t;
     }
 
-    /** 按 (ME, TID) 取到的 trader；null=不归我或不存在 */
+    /** 按 (ME, TID) 取到的 trader；null=不归我或不存在。库里按 id 读到的也是它 */
     private void owned(AiTrader t) {
         when(traderService.owned(ME, TID)).thenReturn(t);
+        when(traderMapper.selectById(TID)).thenReturn(t);
     }
 
     /** 唯一那次列级更新的条件构造器；落库了什么以它为准 */
@@ -273,7 +263,7 @@ class TraderActionServiceTest {
         verify(scheduler).tryManualWake(t);
     }
 
-    /** 调度器的拒因（停工窗口/距例行太近/上一轮还在跑）原样转述，不能报"已唤醒" */
+    /** 调度器的拒因（距例行太近/上一轮还在跑）原样转述，不能报"已唤醒" */
     @Test
     void 调度器给出拒因时不触发唤醒() {
         AiTrader t = running();
@@ -365,15 +355,39 @@ class TraderActionServiceTest {
         verify(reviewRunner, never()).review(any(), anyLong());
     }
 
-    /** 停工窗口内点播会抢掉日线复盘的位子——连素材都不该去查 */
+    /** 拿到复盘位之后重新读库：查素材这一会儿刚重置开了新局，复盘按新局跑，不拿旧局的那份；已经删了就不跑 */
     @Test
-    void 停工窗口内拒绝点播复盘() {
+    void 点播复盘拿到复盘位后按库里最新的交易员跑() throws Exception {
+        AiTrader t = running();
+        owned(t);
+        when(reviewRunner.hasMaterial(eq(t), anyLong())).thenReturn(true);
+        AiTrader newRound = running();
+        newRound.setRoundNo(2);
+        when(traderMapper.selectById(TID)).thenReturn(newRound);
+
+        service.review(ME, TID);
+
+        verify(reviewRunner, timeout(2000)).review(eq(newRound), anyLong());
+        verify(reviewRunner, never()).review(eq(t), anyLong());
+
+        when(traderMapper.selectById(TID)).thenReturn(null);
+        for (int i = 0; i < 200 && reviewScheduler.isBusy(TID); i++) {
+            Thread.sleep(10);
+        }
+        service.review(ME, TID);
+        verify(reviewRunner, after(300).times(1)).review(any(), anyLong());
+    }
+
+    /** 复盘位被占着（单笔复盘或 08:00 的统一复盘在跑）：当场回绝，连素材都不去查 */
+    @Test
+    void 正在复盘时拒绝点播复盘() {
         owned(running());
-        when(scheduler.isHandoverActive()).thenReturn(true);
+        assertThat(reviewScheduler.tryOccupy(TID)).isTrue();
 
         ActionResult r = service.review(ME, TID);
 
         assertThat(r.ok()).isFalse();
+        assertThat(r.message()).contains("正在复盘");
         verify(reviewRunner, never()).hasMaterial(any(), anyLong());
         verify(reviewRunner, never()).review(any(), anyLong());
     }
@@ -381,7 +395,7 @@ class TraderActionServiceTest {
     /**
      * 同一 trader 不并行：一次复盘是 600s 预算的深模型大调用，连点两下就是花两份钱写两篇，
      * 而 ai_trader.memory 是全文覆盖写，后完成的那篇会把另一篇的教训直接顶掉。
-     * 占的是调度器那个 inFlight，所以交接阶段的全体复盘同样会被这个位子挡在外面。
+     * 占的是复盘位，和单笔复盘、08:00 的统一复盘共用；跑完放掉，下一次点得动。
      * 让 mock 卡在 review() 里不返回，复现"上一次还在跑"的那段窗口。
      */
     @Test
@@ -409,6 +423,11 @@ class TraderActionServiceTest {
             release.countDown();   // 断言失败也要放行，别让虚拟线程把这条用例吊死
         }
         verify(reviewRunner, times(1)).review(eq(t), anyLong());
+        // 跑完放位
+        for (int i = 0; i < 200 && reviewScheduler.isBusy(TID); i++) {
+            Thread.sleep(10);
+        }
+        assertThat(reviewScheduler.isBusy(TID)).isFalse();
     }
 
     // ---------- 面板 ----------

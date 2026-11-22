@@ -435,14 +435,16 @@ public class TraderController {
     }
 
     @GetMapping("/{id}/decisions")
-    @Operation(summary = "决策时间线（倒序分页，before传上一页最旧wakeTime；from/to 为 wakeTime 区间 [from,to)）")
+    @Operation(summary = "决策时间线（倒序分页，before传上一页最旧wakeTime；from/to 为 wakeTime 区间 [from,to)；wakeOnly=true 只要真醒来的那几种行，复盘和预案执行不要）")
     public Result<List<AiTraderDecision>> decisions(@PathVariable long id,
                                                     @RequestParam(defaultValue = "50") int limit,
                                                     @RequestParam(required = false) Long before,
                                                     @RequestParam(required = false) Integer round,
                                                     @RequestParam(required = false) Long from,
-                                                    @RequestParam(required = false) Long to) {
-        return Result.ok(traderService.decisions(id, limit, before, round, from, to, null));
+                                                    @RequestParam(required = false) Long to,
+                                                    @RequestParam(defaultValue = "false") boolean wakeOnly) {
+        return Result.ok(traderService.decisions(id, limit, before, round, from, to,
+                wakeOnly ? AiTraderDecision.WAKE_KINDS : null));
     }
 
     // ========== 唤醒现场 ==========

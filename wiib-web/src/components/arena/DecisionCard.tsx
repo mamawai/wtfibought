@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Loader2, NotebookPen } from 'lucide-react';
 import { traderApi } from '../../api';
 import { cn, fmtDateTime, fmtNum, fmtTokens } from '../../lib/utils';
-import type { AiTraderDecisionView, WakeTrace } from '../../types';
+import type { AiTraderDecisionView, TradeRecordView, WakeTrace } from '../../types';
 import { Markdown } from '../Markdown';
 import { ReasoningFold } from './ReasoningFold';
 import { WakeTraceView } from './WakeTraceView';
@@ -16,11 +16,14 @@ const LOOKED_MAX = 4;
 /**
  * 时间线上的一条决策（样式见 ArenaDetail.css .dc）：左边一根细线串起来，圆点颜色跟着是什么叫醒它的。
  * 从上到下：标签/时间/权益/遥测 → "看了什么"一句 → 交易动作行（参数/拒因）→ 推理折叠 + 过程。
- * 复盘不交易，圆点是空心的，正文铺在一块浅灰里。
+ * 复盘不交易，圆点是空心的，正文铺在一块浅灰里；单笔复盘在标签后面写明是哪一笔，它带工具，所以也有"看了什么"和过程。
  * highlight=从做完的交易跳过来的那一条，底色亮一下让人找得到。
  * mine=看的是自己的 trader，只有这时才出"过程"入口——轨迹接口对别人一律回 null。
+ * trade=单笔复盘对应的那笔做完的交易，页面上有就传；没有就只写仓位编号
  */
-export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; mine?: boolean; highlight?: boolean }) {
+export function DecisionCard({ d, mine, highlight, trade }: {
+  d: AiTraderDecisionView; mine?: boolean; highlight?: boolean; trade?: TradeRecordView;
+}) {
   const { t } = useTranslation('ai');
   // 过程轨迹：首次点开才拉，之后开合不重拉；拉失败复位标记，再点一次重试
   const [traceOpen, setTraceOpen] = useState(false);
@@ -33,7 +36,9 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
     void traderApi.decisionTrace(d.traderId, d.id).then(setTrace, () => { traceRequested.current = false; });
   };
   const kindLabel = useKindLabel();
-  const isReview = d.kind === 'REVIEW';
+  const isDebrief = d.kind === 'DEBRIEF';
+  // 两种复盘：空心圆点，正文直接铺开
+  const isReview = d.kind === 'REVIEW' || isDebrief;
   const actions = useMemo(() => parseActions(d.actionsJson), [d.actionsJson]);
   const dataCalls = actions.filter(a => !TRADE_TOOL_SET.has(a.tool));
   const trades = actions.filter(a => TRADE_TOOL_SET.has(a.tool));
@@ -48,8 +53,8 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
     d.modelCalls != null && `${d.totalTokens == null ? '—' : fmtTokens(d.totalTokens)} tok`,
     d.cachedTokens != null && t('detail.cachedTokens', { n: fmtTokens(d.cachedTokens) }),
     d.latencyMs != null && `${(d.latencyMs / 1000).toFixed(1)}s`,
-    // 复盘无工具（单次调用）不显示"0次工具"占位；预案那一行不是模型调的工具，也不显示
-    !isReview && d.kind !== 'PRESET' && t('detail.toolCalls', { count: d.toolCalls }),
+    // 统一复盘无工具（单次调用）不显示"0次工具"占位；预案那一行不是模型调的工具，也不显示
+    d.kind !== 'REVIEW' && d.kind !== 'PRESET' && t('detail.toolCalls', { count: d.toolCalls }),
     d.modelCalls != null && t('detail.modelCalls', { count: d.modelCalls }),
   ].filter(Boolean).join(' · ');
 
@@ -59,7 +64,16 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
   return (
     <div id={`decision-${d.id}`} className={cn('dc', isReview ? 'rv' : dot, highlight && 'hl')}>
       <div className="dc-h">
-        {isReview ? (
+        {isDebrief ? (
+          <>
+            {d.status === 'OK' ? <span className="tag ink"><NotebookPen className="ic" />{t('term.debrief')}</span>
+              : <span className="tag r">{t('decision.debriefFailed')}</span>}
+            {/* 是哪一笔：页面上有这笔交易就写币和方向，没有就写仓位编号 */}
+            <span>
+              {trade ? `${trade.symbol} ${t(trade.side === 'LONG' ? 'term.long' : 'term.short')}` : t('decision.position', { id: d.positionId })}
+            </span>
+          </>
+        ) : isReview ? (
           d.status === 'OK' ? <span className="tag ink"><NotebookPen className="ic" />{t('term.dailyReview')}</span>
             // 观望门控跳过的复盘行（SKIPPED）不是失败：灰标签，error 字段带着跳过缘由
             : d.status === 'SKIPPED' ? <span className="tag">{t('decision.skipped')}</span>
@@ -124,7 +138,15 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
       {d.status === 'SKIPPED' && d.error && <p className="why">{d.error}</p>}
 
       {isReview
-        ? d.reasoning && <div className="rvb"><Markdown content={d.reasoning} /></div>
+        ? (
+          <>
+            {d.reasoning && <div className="rvb"><Markdown content={d.reasoning} /></div>}
+            {/* 单笔复盘带工具，落了轨迹的主人可以看它查了什么 */}
+            {isDebrief && mine && d.hasTrace && (
+              <button type="button" className="linkb" aria-expanded={traceOpen} onClick={toggleTrace}>{t('live.process')}</button>
+            )}
+          </>
+        )
         : (
           <ReasoningFold reasoning={d.reasoning}>
             {/* 这轮落了轨迹（hasTrace）才有过程可看 */}

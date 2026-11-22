@@ -155,7 +155,7 @@ class TraderChatServiceTest {
         service.decisions(running(), null, null, AgentLang.ZH);
         JsonNode unknown = parse(service.decisions(running(), null, "RETRO", AgentLang.ZH));
 
-        verify(traderService).decisions(7L, 3, null, null, null, null, "REVIEW");
+        verify(traderService).decisions(7L, 3, null, null, null, null, List.of("REVIEW"));
         verify(traderService).decisions(7L, TraderChatService.DEFAULT_DECISIONS, null, null, null, null, null);
         assertThat(unknown.path("error").asString(null)).contains("RETRO");
         assertThat(unknown.has("decisions")).isFalse();
@@ -193,7 +193,7 @@ class TraderChatServiceTest {
                                                         TradeRecordService.DecisionRef close) {
         return new TradeRecordService.TradeRecord(id, "BTCUSDT", "LONG", 5, new BigDecimal("100"),
                 new BigDecimal("100").add(new BigDecimal(pnl)), new BigDecimal(pnl), 1_000L, 2_000L,
-                "manual", plan, null, close);
+                "manual", plan, null, close, null);
     }
 
     // ==================== stale：忽略的交易从 chat 教材消失（口径3：chat 跟随忽略） ====================
