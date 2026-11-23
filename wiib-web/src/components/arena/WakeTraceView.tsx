@@ -5,7 +5,7 @@ import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn, fmtDateTime, fmtNum, fmtTokens } from '../../lib/utils';
 import type { WakeStage, WakeToolCall, WakeToolResult, WakeTrace } from '../../types';
 import { StreamText } from '../StreamText';
-import { TRADE_TOOL_SET, dataArgsSummary, toolName, tradeArgsSummary } from './traderTools';
+import { TRADE_TOOL_SET, actionNote, dataArgsSummary, toolName, tradeArgsSummary } from './traderTools';
 
 /** 数据工具的参数 k=v 一行；对象值压成 JSON */
 function kvArgs(args: Record<string, unknown>): string {
@@ -61,6 +61,8 @@ function ToolChip({ tc, result, running }: { tc: WakeToolCall; result?: WakeTool
   const args = typeof tc.args === 'string' ? tc.args
     : TRADE_TOOL_SET.has(tc.name) ? tradeArgsSummary({ tool: tc.name, args: tc.args })
     : dataArgsSummary(tc.name, tc.args) ?? kvArgs(tc.args);
+  // 交易动作的理由不在一行里，指上去连理由一起看
+  const note = typeof tc.args === 'string' ? undefined : actionNote({ tool: tc.name, args: tc.args });
   // not_attempted：调用次数用完被拦下，没执行，不算出错
   const skipped = result?.status === 'not_attempted';
   const failed = result != null && result.status !== 'ok' && !skipped;
@@ -80,7 +82,7 @@ function ToolChip({ tc, result, running }: { tc: WakeToolCall; result?: WakeTool
             : skipped ? t('trade.notAttempted') : ''}
         </b>
         {/* 参数一行放不下就截断，指上去看全的 */}
-        {args && <span title={args}>{args}</span>}
+        {args && <span title={note ? `${args}\n${note}` : args}>{args}</span>}
         {pending && <em>{t('live.processing')}</em>}
       </button>
       {phase !== 'closed' && (

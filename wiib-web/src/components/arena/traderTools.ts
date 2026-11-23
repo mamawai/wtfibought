@@ -74,10 +74,15 @@ export function entryStatus(status: string): string {
   return i18n.t(`ai:plan.entryStatus.${status.toLowerCase()}`);
 }
 
-/** 止盈档写成「105000(50%) / 110000(50%)」 */
-function rungsText(rungs: unknown): string {
+/** 价位：千分位，小数照原样（小币的价位小数位多） */
+export function px(v: unknown): string {
+  return Number(v).toLocaleString('en-US', { maximumFractionDigits: 8 });
+}
+
+/** 止盈档写成「105,000(50%) / 110,000(50%)」 */
+export function rungsText(rungs: unknown): string {
   return Array.isArray(rungs)
-    ? (rungs as TargetRung[]).map(r => `${r.price}(${r.percent}%)`).join(' / ')
+    ? (rungs as TargetRung[]).map(r => `${px(r.price)}(${r.percent}%)`).join(' / ')
     : '';
 }
 
@@ -88,14 +93,35 @@ export interface ActionRow {
   rejected?: string;
   error?: string;
   args?: Record<string, unknown>;
-  result?: { close?: ActionRow; open?: ActionRow; entries?: EntryResult[]; orders?: { status: string }[] };
+  result?: {
+    close?: ActionRow; open?: ActionRow; entries?: EntryResult[]; orders?: { status: string }[];
+    /** 改止损：原来的止损价（老记录没有） */
+    from?: number | null;
+    /** 平仓回执：哪个币、平了多少、成交价、这次平掉的已实现盈亏 */
+    symbol?: string; quantity?: number; filledPrice?: number; realizedPnl?: number;
+  };
 }
 
-interface EntryResult {
+export interface EntryResult {
   quantity: number;
   limitPrice?: number;
   filledPrice?: number;
   status?: string;
+}
+
+/** 开仓的各档：有回执用回执（带成交没有），被拒的用参数；更早的老格式只有一档 quantity/limitPrice */
+export function openEntries(a: ActionRow): EntryResult[] {
+  if (a.result?.entries) return a.result.entries;
+  if (Array.isArray(a.args?.entries)) return a.args.entries as EntryResult[];
+  return a.args?.quantity != null
+    ? [{ quantity: Number(a.args.quantity), limitPrice: a.args.limitPrice != null ? Number(a.args.limitPrice) : undefined }]
+    : [];
+}
+
+/** 动作的理由：模型调工具时写的那句话，开仓、反手、补计划是依据；指到那一行时给看 */
+export function actionNote(a: ActionRow): string | undefined {
+  const note = a.args?.reason ?? a.args?.signalsUsed;
+  return note != null ? String(note) : undefined;
 }
 
 export function parseActions(json: string | null): ActionRow[] {
@@ -131,54 +157,45 @@ export function doneTrades(d: AiTraderDecisionView): ActionRow[] {
     .filter(a => TRADE_TOOL_SET.has(a.tool) && !NOT_ACTING.has(a.tool) && doneAction(a));
 }
 
-/** 交易动作的关键参数一行话（按工具挑重点，不倒整个 JSON）。词表在函数体里现查，切语言即变 */
+/**
+ * 交易动作的关键参数一行话：按工具挑重点，只写做了什么，理由不写（理由见 {@link actionNote}）。
+ * 改止损写成「原来 → 现在」。词表在函数体里现查，切语言即变
+ */
 export function tradeArgsSummary(a: ActionRow): string {
   const g = (k: string) => a.args?.[k] != null ? String(a.args[k]) : '';
   const tr = (key: string, vars?: Record<string, string>) => i18n.t(`ai:${key}`, vars ?? {});
+  const tp = rungsText(a.args?.takeProfits);
   switch (a.tool) {
     case 'reverse_position':
-      return [tr('args.position', { id: g('positionId') }), g('symbol'),
-        g('side') === 'LONG' ? tr('args.long') : g('side') === 'SHORT' ? tr('args.short') : g('side'),
-        g('quantity') && tr('args.qty', { n: g('quantity') }), g('leverage') && `${g('leverage')}x`,
-        g('stopLossPrice') && tr('args.sl', { p: g('stopLossPrice') }),
-        rungsText(a.args?.takeProfits) && tr('args.tp', { p: rungsText(a.args?.takeProfits) }), g('playType'),
-        a.result?.close?.status === 'ok' && tr('args.reverseClosed'),
-        a.result?.close?.status === 'liquidated' && tr('args.reverseLiquidated'),
-        a.result?.open?.status === 'ok' && tr('args.reverseOpened'),
-        a.result?.open?.result?.entries && entriesText(a.result.open.result.entries)].filter(Boolean).join(' · ');
-    case 'open_position': {
-      const tp = rungsText(a.args?.takeProfits);
-      const entries = a.result?.entries ?? (Array.isArray(a.args?.entries) ? a.args.entries as EntryResult[] : undefined);
-      const parts = [g('symbol'), g('side') === 'LONG' ? tr('args.long') : g('side') === 'SHORT' ? tr('args.short') : g('side'),
-        entries ? entriesText(entries) : [g('quantity') && tr('args.qty', { n: g('quantity') }),
-          g('limitPrice') && tr('args.limit', { p: g('limitPrice') })].filter(Boolean).join(' · '),
-        g('leverage') && `${g('leverage')}x`,
-        g('stopLossPrice') && tr('args.sl', { p: g('stopLossPrice') }),
-        tp && tr('args.tp', { p: tp }),
-        g('playType')];
-      return parts.filter(Boolean).join(' · ');
-    }
+      return [tr('args.position', { id: g('positionId') }), g('quantity') && tr('args.qty', { n: g('quantity') }),
+        g('leverage') && `${g('leverage')}x`, g('stopLossPrice') && tr('args.sl', { p: px(g('stopLossPrice')) }),
+        tp && tr('args.tp', { p: tp }), g('playType')].filter(Boolean).join(' · ');
+    case 'open_position':
+      return [g('symbol'), sideText(g('side')), entriesText(openEntries(a)), g('leverage') && `${g('leverage')}x`,
+        g('stopLossPrice') && tr('args.sl', { p: px(g('stopLossPrice')) }), tp && tr('args.tp', { p: tp }),
+        g('playType')].filter(Boolean).join(' · ');
     case 'close_position':
-      return [tr('args.position', { id: g('positionId') }), g('quantity') && tr('args.qty', { n: g('quantity') }), g('reason')]
+      return [tr('args.position', { id: g('positionId') }), g('quantity') && tr('args.qty', { n: g('quantity') })]
         .filter(Boolean).join(' · ');
-    case 'set_stop_loss':
-      return [`→${g('stopLossPrice')}`, g('reason')].filter(Boolean).join(' · ');
+    case 'set_stop_loss': {
+      const from = a.result?.from;
+      return `${from != null ? `${px(from)} ` : ''}→ ${px(g('stopLossPrice'))}`;
+    }
     case 'set_take_profit':
-      return [`→${rungsText(a.args?.takeProfits) || tr('args.tpNone')}`, g('reason')].filter(Boolean).join(' · ');
+      return `→ ${tp || tr('args.tpNone')}`;
     case 'preset': {
       const target = [g('symbol'), g('side')].filter(Boolean).join(' ');
-      const what = g('type') === 'MOVE_STOP' ? tr('args.presetMoveStop', { p: g('stopLossPrice') })
+      const what = g('type') === 'MOVE_STOP' ? tr('args.presetMoveStop', { p: px(g('stopLossPrice')) })
         : g('type') === 'CLOSE' ? tr('args.presetClose', { pct: g('closePercent') })
           : tr('args.order', { id: g('orderId') });
       return [target, what].filter(Boolean).join(' · ');
     }
     case 'write_plan':
-      return [g('playType'), g('invalidationCondition') && tr('args.invalidation', { c: g('invalidationCondition') })]
-        .filter(Boolean).join(' · ');
+      return [tr('args.position', { id: g('positionId') }), g('playType')].filter(Boolean).join(' · ');
     case 'cancel_order':
-      return [Array.isArray(a.args?.orderIds)
+      return Array.isArray(a.args?.orderIds)
         ? a.args.orderIds.map(id => tr('args.order', { id: String(id) })).join(' / ')
-        : tr('args.order', { id: g('orderId') }), g('reason')].filter(Boolean).join(' · ');
+        : tr('args.order', { id: g('orderId') });
     case 'set_watch': {
       const n = Array.isArray(a.args?.watches) ? (a.args.watches as unknown[]).length : 0;
       return [g('symbol'), tr('args.watches', { n: String(n) })].filter(Boolean).join(' · ');
@@ -188,11 +205,16 @@ export function tradeArgsSummary(a: ActionRow): string {
   }
 }
 
+/** 方向的叫法：做多、做空；认不出原样 */
+export function sideText(side: string): string {
+  return side === 'LONG' ? i18n.t('ai:args.long') : side === 'SHORT' ? i18n.t('ai:args.short') : side;
+}
+
 function entriesText(entries: EntryResult[]): string {
   return entries.map(entry => [
-    `${entry.limitPrice ?? i18n.t('ai:plan.marketEntry')} × ${entry.quantity}`,
+    `${entry.limitPrice != null ? px(entry.limitPrice) : i18n.t('ai:plan.marketEntry')} × ${entry.quantity}`,
     entry.status && entryStatus(entry.status),
-    entry.filledPrice != null && i18n.t('ai:plan.filledAt', { price: entry.filledPrice }),
+    entry.filledPrice != null && i18n.t('ai:plan.filledAt', { price: px(entry.filledPrice) }),
   ].filter(Boolean).join(' ')).join(' / ');
 }
 

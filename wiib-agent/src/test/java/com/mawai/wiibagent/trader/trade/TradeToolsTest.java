@@ -243,6 +243,8 @@ class TradeToolsTest {
         verify(simTradeClient, never()).setOrderProtection(eq(99L), eq(2L), any());
         verify(simTradeClient, never()).setOrderProtection(eq(99L), eq(3L), any());
         assertThat(result).contains("updated", "retained", "failed", "already triggered");
+        // 回执带原来的止损价
+        assertThat(MAPPER.readTree(result).path("from").decimalValue()).isEqualByComparingTo("95000");
         assertThat(plan.getRevisionsJson()).contains("同组挂单改了 1 档", "保留原样 2 档", "没改成 1 档");
     }
 

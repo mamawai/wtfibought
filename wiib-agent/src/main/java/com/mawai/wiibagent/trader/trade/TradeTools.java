@@ -595,7 +595,7 @@ public class TradeTools {
                     revisePlan(pos.getSymbol(), pos.getSide(), prompts.get(ctx.lang(), "trader.revise.moveStop"),
                             (m.from() == null ? prompts.get(ctx.lang(), "trader.revise.none") : m.from().stripTrailingZeros().toPlainString())
                                     + "→" + newStop.stripTrailingZeros().toPlainString() + syncedText(m.pending()), reason);
-                    return ok("set_stop_loss", args, protectionReceipt(m.pending()));
+                    return ok("set_stop_loss", args, stopReceipt(m.from(), m.pending()));
                 }
                 case StopOrders.PositionFailed f -> {
                     String suffix = syncedText(f.pending()) + prompts.get(ctx.lang(), "trader.revise.positionUnconfirmed");
@@ -737,6 +737,13 @@ public class TradeTools {
 
     private static String protectionReceipt(List<PendingProtection.Change> changes) {
         ObjectNode receipt = MAPPER.createObjectNode().put("ok", true);
+        receipt.set("pending", MAPPER.valueToTree(changes));
+        return MAPPER.writeValueAsString(receipt);
+    }
+
+    /** 移止损的回执：原来的止损价（原来没设为 null），和同组挂单改得怎样 */
+    private static String stopReceipt(BigDecimal from, List<PendingProtection.Change> changes) {
+        ObjectNode receipt = MAPPER.createObjectNode().put("ok", true).put("from", from);
         receipt.set("pending", MAPPER.valueToTree(changes));
         return MAPPER.writeValueAsString(receipt);
     }

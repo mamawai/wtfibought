@@ -1,11 +1,10 @@
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cn } from '../../lib/utils';
 import { Markdown } from '../Markdown';
 
 /** 结论分段标记 [BTCUSDT]（独占一行），与后端 ReviewMaterialAssembler.SEGMENT_TAG 同一形状 */
 const SEG_LINE = /^\s*\[([A-Z0-9]{2,20})\]\s*$/;
-/** 超过这么多字才折成两行、给「展开全文」 */
+/** 超过这么多字才收起来、给「展开全文」 */
 const LONG_CHARS = 84;
 
 interface Block {
@@ -33,7 +32,7 @@ function splitBlocks(text: string): Block[] {
 }
 
 /**
- * 决策推理（样式见 ArenaDetail.css .rs）：长的默认两行纯文本，展开成 markdown；短的直接铺。
+ * 决策推理（样式见 ArenaDetail.css .rs）：长的默认收起，只给「展开全文」，点开是 markdown；短的直接铺。
  * 带币种分段标记的按币分块，每块前面一枚币码。展开/收起和「过程」并排在底下一行链接里
  */
 export function ReasoningFold({ reasoning, children }: {
@@ -49,16 +48,14 @@ export function ReasoningFold({ reasoning, children }: {
   const blocks = splitBlocks(text);
   return (
     <>
-      {text && (
-        <div className={cn('rs', long && !open && 'clamp')}>
-          {/* 折叠态是纯文本，去掉 markdown 符号免得满屏井号；截到两行交给 line-clamp */}
-          {long && !open ? text.replace(/[#*`]/g, '').replace(/\s+/g, ' ')
-            : blocks.some(b => b.symbol != null) ? blocks.map((b, i) => (
-              <div key={i} className="part">
-                {b.symbol != null && <span className="tag sm">{b.symbol}</span>}
-                <Markdown content={b.body} />
-              </div>
-            )) : <Markdown content={text} />}
+      {text && (!long || open) && (
+        <div className="rs">
+          {blocks.some(b => b.symbol != null) ? blocks.map((b, i) => (
+            <div key={i} className="part">
+              {b.symbol != null && <span className="tag sm">{b.symbol}</span>}
+              <Markdown content={b.body} />
+            </div>
+          )) : <Markdown content={text} />}
         </div>
       )}
       {(long || children) && (

@@ -148,9 +148,7 @@
     "webSearch": "联网搜索"
   },
   "args": {
-    "reverseClosed": "旧仓已平",
     "reverseLiquidated": "旧仓已强平",
-    "reverseOpened": "反向新仓已开",
     "long": "做多",
     "short": "做空",
     "qty": "{{n}}张",
@@ -162,7 +160,6 @@
     "presetClose": "市价平掉{{pct}}%",
     "position": "仓位#{{id}}",
     "order": "订单#{{id}}",
-    "invalidation": "失效条件：{{c}}",
     "watches": "{{n}} 条盯盘条件"
   },
   "decision": {

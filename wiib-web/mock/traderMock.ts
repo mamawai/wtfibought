@@ -202,14 +202,37 @@ const decisions = () => {
     {
       id: 9001, traderId: 1, roundNo: 3, wakeTime: t - 12 * MIN, intervalCode: '4h',
       kind: 'TRADE', status: 'OK', equity: 11842.36, positionId: null,
-      reasoning: '4h 站稳 EMA20，MACD 柱连续三根走扩，62,900 前高转支撑。在现有多单上加一档，止损同步上移到 62,300。ETH 还在区间中轨，本轮不动。',
+      reasoning: '4h 站稳 EMA20，MACD 柱连续三根走扩，62,900 前高转支撑；资金费率回落到 0.006%，空头回补的燃料还在。'
+        + '在现有多单上加一档限价、一档市价，头仓止损同步上移到 62,300，止盈分两档挂在 66,500 和 68,800。'
+        + 'ETH 跌破 3,120 箱体下沿，原来做多的论点不成立，先平掉。',
       actionsJson: actions([
         { tool: 'klines', status: 'ok', args: { symbol: 'BTCUSDT', interval: '4h', limit: 200 } },
         { tool: 'indicators', status: 'ok', args: { symbol: 'BTCUSDT', interval: '4h' } },
         { tool: 'kline_structure', status: 'ok', args: { symbol: 'ETHUSDT', interval: '4h' } },
-        { tool: 'open_position', status: 'ok', args: { symbol: 'BTCUSDT', side: 'LONG', quantity: 0.08, leverage: 5, stopLossPrice: 62300, takeProfitPrice: 66500, playType: '趋势跟随' } },
-        { tool: 'set_stop_loss', status: 'ok', args: { positionId: 501, stopLossPrice: 62300, reason: '成本已覆盖，移到保本上方' } },
-        { tool: 'close_position', rejected: '持仓 88 不存在或已平仓', args: { positionId: 88, reason: '清掉旧的 ETH 空单' } },
+        {
+          tool: 'open_position', status: 'ok',
+          args: {
+            symbol: 'BTCUSDT', side: 'LONG', leverage: 5, stopLossPrice: 62300,
+            entries: [{ quantity: 0.04, limitPrice: 63150 }, { quantity: 0.04 }],
+            takeProfits: [{ price: 66500, percent: 50 }, { price: 68800, percent: 50 }],
+            playType: 'TREND_FOLLOW', signalsUsed: '4h 站稳 EMA20，62,900 前高转支撑', invalidationCondition: '4h 收盘跌回 62,900 下方',
+          },
+          result: {
+            status: 'ok', entries: [
+              { orderId: 7001, orderType: 'LIMIT', limitPrice: 63150, quantity: 0.04, status: 'pending' },
+              { orderId: 7002, orderType: 'MARKET', quantity: 0.04, status: 'filled', filledPrice: 63412.5 },
+            ],
+          },
+        },
+        {
+          tool: 'set_stop_loss', status: 'ok', result: { ok: true, from: 61800, pending: [] },
+          args: { positionId: 501, stopLossPrice: 62300, reason: '4h 放量站稳 62,900 并完成顺势加仓，头仓止损从 61,800 上移到 62,300，和加仓档对齐，压降尾部风险' },
+        },
+        {
+          tool: 'close_position', status: 'ok', result: { status: 'FILLED', symbol: 'ETHUSDT', quantity: 1.2, filledPrice: 3098.4, realizedPnl: -86.52 },
+          args: { positionId: 503, quantity: 1.2, reason: 'ETH 跌破 3,120 箱体下沿，原来做多的论点不成立，提前全平' },
+        },
+        { tool: 'close_position', rejected: '持仓 88 不存在或已平仓', args: { positionId: 88, quantity: 0.5, reason: '清掉旧的 ETH 空单' } },
       ]),
       toolCalls: 6, modelCalls: 3, promptTokens: 14820, completionTokens: 3600, totalTokens: 18420, cachedTokens: 11200,
       latencyMs: 42800, error: null, createdAt: '2026-09-05 12:04:11', hasTrace: true,

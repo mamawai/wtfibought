@@ -152,18 +152,31 @@
   /* 交易动作：一行一个，被拒 / 出错红、结果没准黄、没执行灰 */
   .p-tw .al{display:flex;flex-direction:column;gap:4px;margin-top:8px}
   .p-tw .act{display:flex;align-items:baseline;gap:10px;font-size:13.5px}
-  .p-tw .act b{flex:none;font-weight:600}
-  .p-tw .act span{color:var(--color-muted-foreground)}
+  .p-tw .act > b{flex:none;font-weight:600}
+  .p-tw .act .ad{flex:1;min-width:0;color:var(--color-muted-foreground)}
   .p-tw .act small{display:block;margin-top:1px;font-size:12.5px;color:var(--color-loss);overflow-wrap:anywhere}
-  .p-tw .act.bad b{color:var(--color-loss)}
-  .p-tw .act.unsure b{color:var(--color-warning)}
-  .p-tw .act.skip b{color:var(--color-muted-foreground)}
+  .p-tw .act .op + small{margin-top:6px}
+  .p-tw .act.bad > b{color:var(--color-loss)}
+  .p-tw .act.unsure > b{color:var(--color-warning)}
+  .p-tw .act.skip > b{color:var(--color-muted-foreground)}
+  /* 平仓：成交那一句后面跟这次的盈亏 */
+  .p-tw .act .cl .num{margin-left:8px;font-weight:500}
+  /* 开仓的小面板：币和方向一行，每档一行，止损止盈一行 */
+  .p-tw .op{max-width:440px;padding:7px 12px 8px;border-radius:10px;background:var(--color-fill);font-size:12.5px;line-height:1.75}
+  .p-tw .act .ad > :not(:first-child).op{margin-top:6px}
+  .p-tw .op-h{display:flex;align-items:center;gap:8px}
+  .p-tw .op-h b{font-size:13px;font-weight:600;color:var(--color-foreground)}
+  .p-tw .op-h .op-p{margin-left:auto;font-size:11.5px;color:var(--color-faint)}
+  .p-tw .op-e,.p-tw .op-f{margin-top:4px;padding-top:4px;border-top:1px dashed var(--color-line2)}
+  .p-tw .op-e{display:grid;grid-template-columns:max-content max-content 1fr;gap:0 16px}
+  .p-tw .op-f{display:flex;flex-wrap:wrap;gap:0 16px}
+  .p-tw .op .ok{color:var(--color-foreground)}
+  .p-tw .op .off{color:var(--color-faint)}
   .p-tw .dc .err,.p-tw .dc .why{margin-top:10px;font-size:13.5px}
   .p-tw .dc .err{color:var(--color-loss)}
   .p-tw .dc .why{color:var(--color-muted-foreground)}
-  /* 推理：长的折成两行 */
+  /* 推理：长的收起，只留「展开全文」 */
   .p-tw .rs{max-width:76ch;margin-top:12px;font-size:15px;line-height:1.7}
-  .p-tw .rs.clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .p-tw .rs .part + .part{margin-top:8px}
   .p-tw .rs .part .tag{margin-bottom:4px}
   .p-tw .lk{display:flex;gap:16px;margin-top:8px;font-size:13px}

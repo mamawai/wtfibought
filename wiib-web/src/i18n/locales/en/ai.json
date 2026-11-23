@@ -152,9 +152,7 @@
     "webSearch": "Web search"
   },
   "args": {
-    "reverseClosed": "Old position closed",
     "reverseLiquidated": "Old position liquidated",
-    "reverseOpened": "Opposite position opened",
     "long": "Long",
     "short": "Short",
     "qty": "{{n}} contracts",
@@ -166,7 +164,6 @@
     "presetClose": "closed {{pct}}% at market",
     "position": "Position #{{id}}",
     "order": "Order #{{id}}",
-    "invalidation": "Invalidation: {{c}}",
     "watches": "{{n}} watch conditions"
   },
   "decision": {

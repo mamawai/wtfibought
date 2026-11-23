@@ -1,13 +1,16 @@
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, NotebookPen } from 'lucide-react';
 import { traderApi } from '../../api';
-import { cn, fmtDateTime, fmtNum, fmtTokens } from '../../lib/utils';
+import { cn, fmtDateTime, fmtNum, fmtSignedUsd, fmtTokens } from '../../lib/utils';
 import type { AiTraderDecisionView, TradeRecordView, WakeTrace } from '../../types';
 import { Markdown } from '../Markdown';
 import { ReasoningFold } from './ReasoningFold';
 import { WakeTraceView } from './WakeTraceView';
-import { parseActions, TRADE_TOOL_SET, toolName, tradeArgsSummary } from './traderTools';
+import {
+  actionNote, entryStatus, openEntries, parseActions, px, rungsText, sideText, TRADE_TOOL_SET, toolName, tradeArgsSummary,
+  type ActionRow,
+} from './traderTools';
 import { KIND_TONE, useKindLabel } from './useKindLabel';
 
 /** "看了什么"一行最多点名几个工具，其余折成 +N */
@@ -124,11 +127,12 @@ export function DecisionCard({ d, mine, highlight, trade }: {
                   {a.rejected ? t('trade.rejected') : a.status === 'error' ? t('trade.errored') : a.status === 'unknown' ? t('trade.unknown')
                     : a.status === 'partial' ? t('trade.partial') : skipped ? t('trade.notAttempted') : ''}
                 </b>
-                <span>
-                  {tradeArgsSummary(a)}
+                {/* 理由不铺在这一行，指上去看 */}
+                <div className="ad" title={actionNote(a)}>
+                  <ActionDetail a={a} />
                   {a.rejected && <RejectReason text={a.rejected} />}
                   {a.error && <small>{a.error}</small>}
-                </span>
+                </div>
               </div>
             );
           })}
@@ -160,6 +164,81 @@ export function DecisionCard({ d, mine, highlight, trade }: {
       {traceOpen && (
         <div className="trace">
           {trace ? <WakeTraceView trace={trace} /> : <Loader2 className="ic animate-spin mute" />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 一条交易动作右边写什么：开仓是一块小面板；平仓写平了多少、成交价和这次的盈亏；
+ * 反手是平掉旧仓那一句加新仓的面板；其余一句话（{@link tradeArgsSummary}）
+ */
+function ActionDetail({ a }: { a: ActionRow }) {
+  const { t } = useTranslation('ai');
+  if (a.tool === 'open_position') return <OpenPanel a={a} />;
+  if (a.tool === 'close_position') return <ClosedLine a={a} />;
+  if (a.tool === 'reverse_position' && a.result?.close) {
+    return (
+      <>
+        {a.result.close.status === 'liquidated' ? <span>{t('args.reverseLiquidated')}</span> : <ClosedLine a={a.result.close} />}
+        {a.result.open && <OpenPanel a={a.result.open} />}
+      </>
+    );
+  }
+  return <span>{tradeArgsSummary(a)}</span>;
+}
+
+/** 平仓：哪个币平了多少、成交价、这次平掉的盈亏；没成交的（被拒、出错、老记录）写仓位编号和数量 */
+function ClosedLine({ a }: { a: ActionRow }) {
+  const { t } = useTranslation('ai');
+  const r = a.result;
+  if (r?.filledPrice == null) return <span>{tradeArgsSummary(a)}</span>;
+  return (
+    <span className="cl">
+      {[r.symbol, r.quantity != null && t('args.qty', { n: r.quantity }), `@ ${px(r.filledPrice)}`].filter(Boolean).join(' ')}
+      {r.realizedPnl != null && <span className={cn('num', r.realizedPnl >= 0 ? 'up' : 'dn')}>{fmtSignedUsd(r.realizedPnl)}</span>}
+    </span>
+  );
+}
+
+/** 一档的状态配色：成交了实色，没准黄，被拒红，撤掉和没下更淡；挂着的照常灰 */
+const ENTRY_TONE: Record<string, string> = {
+  filled: 'ok', unknown: 'wn', rejected: 'dn', cancelled: 'off', not_attempted: 'off',
+};
+
+/** 开仓的小面板：币、方向、杠杆和玩法一行；每一档一行，限价还是市价、数量、成交没有；止损止盈一行 */
+function OpenPanel({ a }: { a: ActionRow }) {
+  const { t } = useTranslation('ai');
+  const g = (k: string) => a.args?.[k] != null ? String(a.args[k]) : '';
+  const side = g('side');
+  const entries = openEntries(a);
+  const tp = rungsText(a.args?.takeProfits);
+  return (
+    <div className="op">
+      <div className="op-h">
+        <b>{g('symbol')}</b>
+        {side && <span className={cn('tag sm', side === 'LONG' ? 'g' : side === 'SHORT' && 'r')}>{sideText(side)}</span>}
+        {g('leverage') && <span className="num">{g('leverage')}x</span>}
+        {g('playType') && <span className="op-p">{g('playType')}</span>}
+      </div>
+      {entries.length > 0 && (
+        <div className="op-e num">
+          {entries.map((e, i) => (
+            <Fragment key={i}>
+              <span>{e.limitPrice != null ? t('args.limit', { p: px(e.limitPrice) }) : t('plan.marketEntry')}</span>
+              <span>× {e.quantity}</span>
+              <span className={e.status ? ENTRY_TONE[e.status.toLowerCase()] : undefined}>
+                {e.status && entryStatus(e.status)}{e.filledPrice != null && ` @ ${px(e.filledPrice)}`}
+              </span>
+            </Fragment>
+          ))}
+        </div>
+      )}
+      {(g('stopLossPrice') || tp) && (
+        <div className="op-f num">
+          {g('stopLossPrice') && <span>{t('args.sl', { p: px(g('stopLossPrice')) })}</span>}
+          {tp && <span>{t('args.tp', { p: tp })}</span>}
         </div>
       )}
     </div>
