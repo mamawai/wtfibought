@@ -264,6 +264,6 @@ class TraderWakeupRunnerAccountStateTest {
                 + "\",\"close\":99880,\"changePct\":-0.31}");
         assertThat(MAPPER.readTree(json).get("positions").get(1).has("sinceLastWake")).isFalse();
         // set_watch 的 AT_TIME 按它写
-        assertThat(MAPPER.readTree(json).get("nowBeijing").asString(null)).isEqualTo(BeijingTime.format(BOUNDARY));
+        assertThat(MAPPER.readTree(json).get("nowSingapore").asString(null)).isEqualTo(BeijingTime.format(BOUNDARY));
     }
 }

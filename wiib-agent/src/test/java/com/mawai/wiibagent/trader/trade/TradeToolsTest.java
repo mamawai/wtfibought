@@ -1096,18 +1096,13 @@ class TradeToolsTest {
         assertThat(plan.getValue().getRevisionsJson()).contains("110000(100%)→无");
     }
 
-    /**
-     * 工具描述不许和系统提示词对着干：提示词写的是"账户情况已经给足，无需 get_account 复查，
-     * 把工具调用预算花在行情求证上"，描述里再写 ALWAYS check 就是两条强指令打架——
-     * 模型要么白烧保险丝预算复查账户，要么开始整体折价工具描述的权威性。
-     */
+    /** get_account 的描述只说返回什么、点明账户状态每轮已注入，不带 ALWAYS 这类强指令 */
     @Test
     void getAccountDescriptionDoesNotContradictSystemPrompt() {
         String en = PROMPTS.get(AgentLang.EN, "tool.get_account");
         String zh = PROMPTS.get(AgentLang.ZH, "tool.get_account");
 
         assertThat(en).doesNotContain("ALWAYS");
-        // 只客观描述返回什么 + 点明账户状态每轮已注入，通常不必再调
         assertThat(en).contains("equity").contains("available").contains("wallet balance").contains("already");
         assertThat(zh).contains("权益").contains("available").contains("钱包余额").contains("每轮已注入");
     }

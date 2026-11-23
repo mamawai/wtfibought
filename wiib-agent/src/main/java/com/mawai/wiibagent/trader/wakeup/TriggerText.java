@@ -56,7 +56,7 @@ class TriggerText {
             case EventTrigger e -> prompts.get(lang, "trader.wake.eventHeader", Map.of(
                     "time", time,
                     "detail", eventDetail(e.event(), lang)));
-            // 盯盘条件的时刻带年份，和它条件里的时刻、账户块的 nowBeijing 同一种写法
+            // 盯盘条件的时刻带年份，和它条件里的时刻、账户块的 nowSingapore 同一种写法
             case WatchTrigger w -> prompts.get(lang, "trader.wake.watchHeader", Map.of(
                     "time", BeijingTime.format(w.triggeredAt()),
                     "detail", WatchText.detail(w.watch(), w.price(), prompts, lang),

@@ -382,7 +382,8 @@ public class WakeObservation {
             others = true;
             sb.append(prompts.get(lang, "trader.wake.single.otherOrder", Map.of(
                     "symbol", o.getSymbol(), "side", o.getOrderSide().substring("OPEN_".length()),
-                    "limit", WatchText.num(o.getLimitPrice()), "quantity", WatchText.num(o.getQuantity())))).append('\n');
+                    "limit", WatchText.num(o.getLimitPrice()), "quantity", WatchText.num(o.getQuantity()),
+                    "lossAtStop", StopOrders.pctOfEquity(StopOrders.lossAtStops(o), equity)))).append('\n');
         }
         if (!others) {
             sb.append(prompts.get(lang, "trader.wake.single.otherNone")).append('\n');

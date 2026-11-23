@@ -314,8 +314,8 @@ tool:
     position margin and pending-order reservations), wallet balance, open positions (with id,
     side, quantity, entry price, leverage, unrealized PnL, liquidation price, current
     stop-loss/take-profit) and pending limit orders. This same state is already injected into
-    your opening message every round (the [Account] block), so you normally do not need to call
-    this. Use it to confirm changes after your trades or fills that occurred while you were checking data.
+    your opening message every round (the [Account] block). Use it to confirm changes after your
+    trades or fills that occurred while you were checking data.
 
   open_position: |-
     Open a futures position on your sim account (cross margin) using entries: 1–5 rungs
@@ -389,7 +389,7 @@ tool:
 
   set_watch: |-
     Replace ALL your watch conditions on one symbol. symbol is the coin whose price is watched: any coin
-    the platform tracks, not only your tradable ones (e.g. BTCUSDT as the market benchmark). The platform
+    the platform tracks, not only your tradable ones. The platform
     watches them between wake-ups and wakes you the moment one is met: a non-routine wake-up whose opening
     names the condition and your note.
     Every set belongs to a tradable symbol, and a hit wakes the round that handles only that symbol: leave
@@ -400,10 +400,10 @@ tool:
     period 5m/15m/1h/4h/1d closes above / below level; a close of your heartbeat period or longer lands on the
     routine wake-up at that moment and is read out there, not as a separate wake-up), AT_TIME (at `at`,
     Singapore time yyyy-MM-dd HH:mm).
-    The current Singapore time is nowBeijing in the [Account] block. note: one sentence to your next self about
+    The current Singapore time is nowSingapore in the [Account] block. note: one sentence to your next self about
     what it means when this fires. At most one upward (TOUCH_ABOVE / CLOSE_ABOVE), one downward
-    (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per set: whichever comes first wakes you, and you re-arm
-    then. The previous set "for the same symbol, watching the same coin's price" is replaced in full, an
+    (TOUCH_BELOW / CLOSE_BELOW) and one AT_TIME per set: whichever comes first wakes you; in any
+    round you may re-arm, change or clear watch conditions. The previous set "for the same symbol, watching the same coin's price" is replaced in full, an
     empty array clears it. A condition fires once and is removed.
     A condition may carry an action — a standing order the platform carries out by itself the moment the
     condition fires, on any of your positions or pending orders (not necessarily on this symbol):

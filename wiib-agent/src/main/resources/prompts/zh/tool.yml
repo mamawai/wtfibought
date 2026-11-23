@@ -246,7 +246,7 @@ tool:
   get_account: |-
     获取你的完整账户状态：权益、available（扣掉持仓保证金和挂单占用后，还能用来下新单的额度）、钱包余额、
     在场持仓（含 id、方向、数量、开仓价、杠杆、未实现盈亏、强平价、当前止损/止盈）与未成交限价单。
-    这份状态每轮已注入开场白的【当前账户】，通常不用调它；本轮交易后，或查询期间发生异步成交需要核对账户时使用。
+    这份状态每轮已注入开场白的【当前账户】；本轮交易后，或查询期间发生异步成交需要核对账户时使用。
 
   open_position: |-
     在模拟账户按 entries 一次安排 1–5 档入场（全仓模式），每档 {quantity, limitPrice}。
@@ -304,14 +304,14 @@ tool:
 
   set_watch: |-
     给一个币整组替换盯盘条件：两次唤醒之间系统盯着它们，命中就把你叫醒（非例行唤醒，开场白写明命中了哪条和你当时的 note）。
-    symbol 是盯哪个币的价格，平台在采的币都可以盯，不限你可交易的那几个（比如拿 BTCUSDT 盯大盘）。
+    symbol 是盯哪个币的价格，平台在采的币都可以盯，不限你可交易的那几个。
     每组条件挂在一个可交易币名下，命中时叫醒的是只处理那个币的那一轮：盯的就是可交易币自己时不用写 forSymbol；
     盯别的币的价格时用 forSymbol 写明是为哪个可交易币布的。只处理一个币的那种轮次里，条件一律挂在那个币名下。
     kind：TOUCH_ABOVE / TOUCH_BELOW 标记价触及 level；CLOSE_ABOVE / CLOSE_BELOW 某周期（period 5m/15m/1h/4h/1d）收盘站上 / 跌破 level，
     心跳及更长周期的收盘命中正赶上同一刻的例行唤醒，在那轮开场白里念给你，不另外叫醒；
-    AT_TIME 到 at 时刻（新加坡时间 yyyy-MM-dd HH:mm，当前新加坡时间在【当前账户】的 nowBeijing）。
+    AT_TIME 到 at 时刻（新加坡时间 yyyy-MM-dd HH:mm，当前新加坡时间在【当前账户】的 nowSingapore）。
     note：给下一轮自己的一句话，这条命中意味着什么。
-    每组向上（TOUCH_ABOVE / CLOSE_ABOVE）、向下（TOUCH_BELOW / CLOSE_BELOW）、到时刻（AT_TIME）各最多一条，先到的那条叫醒你，醒来再重布；
+    每组向上（TOUCH_ABOVE / CLOSE_ABOVE）、向下（TOUCH_BELOW / CLOSE_BELOW）、到时刻（AT_TIME）各最多一条，先到的那条叫醒你；任何一轮里你都可以重布、修改或清掉盯盘条件；
     传的是"为同一个币布的、盯同一个币价格的"从现在起要盯的全部条件，旧的整组作废，传空数组 [] 清掉；一条命中一次就摘掉。
     条件可以带一个 action，就是预案：条件命中那一刻平台当场替你执行，动作指的可以是你任何一个仓位或挂单（不必在这个币上）：
     MOVE_STOP（positionId、stopLossPrice：把那个仓位的止损收紧到这个价）、CLOSE（positionId、closePercent：市价平掉那个仓位的

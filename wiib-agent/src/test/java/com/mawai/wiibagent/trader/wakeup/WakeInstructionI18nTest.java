@@ -3,11 +3,13 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptI18nAssertions;
+import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -279,6 +281,13 @@ class WakeInstructionI18nTest {
         t.setSymbols("BTCUSDT,ETHUSDT");
         FuturesPositionDTO eth = openPos("ETHUSDT", "LONG", "2", "3000");
         FuturesPositionDTO btc = openPos("BTCUSDT", "SHORT", "0.1", "100000");
+        // 别的币的挂单：限价 101000 × 0.1，止损 103000，成交后被打掉亏 200 = 权益的 2%
+        FuturesOrderResponse btcOrder = new FuturesOrderResponse();
+        btcOrder.setSymbol("BTCUSDT");
+        btcOrder.setOrderSide("OPEN_SHORT");
+        btcOrder.setLimitPrice(new BigDecimal("101000"));
+        btcOrder.setQuantity(new BigDecimal("0.1"));
+        btcOrder.setStopLosses(List.of(new FuturesStopLoss("s", new BigDecimal("103000"), new BigDecimal("0.1"))));
         Map<String, JsonNode> quotes = Map.of(
                 "BTCUSDT", MAPPER.readTree("{\"markPrice\":\"100000.00\",\"lastFundingRate\":\"0.0001\"}"),
                 "ETHUSDT", MAPPER.readTree("{\"markPrice\":\"3010.00\",\"lastFundingRate\":\"0.0002\"}"));
@@ -293,9 +302,9 @@ class WakeInstructionI18nTest {
             assertThat(packText).contains("\"symbol\":\"ETHUSDT\"").doesNotContain("\"symbol\":\"BTCUSDT\"")
                     .contains("[ETHUSDT]").contains("判断：区间").doesNotContain("[BTCUSDT]");
             String overview = wakeObservation.accountOverview("ETHUSDT", new BigDecimal("10000"), new BigDecimal("8200.5"),
-                    List.of(eth, btc), List.of(), quotes, BOUNDARY, lang);
+                    List.of(eth, btc), List.of(btcOrder), quotes, BOUNDARY, lang);
             assertThat(overview).contains("10000.00").contains("8200.50").contains("BTCUSDT SHORT").contains("0.1 @100000")
-                    .doesNotContain("ETHUSDT LONG");
+                    .contains("101000").contains("2.00%").doesNotContain("ETHUSDT LONG");
             String coin = wakeObservation.coinFacts(t, "ETHUSDT", Map.of(), BOUNDARY, quotes, BOUNDARY, lang);
             assertThat(coin).contains("ETHUSDT").contains("3010").contains("-0.10%");
             if (lang == AgentLang.ZH) {
