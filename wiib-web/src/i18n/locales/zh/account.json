@@ -50,7 +50,8 @@
       "alpha": "因子挖掘",
       "ranking": "排行榜",
       "comments": "留言板",
-      "intro": "项目介绍"
+      "intro": "项目介绍",
+      "releases": "更新日志"
     },
     "themeDark": "深色模式",
     "logout": "退出登录",

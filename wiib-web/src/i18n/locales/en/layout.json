@@ -31,6 +31,18 @@
     "brand": "WhatIfIBought paper trading",
     "disclaimer": "All data is simulated and not investment advice"
   },
+  "release": {
+    "title": "What's new",
+    "older": "Older release",
+    "newer": "Newer release",
+    "fullNotes": "Full release notes",
+    "gotIt": "Got it",
+    "kind": {
+      "new": "New",
+      "better": "Improved",
+      "fix": "Fixed"
+    }
+  },
   "led": {
     "ok": "OK",
     "warn": "Degraded",

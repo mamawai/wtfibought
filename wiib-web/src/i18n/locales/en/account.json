@@ -50,7 +50,8 @@
       "alpha": "Factor mining",
       "ranking": "Leaderboard",
       "comments": "Comments",
-      "intro": "Project Intro"
+      "intro": "Project Intro",
+      "releases": "What's new"
     },
     "themeDark": "Dark mode",
     "logout": "Log out",

@@ -7,6 +7,8 @@ import { useTheme } from '../hooks/useTheme';
 import { useSystemHealth, type HealthLevel } from '../hooks/useSystemHealth';
 import { NotificationBell } from './NotificationBell';
 import { GitHubLink } from './GitHubLink';
+import { ReleaseButton, ReleaseDialog, ReleaseVersion } from './ReleaseNotes';
+import { useHasUpdate } from '../stores/releaseStore';
 import { useLangToggle } from '../hooks/useLangToggle';
 import { TickerStrip } from './TickerStrip';
 import { OfflineBanner } from './OfflineBanner';
@@ -246,6 +248,8 @@ export function Layout({ children }: Props) {
   const { toggleTheme, isDark } = useTheme();
   const { t, i18n } = useTranslation('layout');
   const { toggle: toggleLang } = useLangToggle();
+  // 顶栏有没有挂更新图标
+  const hasUpdate = useHasUpdate();
 
   const { pathname } = location;
 
@@ -314,8 +318,8 @@ export function Layout({ children }: Props) {
     };
   }, []);
 
-  // 切路由当前项换了（多一颗橙点）、切语言文字换了、登录态变了右边工具宽度变了，都要重排
-  useLayoutEffect(() => { fitRef.current?.(); }, [pathname, i18n.language, user, token]);
+  // 切路由当前项换了（多一颗橙点）、切语言文字换了、登录态变了或更新图标没了右边工具宽度变了，都要重排
+  useLayoutEffect(() => { fitRef.current?.(); }, [pathname, i18n.language, user, token, hasUpdate]);
 
   const rest = NAV.slice(keep);
 
@@ -381,6 +385,8 @@ export function Layout({ children }: Props) {
               {langButton}
               {themeButton}
               {user && <NotificationBell />}
+              {/* 更新图标：有新版本才出现，挨在仓库入口左边 */}
+              <ReleaseButton />
               {/* 仓库入口，登没登录都给：登录后夹在铃铛和用户名中间，游客态落在"登录"左边 */}
               <GitHubLink iconClassName="ic" />
               {/* 有 token 但 user 还没拉回来时两边都不显示，否则每次刷新都要闪一下"登录"再变回用户名 */}
@@ -401,12 +407,13 @@ export function Layout({ children }: Props) {
             <img className="hmark" src="/logo.png" alt="" aria-hidden="true" />
           </div>
 
-          {/* 手机：logo + 语言 + 主题 + 仓库，其余入口在底部 Tab 和「我的」页 */}
+          {/* 手机：logo + 语言 + 主题 + 更新 + 仓库，其余入口在底部 Tab 和「我的」页 */}
           <div className="mtop lg:hidden">
             <Link to="/" className="logo" aria-label={t('header.logoHome')}>WIIB<i>.</i></Link>
             <div className="tools">
               {langButton}
               {themeButton}
+              <ReleaseButton />
               <GitHubLink iconClassName="ic" />
             </div>
           </div>
@@ -421,8 +428,9 @@ export function Layout({ children }: Props) {
         {children}
       </main>
 
-      <footer className="page-shell foot hidden lg:flex">
-        <span>{t('footer.brand')}</span>
+      {/* 登录后有悬浮球，页脚两头各缩进一点给它让位 */}
+      <footer className={cn('page-shell foot hidden lg:flex', user && 'dock')}>
+        <span>{t('footer.brand')}<ReleaseVersion /></span>
         <span>{t('footer.disclaimer')}</span>
       </footer>
 
@@ -431,6 +439,8 @@ export function Layout({ children }: Props) {
 
       {/* 全站悬浮研判对话（BYOK）：对话要登录，游客不给气泡 */}
       {user && <ChatDock />}
+
+      <ReleaseDialog />
     </div>
   );
 }

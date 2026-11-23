@@ -1,0 +1,22 @@
+/* 更新图标和更新弹窗 */
+@layer components {
+  /* 顶栏那颗图标右上角的橙点 */
+  .upd{position:relative}
+  .upd::after{content:"";position:absolute;top:-3px;right:-4px;width:6px;height:6px;border-radius:50%;background:var(--color-primary)}
+
+  /* 页脚品牌名后面的版本号 */
+  .foot .ver{margin-left:10px}
+
+  /* 几版叠在同一格，不是当前这版的藏起来但照样占高度 */
+  .rels{display:grid}
+  .rels > .rel{grid-area:1/1}
+  .rels > .rel[aria-hidden="true"]{visibility:hidden}
+  /* 一版几条：标签在左，标题和一句说明在右 */
+  .rel{display:flex;flex-direction:column;gap:14px}
+  .rel li{display:flex;align-items:flex-start;gap:10px}
+  .rel .tag{flex:none}
+  .rel b{display:block;font-size:14.5px;font-weight:600;line-height:20px}
+  .rel p{margin-top:2px;font-size:13px;line-height:1.5;color:var(--color-muted-foreground)}
+  /* 脚：左边去 GitHub 看全文，右边关掉 */
+  .dlg .df.rel-f{justify-content:space-between;align-items:center;gap:16px}
+}

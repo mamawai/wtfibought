@@ -11,9 +11,11 @@ import { ResetAccountDialog } from '../components/ResetAccountDialog';
 import { Avatar } from '../components/Avatar';
 import { useNotificationPanel } from '../hooks/useNotificationPanel';
 import {
-  Bell, BookOpen, ChevronRight, ExternalLink, FlaskConical, History, Layers, LogOut, MessageCircle, Pickaxe,
+  Bell, BookOpen, ChevronRight, ExternalLink, FlaskConical, History, Layers, LogOut, Megaphone, MessageCircle, Pickaxe,
   RotateCcw, Swords, Trophy, Wallet,
 } from 'lucide-react';
+import { useReleaseStore } from '../stores/releaseStore';
+import { LATEST_VERSION } from '../lib/releases';
 import { cn, fmtNum, fmtSignedPct } from '../lib/utils';
 import './Me.css';
 
@@ -26,6 +28,7 @@ export function Me() {
   const { user, logout, fetchUser } = useUserStore();
   const { toggleTheme, isDark } = useTheme();
   const [resetOpen, setResetOpen] = useState(false);
+  const openNotes = useReleaseStore(s => s.openNotes);
 
   // 通知：手机端顶栏信封是 hidden lg:flex 看不到，这里是手机用户唯一的通知入口。
   // 订阅与开合逻辑跟顶栏信封共用一份 hook，未读数也是同一份（各存各的会导致
@@ -106,6 +109,11 @@ export function Me() {
           <a className="row" href={INTRO_URL} target="_blank" rel="noopener noreferrer">
             {rowBody(<BookOpen className="ic" />, t('me.nav.intro'), true)}
           </a>
+          {/* 更新日志：点开更新弹窗，右边带当前版本号；手机上顶栏图标没了以后从这里再看 */}
+          <button type="button" className="row" onClick={openNotes}>
+            <Megaphone className="ic" />{t('me.nav.releases')}
+            <span className="go2"><span className="nf">v{LATEST_VERSION}</span><ChevronRight className="ic" /></span>
+          </button>
         </div>
 
         {/* 设置：公开持仓、语言、深色模式，即点即存 */}

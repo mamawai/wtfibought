@@ -889,6 +889,9 @@ html.pwa nav a {
   .offline{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;padding:8px 14px;border-radius:12px;background:var(--color-warning-soft);color:var(--color-warning);font-size:12.5px;font-weight:500}
   .offline .ic{width:14px;height:14px}
   .foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 24px;padding-block:28px 40px;font-size:12.5px;color:var(--color-muted-foreground)}
+  /* 登录后两头各缩进，悬浮球贴左右哪边都压不到字 */
+  .foot.dock > :first-child{margin-left:24px}
+  .foot.dock > :last-child{margin-right:24px}
 
   @media (prefers-reduced-motion:reduce){
     .hdr.ready,.hdr.ready.collapsed,.hmark,.hdr.collapsed .hmark,.menu,.lamp,.lamp .in,.bell em{transition:none}

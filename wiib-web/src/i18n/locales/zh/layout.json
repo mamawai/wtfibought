@@ -31,6 +31,18 @@
     "brand": "WhatIfIBought 模拟交易",
     "disclaimer": "所有数据均为虚拟，不构成投资建议"
   },
+  "release": {
+    "title": "更新内容",
+    "older": "更早一版",
+    "newer": "较新一版",
+    "fullNotes": "完整发布说明",
+    "gotIt": "知道了",
+    "kind": {
+      "new": "新增",
+      "better": "优化",
+      "fix": "修复"
+    }
+  },
   "led": {
     "ok": "正常",
     "warn": "降级",
