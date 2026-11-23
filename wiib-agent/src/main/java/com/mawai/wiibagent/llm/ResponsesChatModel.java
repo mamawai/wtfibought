@@ -133,6 +133,8 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                         .put("type", "function")
                         .put("name", def.name())
                         .put("description", def.description())
+                        // 显式关掉 strict：不写的话 OpenAI 会尽量按 strict 来，可选参数全被当成必填
+                        .put("strict", false)
                         .set("parameters", MAPPER.readTree(def.inputSchema())));
                 toolNames.add(def.name());
             }

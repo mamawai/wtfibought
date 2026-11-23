@@ -255,7 +255,7 @@ class ResponsesChatModelTest {
 
     /**
      * 请求体整串钉死：温度/档位、store/stream、instructions 拼接、没原始 item 的按文本+function_call 拼、
-     * 有原始 item 的原样回放（密文、小数、null 字段）、function 工具带 schema 小数、搜索声明、不传 tool_choice、缓存分组键、转义与 emoji
+     * 有原始 item 的原样回放（密文、小数、null 字段）、function 工具带 schema 小数和 strict:false、搜索声明、不传 tool_choice、缓存分组键、转义与 emoji
      */
     @Test
     void 请求侧_请求体整串金标准() {
@@ -294,7 +294,7 @@ class ResponsesChatModelTest {
                 + "\"summary\":[],\"encrypted_content\":\"gAAA/+==\"},{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\","
                 + "\"name\":\"get_price\",\"arguments\":\"{\\\"qty\\\":0.010}\",\"status\":\"completed\",\"score\":0.50},{\"type\":\"function_call_output\","
                 + "\"call_id\":\"call_1\",\"output\":\"ERROR: 超时\\t重试\"}],\"tools\":[{\"type\":\"function\",\"name\":\"get_price\","
-                + "\"description\":\"查价格 <b>&\\\"引号\\\"\",\"parameters\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\","
+                + "\"description\":\"查价格 <b>&\\\"引号\\\"\",\"strict\":false,\"parameters\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\","
                 + "\"minimum\":0.010}},\"required\":[\"qty\"],\"additionalProperties\":false}},{\"type\":\"web_search\"}],"
                 + "\"prompt_cache_key\":\"e383530738341e8c1473facb\"}");
     }
