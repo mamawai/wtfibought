@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, ChevronLeft, ChevronRight, Megaphone } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader } from './ui/dialog';
@@ -13,24 +13,19 @@ const KIND_TAG: Record<ReleaseItem['kind'], string> = { new: 'o', better: 'b', f
 /** 弹窗里能翻到的最近几版，再早的去 GitHub 看 */
 const SHOWN = RELEASES.slice(0, 5);
 
-/** 顶栏图标右边那颗（仓库入口）：图标关上弹窗就没了，焦点改还给它 */
-let afterIcon: HTMLElement | null = null;
-
-/** 顶栏更新图标：有没看过的新版本才出现，点开更新弹窗；看过就不显示 */
+/** 顶栏更新图标：一直在，点开更新弹窗；有没看过的新版本时右上角带橙点 */
 export function ReleaseButton() {
   const { t } = useTranslation('layout');
   const fresh = useHasUpdate();
   const openNotes = useReleaseStore(s => s.openNotes);
-  if (!fresh) return null;
   return (
-    <button type="button" className="upd" aria-label={t('release.title')}
-            onClick={e => { afterIcon = e.currentTarget.nextElementSibling as HTMLElement | null; openNotes(); }}>
+    <button type="button" className={fresh ? 'upd fresh' : 'upd'} aria-label={t('release.title')} onClick={openNotes}>
       <Megaphone className="ic" />
     </button>
   );
 }
 
-/** 页脚的版本号：点开更新弹窗，顶栏图标没了以后从这里还能再看 */
+/** 页脚的版本号：点开更新弹窗 */
 export function ReleaseVersion() {
   const { t } = useTranslation('layout');
   const openNotes = useReleaseStore(s => s.openNotes);
@@ -61,11 +56,6 @@ export function ReleaseDialog() {
     setIdx(to);
     if (to === 0 || to === SHOWN.length - 1) e.currentTarget.closest<HTMLElement>('[role="dialog"]')?.focus();
   };
-
-  // 关上后焦点掉到页面上（顶栏图标没了），交给图标右边那颗
-  useEffect(() => {
-    if (!open && document.activeElement === document.body) afterIcon?.focus();
-  }, [open]);
 
   return (
     <Dialog open={open} onClose={close}>

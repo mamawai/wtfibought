@@ -8,7 +8,6 @@ import { useSystemHealth, type HealthLevel } from '../hooks/useSystemHealth';
 import { NotificationBell } from './NotificationBell';
 import { GitHubLink } from './GitHubLink';
 import { ReleaseButton, ReleaseDialog, ReleaseVersion } from './ReleaseNotes';
-import { useHasUpdate } from '../stores/releaseStore';
 import { useLangToggle } from '../hooks/useLangToggle';
 import { TickerStrip } from './TickerStrip';
 import { OfflineBanner } from './OfflineBanner';
@@ -248,8 +247,6 @@ export function Layout({ children }: Props) {
   const { toggleTheme, isDark } = useTheme();
   const { t, i18n } = useTranslation('layout');
   const { toggle: toggleLang } = useLangToggle();
-  // 顶栏有没有挂更新图标
-  const hasUpdate = useHasUpdate();
 
   const { pathname } = location;
 
@@ -318,8 +315,8 @@ export function Layout({ children }: Props) {
     };
   }, []);
 
-  // 切路由当前项换了（多一颗橙点）、切语言文字换了、登录态变了或更新图标没了右边工具宽度变了，都要重排
-  useLayoutEffect(() => { fitRef.current?.(); }, [pathname, i18n.language, user, token, hasUpdate]);
+  // 切路由当前项换了（多一颗橙点）、切语言文字换了或登录态变了，都要重排
+  useLayoutEffect(() => { fitRef.current?.(); }, [pathname, i18n.language, user, token]);
 
   const rest = NAV.slice(keep);
 
@@ -385,7 +382,7 @@ export function Layout({ children }: Props) {
               {langButton}
               {themeButton}
               {user && <NotificationBell />}
-              {/* 更新图标：有新版本才出现，挨在仓库入口左边 */}
+              {/* 更新图标：挨在仓库入口左边 */}
               <ReleaseButton />
               {/* 仓库入口，登没登录都给：登录后夹在铃铛和用户名中间，游客态落在"登录"左边 */}
               <GitHubLink iconClassName="ic" />

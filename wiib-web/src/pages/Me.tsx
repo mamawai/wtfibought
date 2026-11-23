@@ -109,7 +109,7 @@ export function Me() {
           <a className="row" href={INTRO_URL} target="_blank" rel="noopener noreferrer">
             {rowBody(<BookOpen className="ic" />, t('me.nav.intro'), true)}
           </a>
-          {/* 更新日志：点开更新弹窗，右边带当前版本号；手机上顶栏图标没了以后从这里再看 */}
+          {/* 更新日志：点开更新弹窗，右边带当前版本号 */}
           <button type="button" className="row" onClick={openNotes}>
             <Megaphone className="ic" />{t('me.nav.releases')}
             <span className="go2"><span className="nf">v{LATEST_VERSION}</span><ChevronRight className="ic" /></span>

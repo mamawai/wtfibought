@@ -13,7 +13,7 @@ interface ReleaseState {
   seen: string | null;
   open: boolean;
   openNotes: () => void;
-  /** 关上就算看过最新这一版，顶栏图标跟着消失 */
+  /** 关上就算看过最新这一版，顶栏图标上的橙点跟着消失 */
   closeNotes: () => void;
 }
 

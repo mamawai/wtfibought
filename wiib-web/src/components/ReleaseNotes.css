@@ -1,8 +1,8 @@
 /* 更新图标和更新弹窗 */
 @layer components {
-  /* 顶栏那颗图标右上角的橙点 */
+  /* 顶栏那颗图标右上角的橙点：有没看过的新版本才亮 */
   .upd{position:relative}
-  .upd::after{content:"";position:absolute;top:-3px;right:-4px;width:6px;height:6px;border-radius:50%;background:var(--color-primary)}
+  .upd.fresh::after{content:"";position:absolute;top:-3px;right:-4px;width:6px;height:6px;border-radius:50%;background:var(--color-primary)}
 
   /* 页脚品牌名后面的版本号 */
   .foot .ver{margin-left:10px}
