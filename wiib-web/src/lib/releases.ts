@@ -20,6 +20,32 @@ export interface Release {
  */
 export const RELEASES: Release[] = [
   {
+    version: '3.3.1',
+    date: '2026-11-24',
+    items: [
+      {
+        kind: 'better',
+        title: { zh: '时间线只写结果', en: 'Leaner timeline' },
+        desc: { zh: '改止损写原价到新价，平仓写成交价和盈亏，开仓列成一块小面板；长的思考默认收起，点开再看。', en: 'Stops read old → new, closes show the fill price and PnL, entries sit in a small panel, and long reasoning stays folded until you open it.' },
+      },
+      {
+        kind: 'fix',
+        title: { zh: '复盘对得上每一笔单子', en: 'Reviews line up with each trade' },
+        desc: { zh: '几轮同时在跑时，单笔复盘只看这个币的那几轮、按实际先后排，统一复盘也分得清盯盘命中是开场还是中途告诉它的。', en: 'With several rounds running at once, a per-trade review reads only that symbol\'s rounds in the order they really ran, and the daily review tells whether a watch hit was reported at the start or mid-round.' },
+      },
+      {
+        kind: 'fix',
+        title: { zh: '净值曲线按每轮结束排', en: 'Equity follows each round\'s end' },
+        desc: { zh: '最新权益和净值曲线按一轮跑完时的权益排，几轮重叠时不再顶错；新开一局第一笔的开平仓点也画得出来。', en: 'Latest equity and the curve use the equity taken as each round ends, so overlapping rounds no longer swap values, and a new run\'s first trade shows on the curve.' },
+      },
+      {
+        kind: 'fix',
+        title: { zh: 'Responses 端点的工具参数', en: 'Tool arguments on Responses endpoints' },
+        desc: { zh: '用 OpenAI Responses 协议的端点时，工具里的可选参数不再被当成必填。', en: 'On OpenAI Responses endpoints, optional tool arguments are no longer treated as required.' },
+      },
+    ],
+  },
+  {
     version: '3.3.0',
     date: '2026-11-23',
     items: [
