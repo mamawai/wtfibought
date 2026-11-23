@@ -118,7 +118,7 @@ export function Home() {
   const [gridMonth, setGridMonth] = useState(() => fmtDate().slice(0, 7));
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  // 首访自动跳玩法说明只给登录用户；游客打开根路径就是首页，说明页从顶部那条链接自己点
+  // 首访自动跳引言只给登录用户；游客打开根路径就是首页，引言从顶部那条链接自己点
   useEffect(() => { if (!guest && shouldShowNotice()) navigate('/intro', { replace: true }); }, [guest, navigate]);
 
   useEffect(() => {
@@ -172,7 +172,7 @@ export function Home() {
               <b>{t('greeting.withName', { greeting: t(greetingKey()), name: user!.username })}</b>
               <span>{dateStr}</span>
             </div>
-            <Link to="/intro">{t('hero.howToPlay')}</Link>
+            <Link to="/intro">{t('hero.intro')}</Link>
           </div>
           <section className="hero">
             <HeroMain user={user!} history={history} realtime={realtime} />
@@ -196,7 +196,7 @@ export function Home() {
             <p>{t('hero.guestDesc')}</p>
             <Link to="/login" className="btn ink"><LogIn className="ic" />{t('layout:header.login')}</Link>
           </div>
-          <Link to="/intro" className="go">{t('hero.howToPlay')}<ChevronRight className="ic" /></Link>
+          <Link to="/intro" className="go">{t('hero.intro')}<ChevronRight className="ic" /></Link>
         </section>
       )}
 

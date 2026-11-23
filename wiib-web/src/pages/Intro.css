@@ -1,4 +1,4 @@
-/* 玩法说明：一篇能从头读到尾的说明。欢迎 → 三种交易各一块 → 双钱包、量化策略、预测市场 → 风险声明 */
+/* 引言：一句话说这是什么 → 能做什么三块 → 先知道的三件事 → 风险声明 */
 @layer components {
   /* 底下留出浮着的那排按钮的位置 */
   .p-in{padding-bottom:84px}
@@ -9,19 +9,46 @@
   .p-in .rule{padding:24px}
   .p-in .rule .n{display:block;font-size:13px;color:var(--color-faint)}
   .p-in .rule h3{margin-top:10px;font-size:18px;font-weight:600;letter-spacing:-.01em}
-  .p-in .rule ul{display:flex;flex-direction:column;gap:10px;margin:14px 0 0;padding:0;list-style:none}
-  .p-in .rule li{position:relative;padding-left:16px;font-size:14px;line-height:1.65;color:var(--color-muted-foreground)}
-  .p-in .rule li::before{content:"";position:absolute;left:2px;top:.72em;width:5px;height:5px;border-radius:50%;background:var(--color-line2)}
-  .p-in .rule li b{font-weight:500;color:var(--color-foreground)}
+  .p-in .rule p{margin-top:10px;font-size:14px;line-height:1.65;color:var(--color-muted-foreground)}
   .p-in .more{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px 48px}
   .p-in .more h3{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:600}
   .p-in .more h3 .ic{width:17px;height:17px;color:var(--color-muted-foreground)}
   .p-in .more p{margin-top:8px;font-size:14px;line-height:1.7;color:var(--color-muted-foreground)}
-  .p-in .more p b{font-weight:500;color:var(--color-foreground)}
-  /* 底下两颗按钮浮在页面底边；手机上叠在底部 Tab 上面 */
+  /* 底下两颗按钮浮在页面底边；平板上叠在底部 Tab 上面 */
   .p-in .ok{position:fixed;left:50%;bottom:24px;z-index:40;display:flex;gap:8px;width:min(480px,calc(100vw - 32px));padding:8px;border-radius:18px;background:var(--color-pop);box-shadow:var(--sh-pop);transform:translateX(-50%)}
   .p-in .ok .btn{flex:1;height:42px;border-radius:12px;font-size:14.5px}
   .p-in .risk{max-width:80ch;margin-top:56px;padding-top:20px;border-top:1px solid var(--color-border);font-size:12.5px;line-height:1.7;color:var(--color-faint)}
-  @media (max-width:1080px){.p-in .rules,.p-in .more{grid-template-columns:minmax(0,1fr)}}
+  .p-in .lang{display:none}
   @media (max-width:1023px){.p-in .ok{bottom:calc(var(--tabbar-space) + 12px)}}
+
+  /* 手机：整屏盖住顶栏、底部 Tab 和悬浮球，像弹窗；内容压成一屏，按钮贴底 */
+  @media (max-width:760px){
+    .p-in{position:fixed;inset:0;z-index:95;display:flex;flex-direction:column;overflow-y:auto;padding-top:env(safe-area-inset-top);padding-bottom:0;background:var(--color-background)}
+    /* 语言钮在右上角，跟标题一行 */
+    .p-in .lang{display:block;position:absolute;top:calc(env(safe-area-inset-top) + 19px);right:16px;font-size:13px;color:var(--color-muted-foreground)}
+    .p-in .pg-h{padding-top:16px}
+    .p-in .lead{margin-top:8px;font-size:15px;line-height:1.6}
+    /* 顶上那行提醒收掉，底下留完整的风险声明 */
+    .p-in .warnl{display:none}
+    .p-in .sec{margin-top:16px}
+    .p-in .sec-h{margin-bottom:10px}
+    .p-in .sec-h h2{font-size:14px;color:var(--color-muted-foreground)}
+    /* 三块不要卡片底，序号挪到标题左边 */
+    .p-in .rules{grid-template-columns:minmax(0,1fr);gap:10px}
+    .p-in .rule{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;padding:0;border-radius:0;background:none}
+    .p-in .rule .n{grid-row:1/3;padding-top:3px}
+    .p-in .rule h3{margin-top:0;font-size:15px}
+    .p-in .rule p{margin-top:2px;font-size:13.5px;line-height:1.5}
+    /* 三件事：图标打头，标题和说明接成一段 */
+    .p-in .more{grid-template-columns:minmax(0,1fr);gap:8px}
+    .p-in .more > div{position:relative;padding-left:24px;font-size:13.5px;line-height:1.5}
+    .p-in .more h3{display:inline;margin-right:6px;font-size:inherit}
+    .p-in .more h3 .ic{position:absolute;left:0;top:3px;width:15px;height:15px}
+    .p-in .more p{display:inline;font-size:inherit;line-height:inherit}
+    /* 风险声明小字压在按钮上面 */
+    .p-in .risk{max-width:none;margin-top:auto;padding-top:12px;border-top:0;font-size:12px;line-height:1.5}
+    /* 按钮贴在屏幕底；屏幕太矮内容滚动时它也留在底边 */
+    .p-in .ok{order:1;position:sticky;bottom:0;left:auto;width:auto;padding:10px 0 calc(12px + env(safe-area-inset-bottom));border-radius:0;background:var(--color-background);box-shadow:none;transform:none}
+    .p-in .ok .btn{height:44px}
+  }
 }
