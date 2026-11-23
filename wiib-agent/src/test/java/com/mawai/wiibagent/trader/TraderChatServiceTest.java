@@ -184,9 +184,23 @@ class TraderChatServiceTest {
         JsonNode first = out.get("trades").get(0);
         assertThat(first.path("playType").asString(null)).isEqualTo("BREAKOUT");
         assertThat(first.path("closeManner").asString(null)).isEqualTo("manual");
+        assertThat(first.path("closedByPreset").asBoolean()).isFalse();
         assertThat(first.path("closeReason").asString(null)).isEqualTo("失效条件触发");
         // 没配到计划的那笔照给，只是没有论点字段
         assertThat(out.get("trades").get(1).has("playType")).isFalse();
+    }
+
+    /** 它布的预案平掉的：标出来，理由给那一行预案执行（条件、备注、结果），不是空着 */
+    @Test
+    void trades预案平仓标出来并带预案那一行() {
+        TradeRecordService.DecisionRef preset = new TradeRecordService.DecisionRef(9L, 4_000L,
+                AiTraderDecision.KIND_PRESET, "BTCUSDT 跌破 95：已市价平掉", null);
+        when(tradeRecordService.closedTrades(any())).thenReturn(List.of(trade(2L, "12.5", null, preset)));
+
+        JsonNode first = parse(service.trades(running(), null, AgentLang.ZH)).get("trades").get(0);
+
+        assertThat(first.path("closedByPreset").asBoolean()).isTrue();
+        assertThat(first.path("closeReason").asString(null)).isEqualTo("BTCUSDT 跌破 95：已市价平掉");
     }
 
     private static TradeRecordService.TradeRecord trade(long id, String pnl, AiTraderPlan plan,
@@ -198,9 +212,11 @@ class TraderChatServiceTest {
 
     // ==================== stale：忽略的交易从 chat 教材消失（口径3：chat 跟随忽略） ====================
 
+    /** 一醒来就落库的一轮：落库时刻和 wake_time 同一刻 */
     private static AiTraderDecision decision(long wakeTime, String reasoning, String actionsJson) {
         AiTraderDecision d = new AiTraderDecision();
         d.setWakeTime(wakeTime);
+        d.setCreatedAt(TradePairing.localOf(wakeTime));
         d.setKind(AiTraderDecision.KIND_TRADE);
         d.setStatus(AiTraderDecision.STATUS_OK);
         d.setReasoning(reasoning);
@@ -208,7 +224,10 @@ class TraderChatServiceTest {
         return d;
     }
 
-    /** decisions：新格式剔 stale 分段、错误格式落在 stale 生命期内整行剔——与复盘时间线同一套识别逻辑 */
+    /**
+     * decisions：新格式剔 stale 分段、错误格式落在 stale 生命期内整行剔——与复盘时间线同一套识别逻辑；
+     * 只处理别的币的轮，错误格式也不为这个币的计划整行剔
+     */
     @Test
     void decisions剔stale分段与错误格式整轮() {
         AiTraderPlan stale = new AiTraderPlan();
@@ -228,15 +247,46 @@ class TraderChatServiceTest {
         // 没分段的平仓轮：落在生命期 [1000, 5000] 内，整行不出
         AiTraderDecision unsegmentedClose = decision(4000L, "[本轮结论]\n动作：平仓\n等待：无",
                 "[{\"tool\":\"close_position\",\"args\":{\"positionId\":42},\"status\":\"ok\"}]");
+        // 只处理 SOL 的轮也没分段、也落在生命期里：和 BTC 那笔无关，照出
+        AiTraderDecision solOnly = decision(4500L, "[本轮结论]\n动作：观望\n等待：无", null);
+        solOnly.setSymbol("SOLUSDT");
         when(traderService.decisions(eq(7L), anyInt(), any(), any(), any(), any(), any()))
-                .thenReturn(List.of(segmented, unsegmentedClose));
+                .thenReturn(List.of(segmented, unsegmentedClose, solOnly));
 
         JsonNode out = parse(service.decisions(running(), null, null, AgentLang.ZH)).get("decisions");
 
-        assertThat(out).hasSize(1);
+        assertThat(out).hasSize(2);
         String reasoning = out.get(0).path("reasoning").asString(null);
         assertThat(reasoning).doesNotContain("BTCUSDT").contains("[ETHUSDT]").contains("跌破 1888");
         assertThat(out.get(0).get("tools")).extracting(JsonNode::asString).containsExactly("klines");
+        assertThat(out.get(1).path("symbol").asString(null)).isEqualTo("SOLUSDT");
+    }
+
+    /**
+     * 开仓之前就醒、跑到开仓之后才落库的那一轮，写的也是被忽略的那笔：按它实际跑的时段和计划生命期有没有交集判，不按醒来那一刻。
+     * 决策列表带上只处理哪个币
+     */
+    @Test
+    void decisions按一轮实际跑的时段剔stale分段() {
+        AiTraderPlan stale = new AiTraderPlan();
+        stale.setSymbol("BTCUSDT");
+        stale.setSide("LONG");
+        stale.setStatus(AiTraderPlan.STATUS_CLOSED);
+        stale.setStale(true);
+        stale.setOpenedWakeTime(1_785_000_600_000L);
+        stale.setClosedWakeTime(1_785_003_600_000L);
+        when(planStore.listAll(7L, 1)).thenReturn(List.of(stale));
+        // 开仓前 5 分钟醒来、开仓后 5 分钟落库
+        AiTraderDecision single = decision(1_785_000_300_000L,
+                "[本轮结论]\n[BTCUSDT]\n动作：跟着那笔多单移止损\n等待：无", "[]");
+        single.setSymbol("BTCUSDT");
+        single.setCreatedAt(TradePairing.localOf(1_785_000_900_000L));
+        when(traderService.decisions(eq(7L), anyInt(), any(), any(), any(), any(), any())).thenReturn(List.of(single));
+
+        JsonNode out = parse(service.decisions(running(), null, null, AgentLang.ZH)).get("decisions");
+
+        assertThat(out.get(0).path("reasoning").asString(null)).doesNotContain("跟着那笔多单");
+        assertThat(out.get(0).path("symbol").asString(null)).isEqualTo("BTCUSDT");
     }
 
     /** 没做成的交易动作，工具名后面带状态：不带的话被拒的、没执行的看起来和做成的一样 */

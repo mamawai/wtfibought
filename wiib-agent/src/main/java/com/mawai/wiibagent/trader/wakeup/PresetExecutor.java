@@ -35,6 +35,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -62,6 +63,9 @@ public class PresetExecutor {
 
     /** trader → 它还没做完的预案 */
     private final Map<Long, Set<CompletableFuture<Boolean>>> running = new ConcurrentHashMap<>();
+
+    /** 墙钟注入点：计划修订、撤档和时间线那一行的动作，记的都是做成那一刻 */
+    LongSupplier nowMs = System::currentTimeMillis;
 
     /** 一次执行的结果：做没做成，和一句话 */
     private record Done(boolean ok, String text) {
@@ -116,9 +120,9 @@ public class PresetExecutor {
         Done done;
         try {
             done = switch (type) {
-                case AiTraderWatch.ACTION_MOVE_STOP -> moveStop(trader, w, action, at, lang);
-                case AiTraderWatch.ACTION_CLOSE -> close(trader, w, action, at, lang);
-                default -> cancel(trader, w, action, at, lang);
+                case AiTraderWatch.ACTION_MOVE_STOP -> moveStop(trader, w, action, lang);
+                case AiTraderWatch.ACTION_CLOSE -> close(trader, w, action, lang);
+                default -> cancel(trader, w, action, lang);
             };
         } catch (SimOrderRetry.UnknownOutcome e) {
             // 重发也没问到结果：可能已经成交，不能说成没做成，不然模型照备注再平一次
@@ -143,7 +147,7 @@ public class PresetExecutor {
         return !done.ok() || AiTraderWatch.ACTION_CLOSE.equals(type);
     }
 
-    private Done moveStop(AiTrader trader, AiTraderWatch w, JsonNode action, long at, AgentLang lang) {
+    private Done moveStop(AiTrader trader, AiTraderWatch w, JsonNode action, AgentLang lang) {
         FuturesPositionDTO pos = position(trader, action);
         if (pos == null) {
             return new Done(false, prompts.get(lang, "trader.preset.positionGone"));
@@ -156,7 +160,7 @@ public class PresetExecutor {
                 String from = m.from() == null ? prompts.get(lang, "trader.revise.none") : WatchText.num(m.from());
                 // 同组还挂着的档改得怎样，跟在修订和结果后面；没有挂单就没有这半句
                 String synced = PendingProtection.summary(m.pending(), prompts, lang);
-                revise(trader, pos, at, prompts.get(lang, "trader.revise.presetMoveStop"),
+                revise(trader, pos, prompts.get(lang, "trader.revise.presetMoveStop"),
                         from + "→" + WatchText.num(stop) + synced, w.getNote());
                 yield new Done(true, prompts.get(lang, "trader.preset.movedStop", Map.of(
                         "symbol", pos.getSymbol(), "side", pos.getSide(), "from", from, "to", WatchText.num(stop))) + synced);
@@ -165,7 +169,7 @@ public class PresetExecutor {
                 String from = f.from() == null ? prompts.get(lang, "trader.revise.none") : WatchText.num(f.from());
                 String suffix = PendingProtection.summary(f.pending(), prompts, lang)
                         + prompts.get(lang, "trader.revise.positionUnconfirmed");
-                revise(trader, pos, at, prompts.get(lang, "trader.revise.presetMoveStop"),
+                revise(trader, pos, prompts.get(lang, "trader.revise.presetMoveStop"),
                         from + "→" + WatchText.num(stop) + suffix, w.getNote());
                 yield new Done(false, SimTradeClient.describe(f.cause(), messages, lang) + suffix);
             }
@@ -176,7 +180,7 @@ public class PresetExecutor {
         };
     }
 
-    private Done close(AiTrader trader, AiTraderWatch w, JsonNode action, long at, AgentLang lang) {
+    private Done close(AiTrader trader, AiTraderWatch w, JsonNode action, AgentLang lang) {
         FuturesPositionDTO pos = position(trader, action);
         if (pos == null) {
             return new Done(false, prompts.get(lang, "trader.preset.positionGone"));
@@ -189,18 +193,18 @@ public class PresetExecutor {
         req.setOrderType("MARKET");
         req.setClientRequestId(UUID.randomUUID().toString());
         FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.closePosition(trader.getSimUserId(), req));
-        revise(trader, pos, at, prompts.get(lang, "trader.revise.presetClose"), WatchText.num(qty), w.getNote());
+        revise(trader, pos, prompts.get(lang, "trader.revise.presetClose"), WatchText.num(qty), w.getNote());
         return new Done(true, prompts.get(lang, "trader.preset.closed", Map.of(
                 "symbol", pos.getSymbol(), "side", pos.getSide(),
                 "qty", WatchText.num(qty), "price", WatchText.num(resp.getFilledPrice()))));
     }
 
-    private Done cancel(AiTrader trader, AiTraderWatch w, JsonNode action, long at, AgentLang lang) {
+    private Done cancel(AiTrader trader, AiTraderWatch w, JsonNode action, AgentLang lang) {
         String symbol = action.path("symbol").asString();
         String orderSide = action.path("side").asString();
         FuturesOrderResponse response = simTradeClient.cancelOrder(trader.getSimUserId(), action.path("orderId").asLong());
         try {
-            planStore.cancelEntries(trader.getId(), trader.getRoundNo(), List.of(response), w.getNote(), at, lang);
+            planStore.cancelEntries(trader.getId(), trader.getRoundNo(), List.of(response), w.getNote(), nowMs.getAsLong(), lang);
         } catch (Exception e) {
             log.warn("[Preset] 撤单标档失败 traderId={} watchId={} msg={}", trader.getId(), w.getId(), e.toString());
         }
@@ -215,12 +219,12 @@ public class PresetExecutor {
                 .filter(p -> p.getId() == positionId).findFirst().orElse(null);
     }
 
-    /** 往这个仓位的计划记一条修订，理由是模型布预案时写的备注；记不上只打日志 */
-    private void revise(AiTrader trader, FuturesPositionDTO pos, long at, String type, String change, String reason) {
+    /** 往这个仓位的计划记一条修订：时刻是做成那一刻，理由是模型布预案时写的备注；记不上只打日志 */
+    private void revise(AiTrader trader, FuturesPositionDTO pos, String type, String change, String reason) {
         try {
             AiTraderPlan plan = planStore.liveFor(trader.getId(), trader.getRoundNo(), pos.getSymbol(), pos.getSide());
             if (plan != null) {
-                planStore.appendRevision(plan.getId(), at, type, change, reason);
+                planStore.appendRevision(plan.getId(), nowMs.getAsLong(), type, change, reason);
             }
         } catch (Exception e) {
             log.warn("[Preset] 修订落库失败 traderId={} {} msg={}", trader.getId(), pos.getSymbol(), e.toString());
@@ -243,6 +247,8 @@ public class PresetExecutor {
         ObjectNode row = MAPPER.createObjectNode().put("tool", "preset");
         row.set("args", action);
         row.put("status", done.ok() ? TradeActions.OK : TradeActions.ERROR).put(done.ok() ? "result" : "error", done.text());
+        // 做完那一刻，和唤醒轮里的动作同一个口径
+        row.put("at", nowMs.getAsLong());
         d.setActionsJson(MAPPER.writeValueAsString(List.of(row)));
         d.setToolCalls(1);
         if (!done.ok()) {

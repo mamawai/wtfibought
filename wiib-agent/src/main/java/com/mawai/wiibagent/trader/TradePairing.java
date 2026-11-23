@@ -121,4 +121,9 @@ public final class TradePairing {
     public static long msOf(java.time.LocalDateTime t) {
         return t == null ? 0 : t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
     }
+
+    /** msOf 反过来：毫秒换成本机时区的 LocalDateTime，拿去和仓位时间、created_at 这类列比大小 */
+    public static java.time.LocalDateTime localOf(long ms) {
+        return java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ms), ZoneId.systemDefault());
+    }
 }

@@ -20,6 +20,7 @@ import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.TraderActionService;
 import com.mawai.wiibagent.trader.TraderModelFactory;
@@ -504,7 +505,8 @@ public class TraderController {
         }
     }
 
-    public record EquityPoint(long wakeTime, BigDecimal equity) {
+    /** at=这一行落库的时刻(ms)，权益就是那一刻取的 */
+    public record EquityPoint(long at, BigDecimal equity) {
     }
 
     @GetMapping("/{id}/equity-curve")
@@ -516,7 +518,7 @@ public class TraderController {
             return Result.fail(ErrorCode.SYSTEM_ERROR.getCode(), messages.get("trader.notFound"));
         }
         return Result.ok(traderService.equityCurve(t, round).stream()
-                .map(d -> new EquityPoint(d.getWakeTime(), d.getEquity()))
+                .map(d -> new EquityPoint(TradePairing.msOf(d.getCreatedAt()), d.getEquity()))
                 .toList());
     }
 

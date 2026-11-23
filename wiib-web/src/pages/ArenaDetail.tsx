@@ -281,8 +281,8 @@ export function ArenaDetail() {
   // 区间锚在曲线最后一个点而不是"现在"：看历史局时 3 天＝那局的最后 3 天
   const windowed = useMemo(() => {
     if (range === 0 || curve.length === 0) return curve;
-    const from = curve[curve.length - 1].wakeTime - range * DAY_MS;
-    return curve.filter(p => p.wakeTime >= from);
+    const from = curve[curve.length - 1].at - range * DAY_MS;
+    return curve.filter(p => p.at >= from);
   }, [curve, range]);
   // 区间内点不够画线（末点之前是长停工）就退到整局，段选跟着退
   const effectiveRange: Range = windowed.length > 1 ? range : 0;
@@ -313,6 +313,12 @@ export function ArenaDetail() {
     }
     return events;
   }, [trades, detail, t]);
+  // 区间起点之前的不挂；整局不筛：第一轮里做的开平仓早于第一个点（第一轮的落库时刻），也是这一局的
+  const visibleEvents = useMemo(() => {
+    if (effectiveRange === 0 || curve.length === 0) return curveEvents;
+    const from = curve[curve.length - 1].at - effectiveRange * DAY_MS;
+    return curveEvents.filter(e => e.at >= from);
+  }, [curveEvents, curve, effectiveRange]);
 
   // 时间线筛选：每条只解析一次动作
   const actedIds = useMemo(() => new Set(decisions.filter(d => doneTrades(d).length > 0).map(d => d.id)), [decisions]);
@@ -337,7 +343,7 @@ export function ArenaDetail() {
 
   // 记分条：第几天＝曲线首点到末点（末点就是最近一次唤醒）；笔数/胜率从做完的交易现算，只有当前局的
   const dayNo = curve.length > 0
-    ? Math.floor((curve[curve.length - 1].wakeTime - curve[0].wakeTime) / DAY_MS) + 1
+    ? Math.floor((curve[curve.length - 1].at - curve[0].at) / DAY_MS) + 1
     : null;
   const closed = trades.filter(r => r.closedPnl != null);
   const winRate = closed.length > 0 ? Math.round(closed.filter(r => (r.closedPnl as number) > 0).length / closed.length * 100) : null;
@@ -450,7 +456,7 @@ export function ArenaDetail() {
                    options={RANGES.map(r => ({ value: String(r), label: r === 0 ? t('detail.rangeAll') : t('detail.rangeDays', { n: r }) }))} />
             </div>
             {visible.length > 1
-              ? <EquityCurve points={visible} events={curveEvents} />
+              ? <EquityCurve points={visible} events={visibleEvents} />
               : <div className="cv"><div className="empty"><b>{t('detail.notEnoughPoints')}</b></div></div>}
           </section>
 

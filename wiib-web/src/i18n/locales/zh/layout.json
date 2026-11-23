@@ -33,6 +33,7 @@
   },
   "release": {
     "title": "更新内容",
+    "titleFresh": "更新内容（有新版本）",
     "older": "更早一版",
     "newer": "较新一版",
     "fullNotes": "完整发布说明",

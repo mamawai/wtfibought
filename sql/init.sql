@@ -783,6 +783,8 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
 );
 
 CREATE INDEX IF NOT EXISTS idx_atd_trader_time ON ai_trader_decision(trader_id, wake_time DESC);
+-- 最新权益、净值曲线、复盘的权益和取轮按落库时刻（一轮结束）取
+CREATE INDEX IF NOT EXISTS idx_atd_trader_round_created ON ai_trader_decision(trader_id, round_no, created_at DESC);
 COMMENT ON TABLE ai_trader_decision IS 'AI Trader每次唤醒一行：推理全文+动作(含play_type论点标签)+权益快照——竞技场决策时间线与净值曲线数据源';
 COMMENT ON COLUMN ai_trader_decision.status IS 'OK/ERROR/SKIPPED（信号迟到，离下一根太近没跑）';
 COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） EVENT=持仓事件唤醒（sim止损/强平/限价成交当场叫醒，止盈不叫） WATCH=模型自己布的盯盘条件命中（ai_trader_watch） DRAWDOWN=权益回落警报唤醒（权益从参照点回落到主人设的比例，提前跑一轮整盘的） REVIEW=统一复盘（每天一篇，reasoning=复盘全文，无equity） DEBRIEF=单笔复盘（一笔单子平仓满24小时后复盘一次，reasoning=复盘全文，position_id=对应仓位，无equity） PRESET=预案命中后代码执行动作（没跑模型，reasoning=条件与执行结果，无equity）';
@@ -871,7 +873,7 @@ COMMENT ON COLUMN ai_trader_watch.for_symbol IS '为哪个可交易币布的：�
 COMMENT ON COLUMN ai_trader_watch.kind IS 'TOUCH_ABOVE/TOUCH_BELOW=标记价触及level；CLOSE_ABOVE/CLOSE_BELOW=period周期收盘站上/跌破level；AT_TIME=到at_time时刻';
 COMMENT ON COLUMN ai_trader_watch.note IS '模型给下一轮自己的备注：这条命中意味着什么，命中唤醒的开场白原样念给它';
 COMMENT ON COLUMN ai_trader_watch.status IS 'ARMED=在盯 FIRED=命中过（fired_at/fired_price记命中时刻与价） REPLACED=被整组替换或重置作废';
-COMMENT ON COLUMN ai_trader_watch.woke_at IS '模型得知这次命中的那轮唤醒时刻ms（当作触发叫醒它，或开场白里补报）；为空=命中了但还没哪轮告诉过它，下一轮开场白补报';
+COMMENT ON COLUMN ai_trader_watch.woke_at IS '模型得知这次命中的时刻ms：当作触发叫醒它、或开场白里补报的，是那一轮的唤醒时刻；一轮进行中插话告诉它的，是插进去那一刻；为空=命中了但还没哪轮告诉过它，下一轮开场白补报';
 COMMENT ON COLUMN ai_trader_watch.action_json IS '预案动作JSON，没带动作为NULL：type=MOVE_STOP(positionId,stopLossPrice)/CLOSE(positionId,closePercent)/CANCEL_ORDER(orderId)，另带布下时那个仓位或挂单的symbol、side。命中时代码当场执行，只会减风险';
 COMMENT ON COLUMN ai_trader_watch.action_result IS '预案执行结果一句话（跟主人语言）；没带动作或还没命中为NULL';
 COMMENT ON COLUMN ai_trader_watch.action_ok IS '预案做成了没有；没带动作或还没命中为NULL。移止损和撤单做成了不叫醒，平仓做成了或动作没做成都叫醒';

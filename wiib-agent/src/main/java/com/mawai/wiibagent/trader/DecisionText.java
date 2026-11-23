@@ -148,7 +148,8 @@ public class DecisionText {
      * 主人把某笔交易标记成"这笔不算数"（stale）之后，这行决策还剩多少字能用。
      * 时间线、唤醒回注、chat 都走这里，免得被否掉的那笔继续教坏模型。
      * 结论块按 [SYMBOL] 分了段的，只剔那个币的段，别的币照留；
-     * 错误格式（没按币分段或没写结论块）剔不了段，退化成按轮兜底：这轮落在任一 stale 计划生命期内就整行不要返回 null。
+     * 错误格式（没按币分段或没写结论块）剔不了段，退化成按轮兜底：这轮落在任一 stale 计划生命期内就整行不要返回 null，
+     * 只处理一个币的轮只看那个币的计划。
      * 没有 stale 计划就原样返回，一个字不动，错误格式的行也照留。
      */
     public String staleFiltered(AiTraderDecision d, List<AiTraderPlan> plans) {
@@ -156,16 +157,22 @@ public class DecisionText {
         if (plans.stream().noneMatch(p -> Boolean.TRUE.equals(p.getStale()))) {
             return reasoning;
         }
+        // 这一轮从醒来跑到落库；几轮同时在跑时，开仓前就醒、后来写了这笔的那一轮也落在里面
+        Span span = new Span(d.getWakeTime(), TradePairing.msOf(d.getCreatedAt()));
         // 起点语言随便给：locateConclusion 两门语言的标记都会尝试
         Conclusion c = reasoning.isBlank() ? null : locateConclusion(reasoning, AgentLang.ZH);
         if (c != null && SEGMENT_TAG.matcher(c.body(reasoning)).find()) {
-            return scrubStaleSegments(reasoning, c, d.getWakeTime(), plans);
+            return scrubStaleSegments(reasoning, c, span, plans);
         }
-        return inStaleLifetime(d.getWakeTime(), plans) ? null : reasoning;
+        return inStaleLifetime(span, d.getSymbol(), plans) ? null : reasoning;
+    }
+
+    /** 一轮从醒来到落库的时段 */
+    private record Span(long from, long to) {
     }
 
     /** 新格式剔段：结论块里被忽略交易的 [SYMBOL] 段连段头一起剔，引子（总评）与其余段保留 */
-    private String scrubStaleSegments(String reasoning, Conclusion c, long wakeTime, List<AiTraderPlan> plans) {
+    private String scrubStaleSegments(String reasoning, Conclusion c, Span span, List<AiTraderPlan> plans) {
         int bodyStart = c.index() + c.markLength();
         String body = reasoning.substring(bodyStart);
         Matcher m = SEGMENT_TAG.matcher(body);
@@ -175,26 +182,26 @@ public class DecisionText {
         while (m.find()) {
             if (symbol == null) {
                 out.append(body, 0, m.start());
-            } else if (!staleSegment(symbol, wakeTime, plans)) {
+            } else if (!staleSegment(symbol, span, plans)) {
                 out.append(body, segStart, m.start());
             }
             symbol = m.group(1);
             segStart = m.start();
         }
-        if (!staleSegment(symbol, wakeTime, plans)) {
+        if (!staleSegment(symbol, span, plans)) {
             out.append(body, segStart, body.length());
         }
         return out.toString();
     }
 
     /**
-     * 该轮该币的分段是否属于被忽略交易：wake 落在某 stale 计划生命期内，且覆盖该时刻的
+     * 该轮该币的分段是否属于被忽略交易：这一轮的时段和某 stale 计划生命期有交集，且和它有交集的
      * 该币计划<b>全部</b> stale——双开粒度=币，任一方向没被忽略这段就得留。
      */
-    private static boolean staleSegment(String symbol, long wakeTime, List<AiTraderPlan> plans) {
+    private static boolean staleSegment(String symbol, Span span, List<AiTraderPlan> plans) {
         boolean hasStale = false;
         for (AiTraderPlan p : plans) {
-            if (symbol.equals(p.getSymbol()) && covers(p, wakeTime)) {
+            if (symbol.equals(p.getSymbol()) && covers(p, span)) {
                 if (!Boolean.TRUE.equals(p.getStale())) {
                     return false;
                 }
@@ -204,15 +211,20 @@ public class DecisionText {
         return hasStale;
     }
 
-    private static boolean covers(AiTraderPlan p, long wakeTime) {
-        return p.getOpenedWakeTime() != null && p.getOpenedWakeTime() <= wakeTime
-                && wakeTime <= (p.getClosedWakeTime() == null ? Long.MAX_VALUE : p.getClosedWakeTime());
+    /** 计划生命期和这一轮的时段有交集 */
+    private static boolean covers(AiTraderPlan p, Span span) {
+        return p.getOpenedWakeTime() != null && p.getOpenedWakeTime() <= span.to()
+                && span.from() <= (p.getClosedWakeTime() == null ? Long.MAX_VALUE : p.getClosedWakeTime());
     }
 
-    /** 错误格式按轮兜底：这轮 wakeTime 落在任一 stale 计划的生命期内，时间规则与新格式剔段同一条 */
-    private static boolean inStaleLifetime(long wakeTime, List<AiTraderPlan> plans) {
+    /**
+     * 错误格式按轮兜底：这轮的时段和任一 stale 计划的生命期有交集，时间规则与新格式剔段同一条
+     *
+     * @param symbol 只处理一个币的轮那个币，只看它的计划；看整盘的轮给 null，哪个币的都看
+     */
+    private static boolean inStaleLifetime(Span span, String symbol, List<AiTraderPlan> plans) {
         for (AiTraderPlan p : plans) {
-            if (Boolean.TRUE.equals(p.getStale()) && covers(p, wakeTime)) {
+            if (Boolean.TRUE.equals(p.getStale()) && (symbol == null || symbol.equals(p.getSymbol())) && covers(p, span)) {
                 return true;
             }
         }

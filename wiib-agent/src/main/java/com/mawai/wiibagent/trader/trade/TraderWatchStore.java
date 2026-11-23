@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -65,16 +66,15 @@ public class TraderWatchStore {
                 .orderByAsc(AiTraderWatch::getId));
     }
 
-    /** 这几条命中已经在 wakeTime 那轮告诉过模型了 */
-    public void markWoken(Collection<Long> ids, long wakeTime) {
-        if (ids.isEmpty()) {
-            return;
-        }
-        mapper.update(null, new LambdaUpdateWrapper<AiTraderWatch>()
-                .in(AiTraderWatch::getId, ids)
-                .isNull(AiTraderWatch::getWokeAt)
-                .set(AiTraderWatch::getWokeAt, wakeTime)
-                .set(AiTraderWatch::getUpdatedAt, LocalDateTime.now()));
+    /** 这几条命中已经告诉过模型了，值是告诉它的时刻：开场白里念的是那一轮的 wake_time，进行中插话告诉的是插进去那一刻 */
+    public void markWoken(Map<Long, Long> toldAt) {
+        toldAt.entrySet().stream().collect(Collectors.groupingBy(Map.Entry::getValue,
+                        Collectors.mapping(Map.Entry::getKey, Collectors.toList())))
+                .forEach((at, ids) -> mapper.update(null, new LambdaUpdateWrapper<AiTraderWatch>()
+                        .in(AiTraderWatch::getId, ids)
+                        .isNull(AiTraderWatch::getWokeAt)
+                        .set(AiTraderWatch::getWokeAt, at)
+                        .set(AiTraderWatch::getUpdatedAt, LocalDateTime.now())));
     }
 
     /** 这几条里已经告诉过模型的 */

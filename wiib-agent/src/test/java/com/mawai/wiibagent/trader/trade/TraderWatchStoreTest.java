@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -70,14 +71,14 @@ class TraderWatchStoreTest {
         verify(events).publishEvent(new WatchesChanged(7L));
     }
 
-    /** 标"已告诉过"：没 id 不碰库，有 id 才更新 */
+    /** 标"已告诉过"：没 id 不碰库；同一时刻告诉的一起更新，插话告诉的按各自的时刻另更新 */
     @Test
-    void markWokenSkipsEmptyIds() {
-        store.markWoken(List.of(), 1785171600000L);
+    void markWokenGroupsByToldTime() {
+        store.markWoken(Map.of());
         verify(mapper, never()).update(isNull(), any(LambdaUpdateWrapper.class));
 
-        store.markWoken(List.of(31L, 32L), 1785171600000L);
-        verify(mapper).update(isNull(), any(LambdaUpdateWrapper.class));
+        store.markWoken(Map.of(31L, 1785171600000L, 32L, 1785171600000L, 33L, 1785171605000L));
+        verify(mapper, times(2)).update(isNull(), any(LambdaUpdateWrapper.class));
     }
 
     /** 命中是对 ARMED 的 CAS：第二个到的（并发 tick / 刚被替换）拿不到 */

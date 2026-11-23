@@ -461,13 +461,13 @@ public class TraderService {
         log.info("[Trader] 清理过期轮次 traderId={} round<={}", traderId, expired);
     }
 
-    /** 该 trader 最新权益（最近一条带 equity 的决策行；开局无决策时=初始资金）。 */
+    /** 该 trader 最新权益（最后落库的那条带 equity 的决策行，权益是落库前取的；开局无决策时=初始资金）。 */
     public BigDecimal latestEquity(AiTrader t) {
         AiTraderDecision d = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
                 .isNotNull(AiTraderDecision::getEquity)
-                .orderByDesc(AiTraderDecision::getWakeTime)
+                .orderByDesc(AiTraderDecision::getCreatedAt)
                 .last("LIMIT 1"));
         return d != null ? d.getEquity() : INITIAL_BALANCE;
     }
@@ -586,14 +586,14 @@ public class TraderService {
                 group -> simTradeClient.getGroupOrders(t.getSimUserId(), group));
     }
 
-    /** 净值曲线：(wakeTime, equity) 升序；round 缺省=当前局。 */
+    /** 净值曲线：(落库时刻, equity) 按落库先后；权益是落库前取的。round 缺省=当前局。 */
     public List<AiTraderDecision> equityCurve(AiTrader t, Integer round) {
         return decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
-                .select(AiTraderDecision::getWakeTime, AiTraderDecision::getEquity)
+                .select(AiTraderDecision::getCreatedAt, AiTraderDecision::getEquity)
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, round != null ? round : t.getRoundNo())
                 .isNotNull(AiTraderDecision::getEquity)
-                .orderByAsc(AiTraderDecision::getWakeTime));
+                .orderByAsc(AiTraderDecision::getCreatedAt));
     }
 
     private String validate(UpsertReq req) {

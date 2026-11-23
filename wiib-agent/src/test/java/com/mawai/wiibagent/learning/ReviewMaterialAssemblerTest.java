@@ -29,6 +29,7 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -47,6 +48,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -240,8 +242,9 @@ class ReviewMaterialAssemblerTest {
 
     // ==================== 战绩表 ====================
 
-    /** 权益和回撤按窗口内的决策行算；笔数胜负合计数的是本批单子，不管它们哪天平的 */
+    /** 权益和回撤按窗口内的决策行算，起止和先后按落库时刻；笔数胜负合计数的是本批单子，不管它们哪天平的 */
     @Test
+    @SuppressWarnings("unchecked")
     void statsComputedFromEquitySeriesAndBatchTrades() {
         // 窗口起点前最后一条权益 10000；窗口内 10200 → 9800 → 10500
         when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM - H, "10000"));
@@ -263,6 +266,14 @@ class ReviewMaterialAssemblerTest {
         assertThat(m.statsBlock()).contains("10000.00").contains("10500.00").contains("+5.00%");
         assertThat(m.statsBlock()).contains("3.92%");
         assertThat(m.statsBlock()).contains("本批单子 2 笔：1 胜 1 负（胜率 50%），合计净盈亏 +200.00");
+        // 几轮同时在跑时先开始的可能后结束：起始权益和序列都按落库时刻取、按落库时刻排
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderDecision>> prior = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(decisionMapper, atLeastOnce()).selectOne(prior.capture());
+        assertThat(prior.getAllValues().getFirst().getSqlSegment()).contains("created_at <=").contains("ORDER BY created_at DESC");
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderDecision>> lists = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(decisionMapper, atLeastOnce()).selectList(lists.capture());
+        assertThat(lists.getAllValues()).anySatisfy(q -> assertThat(q.getSqlSegment())
+                .contains("created_at >").contains("created_at <=").contains("ORDER BY created_at ASC"));
     }
 
     @Test
@@ -866,7 +877,7 @@ class ReviewMaterialAssemblerTest {
                 .contains("- " + TIME.format(Instant.ofEpochMilli(FROM + 3 * H))
                         + " 命中：BTCUSDT 1h 收盘 63120 站上 63000 ｜ 布时备注：突破确认 ｜ 得知于 "
                         + TIME.format(Instant.ofEpochMilli(FROM + 3 * H + 1))
-                        + "（WATCH）｜ 那轮交易动作：open_position, set_watch（被拒）, close_position（失败） ｜ 那轮该币结论：判断：1h 收盘站上 63000，突破确认 动作：开多 0.01 等待：无");
+                        + "（WATCH）｜ 那轮对该币的交易动作：open_position, set_watch（被拒）, close_position（失败） ｜ 那轮该币结论：判断：1h 收盘站上 63000，突破确认 动作：开多 0.01 等待：无");
     }
 
     @Test
@@ -893,8 +904,52 @@ class ReviewMaterialAssemblerTest {
                 default -> "未发起";
             };
             assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).watchBlock())
-                    .contains("那轮交易动作：close_position, open_position（" + label + "）");
+                    .contains("那轮对该币的交易动作：close_position, open_position（" + label + "）");
         }
+    }
+
+    /**
+     * 盯 BTC 价格、为 SOL 布的条件：算 SOL 布了条件，BTC 整期没有；得知那轮的结论段取 SOL 的。
+     * 命中时那一轮已经在跑、中途插话告诉它的：woke_at 是插进去那一刻，对不上哪一轮的 wake_time，按时段找那时在跑的那一轮，
+     * 说明那一轮几点开始、几点告诉的，不说"得知于"；交易动作只列告诉它之后对 SOL 做的（仓位编号按计划认币）
+     */
+    @Test
+    void watchBlockCountsConditionUnderItsOwnerAndMarksMidRoundHit() {
+        AiTrader t = trader();
+        t.setSymbols("BTCUSDT,SOLUSDT");
+        AiTraderWatch hit = watch(41L, AiTraderWatch.CLOSE_ABOVE, FROM + H);
+        hit.setForSymbol("SOLUSDT");
+        hit.setStatus(AiTraderWatch.STATUS_FIRED);
+        hit.setFiredAt(FROM + 3 * H);
+        hit.setFiredPrice(new BigDecimal("63120"));
+        long toldAt = FROM + 3 * H + 30_000L;
+        hit.setWokeAt(toldAt);
+        when(watchStore.inWindow(7L, 1, FROM, TO)).thenReturn(List.of(hit));
+        when(watchStore.armed(7L, 1)).thenReturn(List.of());
+        AiTraderPlan sol = new AiTraderPlan();
+        sol.setPositionId(5L);
+        sol.setSymbol("SOLUSDT");
+        when(planMapper.selectList(any())).thenReturn(List.of(sol));
+        AiTraderDecision woke = new AiTraderDecision();
+        woke.setWakeTime(FROM + 2 * H);
+        woke.setKind(AiTraderDecision.KIND_TRADE);
+        woke.setActionsJson("[{\"tool\":\"set_stop_loss\",\"args\":{\"positionId\":5},\"status\":\"ok\",\"at\":" + (toldAt - 60_000L) + "},"
+                + "{\"tool\":\"close_position\",\"args\":{\"positionId\":5},\"status\":\"ok\",\"at\":" + (toldAt + 60_000L) + "},"
+                + "{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"},\"status\":\"ok\",\"at\":" + (toldAt + 90_000L) + "}]");
+        woke.setReasoning(prompts.get(AgentLang.ZH, "trader.mark.conclusion")
+                + "\n[SOLUSDT]\n判断：跟着 BTC 突破\n动作：HOLD\n等待：无");
+        // 战绩表取起始权益；按 wake_time 对不上；按时段找到那时在跑的那一轮
+        when(decisionMapper.selectOne(any())).thenReturn(equityRow(FROM, "10000"), null, woke);
+
+        String block = assembler.assemble(t, FROM, TO, AgentLang.ZH).watchBlock();
+
+        assertThat(block)
+                .contains("- 期间布防 1 条（SOLUSDT）；命中 1 条；复盘时仍在盯 0 条；整期没有盯盘条件的币：BTCUSDT")
+                .contains("命中：BTCUSDT 1h 收盘 63120 站上 63000（为 SOLUSDT 布的）")
+                .contains("命中时 " + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 开始的那一轮（TRADE）正在跑，"
+                        + TIME.format(Instant.ofEpochMilli(toldAt)) + " 中途告诉了它 ｜ 那轮在这之后对该币的交易动作：close_position ｜")
+                .contains("那轮该币结论：判断：跟着 BTC 突破 动作：HOLD 等待：无")
+                .doesNotContain("得知于");
     }
 
     /** 窗口里一条都没布也要说（窗口前布下还在盯的币不算没条件）；命中了还没哪轮告诉过它的照样列出来 */
@@ -928,6 +983,7 @@ class ReviewMaterialAssemblerTest {
         w.setTraderId(7L);
         w.setRoundNo(1);
         w.setSymbol("BTCUSDT");
+        w.setForSymbol("BTCUSDT");
         w.setKind(kind);
         w.setLevel(new BigDecimal("63000"));
         w.setPeriod(kind.startsWith("CLOSE_") ? "1h" : null);

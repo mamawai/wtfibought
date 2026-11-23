@@ -240,7 +240,7 @@ public class TradeTools {
         }
     }
 
-    /** 只读账户快照，不增加模型的工具调用记录；给出去的持仓和挂单算这一轮看到过 */
+    /** 只读账户快照，不增加模型的工具调用记录；给出去的持仓、挂单和在盯的条件算这一轮看到过 */
     public String accountSnapshot() {
         ObjectNode out = MAPPER.createObjectNode();
         // 这里不进账户闸：先记下闸里记到第几笔，再取账户，取的过程中别的轮做的动作算没看到
@@ -282,7 +282,19 @@ public class TradeTools {
         out.set("pendingOrders", orders);
         out.put("lossIfPendingFillPctOfEquity", pctOfEquity(pending.stream().map(StopOrders::lossAtStops)
                 .reduce(BigDecimal.ZERO, BigDecimal::add), equity));
+        // 在盯的条件也给，带了预案的连预案动作：别的轮刚换过的这里看得到，看过之后动手就不会再为它被拦
+        List<AiTraderWatch> armed = watchStore.armed(ctx.traderId(), ctx.roundNo());
+        ArrayNode watches = out.putArray("watches");
+        for (AiTraderWatch w : armed) {
+            ObjectNode row = watches.addObject().put("symbol", w.getSymbol()).put("forSymbol", w.getForSymbol())
+                    .put("kind", w.getKind()).put("level", w.getLevel()).put("period", w.getPeriod())
+                    .put("atTime", w.getAtTime() == null ? null : BeijingTime.format(w.getAtTime())).put("note", w.getNote());
+            if (w.getActionJson() != null) {
+                row.set("action", MAPPER.readTree(w.getActionJson()));
+            }
+        }
         seen.look(positions, pending, lastActionNo);
+        seen.lookWatches(armed);
         return MAPPER.writeValueAsString(out);
     }
 
@@ -787,7 +799,7 @@ public class TradeTools {
             plan.setOpenedWakeTime(pos.getCreatedAt() != null
                     ? pos.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
                     : ctx.wakeTime());
-            TraderPlanStore.appendRevision(plan, ctx.wakeTime(), prompts.get(ctx.lang(), "trader.revise.fileNew"),
+            TraderPlanStore.appendRevision(plan, System.currentTimeMillis(), prompts.get(ctx.lang(), "trader.revise.fileNew"),
                     prompts.get(ctx.lang(), "trader.revise.fileNewNote"), signalsUsed);
             // 前置校验已确认无计划，补立就是新立
             planStore.open(plan, group -> simTradeClient.getGroupOrders(simUserId, group), ctx.lang());
@@ -859,7 +871,7 @@ public class TradeTools {
         try {
             AiTraderPlan plan = planStore.liveFor(ctx.traderId(), ctx.roundNo(), symbol, side);
             if (plan != null) {
-                planStore.revise(plan, ctx.wakeTime(), type, change, reason);
+                planStore.revise(plan, System.currentTimeMillis(), type, change, reason);
             }
         } catch (Exception e) {
             log.warn("[TradeTools] 修订落库失败 traderId={} {} msg={}", ctx.traderId(), symbol, e.getMessage());
@@ -959,7 +971,7 @@ public class TradeTools {
         }
         if (!cancelled.isEmpty()) {
             try {
-                planStore.cancelEntries(ctx.traderId(), ctx.roundNo(), cancelled, reason, ctx.wakeTime(), ctx.lang());
+                planStore.cancelEntries(ctx.traderId(), ctx.roundNo(), cancelled, reason, System.currentTimeMillis(), ctx.lang());
             } catch (Exception e) {
                 log.warn("[TradeTools] 撤单标档失败 traderId={}", ctx.traderId(), e);
             }
@@ -1107,12 +1119,14 @@ public class TradeTools {
 
     /**
      * 动作填完整了再入轨迹，经 ReactLoop 调进来的带上这次调用的 id（callId）：
-     * 同一批里两个 get_account 会并发到这儿（别的工具都在 SERIAL_TOOLS 里）
+     * 同一批里两个 get_account 会并发到这儿（别的工具都在 SERIAL_TOOLS 里）。
+     * at 是做完那一刻：写动作都在账户闸里排队，几轮同时在跑时按它排就是在账户上生效的先后
      */
     private synchronized void record(ObjectNode action) {
         if (ReactLoop.TOOL_CALL_ID.isBound()) {
             action.put("callId", ReactLoop.TOOL_CALL_ID.get());
         }
+        action.put("at", System.currentTimeMillis());
         actions.add(action);
     }
 

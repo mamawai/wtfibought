@@ -159,7 +159,7 @@ public class ReviewMaterialAssembler {
                 stats == null ? "" : stats,
                 casesBlock(cases, bodies, cancelledLimits(trader, plans, fetched, fromMs, toMs), lang),
                 marketBlock(trader, fromMs, toMs, lang),
-                watchBlock(trader, fromMs, toMs, lang),
+                watchBlock(trader, plans, fromMs, toMs, lang),
                 ledgerBlock(trader, active, classifies, cases, lang),
                 periodTrades(cases),
                 classifies,
@@ -219,23 +219,23 @@ public class ReviewMaterialAssembler {
 
     /** 权益和回撤看窗口，笔数胜负合计数的是本批单子 */
     private String statsBlock(AiTrader t, long fromMs, long toMs, List<CaseFileBuilder.TradeCase> cases, AgentLang lang) {
-        // 起始权益 = 窗口起点前最后一条带权益的决策行；开局首次复盘无前值 → 初始资金
+        // 权益是每行落库前取的，按落库时刻排。起始权益 = 窗口起点前最后落库的那条；开局首次复盘无前值 → 初始资金
         AiTraderDecision prior = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
                 .isNotNull(AiTraderDecision::getEquity)
-                .le(AiTraderDecision::getWakeTime, fromMs)
-                .orderByDesc(AiTraderDecision::getWakeTime)
+                .le(AiTraderDecision::getCreatedAt, TradePairing.localOf(fromMs))
+                .orderByDesc(AiTraderDecision::getCreatedAt)
                 .last("LIMIT 1"));
         BigDecimal start = prior != null ? prior.getEquity() : INITIAL_BALANCE;
         List<AiTraderDecision> series = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
-                .select(AiTraderDecision::getWakeTime, AiTraderDecision::getEquity)
+                .select(AiTraderDecision::getCreatedAt, AiTraderDecision::getEquity)
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
                 .isNotNull(AiTraderDecision::getEquity)
-                .gt(AiTraderDecision::getWakeTime, fromMs)
-                .le(AiTraderDecision::getWakeTime, toMs)
-                .orderByAsc(AiTraderDecision::getWakeTime));
+                .gt(AiTraderDecision::getCreatedAt, TradePairing.localOf(fromMs))
+                .le(AiTraderDecision::getCreatedAt, TradePairing.localOf(toMs))
+                .orderByAsc(AiTraderDecision::getCreatedAt));
         BigDecimal end = series.isEmpty() ? start : series.getLast().getEquity();
 
         BigDecimal returnPct = start.signum() > 0
@@ -412,8 +412,12 @@ public class ReviewMaterialAssembler {
 
     // ==================== 盯盘布防 ====================
 
-    /** 期间布的盯盘条件、命中，以及得知命中那轮的交易动作与该币结论；整期没布过条件的币点名 */
-    private String watchBlock(AiTrader t, long fromMs, long toMs, AgentLang lang) {
+    /**
+     * 期间布的盯盘条件、命中，以及得知命中那轮对该币的交易动作与该币结论；整期没布过条件的币点名
+     *
+     * @param plans 本局全部计划，认动作动的是哪个币用
+     */
+    private String watchBlock(AiTrader t, List<AiTraderPlan> plans, long fromMs, long toMs, AgentLang lang) {
         List<AiTraderWatch> rows = watchStore.inWindow(t.getId(), t.getRoundNo(), fromMs, toMs);
         List<AiTraderWatch> created = rows.stream()
                 .filter(w -> w.getCreatedWakeTime() > fromMs && w.getCreatedWakeTime() <= toMs).toList();
@@ -421,11 +425,11 @@ public class ReviewMaterialAssembler {
                 .filter(w -> w.getFiredAt() != null && w.getFiredAt() > fromMs && w.getFiredAt() <= toMs)
                 .sorted(Comparator.comparingLong(AiTraderWatch::getFiredAt)).toList();
         List<AiTraderWatch> armed = watchStore.armed(t.getId(), t.getRoundNo());
-        // 期间布过的币；窗口前布下、现在还在盯的也算有条件
+        // 期间为哪些币布过条件，按条件归属的币算，不按盯的是哪个币的价格；窗口前布下、现在还在盯的也算有条件
         Set<String> createdSymbols = new LinkedHashSet<>();
-        created.forEach(w -> createdSymbols.add(w.getSymbol()));
+        created.forEach(w -> createdSymbols.add(w.getForSymbol()));
         Set<String> covered = new LinkedHashSet<>(createdSymbols);
-        armed.forEach(w -> covered.add(w.getSymbol()));
+        armed.forEach(w -> covered.add(w.getForSymbol()));
         List<String> idle = Arrays.stream(t.getSymbols().split(",")).map(String::trim)
                 .filter(s -> !s.isEmpty() && !covered.contains(s)).toList();
         StringBuilder sb = new StringBuilder(prompts.get(lang, "reviewer.label.watchHeader")).append('\n');
@@ -436,18 +440,66 @@ public class ReviewMaterialAssembler {
                 "armed", armed.size(),
                 "idle", idle.isEmpty() ? ""
                         : prompts.get(lang, "reviewer.label.watchIdle", Map.of("symbols", String.join(", ", idle)))))).append('\n');
+        Coins coins = Coins.of(plans);
         for (AiTraderWatch w : fired) {
             sb.append(prompts.get(lang, "reviewer.label.watchHit", Map.of(
                     "firedAt", BeijingTime.shortFormat(w.getFiredAt()),
                     "detail", WatchText.detail(w, w.getFiredPrice(), prompts, lang),
                     "note", WatchText.note(w, prompts, lang),
-                    "followUp", followUp(t, w, lang)))).append('\n');
+                    "followUp", followUp(t, w, coins, lang)))).append('\n');
         }
         return sb.toString();
     }
 
-    /** 得知命中的那轮（woke_at 对应的决策行）：时刻、唤醒类型、交易动作、该币的结论段 */
-    private String followUp(AiTrader t, AiTraderWatch w, AgentLang lang) {
+    /** 认动作动的是哪个币：本局各计划绑的仓位编号、入场档的订单号各是哪个币的 */
+    private record Coins(Map<Long, String> byPosition, Map<Long, String> byOrder) {
+        static Coins of(List<AiTraderPlan> plans) {
+            Map<Long, String> byPosition = new HashMap<>();
+            Map<Long, String> byOrder = new HashMap<>();
+            for (AiTraderPlan p : plans) {
+                if (p.getPositionId() != null) {
+                    byPosition.put(p.getPositionId(), p.getSymbol());
+                }
+                PlanEntry.read(p).stream().map(PlanEntry::getOrderId).filter(Objects::nonNull)
+                        .forEach(id -> byOrder.put(id, p.getSymbol()));
+            }
+            return new Coins(byPosition, byOrder);
+        }
+
+        /**
+         * 这条动作动的是哪个币；认不出给 null。盯盘按为哪个币布的认：写了 forSymbol 用它，没写的单币轮是这一轮的币、整盘轮是被盯的币；
+         * 其余看参数里的币，没写币的按仓位编号、订单号查
+         */
+        String of(JsonNode leg, AiTraderDecision d) {
+            JsonNode args = leg.path("args");
+            if ("set_watch".equals(leg.path("tool").asString(null))) {
+                String forSymbol = args.path("forSymbol").asString(null);
+                return forSymbol != null ? forSymbol : d.getSymbol() != null ? d.getSymbol() : args.path("symbol").asString(null);
+            }
+            String symbol = args.path("symbol").asString(null);
+            if (symbol != null) {
+                return symbol;
+            }
+            symbol = byPosition.get(args.path("positionId").asLong(0));
+            if (symbol != null) {
+                return symbol;
+            }
+            // 撤单：看撤的是哪几张单
+            for (JsonNode id : args.path("orderIds")) {
+                symbol = byOrder.get(id.asLong(0));
+                if (symbol != null) {
+                    return symbol;
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * 得知命中的那轮：时刻、唤醒类型、那轮对该币的交易动作、条件归属那个币的结论段。
+     * 开场白里告诉它的，woke_at 就是那一轮的 wake_time；进行中插话告诉它的，woke_at 是插进去那一刻，找那时在跑的那一轮，换一句写法
+     */
+    private String followUp(AiTrader t, AiTraderWatch w, Coins coins, AgentLang lang) {
         if (w.getWokeAt() == null) {
             return prompts.get(lang, "reviewer.label.watchUnreported");
         }
@@ -458,31 +510,57 @@ public class ReviewMaterialAssembler {
                 .eq(AiTraderDecision::getWakeTime, w.getWokeAt())
                 .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .last("LIMIT 1"));
+        boolean midRound = d == null;
+        if (midRound) {
+            // 这个币的单币轮和整盘轮都在跑时，命中交给的是单币轮：PG 升序空值排在后面，单币轮在前
+            d = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
+                    .eq(AiTraderDecision::getTraderId, t.getId())
+                    .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
+                    .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
+                    .and(q -> q.isNull(AiTraderDecision::getSymbol).or().eq(AiTraderDecision::getSymbol, w.getForSymbol()))
+                    .le(AiTraderDecision::getWakeTime, w.getWokeAt())
+                    .ge(AiTraderDecision::getCreatedAt, TradePairing.localOf(w.getWokeAt()))
+                    .orderByAsc(AiTraderDecision::getSymbol)
+                    .last("LIMIT 1"));
+        }
         String none = prompts.get(lang, "reviewer.label.none");
-        return prompts.get(lang, "reviewer.label.watchFollowUp", Map.of(
-                "wokeAt", BeijingTime.shortFormat(w.getWokeAt()),
+        // 那一轮开始的时刻：开场白里告诉的就是 woke_at
+        long roundStart = midRound && d != null ? d.getWakeTime() : w.getWokeAt();
+        return prompts.get(lang, midRound ? "reviewer.label.watchFollowUpMid" : "reviewer.label.watchFollowUp", Map.of(
+                "wokeAt", BeijingTime.shortFormat(roundStart),
+                "toldAt", BeijingTime.shortFormat(w.getWokeAt()),
                 "kind", d == null ? none : d.getKind(),
-                "actions", d == null ? none : tradeActions(d.getActionsJson(), lang),
-                "section", d == null ? none : symbolSection(d.getReasoning(), w.getSymbol(), none)));
+                "actions", d == null ? none : tradeActions(d, w.getForSymbol(), midRound ? w.getWokeAt() : null, coins, lang),
+                "section", d == null ? none : symbolSection(d.getReasoning(), w.getForSymbol(), none)));
     }
 
-    /** 那轮的交易动作：工具名列表；被护栏拒的、sim 报错的、结果未知的各带标，没标的才是做成了 */
-    private String tradeActions(String actionsJson, AgentLang lang) {
+    /**
+     * 那轮对这个币的交易动作：工具名列表；被护栏拒的、sim 报错的、结果未知的各带标，没标的才是做成了。
+     * 认不出动的是哪个币的照列
+     *
+     * @param since 插话告诉它的时刻：只列这之后做的；老行的动作没记时刻，照列。开场白里告诉的给 null
+     */
+    private String tradeActions(AiTraderDecision d, String symbol, Long since, Coins coins, AgentLang lang) {
         List<String> out = new ArrayList<>();
-        if (actionsJson != null && !actionsJson.isBlank()) {
-            for (JsonNode a : MAPPER.readTree(actionsJson).valueStream()
-                    .flatMap(a -> TradeActions.legs(a).stream()).toList()) {
-                String tool = a.path("tool").asString(null);
-                if (tool == null || !TradeTools.SERIAL_TOOLS.contains(tool)) {
+        if (d.getActionsJson() != null && !d.getActionsJson().isBlank()) {
+            for (JsonNode action : MAPPER.readTree(d.getActionsJson())) {
+                if (since != null && action.path("at").asLong(Long.MAX_VALUE) < since) {
                     continue;
                 }
-                String status = a.path("status").asString("");
-                String key = a.has("rejected") ? "watchRejected"
-                        : TradeActions.ERROR.equals(status) ? "watchFailed"
-                        : TradeActions.NOT_ATTEMPTED.equals(status) ? "watchNotAttempted"
-                        : TradeActions.LIQUIDATED.equals(status) ? "watchLiquidated"
-                        : TradeActions.UNKNOWN.equals(status) ? "watchUnknown" : null;
-                out.add(key == null ? tool : prompts.get(lang, "reviewer.label." + key, Map.of("tool", tool)));
+                for (JsonNode a : TradeActions.legs(action)) {
+                    String tool = a.path("tool").asString(null);
+                    String coin = coins.of(a, d);
+                    if (tool == null || !TradeTools.SERIAL_TOOLS.contains(tool) || coin != null && !coin.equals(symbol)) {
+                        continue;
+                    }
+                    String status = a.path("status").asString("");
+                    String key = a.has("rejected") ? "watchRejected"
+                            : TradeActions.ERROR.equals(status) ? "watchFailed"
+                            : TradeActions.NOT_ATTEMPTED.equals(status) ? "watchNotAttempted"
+                            : TradeActions.LIQUIDATED.equals(status) ? "watchLiquidated"
+                            : TradeActions.UNKNOWN.equals(status) ? "watchUnknown" : null;
+                    out.add(key == null ? tool : prompts.get(lang, "reviewer.label." + key, Map.of("tool", tool)));
+                }
             }
         }
         return out.isEmpty() ? prompts.get(lang, "reviewer.label.watchNoAction") : String.join(", ", out);

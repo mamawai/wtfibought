@@ -173,7 +173,9 @@ reviewer:
     watchSummary: "- 期间布防 {{n}} 条（{{symbols}}）；命中 {{hits}} 条；复盘时仍在盯 {{armed}} 条{{idle}}"
     watchIdle: "；整期没有盯盘条件的币：{{symbols}}"
     watchHit: "- {{firedAt}} 命中：{{detail}} ｜ 布时备注：{{note}} ｜ {{followUp}}"
-    watchFollowUp: "得知于 {{wokeAt}}（{{kind}}）｜ 那轮交易动作：{{actions}} ｜ 那轮该币结论：{{section}}"
+    watchFollowUp: "得知于 {{wokeAt}}（{{kind}}）｜ 那轮对该币的交易动作：{{actions}} ｜ 那轮该币结论：{{section}}"
+    # 命中时那一轮已经在跑，是中途插进去告诉它的：wokeAt 是那一轮开始的时刻，早于命中；toldAt 是插进去的时刻
+    watchFollowUpMid: "命中时 {{wokeAt}} 开始的那一轮（{{kind}}）正在跑，{{toldAt}} 中途告诉了它 ｜ 那轮在这之后对该币的交易动作：{{actions}} ｜ 那轮该币结论：{{section}}"
     watchUnreported: 命中后还没有哪轮唤醒告诉过它
     watchNoAction: 无
     watchRejected: "{{tool}}（被拒）"

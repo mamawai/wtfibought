@@ -197,6 +197,8 @@ public class TraderChatService {
                     .put("time", time(d.getWakeTime()))
                     .put("wakeTime", d.getWakeTime())
                     .put("kind", d.getKind())
+                    // 只处理一个币的轮是哪个币；看整盘的轮、复盘行、预案行为空
+                    .put("symbol", d.getSymbol())
                     .put("status", d.getStatus())
                     .put("equity", d.getEquity())
                     .put("toolCalls", d.getToolCalls())
@@ -269,9 +271,11 @@ public class TraderChatService {
                 row.put("openDecisionAt", time(r.openDecision().wakeTime()));
             }
             if (r.closeDecision() != null) {
-                // 只有主动平仓才挂平仓决策；reason 是它调 close_position 时写的一句话理由
+                // 只有主动平仓才挂平仓决策：它调 close_position 平的，理由是它写的那句话；它布的预案平的，理由是那一行预案执行（条件、备注、结果）
+                boolean preset = AiTraderDecision.KIND_PRESET.equals(r.closeDecision().kind());
                 row.put("closeDecisionAt", time(r.closeDecision().wakeTime()))
-                        .put("closeReason", r.closeDecision().reason());
+                        .put("closedByPreset", preset)
+                        .put("closeReason", preset ? r.closeDecision().reasoning() : r.closeDecision().reason());
             }
             if (r.closedPnl() != null) {
                 total = total.add(r.closedPnl());

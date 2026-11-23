@@ -49,6 +49,8 @@ import static org.mockito.Mockito.when;
 class PresetExecutorTest {
 
     private static final long AT = 1_786_200_000_000L;
+    /** 在账户闸里排完队、做成的那一刻 */
+    private static final long DONE = AT + 4_000L;
 
     private final SimTradeClient sim = mock(SimTradeClient.class);
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
@@ -71,6 +73,7 @@ class PresetExecutorTest {
         AiTraderPlan plan = new AiTraderPlan();
         plan.setId(40L);
         when(planStore.liveFor(7L, 1, "BTCUSDT", "LONG")).thenReturn(plan);
+        executor.nowMs = () -> DONE;
     }
 
     /** ETH 跌破 1900 这条条件，带一个动作 */
@@ -143,7 +146,8 @@ class PresetExecutorTest {
         String result = (positionFailed ? "仓位已平" : "BTCUSDT LONG 止损 98→100") + suffix;
         verify(watchStore).recordAction(31L, !positionFailed, result);
         assertThat(w.getActionOk()).isEqualTo(!positionFailed);
-        verify(planStore).appendRevision(40L, AT, "预案移止损",
+        // 修订记做成那一刻；时间线那一行的时刻是命中，动作的时刻是做成
+        verify(planStore).appendRevision(40L, DONE, "预案移止损",
                 "98→100" + suffix, "大盘破位先保本");
         AiTraderDecision row = timelineRow();
         assertThat(row.getKind()).isEqualTo(AiTraderDecision.KIND_PRESET);
@@ -152,7 +156,7 @@ class PresetExecutorTest {
         assertThat(row.getEquity()).isNull();
         assertThat(row.getReasoning()).contains("ETHUSDT 标记价 1899 触及 1900 以下").contains("大盘破位先保本")
                 .contains(result);
-        assertThat(row.getActionsJson()).contains("\"tool\":\"preset\"")
+        assertThat(row.getActionsJson()).contains("\"tool\":\"preset\"").contains("\"at\":" + DONE)
                 .contains(positionFailed ? "\"status\":\"error\"" : "\"status\":\"ok\"");
     }
 
@@ -173,7 +177,7 @@ class PresetExecutorTest {
         assertThat(req.getValue().getQuantity()).isEqualByComparingTo("5");
         assertThat(req.getValue().getOrderType()).isEqualTo("MARKET");
         verify(watchStore).recordAction(31L, true, "BTCUSDT LONG 市价平掉 5 @103.9");
-        verify(planStore).appendRevision(40L, AT, "预案平仓", "5", "大盘破位先保本");
+        verify(planStore).appendRevision(40L, DONE, "预案平仓", "5", "大盘破位先保本");
     }
 
     /** 平仓指令发出去没问到结果：不说成没做成，如实写「可能已经执行」，叫醒；计划不记平仓 */
@@ -199,7 +203,7 @@ class PresetExecutorTest {
 
         assertThat(executor.execute(w, new BigDecimal("1899"), AT)).isFalse();
         verify(sim).cancelOrder(99L, 600L);
-        verify(planStore).cancelEntries(7L, 1, List.of(cancelled), "大盘破位先保本", AT, AgentLang.ZH);
+        verify(planStore).cancelEntries(7L, 1, List.of(cancelled), "大盘破位先保本", DONE, AgentLang.ZH);
         verify(watchStore).recordAction(31L, true, "BTCUSDT OPEN_LONG 挂单 600 已撤");
 
         when(sim.cancelOrder(99L, 600L)).thenThrow(new IllegalStateException("订单不可撤"));

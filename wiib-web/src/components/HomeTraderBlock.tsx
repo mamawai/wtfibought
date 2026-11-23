@@ -43,12 +43,12 @@ async function statsOf(pub: TraderPublicView): Promise<Stats> {
   ]);
   // 今日盈亏 = 现在的权益 − 今天 0 点（东八区）之前最后一个点；本局刚开就拿第一个点当基准
   const todayStart = new Date(`${fmtDate()}T00:00:00+08:00`).getTime();
-  const base = [...curve].reverse().find(p => p.wakeTime < todayStart) ?? curve[0];
+  const base = [...curve].reverse().find(p => p.at < todayStart) ?? curve[0];
   const todayPnl = base ? pub.equity - base.equity : 0;
   return {
     todayPnl,
     todayPct: base?.equity ? (todayPnl / base.equity) * 100 : 0,
-    dayNo: curve.length ? Math.floor((Date.now() - curve[0].wakeTime) / 86400000) + 1 : 1,
+    dayNo: curve.length ? Math.floor((Date.now() - curve[0].at) / 86400000) + 1 : 1,
     positions: detail?.positions.length ?? 0,
     nextWake: detail?.nextWakeAt ? fmtTime(detail.nextWakeAt) : '—',
     last: firstLine(decisions[0]?.reasoning),

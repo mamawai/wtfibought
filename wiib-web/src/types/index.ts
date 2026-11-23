@@ -965,11 +965,11 @@ export interface AiTraderPlanView {
   stale: boolean | null;
 }
 
-/** 交易记录里引用的那一行决策：id 对应时间线卡；reason 只有平仓有（close_position 的一句话理由） */
+/** 交易记录里引用的那一行决策：id 对应时间线卡；reason 只有平仓有（close_position 的一句话理由，预案平的没有）；预案平的 kind 是 PRESET */
 export interface TradeDecisionRef {
   id: number;
   wakeTime: number;
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'DEBRIEF';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'DEBRIEF' | 'PRESET';
   reasoning: string | null;
   reason: string | null;
 }
@@ -1081,7 +1081,8 @@ export interface AiTraderDecisionView {
 }
 
 export interface TraderEquityPoint {
-  wakeTime: number;
+  /** 这一行落库的时刻(ms)，权益就是那一刻取的 */
+  at: number;
   equity: number;
 }
 

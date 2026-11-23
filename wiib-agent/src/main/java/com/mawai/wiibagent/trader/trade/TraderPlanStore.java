@@ -143,9 +143,8 @@ public class TraderPlanStore {
             mapper.insert(plan);
             return;
         }
-        long revisedAt = plan.getOpenedWakeTime() == null ? 0 : plan.getOpenedWakeTime();
         mutate(old, current -> {
-            appendRevision(current, revisedAt, prompts.get(lang, "trader.revise.addOn"),
+            appendRevision(current, System.currentTimeMillis(), prompts.get(lang, "trader.revise.addOn"),
                     prompts.get(lang, "trader.revise.addOnNote", Map.of(
                             "playType", String.valueOf(current.getPlayType()),
                             "invalidation", String.valueOf(current.getInvalidationCondition()))),

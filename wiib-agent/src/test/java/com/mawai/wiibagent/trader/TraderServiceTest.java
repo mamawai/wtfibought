@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
@@ -911,5 +912,25 @@ class TraderServiceTest {
         // 条件值要 getSqlSegment() 拼过之后才会落进 paramNameValuePairs，顺序反了读到的是空表
         assertThat(q.getSqlSegment()).contains("round_no", "wake_time >=", "wake_time <");
         assertThat(q.getParamNameValuePairs().values()).contains(5, 1000L, 2000L);
+    }
+
+    /** 权益是每行落库前取的：最新权益和净值曲线都按落库时刻排，不按这一轮开始的时刻 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void equityFollowsInsertTime() {
+        AiTrader t = traderOnRound(2);
+        when(decisionMapper.selectOne(any())).thenReturn(null);
+        when(decisionMapper.selectList(any())).thenReturn(List.of());
+
+        service.latestEquity(t);
+        service.equityCurve(t, null);
+
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderDecision>> latest = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(decisionMapper).selectOne(latest.capture());
+        assertThat(latest.getValue().getSqlSegment()).contains("ORDER BY created_at DESC").doesNotContain("wake_time");
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderDecision>> curve = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(decisionMapper).selectList(curve.capture());
+        assertThat(curve.getValue().getSqlSegment()).contains("ORDER BY created_at ASC").doesNotContain("wake_time");
+        assertThat(curve.getValue().getSqlSelect()).contains("created_at");
     }
 }

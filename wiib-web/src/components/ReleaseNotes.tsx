@@ -19,7 +19,8 @@ export function ReleaseButton() {
   const fresh = useHasUpdate();
   const openNotes = useReleaseStore(s => s.openNotes);
   return (
-    <button type="button" className={fresh ? 'upd fresh' : 'upd'} aria-label={t('release.title')} onClick={openNotes}>
+    <button type="button" className={fresh ? 'upd fresh' : 'upd'} aria-label={t(fresh ? 'release.titleFresh' : 'release.title')}
+            onClick={openNotes}>
       <Megaphone className="ic" />
     </button>
   );

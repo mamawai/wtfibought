@@ -239,7 +239,7 @@ class WakeFlows {
         @Override
         public String opening() {
             String symbol = b.scope().symbol();
-            return singleInstruction(b.trader(), symbol, b.triggers(), b.wakeTime(), lastRealWake(b.recent()), b.pack().text(),
+            return singleInstruction(b.trader(), symbol, b.triggers(), b.wakeTime(), b.pack().lastSeen().get(symbol), b.pack().text(),
                     wakeObservation.coinFacts(b.trader(), symbol, b.pack().lastSeen(), b.wakeTime(), b.quotes(),
                             nowMs.getAsLong(), b.lang()),
                     b.overview(), b.lang(), webSearch);
@@ -372,12 +372,13 @@ class WakeFlows {
      * 单币轮开场白：把它叫醒的事 → 当前 K 线未收盘 → 这一轮只处理哪个币 → 这个币的观察包和行情 → 账户概况
      * → 这一轮分几段 → 每种触发各自的问题 → 四种共用的那一句。
      *
+     * @param lastSeen  这个币上次被看到的时刻（{@link WakeObservation#lastSeen}），本局还没有为 null
      * @param coinFacts 这个币的走势和现价（{@link WakeObservation#coinFacts}），空串=不带
      * @param overview  账户概况（{@link WakeObservation#accountOverview}），空串=不带
      */
-    String singleInstruction(AiTrader trader, String symbol, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime,
+    String singleInstruction(AiTrader trader, String symbol, List<WakeTrigger> triggers, long wakeTime, Long lastSeen,
                              String observation, String coinFacts, String overview, AgentLang lang, boolean webSearch) {
-        return triggerText.head(trader, triggers, wakeTime, lastWakeTime, lang)
+        return triggerText.head(trader, triggers, wakeTime, lastSeen, symbol, lang)
                 + prompts.get(lang, "trader.wake.triggerNotice", Map.of("interval", trader.getIntervalCode())) + '\n'
                 + prompts.get(lang, "trader.wake.single.scope", Map.of("symbol", symbol)) + '\n'
                 + observation
@@ -410,7 +411,7 @@ class WakeFlows {
                     "interval", trader.getIntervalCode(),
                     "time", BeijingTime.shortFormat(WakeIntervals.align(wakeTime, WakeIntervals.MS.get(trader.getIntervalCode())))));
         }
-        return triggerText.head(trader, triggers, wakeTime, lastWakeTime, lang)
+        return triggerText.head(trader, triggers, wakeTime, lastWakeTime, null, lang)
                 + prompts.get(lang, "trader.wake.triggerNotice", Map.of("interval", trader.getIntervalCode())) + '\n';
     }
 

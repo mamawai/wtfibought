@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.learning;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.TradePairing;
@@ -8,6 +9,7 @@ import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -24,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 单笔复盘的真跑验收：拿一个真实交易员最近两笔平仓满 24 小时的单子，各跑一遍完整的单笔复盘（真素材、真工具、真模型），
- * 正文、归类行和调过的工具打进日志给人读；断言只守输出契约：有正文、有【归类】段、归类行只写这一笔的仓位编号。
+ * 正文、归类行和调过的工具打进日志给人读；断言守素材和输出契约：各轮带开场白、有正文、有【归类】段、归类行只写这一笔的仓位编号。
  * 不落库：DEBRIEF 行只拿在手里看，这两笔上线后照常会被复盘。
  * <p>
  * 要连真库（两个新列已加）、sim 和本地 5m K 线；烧的是这个交易员主人的 key（每笔最多 16 次模型调用），默认跳过。
@@ -58,6 +60,10 @@ class DebriefRealRunTest {
     private SimTradeClient simTradeClient;
     @Autowired
     private ExperienceOpParser parser;
+    @Autowired
+    private DebriefMaterialAssembler assembler;
+    @Autowired
+    private PromptCatalog prompts;
 
     @Test
     void 真实单子的单笔复盘交回正文和归类段() {
@@ -79,6 +85,10 @@ class DebriefRealRunTest {
 
         for (DebriefRunner.Due due : dues) {
             long positionId = due.position().getId();
+            // 有过程轨迹的轮，素材里有开场白那一段：取全文时得点名要过程轨迹那一列
+            assertThat(assembler.assemble(trader, due.position(), due.plan(), AgentLang.ZH).roundsBlock())
+                    .as("仓位 %s 的各轮带开场白", positionId)
+                    .contains(prompts.get(AgentLang.ZH, "debrief.label.roundOpening"));
             AiTraderDecision d = runner.debriefRow(trader, due);
             log.info("[DebriefRealRun] 仓位 {} status={} error={} 模型调用{}次 工具{}次\n工具：{}\n输出：\n{}",
                     positionId, d.getStatus(), d.getError(), d.getModelCalls(), d.getToolCalls(),

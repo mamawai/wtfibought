@@ -581,6 +581,50 @@ class TradeToolsTest {
         verify(simTradeClient, times(1)).closePosition(eq(99L), any());
     }
 
+    /** 为 BTC 布的一条条件，actionJson 是带的预案（没带给 null） */
+    private static AiTraderWatch btcWatch(String kind, String level, String note, String actionJson) {
+        AiTraderWatch watch = new AiTraderWatch();
+        watch.setSymbol("BTCUSDT");
+        watch.setForSymbol("BTCUSDT");
+        watch.setKind(kind);
+        watch.setLevel(new BigDecimal(level));
+        watch.setNote(note);
+        watch.setActionJson(actionJson);
+        return watch;
+    }
+
+    /** get_account 带着在盯的条件和它带的预案：别的轮刚换过 BTC 的条件，查过一次账户再动 BTC，不再为它被拦 */
+    @Test
+    void getAccountShowsWatchesAndCountsThemAsSeen() {
+        TradeTools book = roundTools(null, new AccountGate());
+        book.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(), 0);
+        // 开场白之后，只处理 BTC 的那一轮给 BTC 布了一条条件
+        when(watchMapper.selectList(any())).thenReturn(List.of(btcWatch("TOUCH_ABOVE", "101000", "突破追多",
+                "{\"type\":\"MOVE_STOP\",\"positionId\":5,\"stopLossPrice\":100500}")));
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.01")));
+        when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "10000", "frozenBalance", "0", "equity", "10000"));
+        when(simTradeClient.getPendingOrders(99L, null)).thenReturn(List.of());
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(reverseCloseReceipt("FILLED"));
+
+        assertThat(book.getAccount()).contains("\"watches\":[{\"symbol\":\"BTCUSDT\",\"forSymbol\":\"BTCUSDT\",\"kind\":\"TOUCH_ABOVE\"")
+                .contains("突破追多").contains("\"action\":{\"type\":\"MOVE_STOP\"");
+        assertThat(book.closePosition(5L, 0.01, "到目标位")).doesNotContain("REJECTED");
+    }
+
+    /** 别的轮只给 BTC 的条件加了预案（价位、备注都没变）：动 BTC 之前照样看得出变了，说明里带着那条预案 */
+    @Test
+    void presetAddedToAWatchCountsAsAChange() {
+        TradeTools book = roundTools(null, new AccountGate());
+        book.seeOpening(List.of(btcLong("0.01")), List.of(), List.of(btcWatch("TOUCH_BELOW", "95000", "破位就走", null)), 0);
+        when(watchMapper.selectList(any())).thenReturn(List.of(btcWatch("TOUCH_BELOW", "95000", "破位就走",
+                "{\"type\":\"CLOSE\",\"positionId\":5,\"closePercent\":100}")));
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(btcLong("0.01")));
+
+        assertThat(book.closePosition(5L, 0.01, "到目标位")).startsWith("REJECTED:")
+                .contains("BTCUSDT 在你上次查看之后变了").contains("\"type\":\"CLOSE\"");
+        verify(simTradeClient, never()).closePosition(anyLong(), any());
+    }
+
     /** 同一个账户上的动作一次只做一个：前一个还在等 sim，后一个在闸外等着 */
     @Test
     void actionsOnTheSameAccountRunOneAtATime() throws Exception {
@@ -948,6 +992,22 @@ class TradeToolsTest {
         assertThat(cap.getValue().getRevisionsJson()).contains("移动止损").contains("95000→98000").contains("锁保本");
         // 计划本体价格字段是原始快照，修订只进历史
         assertThat(cap.getValue().getStopLossPrice()).isEqualByComparingTo("95000");
+    }
+
+    /** 动作和修订都记做成的那一刻，不记这一轮开始的时刻：几轮同时在跑时按它分先后 */
+    @Test
+    void actionAndRevisionCarryTheMomentTheyWereDone() {
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+        when(planMapper.selectOne(any())).thenReturn(existingPlan());
+        long before = System.currentTimeMillis();
+
+        tools.setStopLoss(5L, 98000.0, "价格+2R，上移锁保本");
+
+        long after = System.currentTimeMillis();
+        assertThat(tools.actions().getLast().path("at").asLong()).isBetween(before, after);
+        ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper).updateById(cap.capture());
+        assertThat(MAPPER.readTree(cap.getValue().getRevisionsJson()).get(0).path("time").asLong()).isBetween(before, after);
     }
 
     // ---------- 无基线时的方向校验：只许收紧管不住"第一次挂" ----------

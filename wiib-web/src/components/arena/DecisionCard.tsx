@@ -126,7 +126,7 @@ export function DecisionCard({ d, mine, highlight, trade }: {
                 </b>
                 <span>
                   {tradeArgsSummary(a)}
-                  {a.rejected && <small>{a.rejected}</small>}
+                  {a.rejected && <RejectReason text={a.rejected} />}
                   {a.error && <small>{a.error}</small>}
                 </span>
               </div>
@@ -163,5 +163,26 @@ export function DecisionCard({ d, mine, highlight, trade }: {
         </div>
       )}
     </div>
+  );
+}
+
+/** 拒因：夹着账户快照（JSON）的只露前面那句原因，点开看全文；没夹数据的原样给 */
+function RejectReason({ text }: { text: string }) {
+  const { t } = useTranslation('ai');
+  const [open, setOpen] = useState(false);
+  const cut = text.search(/[{[]/);
+  if (cut < 0) return <small>{text}</small>;
+  let head = text.slice(0, cut).trimEnd();
+  const end = Math.max(head.lastIndexOf('。'), head.lastIndexOf('. '));
+  // 引出数据的那半句（"你上次看到的："）不要，退回上一句末；截在句子中间的补个省略号
+  if (/[:：]$/.test(head) && end >= 0) head = head.slice(0, end + 1);
+  else head += '…';
+  return (
+    <small>
+      {open ? text : head}{' '}
+      <button type="button" className="linkb" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        {open ? t('common:collapse') : t('detail.expandFull')}
+      </button>
+    </small>
   );
 }

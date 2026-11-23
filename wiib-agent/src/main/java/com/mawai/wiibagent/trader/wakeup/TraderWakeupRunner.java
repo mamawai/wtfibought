@@ -204,12 +204,7 @@ public class TraderWakeupRunner {
                     round.busyElsewhere(), lang);
             decision.setReasoning(runSession(trader, round, ledger, prepared, taken, deadline, decision, lang, run));
             decision.setStatus(AiTraderDecision.STATUS_OK);
-            try {
-                decision.setEquity(simTradeClient.getEquity(trader.getSimUserId()));
-            } catch (Exception e) {
-                log.warn("[Trader] 动作后权益刷新失败，沿用唤醒前快照 traderId={} equity={} msg={}",
-                        trader.getId(), equity, e.getMessage());
-            }
+            refreshEquity(trader, decision);
             decision.setLatencyMs((int) (System.currentTimeMillis() - start));
             decision.setTraceJson(run.finish(AiTraderDecision.STATUS_OK, null, decision.getEquity(),
                     decision.getLatencyMs(), decision.getModelCalls(), decision.getTotalTokens()));
@@ -218,7 +213,7 @@ public class TraderWakeupRunner {
             clearFailures(trader);
             recordCitations(trader, decision);
             // 这一轮成功了，开场白里念过的、中途插进来的盯盘命中，和报过的事件行，才算告诉过模型
-            watchStore.markWoken(prepared.watchHits(), decision.getWakeTime());
+            watchStore.markWoken(prepared.watchHits());
             unreported.clear(trader.getId(), prepared.reportedEvents());
         } catch (Exception e) {
             boolean keyInvalid = false;
@@ -240,6 +235,7 @@ public class TraderWakeupRunner {
                     .map(t -> new UnreportedEvents.Line(null, triggerText.missedEquityDrop((EquityDropTrigger) t, lang))).toList());
             decision.setStatus(AiTraderDecision.STATUS_ERROR);
             decision.setError(msg.length() > 500 ? msg.substring(0, 500) : msg);
+            refreshEquity(trader, decision);
             decision.setLatencyMs((int) (System.currentTimeMillis() - start));
             if (run != null) {
                 decision.setTraceJson(run.finish(AiTraderDecision.STATUS_ERROR, decision.getError(), decision.getEquity(),
@@ -288,10 +284,10 @@ public class TraderWakeupRunner {
 
     /**
      * 这一轮进行中到来的事成文，插进对话：到点的例行一段，每条触发一段。
-     * 触发归的那个币放开开仓；盯盘命中在开场白里已经报过的不再说一遍，没报过的记进 told，这一轮成功了才算告诉过
+     * 触发归的那个币放开开仓；盯盘命中在开场白里已经报过的不再说一遍，没报过的连同插进去的时刻记进 told，这一轮成功了才算告诉过
      */
     private List<Message> interject(AiTrader trader, WakeRound.Arrivals arrivals, WakeFlows.Flow flow, TradeTools tradeTools,
-                                    Set<Long> told, boolean unlocks, AgentLang lang) {
+                                    Map<Long, Long> told, boolean unlocks, AgentLang lang) {
         List<Message> out = new ArrayList<>();
         if (arrivals.routineBoundary() != null) {
             out.add(new UserMessage(triggerText.routineDue(trader, arrivals.routineBoundary(), lang)));
@@ -300,7 +296,7 @@ public class TraderWakeupRunner {
             if (t.symbol() != null) {
                 flow.unlock(t.symbol());
             }
-            if (t instanceof WatchTrigger hit && !told.add(hit.watch().getId())) {
+            if (t instanceof WatchTrigger hit && told.putIfAbsent(hit.watch().getId(), nowMs.getAsLong()) != null) {
                 continue;
             }
             out.add(new UserMessage(triggerText.interjection(t, t.symbol() == null ? null : stateOf(trader, tradeTools, t.symbol()),
@@ -316,6 +312,16 @@ public class TraderWakeupRunner {
         } catch (Exception e) {
             log.warn("[Trader] 插话时没查到账户，这段话不带现状 traderId={} {} msg={}", trader.getId(), symbol, e.getMessage());
             return null;
+        }
+    }
+
+    /** 落库前重取一次权益，这一行的权益就是落库那一刻的；取不到沿用开头那份 */
+    private void refreshEquity(AiTrader trader, AiTraderDecision decision) {
+        try {
+            decision.setEquity(simTradeClient.getEquity(trader.getSimUserId()));
+        } catch (Exception e) {
+            log.warn("[Trader] 落库前权益刷新失败，沿用唤醒前快照 traderId={} equity={} msg={}",
+                    trader.getId(), decision.getEquity(), e.getMessage());
         }
     }
 

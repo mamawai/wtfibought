@@ -60,10 +60,10 @@ public class WakeObservation {
 
     /** 最近唤醒轨迹列几轮 */
     private static final int RECENT_DECISIONS = 5;
-    /** 最近的唤醒行取这么多：轨迹和上一轮的总评从里面找 */
+    /** 最近的唤醒行取这么多：轨迹从里面列，"上次唤醒"也从里面找 */
     private static final int RECENT_LOOKBACK = 30;
-    /** 找一个币最近一次写的结论段：正文里带它段头的最近几行，取最先切得出那段的 */
-    private static final int SEGMENT_CANDIDATES = 5;
+    /** 往回找结论看几行：一个币最近写的那段、上一次整盘轮写的结论块，都取最先找得到的 */
+    private static final int CONCLUSION_CANDIDATES = 5;
 
     private final AiTraderDecisionMapper decisionMapper;
     /** stale 教材过滤的共用入口（与复盘时间线/chat 同一套识别逻辑） */
@@ -85,11 +85,14 @@ public class WakeObservation {
 
     /**
      * 回注给下一轮看的一轮唤醒：决策行里只留提示词用得到的几列。
-     * 被主人标记忽略的交易，内容在这里已经剔掉（正文剔那个币的段、动作名剔那笔的），
-     * 行头的时刻/状态/权益原样——那是唤醒事实，不是教材。
+     * 被主人标记忽略的交易，动作名在这里已经剔掉，行头的时刻/状态/权益原样——那是唤醒事实，不是教材。
+     * symbol 是只处理一个币的轮处理的那个币，看整盘的一轮为 null。
      */
-    record RecentWake(long wakeTime, String status, BigDecimal equity, String error,
-                      String reasoning, List<String> tools) {
+    record RecentWake(long wakeTime, String status, BigDecimal equity, String error, List<String> tools, String symbol) {
+    }
+
+    /** 上一次看整盘、写了结论块的那一轮：时刻、当时权益、正文（主人标了不算数的段已经剔掉） */
+    record BookConclusion(long wakeTime, BigDecimal equity, String reasoning) {
     }
 
     /**
@@ -105,12 +108,14 @@ public class WakeObservation {
 
     /**
      * 最近 {@value #RECENT_LOOKBACK} 条交易行（例行/警报/手动/持仓事件/盯盘命中），最新在前。
-     * 轨迹只列前 {@value #RECENT_DECISIONS} 条，其余是找上一轮总评用的。
+     * 轨迹只列前 {@value #RECENT_DECISIONS} 条；"上次唤醒"取第一条不是跳过的，前面几条都跳过时要往后翻。
      * 复盘行不进来：它的产出已经走 memory 注入，再进就是重复占字数。
-     * 忽略过滤要按计划生命期判段落归属（同币另一方向没被忽略的段得留），plans 是本局全部计划。
+     * 主人标了不算数的那笔，动作名要剔，plans 是本局全部计划。
      */
     List<RecentWake> recentWakes(AiTrader trader, long wakeTime, List<AiTraderPlan> plans) {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                .select(AiTraderDecision::getWakeTime, AiTraderDecision::getStatus, AiTraderDecision::getEquity,
+                        AiTraderDecision::getError, AiTraderDecision::getSymbol, AiTraderDecision::getActionsJson)
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
                 .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
@@ -119,9 +124,8 @@ public class WakeObservation {
                 .last("LIMIT " + RECENT_LOOKBACK));
         List<RecentWake> out = new ArrayList<>(rows.size());
         for (AiTraderDecision d : rows) {
-            String reasoning = decisionText.staleFiltered(d, plans);
             out.add(new RecentWake(d.getWakeTime(), d.getStatus(), d.getEquity(), d.getError(),
-                    reasoning == null ? "" : reasoning, decisionText.staleFilteredToolNames(d, plans)));
+                    decisionText.staleFilteredToolNames(d, plans), d.getSymbol()));
         }
         return out;
     }
@@ -134,6 +138,7 @@ public class WakeObservation {
      * @param lossesToday  账户块下面"今天净亏损了结"那一行（{@link #lossesToday}），没有就是空串
      * @param live         对完账还活着的计划
      * @param planEvents   这一轮该报的事件行（{@link UnreportedEvents#due}）拼起来，进"自上次唤醒以来"
+     * @param book         上一次看整盘、写了结论块的那一轮（{@link #lastBookConclusion}）；单币轮或者还没有，为 null
      * @param segments     这一轮管的币各自最近一次写下的结论段（{@link #latestSegments}）
      * @param firedQuietly 命中了还没哪轮告诉过它的盯盘条件，进"自上次唤醒以来"补报
      * @param armed        这一轮管的币还在盯的盯盘条件，进承诺块
@@ -142,7 +147,7 @@ public class WakeObservation {
     Pack assemble(AiTrader trader, WakeScope scope, BigDecimal equity, List<FuturesPositionDTO> positions,
                   List<FuturesOrderResponse> pendingOrders, String lossesToday,
                   List<AiTraderPlan> live, String planEvents,
-                  List<RecentWake> recent, Map<String, Segment> segments, long wakeTime, AgentLang lang,
+                  BookConclusion book, Map<String, Segment> segments, long wakeTime, AgentLang lang,
                   List<AiTraderWatch> firedQuietly, List<AiTraderWatch> armed,
                   Map<String, BigDecimal> marks) {
         // 整盘轮全列（不在可交易币里的旧仓也列），单币轮只列那个币的
@@ -168,7 +173,7 @@ public class WakeObservation {
                 .append(lossesToday);
         sb.append('\n').append(scope.single()
                 ? coinConclusion(scope.symbol(), segments.get(scope.symbol()), lang)
-                : lastConclusion(latestConcluded(recent), segments, scope.symbols(), lang));
+                : lastConclusion(book, segments, scope.symbols(), lang));
         String commitments = commitments(trader, shownPositions, shownOrders, live,
                 armed, segments, marks, wakeTime, lang);
         sb.append(commitments);
@@ -497,11 +502,26 @@ public class WakeObservation {
         return v == null ? "?" : v.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
-    /** 最近一条写出了结论块的 OK 轮；没有给 null */
-    private RecentWake latestConcluded(List<RecentWake> recent) {
-        for (RecentWake w : recent) {
-            if (AiTraderDecision.STATUS_OK.equals(w.status()) && decisionText.conclusionBlock(w.reasoning()) != null) {
-                return w;
+    /**
+     * 上一次看整盘、写了结论块的那一轮：本局最近几条成功的整盘轮里，第一条写了结论块的；正文已剔掉主人标了不算数的段。没有给 null。
+     * 总评和主人留言的对账行只有整盘轮写，单币轮只写自己那个币的段，不在这里找
+     *
+     * @param plans 本局全部计划，剔不算数的段用
+     */
+    BookConclusion lastBookConclusion(AiTrader trader, long wakeTime, List<AiTraderPlan> plans) {
+        List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                .eq(AiTraderDecision::getTraderId, trader.getId())
+                .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
+                .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
+                .isNull(AiTraderDecision::getSymbol)
+                .lt(AiTraderDecision::getWakeTime, wakeTime)
+                .orderByDesc(AiTraderDecision::getWakeTime)
+                .last("LIMIT " + CONCLUSION_CANDIDATES));
+        for (AiTraderDecision d : rows) {
+            String reasoning = decisionText.staleFiltered(d, plans);
+            if (decisionText.conclusionBlock(reasoning) != null) {
+                return new BookConclusion(d.getWakeTime(), d.getEquity(), reasoning);
             }
         }
         return null;
@@ -525,7 +545,7 @@ public class WakeObservation {
                     .like(AiTraderDecision::getReasoning, "[" + symbol + "]")
                     // 决策行在一轮结束时落库：两轮都写了这个币的，后写完的那段算数
                     .orderByDesc(AiTraderDecision::getId)
-                    .last("LIMIT " + SEGMENT_CANDIDATES));
+                    .last("LIMIT " + CONCLUSION_CANDIDATES));
             for (AiTraderDecision d : rows) {
                 Segment segment = segmentOf(d, symbol, plans);
                 if (segment != null) {
@@ -568,21 +588,26 @@ public class WakeObservation {
     }
 
     /**
-     * 上一轮结论：最近一轮的引子（总评、主人留言的对账行）+ 每个币最近一次写下的那段，段头带写下它的时刻。
-     * 本轮没写的币沿用旧段，所以各段的时刻可以不同；翻不到段的币点名；一轮结论都没有就说没有
+     * 上一轮结论：上一次看整盘那一轮的引子（总评、主人留言的对账行），带它的时刻和当时权益；再是每个币最近一次写下的那段，段头带写下它的时刻。
+     * 引子只有整盘轮写。本轮没写的币沿用旧段，所以各段的时刻可以不同；翻不到段的币点名；引子和段都没有就说没有
+     *
+     * @param book 上一次看整盘、写了结论块的那一轮，没有为 null
      */
-    private String lastConclusion(RecentWake concluded, Map<String, Segment> segments, Collection<String> symbols,
+    private String lastConclusion(BookConclusion book, Map<String, Segment> segments, Collection<String> symbols,
                                   AgentLang lang) {
-        if (concluded == null) {
+        if (book == null && segments.isEmpty()) {
             return prompts.get(lang, "trader.wake.lastConclusionNone") + "\n";
         }
-        StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.wake.lastConclusionHeader", Map.of(
-                "time", BeijingTime.shortFormat(concluded.wakeTime()),
-                "equity", concluded.equity().setScale(0, RoundingMode.HALF_UP)))).append('\n');
-        DecisionText.Conclusion c = decisionText.locateConclusion(concluded.reasoning(), lang);
-        String intro = DecisionText.intro(c.body(concluded.reasoning()));
-        if (!intro.isEmpty()) {
-            sb.append(intro).append('\n');
+        StringBuilder sb = new StringBuilder(prompts.get(lang, "trader.wake.lastConclusionHeader")).append('\n');
+        if (book != null) {
+            DecisionText.Conclusion c = decisionText.locateConclusion(book.reasoning(), lang);
+            String intro = DecisionText.intro(c.body(book.reasoning()));
+            if (!intro.isEmpty()) {
+                sb.append(prompts.get(lang, "trader.wake.lastBookIntro", Map.of(
+                        "time", BeijingTime.shortFormat(book.wakeTime()),
+                        "equity", book.equity().setScale(0, RoundingMode.HALF_UP)))).append('\n')
+                        .append(intro).append('\n');
+            }
         }
         segments.forEach((symbol, s) -> sb.append(prompts.get(lang, "trader.wake.lastSegment", Map.of(
                 "symbol", symbol, "time", BeijingTime.shortFormat(s.wakeTime()))))
@@ -694,7 +719,7 @@ public class WakeObservation {
         return out;
     }
 
-    /** 一行一轮：时刻 [状态] 权益，OK 行列工具名，非 OK 行列原因；SKIPPED 行没权益、OK 行多半没 error */
+    /** 一行一轮：时刻 [状态] 只处理哪个币（单币轮才有） 权益，OK 行列工具名，非 OK 行列原因；SKIPPED 行没权益、OK 行多半没 error */
     private String trajectory(List<RecentWake> recent, AgentLang lang) {
         if (recent.isEmpty()) {
             return "";
@@ -703,6 +728,9 @@ public class WakeObservation {
         for (RecentWake w : recent.subList(0, Math.min(RECENT_DECISIONS, recent.size()))) {
             sb.append("- ").append(BeijingTime.shortFormat(w.wakeTime()))
                     .append(" [").append(w.status()).append(']');
+            if (w.symbol() != null) {
+                sb.append(' ').append(prompts.get(lang, "trader.wake.trajectorySingle", Map.of("symbol", w.symbol())));
+            }
             if (w.equity() != null) {
                 sb.append(' ').append(prompts.get(lang, "trader.label.equity",
                         Map.of("value", w.equity().setScale(0, RoundingMode.HALF_UP))));

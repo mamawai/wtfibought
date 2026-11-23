@@ -21,7 +21,6 @@ import tools.jackson.databind.JsonNode;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -68,10 +67,11 @@ class WakeBriefing {
      * 备好的料。
      *
      * @param reportedEvents 开场白里报了的事件行，这一轮成功了才清
-     * @param watchHits      开场白里念给它的盯盘命中（触发源里的和补报的），这一轮成功了才算告诉过
+     * @param watchHits      告诉它的盯盘命中和告诉它的时刻：开场白里念的（触发源里的和补报的）是这一轮的 wake_time；
+     *                       进行中插话告诉的之后加进来，是插进去那一刻。这一轮成功了才算告诉过
      * @param armed          这个 trader 全部在盯的条件，算这一轮看到过的
      */
-    record Prepared(WakeFlows.Brief brief, List<UnreportedEvents.Line> reportedEvents, Set<Long> watchHits,
+    record Prepared(WakeFlows.Brief brief, List<UnreportedEvents.Line> reportedEvents, Map<Long, Long> watchHits,
                     List<AiTraderWatch> armed) {
     }
 
@@ -106,7 +106,8 @@ class WakeBriefing {
         List<UnreportedEvents.Line> events = unreported.due(trader.getId(), scope);
         // 本局全部计划（含归档）：最近轮的 stale 过滤要按计划生命期判段落归属
         List<AiTraderPlan> plans = planStore.listAll(trader.getId(), trader.getRoundNo());
-        List<WakeObservation.RecentWake> recent = wakeObservation.recentWakes(trader, wakeTime, plans);
+        // 最近几轮只有整盘轮的开场白用（上次唤醒、轨迹）；单币轮说的是这个币上次被看到的时刻
+        List<WakeObservation.RecentWake> recent = scope.single() ? List.of() : wakeObservation.recentWakes(trader, wakeTime, plans);
 
         // 盯盘条件只看这一轮管的币的。命中了还没哪轮告诉过模型的分两份：本轮触发源里的（头几句念）、其余的（事件块补报）
         Predicate<AiTraderWatch> mine = w -> scope.single() ? scope.symbol().equals(w.getForSymbol())
@@ -130,7 +131,8 @@ class WakeBriefing {
         WakeObservation.Pack pack = wakeObservation.assemble(trader, scope, equity, positions, pendingOrders,
                 wakeObservation.lossesToday(trader, scope, closed, plans, wakeTime, lang),
                 ledger.live(), events.stream().map(UnreportedEvents.Line::text).collect(Collectors.joining()),
-                recent, wakeObservation.latestSegments(trader, wakeTime, scope.symbols(), plans),
+                scope.single() ? null : wakeObservation.lastBookConclusion(trader, wakeTime, plans),
+                wakeObservation.latestSegments(trader, wakeTime, scope.symbols(), plans),
                 wakeTime, lang, quiet, armed, marks);
 
         // 留言进开场白不进 system；取一次就消费一轮。只给按点的例行轮和手动轮：被触发叫醒的轮在 K 线中间，主人留的话多半是按收盘说的
@@ -148,8 +150,9 @@ class WakeBriefing {
             calendar = econCalendar.assemble(nowMs.getAsLong(), WakeIntervals.align(wakeTime, intervalMs) - intervalMs, lang);
         }
 
-        Set<Long> watchHits = new HashSet<>(triggerWatchIds);
-        quiet.forEach(w -> watchHits.add(w.getId()));
+        Map<Long, Long> watchHits = new HashMap<>();
+        triggerWatchIds.forEach(id -> watchHits.put(id, wakeTime));
+        quiet.forEach(w -> watchHits.put(w.getId(), wakeTime));
         return new Prepared(new WakeFlows.Brief(trader, scope, lang, wakeTime, triggers, recent, pack, calendar, ownerNote,
                 quotes, overview, wakeObservation.busyElsewhere(scope, busyElsewhere, lang)), events, watchHits, armedAll);
     }

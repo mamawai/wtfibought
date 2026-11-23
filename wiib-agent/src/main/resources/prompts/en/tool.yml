@@ -277,7 +277,9 @@ tool:
     Get the closed trades of the user's AI trader, newest first: symbol, side, leverage, entry and
     close price, realized PnL, open/close time, how it was closed (closeManner: stopLoss / takeProfit /
     manual / liquidated), the plan behind it (playType, signalsUsed, invalidation condition, original
-    stop and target) and, for a manual close, the close reason it wrote. Also count, wins and total
+    stop and target) and, for a manual close, the close reason: the line it wrote when it closed with a
+    tool, or, when one of its standing orders closed it (closedByPreset=true), that order's condition,
+    note and result. Also count, wins and total
     realized PnL over the returned trades. Returns hasTrader=false when the user has not created a trader yet.
     The optional trader is a trader name (see trader_list, case-insensitive); trader in the result names the trader this data belongs to.
 
@@ -313,9 +315,12 @@ tool:
     Get your full account state: equity, available (what is still free for new orders after
     position margin and pending-order reservations), wallet balance, open positions (with id,
     side, quantity, entry price, leverage, unrealized PnL, liquidation price, current
-    stop-loss/take-profit) and pending limit orders. This same state is already injected into
-    your opening message every round (the [Account] block). Use it to confirm changes after your
-    trades or fills that occurred while you were checking data.
+    stop-loss/take-profit), pending limit orders, and the watch conditions still armed (whose
+    price is watched, which symbol it was set for, the condition, the note, and for one with a standing
+    order the action the platform takes when it hits). This same state is
+    already injected into your opening message every round (the [Account] block and the commitments
+    block). Use it to confirm changes after your trades, fills that occurred while you were checking
+    data, or changes another round made to the account.
 
   open_position: |-
     Open a futures position on your sim account (cross margin) using entries: 1–5 rungs
@@ -450,6 +455,7 @@ tool:
   # ===== Tools the debrief uses to look into the past =====
   round_detail: |-
     Look up the tools one of this trader's rounds used and the opening message it saw; decisionId is the number after # in that round's title line. What each round wrote is already given in full in the opening material and is not repeated here.
+    Every reply carries the round's wake-up time, kind and status; a round that handled only one symbol carries onlySymbol; a round with a recorded duration carries when it actually ran, ranFrom and ranTo.
     With nothing else: for each model call of the round, how many characters it wrote (textChars), the tools it called, their arguments and results (results carry the first 300 characters only). The whole conclusion block is in the last call that wrote text.
     With call (the call number from the overview): what that call wrote (other symbols' conclusion segments included) and its tool results in full (as stored, at most 2000 characters each).
     With opening=true: the whole opening message the round woke up to (account, positions, plans, commitments, previous conclusion, economic calendar), and the message that started each later stage.

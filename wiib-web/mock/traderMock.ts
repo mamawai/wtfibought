@@ -183,7 +183,7 @@ const CURVE_EQUITY = [
 const equityCurve = () => {
   const last = now();
   return CURVE_EQUITY.map((equity, i) => ({
-    wakeTime: last - (CURVE_EQUITY.length - 1 - i) * 4 * HOUR,
+    at: last - (CURVE_EQUITY.length - 1 - i) * 4 * HOUR,
     equity,
   }));
 };

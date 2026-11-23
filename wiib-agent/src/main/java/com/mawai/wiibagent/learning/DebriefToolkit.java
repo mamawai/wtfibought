@@ -93,7 +93,8 @@ public class DebriefToolkit {
     String roundDetail(AiTrader t, long decisionId, Integer call, Boolean opening) {
         AiTraderDecision d = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
                 .select(AiTraderDecision::getId, AiTraderDecision::getTraderId, AiTraderDecision::getRoundNo,
-                        AiTraderDecision::getWakeTime, AiTraderDecision::getKind, AiTraderDecision::getStatus,
+                        AiTraderDecision::getWakeTime, AiTraderDecision::getCreatedAt, AiTraderDecision::getLatencyMs,
+                        AiTraderDecision::getKind, AiTraderDecision::getSymbol, AiTraderDecision::getStatus,
                         AiTraderDecision::getError, AiTraderDecision::getReasoning, AiTraderDecision::getActionsJson,
                         AiTraderDecision::getTraceJson)
                 .eq(AiTraderDecision::getId, decisionId));
@@ -106,6 +107,13 @@ public class DebriefToolkit {
                 .put("time", BeijingTime.format(d.getWakeTime()))
                 .put("kind", d.getKind())
                 .put("status", d.getStatus());
+        if (d.getSymbol() != null) {
+            out.put("onlySymbol", d.getSymbol());
+        }
+        if (d.getLatencyMs() != null) {
+            DebriefMaterialAssembler.Span span = DebriefMaterialAssembler.Span.of(d);
+            out.put("ranFrom", BeijingTime.format(span.from())).put("ranTo", BeijingTime.format(span.to()));
+        }
         if (d.getError() != null) {
             out.put("error", d.getError());
         }

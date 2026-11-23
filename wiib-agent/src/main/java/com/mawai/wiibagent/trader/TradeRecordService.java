@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -23,6 +24,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -39,6 +41,9 @@ public class TradeRecordService {
     static final int LIMIT = 50;
     /** 平仓决策候选窗口向前放宽的量：例行唤醒的 wake_time 是 K 线边界，比同一轮里才开出的仓位早，至多一个档位（最大 4h） */
     private static final long CLOSE_LOOKBACK_MS = 14_400_000L;
+    /** 平仓决策从哪几种行里找：唤醒行，加预案执行 */
+    private static final List<String> CLOSE_KINDS = Stream.concat(
+            AiTraderDecision.WAKE_KINDS.stream(), Stream.of(AiTraderDecision.KIND_PRESET)).toList();
 
     private final SimTradeClient simTradeClient;
     private final AiTraderPlanMapper planMapper;
@@ -66,14 +71,14 @@ public class TradeRecordService {
                 .eq(AiTraderPlan::getTraderId, t.getId())
                 .eq(AiTraderPlan::getRoundNo, t.getRoundNo()));
         Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
-        Map<Long, AiTraderDecision> openByWake = openDecisions(t, planByPos.values());
+        Map<Long, AiTraderDecision> openByPlan = openDecisions(t, planByPos.values());
         Map<Long, DecisionRef> closeByPos = closeDecisions(t, closed);
         Map<Long, DecisionRef> debriefByPos = debriefs(t, closed);
 
         List<TradeRecord> out = new ArrayList<>(closed.size());
         for (FuturesPositionDTO pos : closed) {
             AiTraderPlan plan = planByPos.get(pos);
-            AiTraderDecision open = plan == null ? null : openByWake.get(plan.getOpenedWakeTime());
+            AiTraderDecision open = plan == null ? null : openByPlan.get(plan.getId());
             // 下发语言无关的码，文案由前端查自己的词表：这张卡是给人看的界面元素，
             // 该跟界面语言走；服务端渲染成某一门语言存下来，切了语言就翻不回去了
             String mannerKey = TradePairing.closeMannerKey(pos);
@@ -109,9 +114,9 @@ public class TradeRecordService {
     }
 
     /**
-     * 开仓决策：plan.openedWakeTime 精确命中那一轮（ALERT/MANUAL 轮的 wake_time 与 WakeCtx.wakeTime 同源）。
-     * 同一 wake_time 撞上多行时，开了仓的那条才是"论点"所在。
-     * write_plan 补立的计划 openedWakeTime 是仓位创建时刻而非任何边界，天然配不到，openDecision 留空。
+     * 开仓决策，键是计划行 id：plan.openedWakeTime 精确命中的那一轮（与 WakeCtx.wakeTime 同源），
+     * 并且那一轮的动作里开过这份计划的币和方向（反手的开仓腿也算）。
+     * 续立计划的 openedWakeTime 是对账那一轮，可能是只处理别的币的轮；write_plan 补立的是仓位创建时刻。这两种都对不上开仓，留空
      */
     public Map<Long, AiTraderDecision> openDecisions(AiTrader t, Collection<AiTraderPlan> plans) {
         Set<Long> times = plans.stream().map(AiTraderPlan::getOpenedWakeTime)
@@ -119,30 +124,45 @@ public class TradeRecordService {
         if (times.isEmpty()) {
             return Map.of();
         }
-        return decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
-                        .eq(AiTraderDecision::getTraderId, t.getId())
-                        .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
-                        .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
-                        .in(AiTraderDecision::getWakeTime, times)
-                        .orderByAsc(AiTraderDecision::getId))
-                .stream().collect(Collectors.toMap(AiTraderDecision::getWakeTime, d -> d,
-                        (a, b) -> opened(a) ? a : b));
+        List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                .eq(AiTraderDecision::getTraderId, t.getId())
+                .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
+                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
+                .in(AiTraderDecision::getWakeTime, times)
+                .orderByAsc(AiTraderDecision::getId));
+        Map<Long, AiTraderDecision> out = new HashMap<>();
+        for (AiTraderPlan p : plans) {
+            rows.stream().filter(d -> Objects.equals(d.getWakeTime(), p.getOpenedWakeTime())
+                            && opened(d, p.getSymbol(), p.getSide()))
+                    .findFirst().ifPresent(d -> out.put(p.getId(), d));
+        }
+        return out;
     }
 
-    private static boolean opened(AiTraderDecision d) {
+    /**
+     * 这一轮的动作里有没有开这个币这个方向的仓：开成了，或者下单结果未知（可能已经成交，计划照样立了）；反手的开仓腿也算
+     */
+    private static boolean opened(AiTraderDecision d, String symbol, String side) {
         if (d.getActionsJson() == null) {
             return false;
         }
-        for (JsonNode a : MAPPER.readTree(d.getActionsJson())) {
-            if (TradeActions.opened(a)) {
-                return true;
+        for (JsonNode action : MAPPER.readTree(d.getActionsJson())) {
+            for (JsonNode leg : TradeActions.legs(action)) {
+                boolean tried = TradeActions.opened(leg) || "open_position".equals(leg.path("tool").asString(null))
+                        && TradeActions.UNKNOWN.equals(leg.path("status").asString(null));
+                if (tried && symbol.equals(leg.path("args").path("symbol").asString(null))
+                        && side.equals(leg.path("args").path("side").asString(null))) {
+                    return true;
+                }
             }
         }
         return false;
     }
 
     /**
-     * 平仓决策：actionsJson 里 close_position 命中该 positionId 的那一轮。同一仓位多次减仓取最后一轮（了结的那次）。
+     * 平仓决策：对该 positionId 做成的平仓里，做成时刻最晚的那一次（了结的那次）所在的那一行。
+     * 算数的有两种：唤醒轮里的 close_position，和预案执行里类型是平仓的那一条（理由在那一行正文的备注里，这里不单给）。
+     * 做成时刻取动作上记的 at；老行没记的，按那一行的 wake_time。几轮同时在跑时，开始得晚的那轮不一定平得晚。
      * 候选窗口 [最早开仓−4h, 最晚了结]，SQL 先按 like 粗筛，再在 Java 里精确对 positionId。
      * 被拒（rejected 字段）/出错（status=error）的动作不算数——窗口上界是全部仓位里最晚的了结时刻，
      * 仓位早已平掉后再对它下的一条失败 close_position 也会落进窗口，不筛掉就会顶掉真正的平仓决策。
@@ -154,11 +174,13 @@ public class TradeRecordService {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
-                .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
+                .in(AiTraderDecision::getKind, CLOSE_KINDS)
                 .between(AiTraderDecision::getWakeTime, from, to)
-                .like(AiTraderDecision::getActionsJson, "close_position")
+                .and(w -> w.like(AiTraderDecision::getActionsJson, "close_position")
+                        .or().like(AiTraderDecision::getActionsJson, "\"type\":\"" + AiTraderWatch.ACTION_CLOSE + "\""))
                 .orderByAsc(AiTraderDecision::getWakeTime));
         Map<Long, DecisionRef> byPos = new HashMap<>();
+        Map<Long, Long> doneAt = new HashMap<>();
         for (AiTraderDecision d : rows) {
             ArrayNode actions;
             try {
@@ -169,20 +191,33 @@ public class TradeRecordService {
             if (actions == null) {
                 continue;
             }
-            for (JsonNode a : actions.valueStream().flatMap(a -> TradeActions.legs(a).stream()).toList()) {
-                JsonNode args = a.hasNonNull("args") ? a.get("args") : null;
-                // 旧轨迹的 pending/无状态沿用成功语义。
-                String status = a.path("status").asString("pending");
-                if (!"close_position".equals(a.path("tool").asString(null))
-                        || args == null || !args.hasNonNull("positionId")
-                        || a.has("rejected") || !(TradeActions.OK.equals(status) || "pending".equals(status))) {
-                    continue;
+            for (JsonNode action : actions) {
+                // 反手拆成两条腿，腿上没有时刻，用外层这条的
+                long at = action.path("at").asLong(d.getWakeTime());
+                for (JsonNode a : TradeActions.legs(action)) {
+                    Long positionId = closedPosition(a);
+                    if (positionId == null || at < doneAt.getOrDefault(positionId, Long.MIN_VALUE)) {
+                        continue;
+                    }
+                    doneAt.put(positionId, at);
+                    byPos.put(positionId, new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), d.getReasoning(),
+                            a.path("args").path("reason").asString(null)));
                 }
-                // 升序遍历 + 覆盖 = 留最后一轮
-                byPos.put(args.get("positionId").asLong(),
-                        new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), d.getReasoning(), args.path("reason").asString(null)));
             }
         }
         return byPos;
+    }
+
+    /** 这条动作做成了平仓的话，平的是哪个仓位；不是平仓、没做成都给 null。旧轨迹的 pending/无状态沿用成功语义 */
+    private static Long closedPosition(JsonNode a) {
+        JsonNode args = a.path("args");
+        String status = a.path("status").asString("pending");
+        if (a.has("rejected") || !(TradeActions.OK.equals(status) || "pending".equals(status)) || !args.hasNonNull("positionId")) {
+            return null;
+        }
+        String tool = a.path("tool").asString("");
+        boolean close = "close_position".equals(tool)
+                || "preset".equals(tool) && AiTraderWatch.ACTION_CLOSE.equals(args.path("type").asString(null));
+        return close ? args.get("positionId").asLong() : null;
     }
 }

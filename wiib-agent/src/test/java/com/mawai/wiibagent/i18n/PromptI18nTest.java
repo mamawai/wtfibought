@@ -137,7 +137,7 @@ class PromptI18nTest {
         assertNoCjk("英文事实表块头", prompts.get(AgentLang.EN, "debrief.label.factsHeader",
                 Map.of("guide", prompts.get(AgentLang.EN, "reviewer.label.caseGuide"))));
         // 各轮块的标签，有的带占位符，取原文看
-        for (String key : List.of("roundTitle", "roundOpening", "roundPosition", "positionNotYet", "positionGone",
+        for (String key : List.of("roundTitle", "roundScope", "roundOverlap", "roundOpening", "roundPosition", "positionNotYet", "positionGone",
                 "pendingEntries", "account", "roundActions", "actionArgs", "actionReceipt", "actionFailed", "closedMidRound",
                 "roundWatches", "stageText", "wholeText", "beforeConclusion", "roundOverall", "roundSymbol",
                 "symbolAbsent", "notSegmented", "closedMark")) {

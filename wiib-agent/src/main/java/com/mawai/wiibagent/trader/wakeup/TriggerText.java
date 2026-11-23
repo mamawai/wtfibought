@@ -26,12 +26,14 @@ class TriggerText {
     private final PromptCatalog prompts;
 
     /**
-     * 开场白的头：逐条报把它叫醒的事，几条一起来的按先后各带自己的时刻；再是"上次唤醒 / 距下次例行"那行
+     * 开场白的头：逐条报把它叫醒的事，几条一起来的按先后各带自己的时刻；再是"上次唤醒 / 距下次例行"那行，
+     * 单币轮那行说的是这个币上次被看到是什么时候，和它"自上次唤醒以来"的窗口同一个起点
      *
      * @param wakeTime     真正醒来的时刻(ms)，"距下一次例行"按它算
-     * @param lastWakeTime 本局上一次交易唤醒的时刻(ms)，null=本局还没醒过
+     * @param lastWakeTime 整盘轮：本局上一次交易唤醒的时刻；单币轮：这个币上次被看到的时刻。null=本局还没有
+     * @param symbol       单币轮只处理的那个币；整盘轮为 null
      */
-    String head(AiTrader trader, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime, AgentLang lang) {
+    String head(AiTrader trader, List<WakeTrigger> triggers, long wakeTime, Long lastWakeTime, String symbol, AgentLang lang) {
         StringBuilder sb = new StringBuilder();
         boolean batch = triggers.size() > 1;
         if (batch) {
@@ -40,7 +42,7 @@ class TriggerText {
         for (WakeTrigger t : triggers) {
             sb.append(batch ? "- " : "").append(line(t, lang)).append('\n');
         }
-        return sb.append(lastWakeLine(trader, wakeTime, lastWakeTime, lang)).append('\n').toString();
+        return sb.append(lastWakeLine(trader, wakeTime, lastWakeTime, symbol, lang)).append('\n').toString();
     }
 
     /** 一条触发的一句话：警报报振幅/方向/现价，事件报币/方向/量/价，盯盘命中报条件与命中价和备注，权益回落报现在多少、最高到过多少、回落百分之几，都带自己的时刻 */
@@ -151,10 +153,10 @@ class TriggerText {
     }
 
     /**
-     * "你上次唤醒…，距下一次例行唤醒还有约 N 分钟"：非例行开场白都带这一行。
+     * "你上次唤醒…，距下一次例行唤醒还有约 N 分钟"：非例行开场白都带这一行；单币轮说的是"你上次看这个币…"。
      * 下次例行要看时段：下一边界落在时段外就是更晚的那个（时段末尾被叫醒，下次醒可能是第二天）。
      */
-    private String lastWakeLine(AiTrader trader, long triggeredAt, Long lastWakeTime, AgentLang lang) {
+    private String lastWakeLine(AiTrader trader, long triggeredAt, Long lastWakeTime, String symbol, AgentLang lang) {
         long intervalMs = WakeIntervals.MS.get(trader.getIntervalCode());
         long next = WakeIntervals.align(triggeredAt, intervalMs) + intervalMs;
         WakeWindow window = WakeWindow.of(trader);
@@ -165,10 +167,15 @@ class TriggerText {
             }
         }
         long toNextMin = Math.max(1, (next - triggeredAt) / 60_000);
+        if (symbol != null && lastWakeTime == null) {
+            return prompts.get(lang, "trader.wake.alertFirstSeen", Map.of("symbol", symbol, "minutes", toNextMin));
+        }
         String lastWake = lastWakeTime == null ? prompts.get(lang, "trader.wake.alertNoWake")
                 : prompts.get(lang, "trader.wake.alertWakeAt", Map.of(
                         "time", BeijingTime.shortFormat(lastWakeTime),
                         "minutes", Math.max(1, (triggeredAt - lastWakeTime) / 60_000)));
-        return prompts.get(lang, "trader.wake.alertLastWake", Map.of("lastWake", lastWake, "minutes", toNextMin));
+        return symbol == null
+                ? prompts.get(lang, "trader.wake.alertLastWake", Map.of("lastWake", lastWake, "minutes", toNextMin))
+                : prompts.get(lang, "trader.wake.alertLastSeen", Map.of("symbol", symbol, "lastWake", lastWake, "minutes", toNextMin));
     }
 }

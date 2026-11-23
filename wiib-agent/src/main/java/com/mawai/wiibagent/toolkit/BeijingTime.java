@@ -6,8 +6,8 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 /**
- * 新加坡时间到分钟：工具输出、klines 的 endTime、盯盘条件、开场白和复盘素材里的时刻都从这里成文。
- * 带年份的 yyyy-MM-dd HH:mm 能读回；MM-dd HH:mm 是只给看的短写法。
+ * 新加坡时间：工具输出、klines 的 endTime、盯盘条件、开场白和复盘素材里的时刻都从这里成文。
+ * 带年份的 yyyy-MM-dd HH:mm 能读回；MM-dd HH:mm 是只给看的短写法；MM-dd HH:mm:ss 只给复盘里动作的先后。
  */
 public final class BeijingTime {
 
@@ -19,6 +19,7 @@ public final class BeijingTime {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter SHORT = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZONE);
+    private static final DateTimeFormatter SHORT_SECONDS = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss").withZone(ZONE);
 
     private BeijingTime() {
     }
@@ -30,6 +31,11 @@ public final class BeijingTime {
     /** 不带年份的短写法 MM-dd HH:mm */
     public static String shortFormat(long epochMs) {
         return SHORT.format(Instant.ofEpochMilli(epochMs));
+    }
+
+    /** 不带年份、到秒的 MM-dd HH:mm:ss：几轮里动作的先后，跨零点也分得清 */
+    public static String shortSeconds(long epochMs) {
+        return SHORT_SECONDS.format(Instant.ofEpochMilli(epochMs));
     }
 
     /** 这一刻所在的新加坡时间当天 0 点 */

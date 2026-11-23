@@ -22,6 +22,7 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -34,7 +35,8 @@ import java.util.stream.Stream;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 单笔复盘的开场素材（纯代码）：这笔单子的事实表、从开仓那轮到平仓后第一轮每一轮的全部内容、经验账本的现役条目。
+ * 单笔复盘的开场素材（纯代码）：这笔单子的事实表、从开仓那轮到平仓后第一个看过这个币的轮每一轮的全部内容、经验账本的现役条目。
+ * 各轮只收看整盘的轮、预案行和只处理这个币的轮；几轮可以同时在跑，按实际开始的先后排，动作带上做成的时刻。
  * 各轮的内容全部给，不截断、不设上限：当时的原文和代码数据原样带上，只去掉别的币的结论段。
  * 段标签在 {@link PromptCatalog} 的 {@code debrief.label.*}；事实表和统一复盘用同一份（{@link CaseFileRenderer}）。
  */
@@ -74,6 +76,22 @@ public class DebriefMaterialAssembler {
     private record StageText(int stage, String text) {
     }
 
+    /** 一轮实际跑的时段：开始是落库时刻减去跑了多久，结束是落库时刻；没记耗时的（预案行、老行）两头都是 wake_time */
+    record Span(long from, long to) {
+        static Span of(AiTraderDecision d) {
+            if (d.getLatencyMs() == null) {
+                return new Span(d.getWakeTime(), d.getWakeTime());
+            }
+            long end = TradePairing.msOf(d.getCreatedAt());
+            return new Span(end - d.getLatencyMs(), end);
+        }
+
+        /** 时段有交集；一轮刚好在另一轮开始那一刻结束不算 */
+        boolean overlaps(Span o) {
+            return from < o.to && o.from < to;
+        }
+    }
+
     /** plan 是绑着这个仓位的计划行 */
     public DebriefMaterial assemble(AiTrader trader, FuturesPositionDTO pos, AiTraderPlan plan, AgentLang lang) {
         List<AiTraderExperience> entries = ledger.active(trader.getId(), trader.getRoundNo()).stream()
@@ -90,13 +108,15 @@ public class DebriefMaterialAssembler {
 
     private String roundsBlock(AiTrader t, FuturesPositionDTO pos, AiTraderPlan plan, AgentLang lang) {
         long closeMs = TradePairing.msOf(pos.getUpdatedAt());
+        // 这笔的起点：计划立案那一轮、仓位开仓时刻里早的那个。续立计划的立案时刻是对账那一轮，仓位可能在那之前就成交了
+        long from = Math.min(plan.getOpenedWakeTime(), TradePairing.msOf(pos.getCreatedAt()));
         Set<Long> planOrders = PlanEntry.read(plan).stream().map(PlanEntry::getOrderId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
         // 预案行只留对这笔单子做了动作的
         List<AiTraderDecision> rows = new ArrayList<>();
         Map<Long, Acted> acted = new HashMap<>();
-        for (AiTraderDecision d : rounds(t, plan.getOpenedWakeTime(), closeMs)) {
-            Acted a = acted(d, pos, planOrders, closeMs, lang);
+        for (AiTraderDecision d : rounds(t, pos, from, closeMs)) {
+            Acted a = acted(d, pos, planOrders, from, closeMs, lang);
             if (!a.actions().isEmpty() || !AiTraderDecision.KIND_PRESET.equals(d.getKind())) {
                 rows.add(d);
                 acted.put(d.getId(), a);
@@ -106,17 +126,28 @@ public class DebriefMaterialAssembler {
         if (rows.isEmpty()) {
             return sb.append(prompts.get(lang, "debrief.label.roundsNone")).append('\n').toString();
         }
+        // 几轮可以同时在跑：按实际开始的先后排
+        rows.sort(Comparator.comparingLong((AiTraderDecision d) -> Span.of(d).from()).thenComparing(AiTraderDecision::getId));
+        List<Span> spans = rows.stream().map(Span::of).toList();
         String closedMark = prompts.get(lang, "debrief.label.closedMark", Map.of(
                 "time", BeijingTime.shortFormat(closeMs), "manner", TradePairing.closeManner(prompts, pos, lang)));
         boolean closed = false;
         for (int i = 0; i < rows.size(); i++) {
             AiTraderDecision d = rows.get(i);
-            if (!closed && d.getWakeTime() > closeMs) {
+            Span span = spans.get(i);
+            if (!closed && span.from() > closeMs) {
                 sb.append('\n').append(closedMark).append('\n');
                 closed = true;
             }
+            // 和它的时段有交集的那几轮，编号从 1 起
+            List<Integer> overlaps = new ArrayList<>();
+            for (int j = 0; j < spans.size(); j++) {
+                if (j != i && spans.get(j).overlaps(span)) {
+                    overlaps.add(j + 1);
+                }
+            }
             // 正文和过程轨迹很大，一轮一轮取
-            sb.append('\n').append(round(decisionMapper.selectById(d.getId()), i + 1, rows.size(),
+            sb.append('\n').append(round(full(d.getId()), span, i + 1, rows.size(), overlaps,
                     acted.get(d.getId()), pos, planOrders, closeMs, lang));
         }
         if (!closed) {
@@ -125,40 +156,70 @@ public class DebriefMaterialAssembler {
         return sb.toString();
     }
 
-    /** 开仓那轮到平仓后第一轮之间的唤醒行和预案行，不带正文和过程轨迹；被跳过的轮不要 */
-    private List<AiTraderDecision> rounds(AiTrader t, long fromMs, long closeMs) {
-        AiTraderDecision after = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
-                .select(AiTraderDecision::getWakeTime)
+    /**
+     * 这笔单子的各轮，不带正文和过程轨迹：看整盘的轮、预案行和只处理这个币的轮，只处理别的币的不要，跳过的轮也不要。
+     * 实际跑的时段和这笔有交集的都收，从这笔的起点到平仓后第一个开跑的、看过这个币的轮；开仓前就在跑、后来动过它的那一轮也在里面。
+     * "平仓后第一个"按实际开始认：例行轮的 wake_time 是边界，撞上数据公布要等一会儿才开跑
+     */
+    private List<AiTraderDecision> rounds(AiTrader t, FuturesPositionDTO pos, long from, long closeMs) {
+        // wake_time 晚于平仓的第一轮：平仓后第一个开跑的那一轮，开跑不会晚于它
+        AiTraderDecision next = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
+                .select(AiTraderDecision::getWakeTime, AiTraderDecision::getCreatedAt, AiTraderDecision::getLatencyMs)
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
                 .in(AiTraderDecision::getKind, AiTraderDecision.WAKE_KINDS)
                 .ne(AiTraderDecision::getStatus, AiTraderDecision.STATUS_SKIPPED)
+                .and(w -> w.isNull(AiTraderDecision::getSymbol).or().eq(AiTraderDecision::getSymbol, pos.getSymbol()))
                 .gt(AiTraderDecision::getWakeTime, closeMs)
                 .orderByAsc(AiTraderDecision::getWakeTime)
                 .last("LIMIT 1"));
-        return decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
-                .select(AiTraderDecision::getId, AiTraderDecision::getWakeTime, AiTraderDecision::getKind,
-                        AiTraderDecision::getStatus, AiTraderDecision::getActionsJson)
+        List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                .select(AiTraderDecision::getId, AiTraderDecision::getWakeTime, AiTraderDecision::getCreatedAt,
+                        AiTraderDecision::getLatencyMs, AiTraderDecision::getKind, AiTraderDecision::getStatus,
+                        AiTraderDecision::getSymbol, AiTraderDecision::getActionsJson)
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
                 .in(AiTraderDecision::getKind, ROUND_KINDS)
                 .ne(AiTraderDecision::getStatus, AiTraderDecision.STATUS_SKIPPED)
-                .between(AiTraderDecision::getWakeTime, fromMs, after == null ? closeMs : after.getWakeTime())
+                .and(w -> w.isNull(AiTraderDecision::getSymbol).or().eq(AiTraderDecision::getSymbol, pos.getSymbol()))
+                .le(AiTraderDecision::getWakeTime, next == null ? closeMs : Span.of(next).from())
+                .ge(AiTraderDecision::getCreatedAt, TradePairing.localOf(from))
                 .orderByAsc(AiTraderDecision::getWakeTime)
                 .orderByAsc(AiTraderDecision::getId));
+        // 平仓后第一个开跑的唤醒轮，比它开始得晚的不要；平仓后还没有轮开跑过，就到平仓为止
+        long until = rows.stream().filter(d -> AiTraderDecision.WAKE_KINDS.contains(d.getKind()))
+                .mapToLong(d -> Span.of(d).from()).filter(s -> s > closeMs).min().orElse(closeMs);
+        return rows.stream().filter(d -> Span.of(d).from() <= until).toList();
+    }
+
+    /** 一轮的全文：正文和过程轨迹。过程轨迹那一列默认不查（select = false），得点名要 */
+    private AiTraderDecision full(long id) {
+        return decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
+                .select(AiTraderDecision::getId, AiTraderDecision::getLatencyMs, AiTraderDecision::getKind,
+                        AiTraderDecision::getStatus, AiTraderDecision::getSymbol, AiTraderDecision::getReasoning,
+                        AiTraderDecision::getTraceJson)
+                .eq(AiTraderDecision::getId, id));
     }
 
     /**
-     * 一轮的全部内容，按顺序：标题行、开场白开头、这一轮开始时这笔仓位、对这笔单子做的动作、给这个币布的盯盘、
-     * 各段写的原文、本轮总评、这个币的结论段。没存过程轨迹的行（预案行、旧行）没有开场白那两块
+     * 一轮的全部内容，按顺序：标题行（实际起止、只处理哪个币、和哪几轮同时在跑）、开场白开头、这一轮开始时这笔仓位、
+     * 对这笔单子做的动作、给这个币布的盯盘、各段写的原文、本轮总评、这个币的结论段。没存过程轨迹的行（预案行、旧行）没有开场白那两块
+     *
+     * @param overlaps 和这一轮的时段有交集的那几轮的编号
      */
-    private String round(AiTraderDecision d, int no, int total, Acted acted, FuturesPositionDTO pos,
-                         Set<Long> planOrders, long closeMs, AgentLang lang) {
+    private String round(AiTraderDecision d, Span span, int no, int total, List<Integer> overlaps, Acted acted,
+                         FuturesPositionDTO pos, Set<Long> planOrders, long closeMs, AgentLang lang) {
         JsonNode trace = d.getTraceJson() == null ? null : MAPPER.readTree(d.getTraceJson());
         String kind = prompts.get(lang, "debrief.label.kind." + d.getKind().toLowerCase(Locale.ROOT));
+        String time = span.from() == span.to() ? BeijingTime.shortFormat(span.from())
+                : BeijingTime.shortFormat(span.from()) + "–" + BeijingTime.shortFormat(span.to());
         StringBuilder sb = new StringBuilder(prompts.get(lang, "debrief.label.roundTitle", Map.of(
-                "no", no, "total", total, "id", d.getId(), "time", BeijingTime.shortFormat(d.getWakeTime()),
-                "kind", AiTraderDecision.STATUS_OK.equals(d.getStatus()) ? kind : kind + "/" + d.getStatus())))
+                "no", no, "total", total, "id", d.getId(), "time", time,
+                "kind", AiTraderDecision.STATUS_OK.equals(d.getStatus()) ? kind : kind + "/" + d.getStatus(),
+                "scope", d.getSymbol() == null ? ""
+                        : prompts.get(lang, "debrief.label.roundScope", Map.of("symbol", d.getSymbol())),
+                "overlap", overlaps.isEmpty() ? "" : prompts.get(lang, "debrief.label.roundOverlap", Map.of("nos",
+                        overlaps.stream().map(String::valueOf).collect(Collectors.joining(prompts.get(lang, "debrief.label.listSep"))))))))
                 .append('\n');
         if (trace != null) {
             String opening = trace.path("prompt").path("instruction").asString("");
@@ -167,20 +228,16 @@ public class DebriefMaterialAssembler {
                 sb.append(prompts.get(lang, "debrief.label.roundOpening")).append('\n')
                         .append(opening.substring(0, account).strip()).append('\n');
                 sb.append(prompts.get(lang, "debrief.label.roundPosition")).append('\n')
-                        .append(positionAtStart(opening.substring(account), pos, planOrders, d.getWakeTime() > closeMs, lang));
+                        .append(positionAtStart(opening.substring(account), pos, planOrders, span.from() > closeMs, lang));
             }
         }
         sb.append(prompts.get(lang, "debrief.label.roundActions")).append('\n')
                 .append(listOrNone(acted.actions(), lang));
         // 这一轮跑到一半这笔仓位平掉了
-        if (trace != null && d.getLatencyMs() != null) {
-            long from = trace.path("startedAt").asLong();
-            long to = from + d.getLatencyMs();
-            if (from <= closeMs && closeMs <= to) {
-                sb.append(prompts.get(lang, "debrief.label.closedMidRound", Map.of(
-                        "time", BeijingTime.shortFormat(closeMs), "manner", TradePairing.closeManner(prompts, pos, lang),
-                        "from", BeijingTime.shortFormat(from), "to", BeijingTime.shortFormat(to)))).append('\n');
-            }
+        if (d.getLatencyMs() != null && span.from() <= closeMs && closeMs <= span.to()) {
+            sb.append(prompts.get(lang, "debrief.label.closedMidRound", Map.of(
+                    "time", BeijingTime.shortFormat(closeMs), "manner", TradePairing.closeManner(prompts, pos, lang),
+                    "from", BeijingTime.shortFormat(span.from()), "to", BeijingTime.shortFormat(span.to())))).append('\n');
         }
         sb.append(prompts.get(lang, "debrief.label.roundWatches", Map.of("symbol", pos.getSymbol()))).append('\n')
                 .append(listOrNone(acted.watches(), lang));
@@ -261,24 +318,33 @@ public class DebriefMaterialAssembler {
         return sb.toString();
     }
 
-    /** 这一轮和这笔单子有关的动作，每条是工具名（没做成的带状态）加参数原样，对这笔单子做的后面跟回执 */
-    private Acted acted(AiTraderDecision d, FuturesPositionDTO pos, Set<Long> planOrders, long closeMs, AgentLang lang) {
+    /**
+     * 这一轮和这笔单子有关的动作，每条是记下的时刻（老行没记就不写）、工具名（没做成的带状态）、参数原样，对这笔单子做的后面跟回执。
+     * 盯盘按它为哪个币布的认
+     *
+     * @param from 这笔的起点
+     */
+    private Acted acted(AiTraderDecision d, FuturesPositionDTO pos, Set<Long> planOrders, long from, long closeMs,
+                        AgentLang lang) {
         List<String> actions = new ArrayList<>();
         List<String> watches = new ArrayList<>();
         if (d.getActionsJson() == null || d.getActionsJson().isBlank()) {
             return new Acted(actions, watches);
         }
         for (JsonNode action : MAPPER.readTree(d.getActionsJson())) {
+            // 反手拆成两条腿，腿上没有时刻，用外层这条的。老行没记，按这一轮的 wake_time 算、不写出来
+            long atMs = action.path("at").asLong(d.getWakeTime());
+            String at = action.has("at") ? BeijingTime.shortSeconds(atMs) + " " : "";
             for (JsonNode leg : TradeActions.legs(action)) {
                 if (!leg.hasNonNull("tool")) {
                     continue;
                 }
-                String row = "- " + TradeActions.label(leg) + " " + prompts.get(lang, "debrief.label.actionArgs") + leg.path("args");
+                String row = "- " + at + TradeActions.label(leg) + " " + prompts.get(lang, "debrief.label.actionArgs") + leg.path("args");
                 if ("set_watch".equals(leg.path("tool").asString())) {
-                    if (pos.getSymbol().equals(leg.path("args").path("symbol").asString(null))) {
+                    if (pos.getSymbol().equals(watchOwner(leg, d))) {
                         watches.add(row);
                     }
-                } else if (onThisTrade(leg, pos, planOrders, d.getWakeTime() <= closeMs)) {
+                } else if (onThisTrade(leg, pos, planOrders, from <= atMs && atMs <= closeMs)) {
                     actions.add(row + receipt(leg, lang));
                 }
             }
@@ -286,15 +352,26 @@ public class DebriefMaterialAssembler {
         return new Acted(actions, watches);
     }
 
+    /** 这条盯盘为哪个币布的：写了 forSymbol 用它；没写的，单币轮是这一轮的币，整盘轮是被盯的币。和 TradeTools.arm 认的一样 */
+    private static String watchOwner(JsonNode leg, AiTraderDecision d) {
+        String forSymbol = leg.path("args").path("forSymbol").asString(null);
+        if (forSymbol != null) {
+            return forSymbol;
+        }
+        return d.getSymbol() != null ? d.getSymbol() : leg.path("args").path("symbol").asString(null);
+    }
+
     /**
-     * 这个动作是不是对这笔单子做的：按仓位编号改止损止盈、平仓的；开仓、撤单涉及的订单是这笔计划的入场档的；
-     * 还有一张单都没下出去的开仓（整笔被拒、出错），看币和方向，而且这一轮开始时这笔还没平。
-     * 光看币和方向不行：止损之后又开同币同向的是另一笔单子。
+     * 这个动作是不是对这笔单子做的：按仓位编号改止损止盈、平仓的；开仓、撤单涉及的订单是这笔计划的入场档的（撤单预案的参数是单数 orderId）；
+     * 还有一张单都没下出去的开仓（整笔被拒、出错），看币和方向，而且是在这笔起点到平仓之间做的。
+     * 光看币和方向不行：止损之后又开同币同向的是另一笔单子，开仓前就在跑的轮里更早的那次也是。
      * 参数是模型传的，类型可能不对，取数字都带默认值
+     *
+     * @param inTrade 这个动作是在这笔起点到平仓之间做的
      */
-    private static boolean onThisTrade(JsonNode leg, FuturesPositionDTO pos, Set<Long> planOrders, boolean beforeClose) {
+    private static boolean onThisTrade(JsonNode leg, FuturesPositionDTO pos, Set<Long> planOrders, boolean inTrade) {
         JsonNode args = leg.path("args");
-        if (args.path("positionId").asLong(0) == pos.getId()) {
+        if (args.path("positionId").asLong(0) == pos.getId() || planOrders.contains(args.path("orderId").asLong(0))) {
             return true;
         }
         boolean placed = false;
@@ -309,7 +386,7 @@ public class DebriefMaterialAssembler {
                 return true;
             }
         }
-        return beforeClose && !placed && "open_position".equals(leg.path("tool").asString(null))
+        return inTrade && !placed && "open_position".equals(leg.path("tool").asString(null))
                 && pos.getSymbol().equals(args.path("symbol").asString(null))
                 && pos.getSide().equals(args.path("side").asString(null));
     }
@@ -394,11 +471,11 @@ public class DebriefMaterialAssembler {
 
     /**
      * 开仓那轮的结论里，该币那一段引用的账本编号（那轮没按币分段就看整块结论）。
-     * 计划行对上的那一轮得真开过这个币这个方向才算：续立行对上的是对账那轮，补归档行对不上任何一轮，这两种都算没引用
+     * 开仓那轮由 {@link TradeRecordService#openDecisions} 认，得真开过这个币这个方向：续立行、补归档行对不上，都算没引用
      */
     private Set<Long> citedAtOpen(AiTrader t, FuturesPositionDTO pos, AiTraderPlan plan) {
-        AiTraderDecision open = tradeRecords.openDecisions(t, List.of(plan)).get(plan.getOpenedWakeTime());
-        if (open == null || !opened(open, pos)) {
+        AiTraderDecision open = tradeRecords.openDecisions(t, List.of(plan)).get(plan.getId());
+        if (open == null) {
             return Set.of();
         }
         String block = decisionText.conclusionBlock(open.getReasoning());
@@ -409,21 +486,5 @@ public class DebriefMaterialAssembler {
         return DecisionText.ledgerRefs(segments.isEmpty() ? block : segments.stream()
                 .filter(s -> pos.getSymbol().equals(s.symbol())).map(DecisionText.ConclusionSegment::body)
                 .collect(Collectors.joining("\n")));
-    }
-
-    /** 这一轮的动作里有没有开成这个币这个方向的仓（反手的开仓腿也算） */
-    private static boolean opened(AiTraderDecision d, FuturesPositionDTO pos) {
-        if (d.getActionsJson() == null) {
-            return false;
-        }
-        for (JsonNode action : MAPPER.readTree(d.getActionsJson())) {
-            for (JsonNode leg : TradeActions.legs(action)) {
-                if (TradeActions.opened(leg) && pos.getSymbol().equals(leg.path("args").path("symbol").asString(null))
-                        && pos.getSide().equals(leg.path("args").path("side").asString(null))) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 }

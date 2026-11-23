@@ -23,10 +23,10 @@ function nearestPoint(points: TraderEquityPoint[], at: number): number {
   let hi = points.length - 1;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (points[mid].wakeTime < at) lo = mid + 1;
+    if (points[mid].at < at) lo = mid + 1;
     else hi = mid;
   }
-  return lo > 0 && at - points[lo - 1].wakeTime <= points[lo].wakeTime - at ? lo - 1 : lo;
+  return lo > 0 && at - points[lo - 1].at <= points[lo].at - at ? lo - 1 : lo;
 }
 
 const pct = (y: number) => `${y / H * 100}%`;
@@ -55,12 +55,12 @@ export function EquityCurve({ points, events = NO_EVENTS, base = BASE_EQUITY }: 
     lo -= pad;
     hi += pad;
     const ys = vals.map(e => (hi - e) / (hi - lo) * H);
-    // 事件挂到时间上最近的那个点；区间外的不挂
-    const first = points[0].wakeTime;
-    const last = points[points.length - 1].wakeTime;
+    // 事件挂到时间上最近的那个点，晚于最后一个点的不挂。早于第一个点的挂到第一个点上：
+    // 点是每轮落库的时刻，第一轮里做的开平仓在它之前；区间起点之前的由调用方筛掉
+    const last = points[points.length - 1].at;
     const at = new Map<number, CurveEvent[]>();
     for (const e of events) {
-      if (e.at < first || e.at > last) continue;
+      if (e.at > last) continue;
       const i = nearestPoint(points, e.at);
       at.set(i, [...(at.get(i) ?? []), e]);
     }
@@ -92,7 +92,7 @@ export function EquityCurve({ points, events = NO_EVENTS, base = BASE_EQUITY }: 
   return (
     <>
       <div className="rd">
-        <span>{fmtDateTime(p.wakeTime)}</span>
+        <span>{fmtDateTime(p.at)}</span>
         <span>{t('term.equity')} <b>{fmtNum(p.equity)}</b></span>
         <span className={diff >= 0 ? 'up' : 'dn'}>
           {t('wb.curve.vsBase', { diff: `${diff >= 0 ? '+' : '-'}${fmtNum(Math.abs(diff))}`, pct: fmtSignedPct(diff / base * 100) })}
@@ -129,7 +129,7 @@ export function EquityCurve({ points, events = NO_EVENTS, base = BASE_EQUITY }: 
       </div>
       <div className="xl">
         {[...new Set([0, Math.floor((n - 1) / 2), n - 1])].map(i => (
-          <span key={i} style={{ left: x(i) }}>{fmtDateTime(points[i].wakeTime)}</span>
+          <span key={i} style={{ left: x(i) }}>{fmtDateTime(points[i].at)}</span>
         ))}
       </div>
     </>

@@ -186,7 +186,9 @@ reviewer:
     watchSummary: "- {{n}} conditions set in the window ({{symbols}}); {{hits}} hit; {{armed}} still armed at review time{{idle}}"
     watchIdle: "; symbols with no watch condition all period: {{symbols}}"
     watchHit: "- {{firedAt}} hit: {{detail}} | note when set: {{note}} | {{followUp}}"
-    watchFollowUp: "learned at {{wokeAt}} ({{kind}}) | trading actions that round: {{actions}} | that round's conclusion for the symbol: {{section}}"
+    watchFollowUp: "learned at {{wokeAt}} ({{kind}}) | trading actions on the symbol that round: {{actions}} | that round's conclusion for the symbol: {{section}}"
+    # The round was already running when it hit and was told mid-round: wokeAt is when that round started, before the hit; toldAt is when it was told
+    watchFollowUpMid: "when it hit, the round started at {{wokeAt}} ({{kind}}) was running and was told at {{toldAt}} | trading actions on the symbol that round after that: {{actions}} | that round's conclusion for the symbol: {{section}}"
     watchUnreported: no wake-up has told it about this hit yet
     watchNoAction: none
     watchRejected: "{{tool}} (rejected)"

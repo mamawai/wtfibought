@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -12,6 +13,7 @@ import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -23,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -87,6 +90,10 @@ class TradeRecordServiceTest {
         return pl;
     }
 
+    /** 开成了 BTCUSDT 多单的一轮动作 */
+    private static final String OPENED_BTC_LONG =
+            "[{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"},\"status\":\"ok\"}]";
+
     private static AiTraderDecision decision(long id, long wakeTime, String reasoning, String actionsJson) {
         AiTraderDecision d = new AiTraderDecision();
         d.setId(id);
@@ -106,7 +113,7 @@ class TradeRecordServiceTest {
         when(planMapper.selectList(any())).thenReturn(List.of(plan(OPEN_MS)));
         // 第一次 selectList 是开仓决策查询，第二次是平仓决策查询
         when(decisionMapper.selectList(any())).thenReturn(
-                List.of(decision(100L, OPEN_MS, "突破做多", "[]")),
+                List.of(decision(100L, OPEN_MS, "突破做多", OPENED_BTC_LONG)),
                 List.of());
 
         List<TradeRecordService.TradeRecord> out = service.closedTrades(trader());
@@ -153,8 +160,7 @@ class TradeRecordServiceTest {
         FuturesPositionDTO pos = closedLong(1L, "108");
         when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(pos));
         when(planMapper.selectList(any())).thenReturn(List.of(plan(OPEN_MS)));
-        AiTraderDecision manual = decision(101L, OPEN_MS, "主人叫醒，突破做多",
-                "[{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\"},\"status\":\"ok\"}]");
+        AiTraderDecision manual = decision(101L, OPEN_MS, "主人叫醒，突破做多", OPENED_BTC_LONG);
         manual.setKind(AiTraderDecision.KIND_MANUAL);
         when(decisionMapper.selectList(any())).thenReturn(
                 List.of(decision(100L, OPEN_MS, "例行 HOLD", "[{\"tool\":\"klines\"}]"), manual),
@@ -195,6 +201,80 @@ class TradeRecordServiceTest {
         assertThat(trade.openDecision().id()).isEqualTo(100L);
         assertThat(trade.closeDecision().id()).isEqualTo(102L);
         assertThat(trade.closeDecision().reason()).isEqualTo("反弹失效");
+    }
+
+    /** 续立计划的开仓时刻是对账那一轮：那一轮只处理 ETH、没开这个币，不挂开仓决策 */
+    @Test
+    void carriedPlanDoesNotLinkTheReconcilingRoundAsOpening() {
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(closedLong(1L, "108")));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan(OPEN_MS)));
+        AiTraderDecision ethRound = decision(100L, OPEN_MS, "只处理 ETH",
+                "[{\"tool\":\"open_position\",\"args\":{\"symbol\":\"ETHUSDT\",\"side\":\"LONG\"},\"status\":\"ok\"}]");
+        ethRound.setSymbol("ETHUSDT");
+        when(decisionMapper.selectList(any())).thenReturn(List.of(ethRound), List.of());
+
+        assertThat(service.closedTrades(trader()).getFirst().openDecision()).isNull();
+    }
+
+    /** 下单结果未知（重发也没问到）的开仓照样立了计划，后来对账认领了成交：那一轮就是开仓决策 */
+    @Test
+    void unknownOutcomeOpenStillLinksAsTheOpenDecision() {
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(closedLong(1L, "108")));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan(OPEN_MS)));
+        when(decisionMapper.selectList(any())).thenReturn(List.of(decision(100L, OPEN_MS, "突破做多",
+                "[{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"},\"status\":\"unknown\","
+                        + "\"result\":{\"status\":\"unknown\",\"entries\":[{\"status\":\"unknown\"}]}}]")), List.of());
+
+        assertThat(service.closedTrades(trader()).getFirst().openDecision().id()).isEqualTo(100L);
+    }
+
+    /** 两轮同时在跑、各平一部分：按动作做成的时刻取最后一次，不按哪一轮开始得晚 */
+    @Test
+    void overlappingRoundsKeepTheCloseDoneLast() {
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(closedLong(7L, "108")));
+        when(planMapper.selectList(any())).thenReturn(List.of());
+        // 先开始的那轮后平；后开始的那轮先平了一半
+        String finalClose = "[{\"tool\":\"close_position\",\"args\":{\"positionId\":7,\"reason\":\"平完\"},\"status\":\"ok\",\"at\":"
+                + CLOSE_MS + "}]";
+        String halfClose = "[{\"tool\":\"close_position\",\"args\":{\"positionId\":7,\"reason\":\"先减半\"},\"status\":\"ok\",\"at\":"
+                + (CLOSE_MS - 600_000L) + "}]";
+        when(decisionMapper.selectList(any())).thenReturn(List.of(
+                decision(101L, OPEN_MS + 900_000L, "单币轮", finalClose),
+                decision(102L, OPEN_MS + 1_800_000L, "整盘轮", halfClose)));
+
+        TradeRecordService.TradeRecord r = service.closedTrades(trader()).getFirst();
+
+        assertThat(r.closeDecision().id()).isEqualTo(101L);
+        assertThat(r.closeDecision().reason()).isEqualTo("平完");
+    }
+
+    /** 预案把仓位平完：了结方式是主动平仓，平仓决策挂那一行预案执行 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void presetCloseCountsAsTheCloseDecision() {
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(List.of(closedLong(7L, "108")));
+        when(planMapper.selectList(any())).thenReturn(List.of());
+        AiTraderDecision earlier = decision(101L, OPEN_MS + 900_000L, "先减半",
+                "[{\"tool\":\"close_position\",\"args\":{\"positionId\":7,\"reason\":\"先减半\"},\"status\":\"ok\"}]");
+        AiTraderDecision preset = decision(105L, CLOSE_MS, "到 108 全平：已执行",
+                "[{\"tool\":\"preset\",\"args\":{\"type\":\"CLOSE\",\"positionId\":7,\"closePercent\":100},\"status\":\"ok\",\"result\":\"平了\",\"at\":"
+                        + CLOSE_MS + "}]");
+        preset.setKind(AiTraderDecision.KIND_PRESET);
+        when(decisionMapper.selectList(any())).thenReturn(List.of(earlier, preset));
+
+        TradeRecordService.TradeRecord r = service.closedTrades(trader()).getFirst();
+
+        assertThat(r.closeMannerKey()).isEqualTo("manual");
+        assertThat(r.closeDecision().id()).isEqualTo(105L);
+        assertThat(r.closeDecision().kind()).isEqualTo(AiTraderDecision.KIND_PRESET);
+        assertThat(r.closeDecision().reason()).isNull();
+        // 库里粗筛就得把预案行带上：类型有 PRESET，正文按 close_position 或预案的平仓类型找
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderDecision>> q = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(decisionMapper, atLeastOnce()).selectList(q.capture());
+        LambdaQueryWrapper<AiTraderDecision> closes = q.getAllValues().stream()
+                .filter(w -> w.getSqlSegment().contains("LIKE")).findFirst().orElseThrow();
+        assertThat(closes.getParamNameValuePairs().values())
+                .contains(AiTraderDecision.KIND_PRESET, "%close_position%", "%\"type\":\"CLOSE\"%");
     }
 
     /** 被拒/出错/没执行的 close_position 不算数：仓位早平了之后再对它下的失败动作不能顶掉真正的平仓决策 */

@@ -40,6 +40,7 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
@@ -51,6 +52,7 @@ import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -101,6 +103,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -777,6 +780,7 @@ class TraderWakeupLoopTest {
         long prevWake = 1785171600000L - 3600_000L;
         AiTraderDecision prev = new AiTraderDecision();
         prev.setWakeTime(prevWake);
+        prev.setCreatedAt(TradePairing.localOf(prevWake + 60_000L));
         prev.setKind(AiTraderDecision.KIND_TRADE);
         prev.setStatus(AiTraderDecision.STATUS_OK);
         prev.setEquity(new BigDecimal("10000"));
@@ -1019,6 +1023,23 @@ class TraderWakeupLoopTest {
         verify(traderMapper, never()).update(any(), any()); // 没有 recordFailure，连败不涨
     }
 
+    /** 失败的轮落库前也重取一次权益：这一行的权益是落库那一刻的，曲线按落库时刻排才对得上 */
+    @Test
+    void failedRoundRecordsEquityTakenBeforeInsert() {
+        stubHealthyAccount();
+        when(simTradeClient.getBalanceDetail(99L)).thenReturn(
+                Map.of("balance", "10000", "frozenBalance", "0", "equity", "10000"),
+                Map.of("balance", "9800", "frozenBalance", "0", "equity", "9800"));
+        when(modelFactory.modelFor(any())).thenThrow(new IllegalStateException("上游超时"));
+
+        wake(trader(), 1785171600000L);
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
+        assertThat(dec.getValue().getEquity()).isEqualByComparingTo("9800");
+    }
+
     /**
      * 决策行落库后的收尾 DB 操作（clearFailures）抖一下，不许把同一个 decision 再 insert 一次：
      * MP 自增主键 insert 后会把 id 回填进实体，二次 insert 必撞主键，异常直接逃出唤醒回路——
@@ -1148,8 +1169,9 @@ class TraderWakeupLoopTest {
         String injected = prompt.getAllValues().getLast().getInstructions().stream()
                 .map(Message::getText).reduce("", String::concat);
         assertThat(injected)
-                .contains("【上一轮结论】（最近一轮 " + BeijingTime.shortFormat(boundary - 3600_000L))
-                .contains("总评：只动了两个币").doesNotContain("旧总评")
+                .contains("【上一轮结论】每个币最近一次写下的")
+                .contains("上一次看整盘的一轮（" + BeijingTime.shortFormat(boundary - 3600_000L) + "，当时权益10123）写下的：\n"
+                        + "总评：只动了两个币").doesNotContain("旧总评")
                 .contains("[BTCUSDT]（" + BeijingTime.shortFormat(boundary - 3600_000L) + " 写下）\n判断：" + "x".repeat(400))
                 .contains("ETH等待B")
                 .contains("[SOLUSDT]（" + BeijingTime.shortFormat(boundary - 7200_000L) + " 写下）\n动作：HOLD\n等待：SOL等待C")
@@ -1158,6 +1180,88 @@ class TraderWakeupLoopTest {
                 // 等待行也按每币最近一段取：SOL 的来自更早那轮
                 .contains("- SOLUSDT 你上一轮等的「SOL等待C」")
                 .contains("工具：klines×2");
+    }
+
+    /**
+     * 总评和主人留言的对账行只取看整盘的那一轮：最近一条是只写了 SOL 段的单币轮，
+     * 引子仍取再往前那轮整盘的；SOL 段取单币轮写的，BTC 段沿用整盘轮的
+     */
+    @Test
+    void lastConclusionIntroComesFromBookRound() {
+        stubHealthyAccount();
+        long boundary = 1785171600000L;
+        AiTraderDecision single = new AiTraderDecision();
+        single.setWakeTime(boundary - 600_000L);
+        single.setKind(AiTraderDecision.KIND_ALERT);
+        single.setSymbol("SOLUSDT");
+        single.setStatus(AiTraderDecision.STATUS_OK);
+        single.setEquity(new BigDecimal("10200"));
+        single.setReasoning("[本轮结论]\n[SOLUSDT]\n判断：单币轮写的\n动作：HOLD\n等待：无");
+        AiTraderDecision book = new AiTraderDecision();
+        book.setWakeTime(boundary - 3600_000L);
+        book.setKind(AiTraderDecision.KIND_TRADE);
+        book.setStatus(AiTraderDecision.STATUS_OK);
+        book.setEquity(new BigDecimal("10123.45"));
+        book.setReasoning("[本轮结论]\n主人留言：已执行，止损上移到保本\n总评：整盘轮写的\n"
+                + "[BTCUSDT]\n判断：整盘轮写的BTC\n动作：HOLD\n等待：无\n"
+                + "[SOLUSDT]\n判断：整盘轮写的旧SOL\n动作：HOLD\n等待：无");
+        when(decisionMapper.selectList(any())).thenAnswer(call -> bookOnly(call.getArgument(0))
+                ? List.of(book) : List.of(single, book));
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTrader t = trader();
+        t.setSymbols("BTCUSDT,SOLUSDT");
+
+        wake(t, boundary);
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(prompt.capture());
+        String injected = prompt.getAllValues().getLast().getInstructions().stream()
+                .map(Message::getText).reduce("", String::concat);
+        assertThat(injected)
+                .contains("上一次看整盘的一轮（" + BeijingTime.shortFormat(boundary - 3600_000L) + "，当时权益10123）写下的：\n"
+                        + "主人留言：已执行，止损上移到保本\n总评：整盘轮写的")
+                .contains("[SOLUSDT]（" + BeijingTime.shortFormat(boundary - 600_000L) + " 写下）\n判断：单币轮写的")
+                .contains("[BTCUSDT]（" + BeijingTime.shortFormat(boundary - 3600_000L) + " 写下）\n判断：整盘轮写的BTC")
+                .doesNotContain("整盘轮写的旧SOL");
+    }
+
+    /** 还没有整盘轮写过结论、单币轮写过段：各币段照常列出，没写过的币点名，不说本局还没有上一轮结论 */
+    @Test
+    void lastConclusionListsSegmentsWithoutBookRound() {
+        stubHealthyAccount();
+        long boundary = 1785171600000L;
+        AiTraderDecision single = new AiTraderDecision();
+        single.setWakeTime(boundary - 600_000L);
+        single.setKind(AiTraderDecision.KIND_ALERT);
+        single.setSymbol("SOLUSDT");
+        single.setStatus(AiTraderDecision.STATUS_OK);
+        single.setEquity(new BigDecimal("10200"));
+        single.setReasoning("[本轮结论]\n[SOLUSDT]\n判断：单币轮写的\n动作：HOLD\n等待：无");
+        when(decisionMapper.selectList(any())).thenAnswer(call -> bookOnly(call.getArgument(0))
+                ? List.of() : List.of(single));
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTrader t = trader();
+        t.setSymbols("BTCUSDT,SOLUSDT");
+
+        wake(t, boundary);
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(prompt.capture());
+        String injected = prompt.getAllValues().getLast().getInstructions().stream()
+                .map(Message::getText).reduce("", String::concat);
+        assertThat(injected)
+                .contains("【上一轮结论】每个币最近一次写下的")
+                .contains("[SOLUSDT]（" + BeijingTime.shortFormat(boundary - 600_000L) + " 写下）\n判断：单币轮写的")
+                .contains("[BTCUSDT] 还没有结论段")
+                .doesNotContain("本局还没有上一轮结论").doesNotContain("上一次看整盘的一轮");
+    }
+
+    /** 只取看整盘那几轮的查询：symbol 为空，不是"为空或等于某个币" */
+    private static boolean bookOnly(LambdaQueryWrapper<AiTraderDecision> q) {
+        String sql = q.getSqlSegment();
+        return sql.contains("symbol IS NULL") && !sql.contains("OR symbol");
     }
 
     /**
@@ -1750,6 +1854,28 @@ class TraderWakeupLoopTest {
         List<Message> first = sent.getAllValues().getFirst().getInstructions();
         assertThat(first.stream().filter(UserMessage.class::isInstance)).hasSize(1);
         assertThat(first.getLast().getText()).contains("BTCUSDT 1h 收盘 63120 站上 63000").doesNotContain("又发生了一件事");
+    }
+
+    /** 一轮进行中插话告诉它的盯盘命中，这一轮成功后标的是插进去那一刻，不是这一轮的 wake_time */
+    @Test
+    @SuppressWarnings("unchecked")
+    void watchHitToldMidRoundIsMarkedWithTheMomentItWasTold() {
+        stubHealthyAccount();
+        WakeRound round = round(trader(), null);
+        onlineModel(n -> {
+            if (n == 1) {
+                round.offer(new WatchTrigger(closeHit(), new BigDecimal("63120"), 1785171600000L + 500L));
+            }
+            return new AssistantMessage(n < 4 ? "这一段没有要做的。" : "[本轮结论]\n[BTCUSDT]\n判断：观望\n动作：无\n等待：无");
+        });
+
+        runner.wake(trader(), 1785171600000L, round);
+
+        ArgumentCaptor<LambdaUpdateWrapper<AiTraderWatch>> marked = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(watchMapper).update(isNull(), marked.capture());
+        marked.getValue().getSqlSet();
+        assertThat(marked.getValue().getParamNameValuePairs().values())
+                .contains(1785171600000L + 1_000L).doesNotContain(1785171600000L);
     }
 
     /** 这一轮失败了，开场白里念过的盯盘命中不算告诉过，库里不标 */

@@ -402,7 +402,7 @@ WakeBriefing.reconcile：在账户闸里现取持仓挂单 + 计划对账（Trad
      + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹；
        Listener.inbox 每次调模型前取一次 WakeRound.take()，由 TraderWakeupRunner.interject 成文插进对话）
      + FutureTask 限时执行；finally 里动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
-  → 成功了才算告诉过模型：watchStore.markWoken 记盯盘命中，UnreportedEvents.clear 清报过的事件行
+  → 成功了才算告诉过模型：watchStore.markWoken 记盯盘命中（开场白里念的记这一轮的 wake_time，插话告诉的记插进去那一刻），UnreportedEvents.clear 清报过的事件行
 ```
 
 插话（`TraderWakeupRunner.interject` + `TriggerText.interjection`）：到点的例行一段，每条触发一段，带那个币现在的持仓、挂单和盯盘条件；整盘的联网轮前两段本来不许开仓，这个币来了触发就当场放开（`Flow.unlock`）。盯盘命中在开场白里已经报过的不再说第二遍。
@@ -431,7 +431,7 @@ WakeBriefing.reconcile：在账户闸里现取持仓挂单 + 计划对账（Trad
 |---|---|---|
 | 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席。事件对出来先按币存进 `ai_trader.unreported_events`（`UnreportedEvents`），整盘轮全报，单币轮只报自己那个币的，那一轮成功了才清；止盈平掉一部分、仓位还在的，和休眠时段里命中没叫醒的盯盘条件，也在这一块报 |
 | 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、当前止损与各档止盈（价位和数量）、计划（开仓时的止盈分档 `targets`）与修订历史（时刻可读）、挂单带已挂时长。风险事实代码算好：每个持仓浮盈几 R（`unrealizedR`，R 按计划原始止损）、离最近一档止损百分之几（`stopDistancePct`）、止损打掉亏权益百分之几（`lossAtStopPctOfEquity`，止损挪过成本的是负数），顶层一行全部止损同时打掉的合计（`lossAtAllStopsPctOfEquity`）。持仓另带 `sinceLastWake`（`PositionPath` 算窗口，极值复用 `CaseFileBuilder.market`）：从这个币上次被看到起（`WakeObservation.lastSeen`：本局最近一条管着它的 OK 决策行——看整盘的一轮，或只处理它的那一轮，按决策行的 `symbol` 列认；只处理别的币的轮不算）本地 5m 的首根开盘、最高最低各在何时、末根收盘、涨跌，from / to 是实际覆盖的起止；还没有 OK 行或仓位是那之后才开的，从开仓所在那根算；窗口里没收盘根就不带。一次给足，工具预算才能留给行情求证；盯盘条件不在这块，在承诺块里。账户块下面另有一行今天（新加坡时间 0 点起）净亏损了结的仓位数，按币和方向数，止损单触发的另数，主人标了不算数的不数（`WakeObservation.lossesToday`）；今天没有、或者已平仓位这次没取到，就不出这一行 |
-| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 轨迹吃 `recentWakes` 查的那份 `List<RecentWake>`；结论按币取最近一段（`latestSegments`，一个币一次查询，按结论块里的 `[SYMBOL]` 找最近几行——几轮并行之后轮次变多，往回翻固定轮数不够用）——模型每轮只写有变化的币，没写的币带着它最近一次写的那段和写下的时刻，找不到的点名"还没有结论段"；最近一轮的总评照带，段身不截断。轨迹一行一轮，只列最近 5 轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL/EVENT/WATCH/DRAWDOWN，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
+| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 轨迹吃 `recentWakes` 查的那份 `List<RecentWake>`；结论按币取最近一段（`latestSegments`，一个币一次查询，按结论块里的 `[SYMBOL]` 找最近几行——几轮并行之后轮次变多，往回翻固定轮数不够用）——模型每轮只写有变化的币，没写的币带着它最近一次写的那段和写下的时刻，找不到的点名"还没有结论段"；总评取上一次看整盘、写了结论块的那一轮（`lastBookConclusion`，单币轮只写自己那个币的段、不写总评），段身不截断。轨迹一行一轮，只列最近 5 轮（时刻/状态/权益/工具名或失败原因），只有整盘轮要，单币轮不查。只回注交易类（TRADE/ALERT/MANUAL/EVENT/WATCH/DRAWDOWN，即 `AiTraderDecision.WAKE_KINDS`），REVIEW 已走账本注入。被主人标记忽略的交易，`RecentWake` 里剔掉它的动作名、取结论段时剔掉它的段，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 承诺块 + 各币摘要 | `WakeObservation.commitments` / `symbolsSummary` | 承诺块进第一段：持仓与挂单各一行（失效条件原文 + `PositionPath.lastClosedBar` 合成的刚收盘那根心跳周期的开高低收）、在盯的每条条件一行（价格类按标记价算"在价位上方 / 下方 X%"，AT_TIME 算还有几分钟）、上一轮每个币的等待行（按结论块自己那门语言的 `mark.wait` / `waitLong` 认，写"无"的不算；那个币一条条件都没布就注明）。只列事实不下判断——失效条件是自由文本，代码判不了触发没触发。各币摘要进第二段：每个可交易币和 BTCUSDT（不可交易也给一行，标成大盘参考）各自从上次被看到起的开高低收（`PositionPath.symbol`，起点同样按 `lastSeen` 一个币一个算）。承诺块非空、有事件或收盘命中就是"忙"（`Pack.busy`），运行器据此分两段 |
 | 行情快照 | `WakeObservation.snapshot` | 进第二段：每个可交易币和 BTCUSDT 的标记价、1h / 4h / 24h 涨跌（`CaseFileBuilder.changes` 按已收盘 5m 算，本地缺 K 线的那格写"—"）、资金费率；后面跟美股参考（纳指期货、标普期货、VIX 的现价与较昨收涨跌，取 `CrossAssetService` 的缓存，取不到整块不带） |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后**；开场白这份不带重放汇总，复盘素材和指令生成器取的那份样本够了才带（止损原样与放宽各档的结局、管理动作相对拿着不动的差） |
@@ -512,7 +512,7 @@ WakeBriefing.reconcile：在账户闸里现取持仓挂单 + 计划对账（Trad
 | `DebriefRunner.next` | 现在该复盘哪一笔：候选是绑了仓位、已归档、主人没标不算数、还没进过统一复盘的计划行；去掉复盘成功过的、试满了的、还没到重试时刻的，剩下有候选才去问 sim；平仓满 24 小时、不超过 7 天（`MAX_AGE_MS`）的里面取平仓最早的。平仓时刻以 sim 的已平仓位为准，不用计划行的归档时刻（归档是下一次唤醒才做的） |
 | `DebriefRunner.ready` | "满 24 小时"按平仓所在那根 5m 的开盘算，再多过一根 5m：事实表要的最后一根 K 线在"那根开盘 + 24 小时"收盘，而扫描可能是别的币的收盘事件触发的，多等的这一根保证它已经落库 |
 | `DebriefRunner.attemptable` | 重试规则：第一次失败等 1 小时，第二次失败等 24 小时，第三次还失败就不再试，这笔不进账本。能扛住一天以内的端点故障 |
-| `DebriefMaterialAssembler` | 纯代码备三块开场素材：这一笔的事实表（和统一复盘同一份 `CaseFileRenderer`）/ 从开仓那轮到平仓后第一轮的各轮决策（每一轮全部给、不截断：开场白里账户段之前的原文、这一轮开始时这笔仓位、对这笔做的动作和回执、给这个币布的盯盘、各段写的原文、总评、该币的结论段；只去掉别的币的结论段）/ 经验账本的现役条目和开仓那轮引用了其中哪几条 |
+| `DebriefMaterialAssembler` | 纯代码备三块开场素材：这一笔的事实表（和统一复盘同一份 `CaseFileRenderer`）/ 从这笔的起点到平仓后第一个开跑、看过这个币的轮的各轮决策（只收看整盘的轮、预案行和只处理这个币的轮，按实际开始排，标出同时在跑的几轮，动作带记下的时刻；每一轮全部给、不截断：开场白里账户段之前的原文、这一轮开始时这笔仓位、对这笔做的动作和回执、给这个币布的盯盘、各段写的原文、总评、该币的结论段；只去掉别的币的结论段）/ 经验账本的现役条目和开仓那轮引用了其中哪几条 |
 | `DebriefToolkit` | 两个只读工具，按 trader 烤死：`round_detail` 查某一轮当时调过的工具和回执（总览每次调用都列，带这次写了多少字，每条回执只给前 300 字；带 `call` 给那一次调用写的字和落库的那份回执全文预览；带 `opening` 给整篇开场白和各段的段开场白；别的 trader、别的局、非唤醒类的行一律拒）；`trade_history` 列本局已了结的单子，给仓位编号就回那一笔的事实表和它成功的那篇单笔复盘 |
 | `DebriefRunner.run` | 挂的工具只有能查历史时刻的六个：上面两个 + `IndicatorToolkit` 的 K 线三件套（带 `endTime`）+ `NewsToolkit.archiveFor` 的 `news_archive`（起止时刻）。上限 16 次模型调用、1800 秒；`finally` 里落工具调用和用量——超时作废的那次，调过的工具和烧掉的 token 也是真的 |
 | `DebriefRunner.debrief` | 成败都落一行 DEBRIEF（带 `position_id`）。不上现场流（复盘和唤醒会同时跑），自己拿一个 `WakeTrace` 落 `trace_json`。没有【归类】段，或者账本有现役条目而段里一行都认不出的，正文照存、记成 ERROR、过后重试 |
@@ -680,7 +680,7 @@ cd wiib-web && npx tsc -b && npm run build
 - 子运行的真实时序：批准深研判后主 agent 当轮结束，几分钟后前端自动唤醒、补充回答带【补充回答】标头，期间发新消息能正常对话；"开两个子 agent 分别查 X 和 Y"看到两条 child 轨并行、报告各自回灌；关掉开关后模型收到拒因并自己作答
 - trader 唤醒里同批数据工具是否真的并发（看工具日志的时间戳）
 - 收尾格式的 `[SYMBOL]` 分段模型到底填不填得对（`TraderConclusionFormatRealRunTest` 就是为它建的）
-- 单笔复盘在真实单子上写得怎么样（`DebriefRealRunTest`：再带一个 `WIIB_DEBRIEF_TRADER_ID=交易员id`，拿它最近两笔平仓满 24 小时的单子各跑一遍，真素材、真工具、真模型，不落库；断言只守"有正文、有【归类】段、归类行只写这一笔"，正文有没有拿事后的走势去说当时该怎么做、有没有编数，要人读日志）
+- 单笔复盘在真实单子上写得怎么样（`DebriefRealRunTest`：再带一个 `WIIB_DEBRIEF_TRADER_ID=交易员id`，拿它最近两笔平仓满 24 小时的单子各跑一遍，真素材、真工具、真模型，不落库；断言只守"各轮带开场白、有正文、有【归类】段、归类行只写这一笔"，正文有没有拿事后的走势去说当时该怎么做、有没有编数，要人读日志）
 - 统一复盘的两段契约（`ReviewContractRealRunTest`：手造带单笔复盘正文的素材，看模型是不是按【本期复盘】/【经验更新】填表、有没有照规矩不写编号归类行）
 - 整理上下文后重新生成会不会踩到"原样留下的上一问"那个陷阱
 - 思考档位传给不支持的模型会怎样——**模型支不支持这个参数查不到**（OpenAI 标准 `/v1/models` 只回 id/object/created/owned_by），只能真跑

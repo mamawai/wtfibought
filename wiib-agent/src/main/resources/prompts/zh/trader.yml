@@ -436,18 +436,25 @@ trader:
     lossesToday: "今天（新加坡时间 0 点起）净亏损了结的仓位：{{rows}}"
     lossesTodayRow: "{{position}} {{n}} 次（其中止损单触发 {{stops}} 次）"
     lossesTodaySep: "；"
-    lastConclusionHeader: 【上一轮结论】（最近一轮 {{time}}，权益{{equity}}）每个币最近一次写下的判断、动作与等待条件；没变化的币沿用旧段，段头是写下它的时刻
+    lastConclusionHeader: 【上一轮结论】每个币最近一次写下的判断、动作与等待条件；没变化的币沿用旧段，段头是写下它的时刻
+    # 总评和主人留言的对账行前面那一行：只有看整盘的那一轮写这两样
+    lastBookIntro: "上一次看整盘的一轮（{{time}}，当时权益{{equity}}）写下的："
     # 一个币最近一次的结论段的段头；往回翻都没写过的币单起一行点名
     lastSegment: "[{{symbol}}]（{{time}} 写下）"
     lastSegmentNone: "[{{symbol}}] 还没有结论段"
     lastConclusionNone: 【上一轮结论】本局还没有上一轮结论（首轮，或之前几轮都没写出结论块），每个可交易币都还没有结论段
     trajectoryHeader: 【最近唤醒轨迹】（最新在前）
+    # 轨迹里只处理一个币的那一轮，标出是哪个币
+    trajectorySingle: "只处理 {{symbol}}"
     trajectoryTools: "工具：{{tools}}"
     # 时段内末次唤醒的休眠提示：只给事实，两个方向都不带偏置
     sleepNotice: 本唤醒时段（{{window}}）内的例行唤醒到 {{lastBar}} 这根K线为止，下次例行唤醒在 {{next}}（新加坡时间，约 {{hours}} 小时后），期间不会有例行唤醒、波动警报和权益回落警报，盯盘条件命中也不叫醒你；止损止盈单照常自动触发，预案照常执行。这只是时间跨度的事实：休眠本身既不是平仓或收紧止损的理由，也不是赶在休眠前多开一笔的理由。
     # 把它叫醒的事，一条一句（TriggerText）：几条一起来的按先后报、各带自己的时刻；事实全代码注入
     alertHeader: 行情波动警报（{{time}}）：{{symbol}} 5分钟内波动 {{amplitude}}%（方向：{{direction}}，现价 {{price}}）
     alertLastWake: 你上次唤醒{{lastWake}}，距下一次例行唤醒还有约 {{minutes}} 分钟。
+    # 单币轮那一行说这个币上次被看到是什么时候：看整盘的一轮，或只处理它的那一轮
+    alertLastSeen: 你上次看 {{symbol}} {{lastWake}}，距下一次例行唤醒还有约 {{minutes}} 分钟。
+    alertFirstSeen: 本局还没有哪一轮看过 {{symbol}}，距下一次例行唤醒还有约 {{minutes}} 分钟。
     # 方向码 → 文案：AlertTrigger 里存的是 UP/DOWN/FLAT，语言无关
     direction:
       up: 上涨

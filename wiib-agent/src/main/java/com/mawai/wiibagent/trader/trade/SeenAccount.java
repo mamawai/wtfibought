@@ -145,15 +145,18 @@ final class SeenAccount {
         return out.toString();
     }
 
-    /** 为这个币布的在盯条件 */
+    /** 为这个币布的在盯条件；带了预案的连预案动作一起，别的轮只改了预案也看得出变了 */
     private static String watchesOf(String forSymbol, List<AiTraderWatch> armed) {
         ArrayNode out = MAPPER.createArrayNode();
         for (AiTraderWatch w : armed) {
             if (!forSymbol.equals(w.getForSymbol())) {
                 continue;
             }
-            out.addObject().put("symbol", w.getSymbol()).put("kind", w.getKind()).put("level", w.getLevel())
+            ObjectNode row = out.addObject().put("symbol", w.getSymbol()).put("kind", w.getKind()).put("level", w.getLevel())
                     .put("period", w.getPeriod()).put("atTime", w.getAtTime()).put("note", w.getNote());
+            if (w.getActionJson() != null) {
+                row.set("action", MAPPER.readTree(w.getActionJson()));
+            }
         }
         return out.toString();
     }

@@ -97,7 +97,7 @@ class WakeInstructionI18nTest {
     private WakeObservation.Pack pack(AgentLang lang, String planEvents, List<AiTraderWatch> firedQuietly,
                                       List<AiTraderWatch> armed, Map<String, BigDecimal> marks) {
         return wakeObservation.assemble(trader(), WakeScope.book(trader()), new BigDecimal("10000"), List.of(), List.of(), "",
-                List.of(), planEvents, List.of(), Map.of(), BOUNDARY, lang, firedQuietly, armed, marks);
+                List.of(), planEvents, null, Map.of(), BOUNDARY, lang, firedQuietly, armed, marks);
     }
 
     /** 留言消费走 Lambda 条件构造器，要查 TableInfo；不预热的话本类单独跑会炸 */
@@ -298,7 +298,7 @@ class WakeInstructionI18nTest {
 
         for (AgentLang lang : AgentLang.values()) {
             String packText = wakeObservation.assemble(t, WakeScope.of(t, "ETHUSDT"), new BigDecimal("10000"), List.of(eth, btc),
-                    List.of(), "", List.of(), "", List.of(), segments, BOUNDARY, lang, List.of(), List.of(), Map.of()).text();
+                    List.of(), "", List.of(), "", null, segments, BOUNDARY, lang, List.of(), List.of(), Map.of()).text();
             assertThat(packText).contains("\"symbol\":\"ETHUSDT\"").doesNotContain("\"symbol\":\"BTCUSDT\"")
                     .contains("[ETHUSDT]").contains("判断：区间").doesNotContain("[BTCUSDT]");
             String overview = wakeObservation.accountOverview("ETHUSDT", new BigDecimal("10000"), new BigDecimal("8200.5"),
@@ -625,7 +625,7 @@ class WakeInstructionI18nTest {
         String time = TIME_FMT.format(Instant.ofEpochMilli(BOUNDARY));
         assertThat(alertOpening(trader(), "", AgentLang.ZH, false))
                 .isEqualTo("行情波动警报（" + time + "）：BTCUSDT 5分钟内波动 5.2%（方向：上涨，现价 100000）\n"
-                        + "你上次唤醒本局还没有过唤醒，距下一次例行唤醒还有约 60 分钟。\n"
+                        + "本局还没有哪一轮看过 BTCUSDT，距下一次例行唤醒还有约 60 分钟。\n"
                         + "注意：本次不是例行唤醒，当前 1h K线尚未收盘——按 1h 收盘定义的条件此刻不作数，求证请用已收盘的K线。\n"
                         + "这一轮只处理 BTCUSDT：交易和盯盘工具只对它生效，对别的币的动作会被拒；行情和数据工具不限币。"
                         + "别的币的结论和盯盘条件原样保留，由它们自己的那一轮和例行轮管。\n"
@@ -633,6 +633,25 @@ class WakeInstructionI18nTest {
                         + "上面是这个币的波动警报：它的仓位和挂单怎么处理？持仓的计划有没有被这波波动动摇，要不要先用工具求证、求证到哪一步由你定。\n"
                         + "平仓、撤单、收紧止损可以当场做；开仓、加仓、反手之前，要先取得足够明确的信息。"
                         + "被叫醒本身不是动作的理由，也不是不动的理由。本段不布盯盘条件、不写[本轮结论]块，那是最后一段的事。");
+    }
+
+    /** 单币轮说的是这个币上次被看到的时刻，和它的窗口同一个起点；整盘轮说上次唤醒 */
+    @Test
+    void 单币轮开场白说上次看这个币() {
+        long seen = BOUNDARY - 600_000L;
+        for (AgentLang lang : AgentLang.values()) {
+            String single = flows.singleInstruction(trader(), "BTCUSDT", List.of(alert()), BOUNDARY, seen, "", "", "", lang, false);
+            String book = flows.stageOneInstruction(trader(), List.of(alert()), BOUNDARY, seen, "", "", lang, false);
+            assertThat(single).contains(prompts.get(lang, "trader.wake.alertLastSeen", Map.of("symbol", "BTCUSDT",
+                    "lastWake", prompts.get(lang, "trader.wake.alertWakeAt", Map.of("time", TIME_FMT.format(Instant.ofEpochMilli(seen)), "minutes", 10)),
+                    "minutes", 60)));
+            assertThat(book).contains(prompts.get(lang, "trader.wake.alertLastWake", Map.of(
+                    "lastWake", prompts.get(lang, "trader.wake.alertWakeAt", Map.of("time", TIME_FMT.format(Instant.ofEpochMilli(seen)), "minutes", 10)),
+                    "minutes", 60)));
+            if (lang == AgentLang.EN) {
+                PromptI18nAssertions.assertNoCjk("英文单币轮上次看这个币", single);
+            }
+        }
     }
 
     /** 四种单币轮各问各的；开了联网的交代分三段 */

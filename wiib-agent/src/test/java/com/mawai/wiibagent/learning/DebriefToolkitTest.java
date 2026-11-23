@@ -1,10 +1,13 @@
 package com.mawai.wiibagent.learning;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.toolkit.BeijingTime;
+import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.wakeup.WakeTrace;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -16,6 +19,7 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 
 import java.math.BigDecimal;
@@ -28,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -104,6 +109,27 @@ class DebriefToolkitTest {
         assertThat(tools.roundDetail(901L, null, true)).contains("\"opening\":\"开场白：账户与持仓\"")
                 .contains("\"stageOpenings\":[{\"call\":2,\"text\":\"第二段的开场白\"}]")
                 .doesNotContain("系统提示词").doesNotContain("klines");
+        // 整盘轮不带 onlySymbol；没记耗时不带实际起止
+        assertThat(overview).doesNotContain("onlySymbol").doesNotContain("ranFrom");
+    }
+
+    /** 只处理一个币的轮带 onlySymbol；记了耗时的带实际跑的时段，从落库时刻往前推 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void roundDetailCarriesScopeAndRealRunningTime() {
+        AiTraderDecision single = round(AiTraderDecision.KIND_ALERT, trace());
+        single.setSymbol("SOLUSDT");
+        single.setLatencyMs(600_000);
+        single.setCreatedAt(TradePairing.localOf(T0 + 630_000L));
+        when(decisionMapper.selectOne(any())).thenReturn(single);
+
+        assertThat(toolkit.roundDetail(trader(), 901L, null, null)).contains("\"onlySymbol\":\"SOLUSDT\"")
+                .contains("\"ranFrom\":\"" + BeijingTime.format(T0 + 30_000L) + "\"")
+                .contains("\"ranTo\":\"" + BeijingTime.format(T0 + 630_000L) + "\"");
+        // 这几列查询里得点名要
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderDecision>> q = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(decisionMapper).selectOne(q.capture());
+        assertThat(q.getValue().getSqlSelect()).contains("created_at").contains("latency_ms").contains("symbol");
     }
 
     /** 没存过程的行只有正文和动作；别的交易员的轮、复盘行不给 */

@@ -549,18 +549,25 @@ trader:
     lossesToday: "Positions closed at a net loss today (since 00:00 Singapore time): {{rows}}"
     lossesTodayRow: "{{position}} {{n}} (of which {{stops}} by stop order)"
     lossesTodaySep: "; "
-    lastConclusionHeader: "[Last round's conclusion] (latest round {{time}}, equity {{equity}}) The judgement, action and waiting condition you most recently wrote for each symbol; a symbol with no change keeps its old section, and each header shows when it was written"
+    lastConclusionHeader: "[Last round's conclusion] The judgement, action and waiting condition you most recently wrote for each symbol; a symbol with no change keeps its old section, and each header shows when it was written"
+    # The line before the overall comment and the owner-note line: only the whole-board round writes these two
+    lastBookIntro: "Written by the last whole-board round ({{time}}, equity then {{equity}}):"
     # Header of a symbol's most recent section; a symbol never written within the lookback gets a line of its own
     lastSegment: "[{{symbol}}] (written {{time}})"
     lastSegmentNone: "[{{symbol}}] no section yet"
     lastConclusionNone: "[Last round's conclusion] none yet this round (first wake-up, or no conclusion block was written in the previous rounds); no tradable symbol has a section yet"
     trajectoryHeader: "[Recent wake-ups] (newest first)"
+    # A round in the trajectory that handled only one symbol says which one
+    trajectorySingle: "{{symbol}} only"
     trajectoryTools: "tools: {{tools}}"
     # Sleep notice on the last wake-up inside the window: facts only, no bias in either direction
     sleepNotice: "Routine wake-ups inside this window ({{window}}) end with the {{lastBar}} candle; the next routine wake-up is at {{next}} (Singapore time, about {{hours}} hours from now). In between there are no routine wake-ups, no volatility alerts and no equity drawdown alerts, and a watch condition that fires does not wake you either; stop-loss and take-profit orders keep firing automatically and standing orders are still carried out. This is nothing but a fact about elapsed time: the sleep itself is not a reason to close or tighten a stop, nor a reason to squeeze in one more trade before it."
     # What woke it, one sentence each (TriggerText): several arriving together are listed in order with their own times; facts all injected by code
     alertHeader: "Volatility alert ({{time}}): {{symbol}} moved {{amplitude}}% within 5 minutes (direction: {{direction}}, last price {{price}})"
     alertLastWake: You last woke {{lastWake}}, and the next routine wake-up is about {{minutes}} minutes away.
+    # In a single-symbol round the line says when this symbol was last looked at: by a whole-board round, or by a round handling only it
+    alertLastSeen: You last looked at {{symbol}} {{lastWake}}, and the next routine wake-up is about {{minutes}} minutes away.
+    alertFirstSeen: No round has looked at {{symbol}} yet this round, and the next routine wake-up is about {{minutes}} minutes away.
     # 方向码 → 文案：AlertTrigger 里存的是 UP/DOWN/FLAT，语言无关
     direction:
       up: up

@@ -33,6 +33,7 @@
   },
   "release": {
     "title": "What's new",
+    "titleFresh": "What's new (new release)",
     "older": "Older release",
     "newer": "Newer release",
     "fullNotes": "Full release notes",
