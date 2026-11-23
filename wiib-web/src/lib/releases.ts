@@ -20,6 +20,37 @@ export interface Release {
  */
 export const RELEASES: Release[] = [
   {
+    version: '3.3.0',
+    date: '2026-11-23',
+    items: [
+      {
+        kind: 'new',
+        title: { zh: '一个账号最多 3 个 Trader', en: 'Up to three Traders per account' },
+        desc: { zh: '可以同时开 3 个 Trader，各用各的账户；对话里提到 Trader 时会让你选是哪一个。', en: 'Run up to three Traders side by side, each on its own account; chat asks which one you mean.' },
+      },
+      {
+        kind: 'new',
+        title: { zh: '单笔复盘', en: 'Per-trade reviews' },
+        desc: { zh: '每笔单子平仓满 24 小时单独复盘一次，每天再出一篇统一复盘。', en: 'Each trade is reviewed on its own 24 hours after it closes, plus one combined review a day.' },
+      },
+      {
+        kind: 'new',
+        title: { zh: '权益回落警报', en: 'Equity drawdown alert' },
+        desc: { zh: '权益从最高点回落到你设的比例时，提前叫醒 Trader 看一次整盘。', en: 'When equity falls from its high by the percentage you set, the Trader is woken early to look over everything.' },
+      },
+      {
+        kind: 'better',
+        title: { zh: '唤醒按币并行', en: 'Wake-ups run per symbol' },
+        desc: { zh: '盯盘命中和警报只叫醒处理那一个币的一轮，几轮可以同时跑；心跳只留 1h 和 4h。', en: 'A watch hit or an alert wakes a round for that one symbol and several can run at once; heartbeats are now 1h or 4h only.' },
+      },
+      {
+        kind: 'better',
+        title: { zh: '经验账本按真实单子记账', en: 'Experience ledger scored on real trades' },
+        desc: { zh: '每条经验名下记的是真实单子的盈亏，单子够了自动转正，亏回去自动降级。', en: 'Each lesson is scored on the actual trades filed under it, then promoted or demoted automatically.' },
+      },
+    ],
+  },
+  {
     version: '3.2.0',
     date: '2026-11-17',
     items: [
