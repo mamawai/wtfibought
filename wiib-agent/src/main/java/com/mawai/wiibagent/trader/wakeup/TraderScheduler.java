@@ -221,7 +221,7 @@ public class TraderScheduler {
      */
     private void start(Desk desk, AiTrader trader, WakeScope scope, Consumer<WakeRound> work) {
         String key = scope.single() ? scope.symbol() : BOOK;
-        WakeRound round = new WakeRound(scope, () -> singleSymbols(desk));
+        WakeRound round = new WakeRound(scope, () -> singleSymbols(desk), nowMs.getAsLong());
         desk.rounds.put(key, round);
         Thread.startVirtualThread(() -> {
             try {
@@ -242,6 +242,18 @@ public class TraderScheduler {
                 unread.triggers().forEach(t -> dispatch(trader.getId(), t));
             }
         });
+    }
+
+    /**
+     * 有没有 atMs 那一刻就在跑、到现在还没跑完、看得到这个币的轮：整盘轮，或者只处理这个币的单币轮。
+     * 立即复盘用：平掉这笔的那一轮在平仓那一刻就在跑，它的决策行要整轮跑完才落库
+     */
+    public boolean runningAt(long traderId, String symbol, long atMs) {
+        Desk desk = desk(traderId);
+        synchronized (desk) {
+            return desk.rounds.entrySet().stream()
+                    .anyMatch(e -> (BOOK.equals(e.getKey()) || e.getKey().equals(symbol)) && e.getValue().startedAt() <= atMs);
+        }
     }
 
     /** 此刻有单币轮在处理的币 */

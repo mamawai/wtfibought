@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 统一复盘输出契约的真跑验收：手造五块素材（单子带单笔复盘正文）交给真模型，看它是否按【本期复盘】/【经验更新】两段填表、
- * 经验更新里的行能否被 {@link ExperienceOpParser} 认出、有没有照规矩不写编号归类行。两门语言各跑一次。
+ * 经验更新里的行能否被 {@link ExperienceOpParser} 认出、没有要补归类的条目时有没有照规矩不写编号归类行。两门语言各跑一次。
  * <p>
  * 会烧真 token（2 次调用），默认跳过。跑法（项目根）：
  * <pre>
@@ -83,7 +83,7 @@ class ReviewContractRealRunTest {
             // 有可认的新增、发现、删除，或者老实写了「本期无更新」
             assertThat(parsed.noUpdates() || !parsed.ops().isEmpty())
                     .as("%s 经验更新能解析", lang.code()).isTrue();
-            // 归类已经由单笔复盘做完，这里不该再写编号归类行
+            // 素材里没有哪笔列着要补归类的条目，这里不该写编号归类行
             assertThat(parsed.ops()).as("%s 没有编号归类行", lang.code())
                     .noneMatch(ExperienceLedger.Classify.class::isInstance);
         }
@@ -94,11 +94,11 @@ class ReviewContractRealRunTest {
         String none = prompts.get(lang, "reviewer.label.none");
         // 赢的那笔各档止损宽度都到目标；亏的那笔原样被止损，放宽以后都没了结
         CaseFileBuilder.Replay winner = new CaseFileBuilder.Replay(new BigDecimal("1.40"), new BigDecimal("3.80"),
-                new BigDecimal("-0.35"), new BigDecimal("3.50"), List.of(
+                new BigDecimal("-0.35"), new BigDecimal("3.50"), CaseFileBuilder.DIRECTION_MS, List.of(
                         width("1", CaseFileBuilder.Outcome.TARGET, "1.98"), width("1.5", CaseFileBuilder.Outcome.TARGET, "1.31"),
                         width("2", CaseFileBuilder.Outcome.TARGET, "0.98"), width("3", CaseFileBuilder.Outcome.TARGET, "0.65")), false);
         CaseFileBuilder.Replay loser = new CaseFileBuilder.Replay(new BigDecimal("-1.07"), new BigDecimal("0.60"),
-                new BigDecimal("-1.40"), new BigDecimal("-0.10"), List.of(
+                new BigDecimal("-1.40"), new BigDecimal("-0.10"), CaseFileBuilder.DIRECTION_MS, List.of(
                         width("1", CaseFileBuilder.Outcome.STOP, "-1.02"), width("1.5", CaseFileBuilder.Outcome.OPEN, null),
                         width("2", CaseFileBuilder.Outcome.OPEN, null), width("3", CaseFileBuilder.Outcome.OPEN, null)), false);
         String stats = prompts.get(lang, "reviewer.label.statsHeader") + "\n"
@@ -106,7 +106,8 @@ class ReviewContractRealRunTest {
                 + prompts.get(lang, "reviewer.label.statsDrawdown", Map.of("dd", "2.10")) + "\n"
                 + prompts.get(lang, "reviewer.label.statsClosed", Map.of("n", 2, "wins", 1, "losses", 1, "winRate", 50, "pnl", "-120.00")) + "\n";
         boolean zh = lang == AgentLang.ZH;
-        String debrief = prompts.get(lang, "reviewer.label.caseDebrief") + "\n";
+        String debrief = prompts.get(lang, "reviewer.label.caseDebrief",
+                Map.of("after", prompts.get(lang, "reviewer.label.duration.hours", Map.of("n", 24)))) + "\n";
         String cases = prompts.get(lang, "reviewer.label.casesHeader", Map.of("guide", caseRenderer.guide(lang))) + "\n"
                 + prompts.get(lang, "reviewer.label.caseGroup", Map.of("play", "PULLBACK", "n", 2, "wins", 1, "net", "-120")) + "\n"
                 + prompts.get(lang, "reviewer.label.caseTrade", Map.ofEntries(Map.entry("id", 2238),
@@ -116,9 +117,10 @@ class ReviewContractRealRunTest {
                         Map.entry("manner", prompts.get(lang, "reviewer.label.closeManner.manual")), Map.entry("pnl", "+280"), Map.entry("funding", "-2"))) + "\n"
                 + prompts.get(lang, "reviewer.label.casePath", Map.ofEntries(
                         Map.entry("mfe", "101900"), Map.entry("mfeAt", "11:05"), Map.entry("mfeR", "+1.90R"), Map.entry("mae", "99650"), Map.entry("maeR", "-0.35R"),
-                        Map.entry("tHalf", "20"), Map.entry("t1", "55"), Map.entry("firstBack", none), Map.entry("best4", "103100"), Map.entry("best24", "103800"),
-                        Map.entry("targetsAfter", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 1, "total", 1))))) + "\n"
-                + caseRenderer.replayLine(winner, lang) + "\n"
+                        Map.entry("tHalf", "20"), Map.entry("t1", "55"), Map.entry("firstBack", none),
+                        Map.entry("after", prompts.get(lang, "reviewer.label.caseAfterFull", Map.of("best4", "103100", "best", "103800",
+                                "targets", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 1, "total", 1))))))) + "\n"
+                + caseRenderer.replayLine(winner, CaseFileBuilder.AFTER_LONG_MS, lang) + "\n"
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100600 101300 101400")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩企稳 + 量比 1.6", "invalidation", "1h 收盘跌破 99000", "revisions", none)) + "\n"
                 + prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
@@ -135,9 +137,10 @@ class ReviewContractRealRunTest {
                         Map.entry("manner", prompts.get(lang, "reviewer.label.closeManner.stopLoss")), Map.entry("pnl", "-400"), Map.entry("funding", "-1"))) + "\n"
                 + prompts.get(lang, "reviewer.label.casePath", Map.ofEntries(
                         Map.entry("mfe", "101600"), Map.entry("mfeAt", "16:20"), Map.entry("mfeR", "+0.60R"), Map.entry("mae", "99950"), Map.entry("maeR", "-1.05R"),
-                        Map.entry("tHalf", "15"), Map.entry("t1", none), Map.entry("firstBack", "16:45"), Map.entry("best4", "100900"), Map.entry("best24", "100900"),
-                        Map.entry("targetsAfter", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 0, "total", 1))))) + "\n"
-                + caseRenderer.replayLine(loser, lang) + "\n"
+                        Map.entry("tHalf", "15"), Map.entry("t1", none), Map.entry("firstBack", "16:45"),
+                        Map.entry("after", prompts.get(lang, "reviewer.label.caseAfterFull", Map.of("best4", "100900", "best", "100900",
+                                "targets", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 0, "total", 1))))))) + "\n"
+                + caseRenderer.replayLine(loser, CaseFileBuilder.AFTER_LONG_MS, lang) + "\n"
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100800 99950")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩 + 量比 1.1", "invalidation", "1h 收盘跌破 100000", "revisions", none)) + "\n"
                 + prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
@@ -169,7 +172,7 @@ class ReviewContractRealRunTest {
         return new ReviewMaterialAssembler.ReviewMaterial(stats, "", cases, market, "", ledger, Map.of(
                 2238L, new ExperienceLedger.PeriodTrade(new BigDecimal("280.00"), LocalDate.of(2026, 10, 9)),
                 2241L, new ExperienceLedger.PeriodTrade(new BigDecimal("-400.00"), LocalDate.of(2026, 10, 9))),
-                List.of(), List.of());
+                Map.of(), Map.of(), List.of(), List.of());
     }
 
     /** 一档止损宽度的重放结局；未决没有 r */

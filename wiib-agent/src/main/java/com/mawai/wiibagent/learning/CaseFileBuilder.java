@@ -64,17 +64,18 @@ public class CaseFileBuilder {
     /**
      * 路径指标。浮盈/逆向按方向取 K 线高低；mfeR / maeR 是它们相当于几 R（R = 入场价到计划原始止损的距离），没计划止损就没有。
      * minToHalfR / minTo1R 是开仓后多少分钟第一次走到 +0.5R / +1R；firstBackAt 是入场根之后第一根收盘穿回入场价的时刻。
-     * 出场后数据覆盖不到 4h 时 bestAfter4h 为 null，覆盖不到 24h 时 bestAfter24h 为 null。
-     * targetsAfter24h 是出场后 24 小时内到过计划里的几档止盈，没设止盈或覆盖不到 24h 为 null。
+     * afterMs 是出场后的 K 线覆盖了多久（平仓那根的下一根开盘到最后一根收盘），盖满 24 小时记 24 小时，出场后一根都没有是 0。
+     * bestAfter4h 是出场后 4 小时内的最有利价，覆盖不到 4 小时为 null；bestAfter 是覆盖到的这一段里的最有利价。
+     * targetsAfter 是这一段里到过计划里的几档止盈，没设止盈或出场后没有 K 线为 null。
      * 窗口内没有 K 线时全部为 null、hourly 为空。
      */
     public record Path(BigDecimal mfePrice, Long mfeAt, BigDecimal mfeR,
                        BigDecimal maePrice, BigDecimal maeR,
                        Long minToHalfR, Long minTo1R, Long firstBackAt,
                        List<KlineBar> hourly,
-                       BigDecimal bestAfter4h, BigDecimal bestAfter24h, Integer targetsAfter24h) {
+                       BigDecimal bestAfter4h, BigDecimal bestAfter, Integer targetsAfter, long afterMs) {
         static final Path EMPTY = new Path(null, null, null, null, null, null, null, null,
-                List.of(), null, null, null);
+                List.of(), null, null, null, 0);
     }
 
     /** 重放的结局：到过止盈档并且整仓了结、没到过止盈档就被止损、走完仓位还没了结 */
@@ -88,9 +89,10 @@ public class CaseFileBuilder {
 
     /**
      * 首批计划不动的重放，R 是首批数量 × 加权入场到止损的距离；无首批档记录的沿用单档算法。
-     * fav24R / adv24R / hold24R 是以入场参照价计算的价格位置；withAdds 标记实际里有加仓。
+     * favR / advR / holdR 是以入场参照价计算的价格位置：favR / advR 看首档成交后最多 24 小时，holdR 要覆盖满 24 小时才有。
+     * spanMs 是首档成交后的 K 线覆盖了多久（重放开始算的那根开盘到最后一根收盘），盖满 24 小时记 24 小时；withAdds 标记实际里有加仓。
      */
-    public record Replay(BigDecimal actualR, BigDecimal fav24R, BigDecimal adv24R, BigDecimal hold24R,
+    public record Replay(BigDecimal actualR, BigDecimal favR, BigDecimal advR, BigDecimal holdR, long spanMs,
                          List<WidthOutcome> widths, boolean withAdds) {
         /** 止损原样那一档，就是开仓后什么都不动 */
         public WidthOutcome untouched() {
@@ -348,7 +350,8 @@ public class CaseFileBuilder {
             adv = adv.max(isLong ? entry.subtract(b.low()) : b.high().subtract(entry));
             hold = isLong ? b.close().subtract(entry) : entry.subtract(b.close());
         }
-        boolean covers24h = after.getLast().openTime() + BAR_MS >= openBar + DIRECTION_MS;
+        long coveredTo = after.getLast().openTime() + BAR_MS;
+        long spanMs = coveredTo >= openBar + DIRECTION_MS ? DIRECTION_MS : coveredTo - openBar - BAR_MS;
         // 止盈档由近到远排好，重放时一档一档碰
         List<TargetRung> rungs = TargetRung.of(plan).stream()
                 .sorted(Comparator.comparing(t -> t.price().subtract(entry).abs())).toList();
@@ -360,7 +363,8 @@ public class CaseFileBuilder {
         BigDecimal actualR = pos.getClosedPnl() == null || pos.getOpenedQuantity() == null ? null
                 : pos.getClosedPnl().add(pos.getFundingFeeTotal() == null ? BigDecimal.ZERO : pos.getFundingFeeTotal())
                 .divide(pos.getOpenedQuantity().multiply(r), 2, RoundingMode.HALF_UP);
-        return new Replay(actualR, frac(fav, r), frac(adv, r).negate(), covers24h ? frac(hold, r) : null, widths, hasFilledAdds(plan));
+        return new Replay(actualR, frac(fav, r), frac(adv, r).negate(), spanMs >= DIRECTION_MS ? frac(hold, r) : null, spanMs,
+                widths, hasFilledAdds(plan));
     }
 
     /**
@@ -416,7 +420,7 @@ public class CaseFileBuilder {
         Long minTo1R = null;
         Long firstBackAt = null;
         BigDecimal best4h = null;
-        BigDecimal best24h = null;
+        BigDecimal bestAfter = null;
         for (KlineBar b : bars) {
             BigDecimal favExc = isLong ? b.high().subtract(entry) : entry.subtract(b.low());
             if (b.openTime() <= closeBar) {
@@ -447,21 +451,21 @@ public class CaseFileBuilder {
                 if (b.openTime() <= closeBar + AFTER_SHORT_MS) {
                     best4h = better(best4h, fav, isLong);
                 }
-                best24h = better(best24h, fav, isLong);
+                bestAfter = better(bestAfter, fav, isLong);
             }
         }
         // 出场后数据覆盖到哪：最后一根 5m 的收盘时刻
         long coveredTo = bars.getLast().openTime() + BAR_MS;
-        boolean has4h = coveredTo >= closeBar + AFTER_SHORT_MS;
-        boolean has24h = coveredTo >= closeBar + AFTER_LONG_MS;
+        long afterMs = bestAfter == null ? 0 : coveredTo >= closeBar + AFTER_LONG_MS ? AFTER_LONG_MS : coveredTo - closeBar - BAR_MS;
+        boolean has4h = afterMs >= AFTER_SHORT_MS;
         List<TargetRung> rungs = TargetRung.of(plan);
-        Integer targetsAfter = !has24h || rungs.isEmpty() ? null : reached(rungs, best24h, isLong);
+        Integer targetsAfter = bestAfter == null || rungs.isEmpty() ? null : reached(rungs, bestAfter, isLong);
         BigDecimal mfe = mfeExc == null ? null : isLong ? entry.add(mfeExc) : entry.subtract(mfeExc);
         BigDecimal mae = maeExc == null ? null : isLong ? entry.subtract(maeExc) : entry.add(maeExc);
         return new Path(mfe, mfeAt, frac(mfeExc == null ? null : mfeExc.abs(), stopDist),
                 mae, frac(maeExc == null ? null : maeExc.abs(), stopDist),
                 minToHalfR, minTo1R, firstBackAt, hourlyBars(inTrade),
-                has4h ? best4h : null, has24h ? best24h : null, targetsAfter);
+                has4h ? best4h : null, bestAfter, targetsAfter, afterMs);
     }
 
     private static BigDecimal better(BigDecimal cur, BigDecimal candidate, boolean isLong) {

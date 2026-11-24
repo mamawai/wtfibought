@@ -7,6 +7,8 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibagent.learning.DebriefRunner;
+import com.mawai.wiibagent.learning.RunningDebriefs;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.trade.TradeActions;
@@ -48,17 +50,27 @@ public class TradeRecordService {
     private final SimTradeClient simTradeClient;
     private final AiTraderPlanMapper planMapper;
     private final AiTraderDecisionMapper decisionMapper;
+    /** 每个交易员正在复盘哪一笔 */
+    private final RunningDebriefs running;
 
     /** 时间线里那一条决策的引用（id 可对上时间线卡）；reason 只有平仓有——close_position 的一句话理由 */
     public record DecisionRef(long id, long wakeTime, String kind, String reasoning, String reason) {
     }
 
-    /** debrief 是这笔的单笔复盘（时间线上的 DEBRIEF 行，只带 id 和时刻），还没复盘成功就是 null */
+    /**
+     * debrief 是这笔的单笔复盘（时间线上的 DEBRIEF 行，只带 id 和时刻），还没复盘成功就是 null。
+     * debriefable：能点"立即复盘"（计划正好绑着这个仓位、没忽略、没复盘成功过、没在复盘、平仓那根 K 线已经收进来）；
+     * debriefing：正在复盘的就是这一笔；debriefError：还没复盘成功、最近一次失败的原因，没失败过为 null
+     */
     public record TradeRecord(long positionId, String symbol, String side, Integer leverage,
                               BigDecimal entryPrice, BigDecimal closedPrice, BigDecimal closedPnl,
                               long openedAt, long closedAt, String closeMannerKey,
                               AiTraderPlan plan, DecisionRef openDecision, DecisionRef closeDecision,
-                              DecisionRef debrief) {
+                              DecisionRef debrief, boolean debriefable, boolean debriefing, String debriefError) {
+    }
+
+    /** 这些仓位的单笔复盘：ok 是成功的那篇（有几篇取最新的），lastError 是没成功过的那几笔最近一次失败的原因 */
+    private record Debriefs(Map<Long, DecisionRef> ok, Map<Long, String> lastError) {
     }
 
     public List<TradeRecord> closedTrades(AiTrader t) {
@@ -73,12 +85,20 @@ public class TradeRecordService {
         Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
         Map<Long, AiTraderDecision> openByPlan = openDecisions(t, planByPos.values());
         Map<Long, DecisionRef> closeByPos = closeDecisions(t, closed);
-        Map<Long, DecisionRef> debriefByPos = debriefs(t, closed);
+        // 先读正在复盘哪笔，再查复盘行（复盘收尾是先落行、再清标记）
+        Long debriefingPos = running.positionOf(t.getId());
+        Debriefs debriefs = debriefs(t, closed);
+        long now = System.currentTimeMillis();
 
         List<TradeRecord> out = new ArrayList<>(closed.size());
         for (FuturesPositionDTO pos : closed) {
             AiTraderPlan plan = planByPos.get(pos);
             AiTraderDecision open = plan == null ? null : openByPlan.get(plan.getId());
+            DecisionRef debrief = debriefs.ok().get(pos.getId());
+            boolean debriefing = pos.getId().equals(debriefingPos);
+            // 计划要正好绑着这个仓位，按时间就近配上的不算
+            boolean debriefable = debrief == null && !debriefing && plan != null && pos.getId().equals(plan.getPositionId())
+                    && !Boolean.TRUE.equals(plan.getStale()) && DebriefRunner.manualReady(TradePairing.msOf(pos.getUpdatedAt()), now);
             // 下发语言无关的码，文案由前端查自己的词表：这张卡是给人看的界面元素，
             // 该跟界面语言走；服务端渲染成某一门语言存下来，切了语言就翻不回去了
             String mannerKey = TradePairing.closeMannerKey(pos);
@@ -91,26 +111,31 @@ public class TradeRecordService {
                     // 止损/止盈带走的依据就是计划里的原始止损/目标，不挂平仓决策
                     TradePairing.MANNER_MANUAL.equals(mannerKey)
                             ? closeByPos.get(pos.getId()) : null,
-                    debriefByPos.get(pos.getId())));
+                    debrief, debriefable, debriefing, debriefs.lastError().get(pos.getId())));
         }
         return out;
     }
 
-    /** 这些仓位各自成功的单笔复盘（有几篇取最新的），键是仓位编号；只带 id 和时刻，正文在时间线上看 */
-    private Map<Long, DecisionRef> debriefs(AiTrader t, List<FuturesPositionDTO> closed) {
-        Map<Long, DecisionRef> byPos = new HashMap<>();
+    /** 这些仓位的单笔复盘行，成功和失败的都取；成功的只带 id 和时刻，正文在时间线上看 */
+    private Debriefs debriefs(AiTrader t, List<FuturesPositionDTO> closed) {
+        Map<Long, DecisionRef> ok = new HashMap<>();
+        Map<Long, String> lastError = new HashMap<>();
         for (AiTraderDecision d : decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .select(AiTraderDecision::getId, AiTraderDecision::getWakeTime, AiTraderDecision::getKind,
-                        AiTraderDecision::getPositionId)
+                        AiTraderDecision::getPositionId, AiTraderDecision::getStatus, AiTraderDecision::getError)
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())
                 .eq(AiTraderDecision::getKind, AiTraderDecision.KIND_DEBRIEF)
-                .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
                 .in(AiTraderDecision::getPositionId, closed.stream().map(FuturesPositionDTO::getId).toList())
                 .orderByAsc(AiTraderDecision::getId))) {
-            byPos.put(d.getPositionId(), new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), null, null));
+            if (AiTraderDecision.STATUS_OK.equals(d.getStatus())) {
+                ok.put(d.getPositionId(), new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), null, null));
+            } else {
+                lastError.put(d.getPositionId(), d.getError());
+            }
         }
-        return byPos;
+        lastError.keySet().removeAll(ok.keySet());
+        return new Debriefs(ok, lastError);
     }
 
     /**

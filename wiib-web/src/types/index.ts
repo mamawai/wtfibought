@@ -994,8 +994,14 @@ export interface TradeRecordView {
   openDecision: TradeDecisionRef | null;
   /** 只有主动平仓才有：止损/止盈带走的依据就是计划里的原始止损/目标 */
   closeDecision: TradeDecisionRef | null;
-  /** 这笔的单笔复盘（时间线上的 DEBRIEF 行，只带 id 和时刻）；平仓满 24 小时复盘成功后才有 */
+  /** 这笔的单笔复盘（时间线上的 DEBRIEF 行，只带 id 和时刻）；复盘成功后才有，wakeTime 减 closedAt 是平仓后多久做的 */
   debrief: TradeDecisionRef | null;
+  /** 能点"立即复盘"：计划正好绑着这个仓位、没忽略、没复盘成功过、没在复盘、平仓那根 K 线已经收进来 */
+  debriefable: boolean;
+  /** 正在复盘的就是这一笔（自动的或手动点的） */
+  debriefing: boolean;
+  /** 还没复盘成功、最近一次失败的原因；没失败过为 null */
+  debriefError: string | null;
 }
 
 /** trader 详情：公开视图 + 实时持仓/挂单 + 本局生效中的交易计划 + 经验账本 */
@@ -1051,7 +1057,7 @@ export interface AiTraderDecisionView {
    * EVENT=持仓事件唤醒（止损/强平/限价成交当场叫醒，止盈不叫） WATCH=它自己布的盯盘条件命中
    * DRAWDOWN=权益回落警报唤醒（权益从最高点回落到主人设的比例，提前看一次整盘）
    * REVIEW=统一复盘（每天一篇，reasoning=复盘全文，无equity）
-   * DEBRIEF=单笔复盘（一笔单子平仓满 24 小时后复盘一次，reasoning=复盘全文，无equity）
+   * DEBRIEF=单笔复盘（一笔单子平仓满 24 小时后自动复盘，主人也可以在交易卡上提前点，reasoning=复盘全文，无equity）
    * PRESET=预案命中后平台代它执行的动作（没跑模型，reasoning=条件与执行结果，无equity）
    */
   kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'REVIEW' | 'DEBRIEF' | 'PRESET';

@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -90,11 +91,12 @@ class ReviewMaterialAssemblerTest {
             new PlayStatsAssembler(simTradeClient, planMapper, prompts, caseFiles), watchStore, new DecisionText(prompts),
             new ExperienceOpParser(prompts));
 
-    /** 一笔单子的单笔复盘行：正文两行，加归类段 */
+    /** 一笔单子的单笔复盘行：正文两行，加归类段；开跑时刻晚于这里各测试的平仓 */
     private static AiTraderDecision debrief(long positionId, String classifyLines) {
         AiTraderDecision d = new AiTraderDecision();
         d.setId(5000 + positionId);
         d.setPositionId(positionId);
+        d.setWakeTime(TO + 3 * H);
         d.setReasoning("【单笔复盘】\n路径：第 " + positionId + " 笔的路径\n管理动作：没动过\n【归类】\n" + classifyLines);
         return d;
     }
@@ -330,7 +332,7 @@ class ReviewMaterialAssemblerTest {
 
         assertThat(cases).startsWith("【本批单子】").contains("\nBREAKOUT（1 笔，0 胜，净 -50）\n");
         // 事实表下面是单笔复盘正文，段标记和归类行不带
-        assertThat(cases).contains("  单笔复盘：\n    路径：第 42 笔的路径\n    管理动作：没动过\n")
+        assertThat(cases).contains("  单笔复盘（平仓后 21小时 做的）：\n    路径：第 42 笔的路径\n    管理动作：没动过\n")
                 .doesNotContain("【归类】").doesNotContain("#75 名下 42");
         assertThat(cases).contains("- [42] BTCUSDT LONG " + TIME.format(Instant.ofEpochMilli(openMs)) + " → "
                 + TIME.format(Instant.ofEpochMilli(closeMs))
@@ -351,9 +353,9 @@ class ReviewMaterialAssemblerTest {
                 + " ｜ 新加坡时间 9 时 ｜ 资金费 0.0001 ｜ MARKET 10x");
     }
 
-    /** 出场后数据覆盖不到 4h / 24h：最有利价留空，结尾写"出场后数据不足"而不是没到目标 */
+    /** 出场后只有平仓那根的下一根，覆盖 5 分钟：写看得到多久，最有利价和到过几档按这一段算，4 小时那格留空 */
     @Test
-    void caseAfterExitCoverageShortRendersNotice() {
+    void caseAfterExitCoveragePartialRendersWhatItCovers() {
         long openMs = FROM + H;
         long closeMs = FROM + 2 * H;
         FuturesPositionDTO pos = closedPos("SHORT", "100000", "99000", "10", openMs, closeMs);
@@ -373,7 +375,28 @@ class ReviewMaterialAssemblerTest {
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("RANGE（1 笔，1 胜，净 +10）");
-        assertThat(cases).contains("出场后 4h / 24h 最有利 — / —，出场后数据不足");
+        assertThat(cases).contains("出场后只看得到 5分钟：4h / 5分钟 内最有利 — / 97900，到过原目标 1/1 档");
+        // 重放从开仓那根的下一根数到最后一根，只有 65 分钟：顺向 2100 是 2.10R，拿满 24 小时的位置没有；各档都了结了，不写走到哪
+        assertThat(cases).contains("首档成交后 65分钟 内最大顺向 +2.10R").contains("不设止损拿满 24h 未满 24h")
+                .doesNotContain("各档只走到");
+    }
+
+    /** 平仓后的 K 线没满 24 小时、又有一档没了结：重放行写各档只走到了哪；满 24 小时、各档都了结了不写 */
+    @Test
+    void replayLineSaysHowFarTheWidthsWereWalked() {
+        CaseFileRenderer renderer = new CaseFileRenderer(prompts);
+        CaseFileBuilder.WidthOutcome stopped = new CaseFileBuilder.WidthOutcome(BigDecimal.ONE, CaseFileBuilder.Outcome.STOP,
+                new BigDecimal("-1.02"));
+        CaseFileBuilder.Replay open = new CaseFileBuilder.Replay(null, BigDecimal.ONE, BigDecimal.ONE.negate(), null,
+                CaseFileBuilder.DIRECTION_MS, List.of(stopped,
+                new CaseFileBuilder.WidthOutcome(new BigDecimal("1.5"), CaseFileBuilder.Outcome.OPEN, null)), false);
+        CaseFileBuilder.Replay decided = new CaseFileBuilder.Replay(null, BigDecimal.ONE, BigDecimal.ONE.negate(), null,
+                CaseFileBuilder.DIRECTION_MS, List.of(stopped), false);
+
+        assertThat(renderer.replayLine(open, 2 * H, AgentLang.ZH)).endsWith("、1.5 倍 未决（各档只走到平仓后 2小时）");
+        assertThat(renderer.replayLine(open, 0, AgentLang.ZH)).endsWith("、1.5 倍 未决（平仓后还没有 K 线，各档只走到平仓）");
+        assertThat(renderer.replayLine(open, CaseFileBuilder.AFTER_LONG_MS, AgentLang.ZH)).endsWith("、1.5 倍 未决");
+        assertThat(renderer.replayLine(decided, 2 * H, AgentLang.ZH)).endsWith("止损原样 止损（-1.02R）");
     }
 
     /** 没有 K 线：路径全部留空、没有 1h 收盘行，其余事实照出；计划没标类型的归到"未标类型" */
@@ -388,7 +411,7 @@ class ReviewMaterialAssemblerTest {
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("未标类型（1 笔，1 胜，净 +10）");
-        assertThat(cases).contains("  价格路径（以最终均价为参照）：最大浮盈 —（—，—）｜ 最大逆向 —（—）｜ 到 +0.5R / +1R 用时 — / — 分 ｜ 首次收回入场价 — ｜ 出场后 4h / 24h 最有利 — / —，没设止盈");
+        assertThat(cases).contains("  价格路径（以最终均价为参照）：最大浮盈 —（—，—）｜ 最大逆向 —（—）｜ 到 +0.5R / +1R 用时 — / — 分 ｜ 首次收回入场价 — ｜ 出场后没有 K 线");
         assertThat(cases).doesNotContain("1h 收盘");
         assertThat(cases).doesNotContain("入场上下文");
     }
@@ -511,7 +534,7 @@ class ReviewMaterialAssemblerTest {
         assertThat(m.casesBlock()).startsWith("【本批单子】").contains("本批没有单子");
         assertThat(m.statsBlock()).contains("本批没有单子");
         assertThat(m.trades()).isEmpty();
-        assertThat(m.classifies()).isEmpty();
+        assertThat(m.classifies(Map.of())).isEmpty();
         assertThat(m.planIds()).isEmpty();
     }
 
@@ -754,7 +777,7 @@ class ReviewMaterialAssemblerTest {
                 + TIME.format(Instant.ofEpochMilli(opened + M5)) + " 净 -50\n");
         assertThat(m.ledgerBlock()).contains("证据 证据-61\n  本批单笔复盘归到它这里的单子：破 [42] BTCUSDT LONG BREAKOUT ");
         assertThat(m.ledgerBlock()).doesNotContain("证据 证据-75\n  本批单笔复盘");
-        assertThat(m.classifies()).containsExactly(
+        assertThat(m.classifies(Map.of())).containsExactly(
                 new ExperienceLedger.Classify(62L, List.of(
                         new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 42L),
                         new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_MISCITED, 43L))),
@@ -782,8 +805,46 @@ class ReviewMaterialAssemblerTest {
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
         assertThat(m.trades()).containsOnlyKeys(42L);
-        assertThat(m.classifies()).containsExactly(new ExperienceLedger.Classify(62L,
+        assertThat(m.classifies(Map.of())).containsExactly(new ExperienceLedger.Classify(62L,
                 List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 42L))));
+    }
+
+    /**
+     * 单笔复盘开跑之后账本才新增的条目：列在那一笔的正文下面；这篇补的编号归类行只认（条目，单子）对得上名单的，
+     * 和单笔复盘写的一起合成每条一行。复盘之前就有的条目、名单外的单子不收
+     */
+    @Test
+    void entriesAddedAfterADebriefAreListedForTheReviewToSort() {
+        long opened = FROM + H;
+        FuturesPositionDTO pos = closedPos("LONG", "100000", "99000", "-293.29", opened, opened + H);
+        pos.setId(42L);
+        FuturesPositionDTO other = closedPos("LONG", "100000", "99000", "-100", opened + M5, opened + 2 * H);
+        other.setId(43L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos, other));
+        when(planMapper.selectList(any())).thenReturn(List.of(boundPlan(42L, "BREAKOUT", opened), boundPlan(43L, "BREAKOUT", opened)));
+        AiTraderDecision early = debrief(42L, "#62 名下 42");
+        early.setWakeTime(opened + 2 * H);
+        stubDecisionLists(List.of(early, debrief(43L, "#62 名下 43\n#90 名下 43")), List.of());
+        AiTraderExperience added = exp(90L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.SLOT_ENTRY,
+                AiTraderExperience.DIR_OPPORTUNITY, "BREAKOUT", "回踩前高不破再进");
+        added.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(opened + 3 * H), ZoneId.systemDefault()));
+        when(ledger.active(7L, 1)).thenReturn(List.of(exp(62L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
+                AiTraderExperience.DIR_OPPORTUNITY, "BREAKOUT", "破位后挂限价"), added));
+
+        ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
+
+        assertThat(m.gaps()).containsExactly(Map.entry(42L, Set.of(90L)));
+        assertThat(m.casesBlock()).contains("    路径：第 42 笔的路径\n    管理动作：没动过\n  做这笔单笔复盘时还没有的条目：#90（由你给这一笔补归类）\n");
+        Map<Long, List<ExperienceLedger.Classify>> gapLines = m.gapLines(List.of(
+                new ExperienceLedger.Classify(90L, List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 42L),
+                        new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 43L))),
+                new ExperienceLedger.Classify(62L, List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_MISCITED, 42L)))));
+        assertThat(gapLines).containsOnlyKeys(42L);
+        assertThat(m.classifies(gapLines)).containsExactly(
+                new ExperienceLedger.Classify(62L, List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 42L),
+                        new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 43L))),
+                new ExperienceLedger.Classify(90L, List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 42L),
+                        new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_UNDER, 43L))));
     }
 
     // ==================== 素材有无与上次复盘定位 ====================
@@ -815,6 +876,23 @@ class ReviewMaterialAssemblerTest {
         pos.setId(1L);
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
         assertThat(assembler.hasNewMaterial(trader(), FROM, TO)).isTrue();
+    }
+
+    /** 提前做了单笔复盘、平仓晚于窗口右端的单子：这一篇不收，也不算素材；窗口盖住它平仓的下一篇才收 */
+    @Test
+    void debriefedTradeClosedAfterTheWindowWaitsForTheNextReview() {
+        when(decisionMapper.selectCount(any())).thenReturn(0L);
+        FuturesPositionDTO pos = closedPos("LONG", "100000", "101000", "10", TO + H, TO + 2 * H);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
+        when(planMapper.selectList(any())).thenReturn(List.of(boundPlan(pos.getId(), "BREAKOUT", TO + H)));
+        stubDecisionLists(List.of(debrief(pos.getId(), "")), List.of());
+
+        assertThat(assembler.hasNewMaterial(trader(), FROM, TO)).isFalse();
+        assertThat(assembler.assemble(trader(), FROM, TO, AgentLang.ZH).planIds()).isEmpty();
+
+        long nextTo = TO + 86_400_000L;
+        assertThat(assembler.hasNewMaterial(trader(), TO, nextTo)).isTrue();
+        assertThat(assembler.assemble(trader(), TO, nextTo, AgentLang.ZH).planIds()).containsExactly(100 + pos.getId());
     }
 
     /** 开仓动作只数交易行白名单（TRADE/ALERT/MANUAL）且 actions 里带 open_position；REVIEW 行天天有，不许充当素材 */

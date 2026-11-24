@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Loader2, NotebookPen } from 'lucide-react';
 import { formatCoinPrice, getCoin } from '../../lib/coinConfig';
 import { cn, fmtDateTime, fmtDuration, fmtNum } from '../../lib/utils';
 import type { TradeDecisionRef, TradeRecordView } from '../../types';
@@ -20,12 +20,13 @@ const CLOSE_MANNER_TONE: Record<string, string> = {
  * 一笔做完的交易（样式见 ArenaDetail.css .tc）：头行（币种·多空·了结方式·入场→出场·盈亏）→ 开/平时刻
  * → 计划（打法和依据、失效条件、入场/下单时止损/目标、逐档安排、修订史）→ 开仓/平仓决策和单笔复盘的跳转钮。
  * 决策和复盘的全文不在这里重复——时间线才是它的家，onJump 把人带过去。
- * onToggleStale 只有主人视角才传：忽略开关只治理自己 AI 的教材，公开记录不动。
+ * onToggleStale、onDebrief 只有主人视角才传：忽略开关只治理自己 AI 的教材，公开记录不动。
  */
-export function TradeCard({ r, onJump, onToggleStale }: {
+export function TradeCard({ r, onJump, onToggleStale, onDebrief }: {
   r: TradeRecordView;
   onJump: (d: TradeDecisionRef) => void;
   onToggleStale?: (r: TradeRecordView) => void;
+  onDebrief?: (r: TradeRecordView) => void;
 }) {
   const { t } = useTranslation('ai');
   const isLong = r.side === 'LONG';
@@ -36,6 +37,8 @@ export function TradeCard({ r, onJump, onToggleStale }: {
   // stale 视觉与开关同门槛（仅主人）：忽略是主人对自家教材的私人治理，公开视角的列表与常人无异
   const stale = plan?.stale === true && onToggleStale != null;
   const targets = useMemo(() => planTargets(plan?.takeProfitsJson), [plan?.takeProfitsJson]);
+  // 主人视角、还没复盘成功的：正在复盘显示复盘中，能做的给立即复盘
+  const debriefAction = onDebrief != null && !r.debrief && (r.debriefing || r.debriefable);
   return (
     <div className={cn('tc', stale && 'stale')}>
       <div className="tc-h">
@@ -82,12 +85,17 @@ export function TradeCard({ r, onJump, onToggleStale }: {
           <PlanRevisions json={plan.revisionsJson} labelKey="plan.revisions" />
         </>
       ) : <div className="tm">{t('trade.noPlan')}</div>}
-      {(r.openDecision || r.closeDecision || r.debrief) && (
+      {(r.openDecision || r.closeDecision || r.debrief || debriefAction) && (
         <div className="jp">
           {r.openDecision && <DecisionLink label={t('trade.openDecision')} d={r.openDecision} onJump={onJump} />}
           {r.closeDecision && <DecisionLink label={t('trade.closeDecision')} d={r.closeDecision} onJump={onJump} />}
-          {/* 平仓满 24 小时后的单笔复盘，复盘成功了才有 */}
-          {r.debrief && <DecisionLink label={t('term.debrief')} d={r.debrief} onJump={onJump} />}
+          {/* 单笔复盘成功了才有，写着平仓后多久做的 */}
+          {r.debrief && <DecisionLink label={t('term.debrief')} d={r.debrief} onJump={onJump}
+                                      detail={t('trade.debriefAfter', { d: fmtDuration(r.closedAt, r.debrief.wakeTime) })} />}
+          {debriefAction && (r.debriefing
+            ? <button type="button" className="btn sm" disabled><Loader2 className="ic animate-spin" />{t('trade.debriefing')}</button>
+            : <button type="button" className="btn sm" onClick={() => onDebrief(r)}><NotebookPen className="ic" />{t('trade.debriefNow')}</button>)}
+          {debriefAction && !r.debriefing && r.debriefError && <span className="err">{t('trade.debriefFailed', { e: r.debriefError })}</span>}
           {/* 平仓那一轮的一句话理由：止损/止盈带走没有这一轮，头行的了结方式标签已经说明 */}
           {r.closeDecision?.reason && <span>—— {r.closeDecision.reason}</span>}
         </div>
@@ -96,10 +104,16 @@ export function TradeCard({ r, onJump, onToggleStale }: {
   );
 }
 
-function DecisionLink({ label, d, onJump }: { label: string; d: TradeDecisionRef; onJump: (d: TradeDecisionRef) => void }) {
+/** 跳到时间线那一行的按钮；detail 不传写那一轮的时刻 */
+function DecisionLink({ label, d, onJump, detail }: {
+  label: string;
+  d: TradeDecisionRef;
+  onJump: (d: TradeDecisionRef) => void;
+  detail?: string;
+}) {
   return (
     <button type="button" className="btn sm" onClick={() => onJump(d)}>
-      <span>{label} · {fmtDateTime(d.wakeTime)}</span><ArrowRight className="ic" />
+      <span>{label} · {detail ?? fmtDateTime(d.wakeTime)}</span><ArrowRight className="ic" />
     </button>
   );
 }

@@ -207,7 +207,7 @@ class TraderChatServiceTest {
                                                         TradeRecordService.DecisionRef close) {
         return new TradeRecordService.TradeRecord(id, "BTCUSDT", "LONG", 5, new BigDecimal("100"),
                 new BigDecimal("100").add(new BigDecimal(pnl)), new BigDecimal(pnl), 1_000L, 2_000L,
-                "manual", plan, null, close, null);
+                "manual", plan, null, close, null, false, false, null);
     }
 
     // ==================== stale：忽略的交易从 chat 教材消失（口径3：chat 跟随忽略） ====================

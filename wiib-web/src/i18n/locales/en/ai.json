@@ -222,6 +222,10 @@
     "noPlan": "No plan on record",
     "openDecision": "Entry decision",
     "closeDecision": "Exit decision",
+    "debriefNow": "Debrief now",
+    "debriefing": "Debriefing",
+    "debriefFailed": "Last debrief failed: {{e}}",
+    "debriefAfter": "{{d}} after the close",
     "closeManner": {
       "liquidated": "liquidated",
       "stopLoss": "taken by stop",

@@ -216,6 +216,10 @@
     "noPlan": "无计划记录",
     "openDecision": "开仓决策",
     "closeDecision": "平仓决策",
+    "debriefNow": "立即复盘",
+    "debriefing": "复盘中",
+    "debriefFailed": "上次复盘失败：{{e}}",
+    "debriefAfter": "平仓后 {{d}}",
     "closeManner": {
       "liquidated": "强平",
       "stopLoss": "止损带走",

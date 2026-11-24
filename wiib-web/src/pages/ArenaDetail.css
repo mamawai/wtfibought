@@ -206,6 +206,7 @@
   .p-tw .tc .revs{margin-top:8px;padding-top:8px;border-top:1px dashed var(--color-line2)}
   .p-tw .tc .jp{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:12px;font-size:13px;color:var(--color-muted-foreground)}
   .p-tw .tc .jp .btn{color:var(--color-foreground)}
+  .p-tw .tc .jp .err{color:var(--color-loss)}
   /* 计划里的逐档入场安排（交易卡和仓位卡共用） */
   .p-tw .ents{margin-top:8px;font-size:12.5px;color:var(--color-muted-foreground)}
   .p-tw .ents ul{display:flex;flex-direction:column;gap:4px;margin-top:4px}

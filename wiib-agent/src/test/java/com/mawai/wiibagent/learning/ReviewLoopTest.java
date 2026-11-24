@@ -188,6 +188,7 @@ class ReviewLoopTest {
         AiTraderDecision debrief = new AiTraderDecision();
         debrief.setId(850L);
         debrief.setPositionId(42L);
+        debrief.setWakeTime(closeMs + 24 * 3_600_000L + 300_000L);
         debrief.setReasoning("""
                 【单笔复盘】
                 路径：10 分钟到目标 45%，第 3 根收回入场价，第 4 根止损
@@ -247,7 +248,8 @@ class ReviewLoopTest {
                         新增 BREAKOUT 入场条件 限制型 ｜ 突破前高后不等回踩 → 不市价追 ｜ BTC 100000 市价追多 -11 ｜ 名下 42""")))));
         when(modelFactory.modelFor(any())).thenReturn(model);
 
-        runner.review(trader(), DAY_BOUNDARY);
+        // 平仓满 24 小时才做的单笔复盘，进第二天 08:00 那篇：窗口右端（复盘时刻减 24 小时）盖住了平仓
+        runner.review(trader(), DAY_BOUNDARY + 86_400_000L);
 
         // 提示词里是代码算的事实原文，每笔前面带仓位编号、下面跟着单笔复盘正文，账本行带代码记的账和本批的归类
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
@@ -255,11 +257,11 @@ class ReviewLoopTest {
         String all = prompt.getValue().getInstructions().stream().map(Message::getText).reduce("", String::concat);
         assertThat(all).contains("起始权益 10000.00").contains("-0.11%");                       // 战绩表
         assertThat(all).contains("\nBREAKOUT（1 笔，0 胜，净 -11）\n").contains("- [42] BTCUSDT LONG"); // 单子组
-        assertThat(all).contains("  单笔复盘：\n    路径：10 分钟到目标 45%，第 3 根收回入场价，第 4 根止损\n    方向错了还是被洗掉：方向错了\n");
+        assertThat(all).contains("  单笔复盘（平仓后 24小时 做的）：\n    路径：10 分钟到目标 45%，第 3 根收回入场价，第 4 根止损\n    方向错了还是被洗掉：方向错了\n");
         assertThat(all).contains("证据 ETH 09:32\n  本批单笔复盘归到它这里的单子：名下 [42] BTCUSDT LONG BREAKOUT ");
         assertThat(all).contains("最大浮盈 100900").contains("+0.90R")                            // 路径
                 .contains("最大逆向 98850（-1.15R）")
-                .contains("出场后 4h / 24h 最有利 — / —，出场后数据不足");
+                .contains("出场后只看得到 30分钟：4h / 30分钟 内最有利 — / 99400，到过原目标 0/1 档");
         assertThat(all).contains("1h ADX 31.2 ｜ 1h 布林带宽 2.8").contains("止损 3.1 个 ATR");   // 入场上下文
         assertThat(all).contains("论点 突破前高100200").contains("失效 1h收盘跌回99500下方");       // 计划
         assertThat(all).contains("【本期行情】").contains("- BTCUSDT 100000 → 99300");             // 行情

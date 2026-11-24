@@ -53,9 +53,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 统一复盘的素材组装（纯代码）：战绩表、本局论点战绩、本批单子（每笔事实表加它的单笔复盘正文，按单子类型分组）、
  * 本期行情、盯盘布防、经验账本。事实裁定归代码、模型只解读。
  * <p>
- * 本批单子不按时间切：收的是有成功的单笔复盘、还没进过统一复盘、主人没标不算数的单子。
+ * 本批单子：有成功的单笔复盘、还没进过统一复盘、主人没忽略、平仓不晚于窗口右端的单子。
  * 行情、盯盘布防、撤掉的限价档、战绩表的权益看窗口 (fromMs, toMs]，窗口由 {@link ReviewRunner} 定，右端在 24 小时之前。
- * 各笔单笔复盘的归类行在这里合并成每条经验一行，随素材交出去落账。
+ * 提前做了单笔复盘的单子，等到窗口盖住它平仓的那一篇才收。
+ * 各笔单笔复盘的归类行随素材交出去，和这篇给"单笔复盘时还没有的条目"补的归类一起，合并成每条经验一行落账。
  * <p>
  * 段标签全在 {@link PromptCatalog} 的 {@code reviewer.label.*}；路径指标在 {@link CaseFileBuilder}，
  * 每笔事实表的文本在 {@link CaseFileRenderer}，账本在 {@link ExperienceLedger}。
@@ -89,13 +90,38 @@ public class ReviewMaterialAssembler {
     private final ExperienceOpParser parser;
 
     /**
-     * 六块素材文本，加落账要用的三样：本批单子（仓位编号 → 净盈亏和平仓日，新增行里的仓位编号只认这些）、
-     * 各笔单笔复盘合并出来的归类行、本批单子的计划行 id（落账后盖上这篇复盘的编号）
+     * 六块素材文本，加落账要用的：本批单子（仓位编号 → 净盈亏和平仓日，新增行里的仓位编号只认这些）、
+     * 各笔单笔复盘写的归类行（仓位编号 → 行）、各笔做单笔复盘时还没有的条目（仓位编号 → 条目编号，由这篇补归类）、
+     * 现役条目、本批单子的计划行 id（落账后盖上这篇复盘的编号）
      */
     public record ReviewMaterial(String statsBlock, String playStatsBlock, String casesBlock,
                                  String marketBlock, String watchBlock, String ledgerBlock,
                                  Map<Long, ExperienceLedger.PeriodTrade> trades,
-                                 List<ExperienceLedger.Classify> classifies, List<Long> planIds) {
+                                 Map<Long, List<ExperienceLedger.Classify>> debriefLines,
+                                 Map<Long, Set<Long>> gaps, List<AiTraderExperience> active, List<Long> planIds) {
+
+        /** 这篇补的编号归类行里收得下的：（条目，单子）在 gaps 里列着；按单子分开，一个标记一行 */
+        public Map<Long, List<ExperienceLedger.Classify>> gapLines(List<ExperienceLedger.Op> reviewOps) {
+            Map<Long, List<ExperienceLedger.Classify>> out = new LinkedHashMap<>();
+            for (ExperienceLedger.Op op : reviewOps) {
+                if (op instanceof ExperienceLedger.Classify c) {
+                    for (ExperienceLedger.Mark m : c.marks()) {
+                        if (gaps.getOrDefault(m.positionId(), Set.of()).contains(c.id())) {
+                            out.computeIfAbsent(m.positionId(), k -> new ArrayList<>()).add(new ExperienceLedger.Classify(c.id(), List.of(m)));
+                        }
+                    }
+                }
+            }
+            return out;
+        }
+
+        /** 落账的归类：各笔单笔复盘写的，加上这篇补的（{@link #gapLines}），合成每条经验一行 */
+        public List<ExperienceLedger.Classify> classifies(Map<Long, List<ExperienceLedger.Classify>> gapLines) {
+            Map<Long, List<ExperienceLedger.Classify>> byPosition = new LinkedHashMap<>();
+            debriefLines.forEach((id, rows) -> byPosition.put(id, new ArrayList<>(rows)));
+            gapLines.forEach((id, rows) -> byPosition.get(id).addAll(rows));
+            return ExperienceLedger.mergeDebriefs(byPosition, active);
+        }
     }
 
     /** 上一期成功的复盘行；无 → null（本局首篇，素材窗口从本局开始算） */
@@ -110,7 +136,7 @@ public class ReviewMaterialAssembler {
     }
 
     /**
-     * 窗口内有过开仓动作（被拒的尝试也算），或者有做完单笔复盘、还没进过统一复盘的单子，才有素材。
+     * 窗口内有过开仓动作（被拒的尝试也算），或者有做完单笔复盘、还没进过统一复盘、平仓不晚于窗口右端的单子，才有素材。
      * 单子要在 sim 的已平仓位里还找得到才算，和 {@link #assemble} 收单子是同一个口径
      */
     public boolean hasNewMaterial(AiTrader trader, long fromMs, long toMs) {
@@ -127,7 +153,12 @@ public class ReviewMaterialAssembler {
         Map<Long, AiTraderDecision> debriefs = debriefs(trader, unreviewed(plans(trader)).keySet());
         return !debriefs.isEmpty()
                 && simTradeClient.getClosedPositions(trader.getSimUserId(), CLOSED_FETCH_LIMIT).stream()
-                .anyMatch(p -> debriefs.containsKey(p.getId()));
+                .anyMatch(p -> debriefs.containsKey(p.getId()) && closedBy(p, toMs));
+    }
+
+    /** 平仓不晚于 toMs：窗口右端以后才平的，等下一篇 */
+    private static boolean closedBy(FuturesPositionDTO p, long toMs) {
+        return TradePairing.msOf(p.getUpdatedAt()) <= toMs;
     }
 
     public ReviewMaterial assemble(AiTrader trader, long fromMs, long toMs, AgentLang lang) {
@@ -137,33 +168,43 @@ public class ReviewMaterialAssembler {
         Map<Long, AiTraderDecision> debriefs = debriefs(trader, planByPosition.keySet());
         // 本批单子，按平仓先后，最多 MAX_BATCH 笔
         List<CaseFileBuilder.TradeCase> cases = fetched.stream()
-                .filter(p -> debriefs.containsKey(p.getId()))
+                .filter(p -> debriefs.containsKey(p.getId()) && closedBy(p, toMs))
                 .sorted(Comparator.comparing(FuturesPositionDTO::getUpdatedAt))
                 .limit(MAX_BATCH)
                 .map(p -> caseFiles.build(p, planByPosition.get(p.getId()))).toList();
         List<AiTraderExperience> active = ledger.active(trader.getId(), trader.getRoundNo());
-        Map<Long, String> bodies = new HashMap<>();
         Map<Long, List<ExperienceLedger.Classify>> lines = new LinkedHashMap<>();
+        Map<Long, Set<Long>> gaps = new LinkedHashMap<>();
         for (CaseFileBuilder.TradeCase c : cases) {
-            String text = debriefs.get(c.pos().getId()).getReasoning();
-            bodies.put(c.pos().getId(), parser.debriefBody(text));
-            // 没有净盈亏的记不了账，它的归类不并进去
+            // 没有净盈亏的记不了账，它的归类不并进去，也不用补
             if (c.net() != null) {
-                lines.put(c.pos().getId(), parser.debriefClassifies(text));
+                AiTraderDecision d = debriefs.get(c.pos().getId());
+                lines.put(c.pos().getId(), parser.debriefClassifies(d.getReasoning()));
+                Set<Long> added = addedAfter(active, d.getWakeTime());
+                if (!added.isEmpty()) {
+                    gaps.put(c.pos().getId(), added);
+                }
             }
         }
-        List<ExperienceLedger.Classify> classifies = ExperienceLedger.mergeDebriefs(lines, active);
         String stats = playStats.assembleWithReplay(trader, lang);
         return new ReviewMaterial(
                 statsBlock(trader, fromMs, toMs, cases, lang),
                 stats == null ? "" : stats,
-                casesBlock(cases, bodies, cancelledLimits(trader, plans, fetched, fromMs, toMs), lang),
+                casesBlock(cases, debriefs, gaps, cancelledLimits(trader, plans, fetched, fromMs, toMs), lang),
                 marketBlock(trader, fromMs, toMs, lang),
                 watchBlock(trader, plans, fromMs, toMs, lang),
-                ledgerBlock(trader, active, classifies, cases, lang),
+                ledgerBlock(trader, active, ExperienceLedger.mergeDebriefs(lines, active), cases, lang),
                 periodTrades(cases),
-                classifies,
+                lines, gaps, active,
                 cases.stream().map(c -> c.plan().getId()).toList());
+    }
+
+    /** 单笔复盘开跑之后才新增的现役条目（发现不算），那篇复盘没见过它们 */
+    private static Set<Long> addedAfter(List<AiTraderExperience> active, long debriefAt) {
+        return active.stream()
+                .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind()) && TradePairing.msOf(e.getCreatedAt()) > debriefAt)
+                .map(AiTraderExperience::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private List<AiTraderPlan> plans(AiTrader trader) {
@@ -191,7 +232,8 @@ public class ReviewMaterialAssembler {
             return out;
         }
         for (AiTraderDecision d : decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
-                .select(AiTraderDecision::getId, AiTraderDecision::getPositionId, AiTraderDecision::getReasoning)
+                .select(AiTraderDecision::getId, AiTraderDecision::getPositionId, AiTraderDecision::getWakeTime,
+                        AiTraderDecision::getReasoning)
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
                 .eq(AiTraderDecision::getKind, AiTraderDecision.KIND_DEBRIEF)
@@ -283,9 +325,12 @@ public class ReviewMaterialAssembler {
 
     // ==================== 本批单子 ====================
 
-    /** 按单子类型分组，每笔是事实表加它的单笔复盘正文；末尾是本批重放汇总和窗口里没成交就撤掉的限价档 */
-    private String casesBlock(List<CaseFileBuilder.TradeCase> cases, Map<Long, String> debriefBodies,
-                              List<CaseFileBuilder.CancelledLimit> cancelled, AgentLang lang) {
+    /**
+     * 按单子类型分组，每笔是事实表加它的单笔复盘正文（标着平仓后多久做的），复盘之后才新增的条目列在正文下面；
+     * 末尾是本批重放汇总和窗口里没成交就撤掉的限价档
+     */
+    private String casesBlock(List<CaseFileBuilder.TradeCase> cases, Map<Long, AiTraderDecision> debriefs,
+                              Map<Long, Set<Long>> gaps, List<CaseFileBuilder.CancelledLimit> cancelled, AgentLang lang) {
         StringBuilder sb = new StringBuilder(prompts.get(lang, "reviewer.label.casesHeader",
                 Map.of("guide", caseRenderer.guide(lang)))).append('\n');
         if (cases.isEmpty()) {
@@ -296,9 +341,16 @@ public class ReviewMaterialAssembler {
                     "play", g.playType() == null ? prompts.get(lang, "reviewer.label.caseGeneral") : g.playType(),
                     "n", g.trades().size(), "wins", g.wins(), "net", signed(g.net().setScale(0, RoundingMode.HALF_UP))))).append('\n');
             for (CaseFileBuilder.TradeCase c : g.trades()) {
+                AiTraderDecision d = debriefs.get(c.pos().getId());
                 sb.append(caseRenderer.render(c, lang));
-                sb.append(prompts.get(lang, "reviewer.label.caseDebrief")).append('\n');
-                debriefBodies.get(c.pos().getId()).lines().forEach(line -> sb.append("    ").append(line).append('\n'));
+                sb.append(prompts.get(lang, "reviewer.label.caseDebrief", Map.of("after", CaseFileRenderer.humanize(prompts,
+                        d.getWakeTime() - TradePairing.msOf(c.pos().getUpdatedAt()), lang)))).append('\n');
+                parser.debriefBody(d.getReasoning()).lines().forEach(line -> sb.append("    ").append(line).append('\n'));
+                Set<Long> gap = gaps.get(c.pos().getId());
+                if (gap != null) {
+                    sb.append(prompts.get(lang, "reviewer.label.caseGap", Map.of("ids", gap.stream().map(id -> "#" + id)
+                            .collect(Collectors.joining(prompts.get(lang, "reviewer.label.listSep")))))).append('\n');
+                }
             }
         }
         List<CaseFileBuilder.Replay> replays = cases.stream()

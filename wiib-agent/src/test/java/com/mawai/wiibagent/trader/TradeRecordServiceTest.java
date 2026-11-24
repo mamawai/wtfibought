@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibagent.learning.RunningDebriefs;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -20,6 +21,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -46,8 +49,9 @@ class TradeRecordServiceTest {
     private final SimTradeClient sim = mock(SimTradeClient.class);
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
     private final AiTraderDecisionMapper decisionMapper = mock(AiTraderDecisionMapper.class);
+    private final RunningDebriefs running = mock(RunningDebriefs.class);
     private final TradeRecordService service =
-            new TradeRecordService(sim, planMapper, decisionMapper);
+            new TradeRecordService(sim, planMapper, decisionMapper, running);
 
     private static AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -354,6 +358,7 @@ class TradeRecordServiceTest {
         when(planMapper.selectList(any())).thenReturn(List.of());
         AiTraderDecision debrief = decision(500L, CLOSE_MS + 86_700_000L, null, null);
         debrief.setKind(AiTraderDecision.KIND_DEBRIEF);
+        debrief.setStatus(AiTraderDecision.STATUS_OK);
         debrief.setPositionId(3L);
         // 第一次 selectList 是平仓决策查询，第二次是单笔复盘查询
         when(decisionMapper.selectList(any())).thenReturn(List.of(), List.of(debrief));
@@ -363,6 +368,64 @@ class TradeRecordServiceTest {
         assertThat(ref.id()).isEqualTo(500L);
         assertThat(ref.wakeTime()).isEqualTo(CLOSE_MS + 86_700_000L);
         assertThat(ref.kind()).isEqualTo(AiTraderDecision.KIND_DEBRIEF);
+    }
+
+    /** 计划行；positionId 为 null 就是没绑仓位，只能按时间就近配 */
+    private static AiTraderPlan boundPlan(long id, Long positionId) {
+        AiTraderPlan pl = plan(OPEN_MS);
+        pl.setId(id);
+        pl.setPositionId(positionId);
+        return pl;
+    }
+
+    /** 一行单笔复盘：成功的，或带失败原因的 */
+    private static AiTraderDecision debriefRow(long id, long positionId, String error) {
+        AiTraderDecision d = decision(id, CLOSE_MS + 3_600_000L, null, null);
+        d.setKind(AiTraderDecision.KIND_DEBRIEF);
+        d.setStatus(error == null ? AiTraderDecision.STATUS_OK : AiTraderDecision.STATUS_ERROR);
+        d.setError(error);
+        d.setPositionId(positionId);
+        return d;
+    }
+
+    /**
+     * 卡片上立即复盘的几种状态：计划正好绑着、没复盘成功过的能点；失败过的照样能点，带上最近一次失败的原因；
+     * 失败后又复盘成功的挂上复盘、不能点、不带失败原因；正在复盘的那一笔不能点、标成复盘中；
+     * 忽略了的、按时间就近配上计划的、刚平仓平仓那根 K 线还没收进来的不能点
+     */
+    @Test
+    void debriefStatesOnTheTradeCard() {
+        FuturesPositionDTO justClosed = closedLong(9L, "108");
+        justClosed.setUpdatedAt(at(System.currentTimeMillis() - 60_000L));
+        List<FuturesPositionDTO> closed = List.of(closedLong(3L, "108"), closedLong(4L, "108"), closedLong(5L, "108"),
+                closedLong(6L, "108"), closedLong(7L, "108"), closedLong(8L, "108"), justClosed);
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT)).thenReturn(closed);
+        AiTraderPlan stale = boundPlan(25L, 7L);
+        stale.setStale(true);
+        when(planMapper.selectList(any())).thenReturn(List.of(boundPlan(21L, 3L), boundPlan(22L, 4L), boundPlan(23L, 5L),
+                boundPlan(24L, null), stale, boundPlan(26L, 8L), boundPlan(27L, 9L)));
+        // 开仓决策、平仓决策、单笔复盘三次查询
+        when(decisionMapper.selectList(any())).thenReturn(List.of(), List.of(), List.of(debriefRow(600L, 4L, "单笔复盘超时"),
+                debriefRow(601L, 8L, "单笔复盘超时"), debriefRow(602L, 8L, null)));
+        when(running.positionOf(7L)).thenReturn(5L);
+
+        Map<Long, TradeRecordService.TradeRecord> byPos = service.closedTrades(trader()).stream()
+                .collect(Collectors.toMap(TradeRecordService.TradeRecord::positionId, r -> r));
+
+        assertThat(byPos.get(3L).debriefable()).isTrue();
+        assertThat(byPos.get(3L).debriefError()).isNull();
+        assertThat(byPos.get(4L).debriefable()).isTrue();
+        assertThat(byPos.get(4L).debriefError()).isEqualTo("单笔复盘超时");
+        assertThat(byPos.get(5L).debriefing()).isTrue();
+        assertThat(byPos.get(5L).debriefable()).isFalse();
+        assertThat(byPos.get(6L).plan()).isNotNull();
+        assertThat(byPos.get(6L).debriefable()).isFalse();
+        assertThat(byPos.get(7L).debriefable()).isFalse();
+        assertThat(byPos.get(8L).debrief().id()).isEqualTo(602L);
+        assertThat(byPos.get(8L).debriefable()).isFalse();
+        assertThat(byPos.get(8L).debriefError()).isNull();
+        assertThat(byPos.get(9L).plan().getId()).isEqualTo(27L);
+        assertThat(byPos.get(9L).debriefable()).isFalse();
     }
 
     /** sim 无已平仓位：不查计划不查决策 */

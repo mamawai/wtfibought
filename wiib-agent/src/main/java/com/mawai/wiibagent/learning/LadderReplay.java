@@ -33,7 +33,7 @@ final class LadderReplay {
      * @param initial  首批档（add=false）
      * @param bars     从首批最早挂出那根起、到平仓后 24 小时为止的 5m K 线，重放走到末尾
      * @param withAdds 这笔实际里有没有加过仓，只是带出去做标记
-     * @return 首批里有下单结果未知的档、或没有 K 线时为 null
+     * @return 首批里有下单结果未知的档、没有 K 线、或者重放里首档一直没成交（刚平仓时成交那根之后还没有 K 线）时为 null
      */
     static Replay replay(FuturesPositionDTO pos, List<PlanEntry> initial, List<KlineBar> bars, boolean withAdds) {
         if (initial.stream().anyMatch(e -> "UNKNOWN".equals(e.getStatus())) || bars.isEmpty()) {
@@ -54,37 +54,37 @@ final class LadderReplay {
         boolean isLong = "LONG".equals(pos.getSide());
         List<Walk> walks = STOP_WIDTHS.stream()
                 .map(width -> walk(initial, bars, pos.getSymbol(), isLong, entry, distance, budget, width)).toList();
-        // 首档成交后 24 小时内的顺向、逆向和拿满的位置，以加权均价为参照。
-        // 24 小时从首档成交所在那根的开盘算：平仓不会早于那一根，取到平仓后 24 小时的 K 线一定盖得住这一段
         Long firstFill = walks.getFirst().firstFill();
-        BigDecimal fav = null;
-        BigDecimal adv = null;
-        BigDecimal hold = null;
-        if (firstFill != null) {
-            long end = walks.getFirst().fillBar() + DIRECTION_MS;
-            BigDecimal favourable = BigDecimal.ZERO;
-            BigDecimal adverse = BigDecimal.ZERO;
-            for (KlineBar bar : bars) {
-                if (bar.openTime() < firstFill || bar.openTime() >= end) {
-                    continue;
-                }
-                favourable = favourable.max(isLong ? bar.high().subtract(entry) : entry.subtract(bar.low()));
-                adverse = adverse.max(isLong ? entry.subtract(bar.low()) : bar.high().subtract(entry));
-                // K 线覆盖到 24 小时才有拿满的位置
-                if (bar.openTime() + BAR_MS >= end) {
-                    hold = ratio(isLong ? bar.close().subtract(entry) : entry.subtract(bar.close()), distance);
-                }
-            }
-            fav = ratio(favourable, distance);
-            adv = ratio(adverse, distance).negate();
+        if (firstFill == null) {
+            return null;
         }
+        // 首档成交后 24 小时内的顺向、逆向和拿满的位置，以加权均价为参照。
+        // 24 小时从首档成交所在那根的开盘算；K 线还没走到那一刻的，顺向逆向算到最后一根，没有拿满的位置
+        long end = walks.getFirst().fillBar() + DIRECTION_MS;
+        BigDecimal favourable = BigDecimal.ZERO;
+        BigDecimal adverse = BigDecimal.ZERO;
+        BigDecimal hold = null;
+        for (KlineBar bar : bars) {
+            if (bar.openTime() < firstFill || bar.openTime() >= end) {
+                continue;
+            }
+            favourable = favourable.max(isLong ? bar.high().subtract(entry) : entry.subtract(bar.low()));
+            adverse = adverse.max(isLong ? entry.subtract(bar.low()) : bar.high().subtract(entry));
+            // K 线覆盖到 24 小时才有拿满的位置
+            if (bar.openTime() + BAR_MS >= end) {
+                hold = ratio(isLong ? bar.close().subtract(entry) : entry.subtract(bar.close()), distance);
+            }
+        }
+        long coveredTo = bars.getLast().openTime() + BAR_MS;
+        long spanMs = coveredTo >= end ? DIRECTION_MS : coveredTo - firstFill;
         // 实际：净盈亏把资金费加回去，除以计划风险金额
         BigDecimal actual = null;
         if (pos.getClosedPnl() != null) {
             BigDecimal funding = pos.getFundingFeeTotal() == null ? BigDecimal.ZERO : pos.getFundingFeeTotal();
             actual = ratio(pos.getClosedPnl().add(funding), budget);
         }
-        return new Replay(actual, fav, adv, hold, walks.stream().map(Walk::outcome).toList(), withAdds);
+        return new Replay(actual, ratio(favourable, distance), ratio(adverse, distance).negate(), hold, spanMs,
+                walks.stream().map(Walk::outcome).toList(), withAdds);
     }
 
     /** 一档止盈：价位和这一档入场分到的数量 */

@@ -132,6 +132,8 @@ export function ArenaDetail() {
 
   // load 最近一次发请求时的 trader 和局，也就是当前筛选
   const loadAtRef = useRef<{ traderId: number; round: number | null } | null>(null);
+  // 已了结列表本地改过几次：请求发出之后本地又改过的，回来的是改之前的快照，不用
+  const tradesEditsRef = useRef(0);
 
   const load = useCallback(() => {
     if (!Number.isFinite(traderId)) return;
@@ -149,20 +151,41 @@ export function ArenaDetail() {
     void traderApi.equityCurve(traderId, round ?? undefined)
       .then(v => { if (sameCurve()) setCurve(v); })
       .catch(() => { if (sameCurve() && curveSwitched) setCurve([]); });
+    const edits = tradesEditsRef.current;
     void traderApi.trades(traderId)
-      .then(v => { if (sameTrader()) setTrades(v); })
+      .then(v => { if (sameTrader() && tradesEditsRef.current === edits) setTrades(v); })
       .catch(() => { if (sameTrader() && traderSwitched) setTrades([]); });
   }, [traderId, round]);
 
-  // 忽略开关（仅主人可见）：成功后本地改写该行，不整页重拉；失败要出声——静默吞掉用户会以为已忽略
+  // 本地改写已了结列表的一行，记一次改动
+  const editTrade = useCallback((positionId: number, edit: (r: TradeRecordView) => TradeRecordView) => {
+    tradesEditsRef.current++;
+    setTrades(prev => prev.map(x => x.positionId === positionId ? edit(x) : x));
+  }, []);
+
+  // 忽略开关（仅主人可见）：成功后本地改写该行，不整页重拉；失败要出声——静默吞掉用户会以为已忽略。
+  // 标了忽略就不能立即复盘；取消忽略后能不能点由后端判，重拉一次
   const toggleStale = useCallback((r: TradeRecordView) => {
     if (!r.plan) return;
     const next = r.plan.stale !== true;
-    void traderApi.setPlanStale(traderId, r.plan.id, next).then(() =>
-      setTrades(prev => prev.map(x => x.positionId === r.positionId && x.plan
-        ? { ...x, plan: { ...x.plan, stale: next } } : x))
-    ).catch((e: Error) => toast(e.message || t('toast.actionFailed'), 'error'));
-  }, [traderId, toast, t]);
+    void traderApi.setPlanStale(traderId, r.plan.id, next).then(() => {
+      editTrade(r.positionId, x => x.plan
+        ? { ...x, plan: { ...x.plan, stale: next }, debriefable: next ? false : x.debriefable } : x);
+      if (!next) load();
+    }).catch((e: Error) => toast(e.message || t('toast.actionFailed'), 'error'));
+  }, [traderId, toast, t, editTrade, load]);
+
+  // 立即复盘一笔（仅主人可见）：点下去先标成复盘中，按钮跟着不能点；没开跑就重拉，按后端的状态显示
+  const debriefNow = useCallback((r: TradeRecordView) => {
+    editTrade(r.positionId, x => ({ ...x, debriefing: true, debriefable: false }));
+    void traderApi.debrief(traderId, r.positionId).then(res => {
+      toast(res.message, res.ok ? 'success' : 'error');
+      if (!res.ok) load();
+    }).catch((e: Error) => {
+      toast(e.message || t('toast.actionFailed'), 'error');
+      load();
+    });
+  }, [traderId, toast, t, editTrade, load]);
 
   // 定时刷新之外，一轮唤醒刚结束（endedAt 变）也立刻重拉：新决策行、净值点、持仓都在那一刻落库
   useEffect(() => {
@@ -523,7 +546,8 @@ export function ArenaDetail() {
               trades.length === 0
                 ? <div className="empty"><b>{t('detail.noTrades')}</b></div>
                 : trades.map(r => <TradeCard key={r.positionId} r={r} onJump={jumpToDecision}
-                                             onToggleStale={tr?.mine ? toggleStale : undefined} />)
+                                             onToggleStale={tr?.mine ? toggleStale : undefined}
+                                             onDebrief={tr?.mine ? debriefNow : undefined} />)
             )}
           </section>
         </div>

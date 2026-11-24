@@ -207,7 +207,7 @@ class TraderWakeupLoopTest {
 
     /** 在跑的一轮：symbol 为 null 是整盘轮；没有别的轮同时在跑 */
     private static WakeRound round(AiTrader t, String symbol) {
-        return new WakeRound(WakeScope.of(t, symbol), Set::of);
+        return new WakeRound(WakeScope.of(t, symbol), Set::of, 0L);
     }
 
     /** 库里的那一行 trader，只有未报事件那一列跟着写入变 */

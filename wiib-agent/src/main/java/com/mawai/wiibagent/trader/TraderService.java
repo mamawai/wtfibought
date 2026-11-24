@@ -579,11 +579,11 @@ public class TraderService {
         return planStore.list(t.getId(), t.getRoundNo());
     }
 
-    /** 把计划各档盖上 sim 订单的最新状态，只改传进来的这几份，不写库；pending 是刚查到的挂单 */
+    /** 把计划各档盖上 sim 订单的最新状态，只改传进来的这几份，不写库；pending 是刚查到的挂单，撤单原因用主人的语言 */
     public void overlayEntries(AiTrader t, List<AiTraderPlan> plans, List<FuturesOrderResponse> pending) {
         planStore.overlayEntries(plans,
                 pending.stream().map(FuturesOrderResponse::getOrderId).collect(Collectors.toSet()),
-                group -> simTradeClient.getGroupOrders(t.getSimUserId(), group));
+                group -> simTradeClient.getGroupOrders(t.getSimUserId(), group), langResolver.of(t.getUserId()));
     }
 
     /** 净值曲线：(落库时刻, equity) 按落库先后；权益是落库前取的。round 缺省=当前局。 */

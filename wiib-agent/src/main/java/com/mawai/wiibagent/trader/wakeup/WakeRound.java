@@ -25,19 +25,26 @@ public final class WakeRound {
 
     private final WakeScope scope;
     private final Supplier<Set<String>> busyElsewhere;
+    private final long startedAt;
     private final List<WakeTrigger> triggers = new ArrayList<>();
     private Long routineBoundary;
 
     /**
      * @param busyElsewhere 现查：此刻另有单币轮在处理的币
+     * @param startedAt     这一轮登记开跑的时刻
      */
-    public WakeRound(WakeScope scope, Supplier<Set<String>> busyElsewhere) {
+    public WakeRound(WakeScope scope, Supplier<Set<String>> busyElsewhere, long startedAt) {
         this.scope = scope;
         this.busyElsewhere = busyElsewhere;
+        this.startedAt = startedAt;
     }
 
     public WakeScope scope() {
         return scope;
+    }
+
+    public long startedAt() {
+        return startedAt;
     }
 
     /** 此刻另有单币轮在处理的币 */

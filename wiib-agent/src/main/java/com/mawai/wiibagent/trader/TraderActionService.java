@@ -3,11 +3,13 @@ package com.mawai.wiibagent.trader;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
+import com.mawai.wiibagent.learning.DebriefRunner;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibagent.learning.ReviewScheduler;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
@@ -25,12 +27,12 @@ import java.util.Map;
 import java.time.ZoneId;
 
 /**
- * trader 三个动作（留言 / 手动唤醒 / 点播复盘）的唯一实现。
+ * trader 几个动作（留言 / 手动唤醒 / 点播复盘 / 立即复盘一笔）的唯一实现。
  * <p>
  * 执行入口只有动作面板这一条 REST 路径。对话轨的工具只把表单推给用户看，
  * 碰不到这里——所以模型说不出"我已经唤醒了"，它确实没有那个能力。
  * <p>
- * 返回一律带 message：三个动作里有"做了"、"被拦下"、"没素材所以跳过且没花钱"三种结局，
+ * 返回一律带 message：这几个动作里有"做了"、"被拦下"、"没素材所以跳过且没花钱"三种结局，
  * 最后一种是成功的省钱决定，压进 ok/fail 两态会让它在界面上变成一次报错。
  */
 @Slf4j
@@ -47,6 +49,7 @@ public class TraderActionService {
     private final TraderScheduler scheduler;
     private final ReviewScheduler reviewScheduler;
     private final ReviewRunner reviewRunner;
+    private final DebriefRunner debriefRunner;
     private final AiTraderMapper traderMapper;
     private final AiTraderDecisionMapper decisionMapper;
     /** 三张动作卡的回执与拦因都是当场给用户看的话，跟界面语言 */
@@ -213,6 +216,54 @@ public class TraderActionService {
         return new ActionResult(true, messages.get("trader.review.started"));
     }
 
+
+    // ========== 立即复盘一笔 ==========
+
+    /**
+     * 主人点某一笔的"立即复盘"：准入同步、执行异步。先占复盘位再判这一笔能不能做，占着位的时候重置、删除进不来；
+     * 拿到位之后按库里最新的交易员判和跑。平仓那一刻就在跑、看得到这个币的唤醒轮还没跑完的，等它跑完
+     */
+    public ActionResult debrief(long userId, long traderId, long positionId) {
+        AiTrader t = traderService.owned(userId, traderId);
+        if (t == null) {
+            return new ActionResult(false, messages.get("trader.notFound"));
+        }
+        if (!reviewScheduler.tryOccupy(t.getId())) {
+            return new ActionResult(false, messages.get("trader.review.busy"));
+        }
+        boolean started = false;
+        try {
+            AiTrader fresh = traderMapper.selectById(t.getId());
+            if (fresh == null) {
+                return new ActionResult(false, messages.get("trader.notFound"));
+            }
+            DebriefRunner.ManualDue due = debriefRunner.manualDue(fresh, positionId, System.currentTimeMillis());
+            if (due.due() == null) {
+                return new ActionResult(false, messages.get(due.refusal()));
+            }
+            FuturesPositionDTO pos = due.due().position();
+            if (scheduler.runningAt(fresh.getId(), pos.getSymbol(), TradePairing.msOf(pos.getUpdatedAt()))) {
+                return new ActionResult(false, messages.get("trader.debrief.roundRunning"));
+            }
+            Thread.startVirtualThread(() -> {
+                try {
+                    debriefRunner.debrief(fresh, due.due());
+                } catch (Exception e) {
+                    // debrief() 自己兜住模型调用的失败并落 ERROR 行；这里兜的是落库这些
+                    log.warn("[TraderAction] 立即复盘异常逃逸 traderId={} positionId={} msg={}", fresh.getId(), positionId, e.getMessage());
+                } finally {
+                    reviewScheduler.release(fresh.getId());
+                }
+            });
+            started = true;
+            return new ActionResult(true, messages.get("trader.debrief.started"));
+        } finally {
+            // 没开跑就当场放位
+            if (!started) {
+                reviewScheduler.release(t.getId());
+            }
+        }
+    }
 
     /** 不能复盘的原因，null=可以：只看复盘位，唤醒在跑不挡复盘。素材有无另看 {@link ReviewRunner#hasMaterial} */
     public String reviewBlockedReason(AiTrader t) {

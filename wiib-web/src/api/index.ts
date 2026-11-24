@@ -720,6 +720,9 @@ export const traderApi = {
   wake: (id: number) => api.post<unknown, TraderActionResult>(`/ai/trader/${id}/wake`),
   /** 点播复盘：异步跑；无新素材时后端跳过且不消耗模型调用（仍返回 ok） */
   review: (id: number) => api.post<unknown, TraderActionResult>(`/ai/trader/${id}/review`),
+  /** 立即复盘一笔已平仓的单子：异步跑；复盘成功过的、没绑计划的、忽略了的后端不做 */
+  debrief: (id: number, positionId: number) =>
+    api.post<unknown, TraderActionResult>(`/ai/trader/${id}/debrief/${positionId}`),
 };
 
 // ========== 策略账户监控 ==========

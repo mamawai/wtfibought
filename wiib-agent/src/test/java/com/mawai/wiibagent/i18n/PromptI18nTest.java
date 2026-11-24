@@ -120,7 +120,7 @@ class PromptI18nTest {
         assertNoCjk("英文行情", m.marketBlock());
         assertNoCjk("英文账本", m.ledgerBlock());
         // 单笔复盘正文和它的归类都进了素材
-        assertThat(m.casesBlock()).contains("  Debrief:\n    Path: ran straight to the target\n");
+        assertThat(m.casesBlock()).contains("  Debrief (written 24h after the close):\n    Path: ran straight to the target\n");
         assertThat(m.ledgerBlock()).contains("This batch's trades the debriefs sorted here: UNDER [1] BTCUSDT LONG BREAKOUT ");
     }
 
@@ -324,7 +324,8 @@ class PromptI18nTest {
         assertThat(p)
                 .as("① 数字只许引用事实表").contains("所有数字只许引用事实表里的，禁止自算或美化")
                 .contains("战绩一行只许原样复述")
-                .as("② 不逐笔重做、不写编号归类行").contains("不要逐笔重做").contains("你不写编号归类行，写了也不算数")
+                .as("② 不逐笔重做；编号归类行只补单笔复盘之后才新增的条目").contains("不要逐笔重做")
+                .contains("某笔下面列了「做这笔单笔复盘时还没有的条目」的").contains("除此之外不写编号归类行，写了也不算数")
                 .as("③ 不抄指令、不继承旧教训").contains("主人指令里的规定不能当假设写进账本")
                 .contains("上期的教训不许重抄")
                 .contains("【本期复盘】").contains("【经验更新】");
@@ -627,6 +628,7 @@ class PromptI18nTest {
         AiTraderDecision debrief = new AiTraderDecision();
         debrief.setId(50L);
         debrief.setPositionId(1L);
+        debrief.setWakeTime(FROM + 7200_000 + 24 * 3600_000L + 300_000);
         debrief.setReasoning("[DEBRIEF]\nPath: ran straight to the target\n[SORTING]\n#1 UNDER 1");
         when(decisionMapper.selectList(any())).thenAnswer(inv -> {
             LambdaQueryWrapper<AiTraderDecision> w = inv.getArgument(0);

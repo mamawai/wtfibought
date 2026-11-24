@@ -5,7 +5,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibagent.learning.DebriefRunner;
@@ -25,6 +27,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -77,6 +80,7 @@ class TraderActionServiceTest {
     private final TraderService traderService = mock(TraderService.class);
     private final TraderScheduler scheduler = mock(TraderScheduler.class);
     private final ReviewRunner reviewRunner = mock(ReviewRunner.class);
+    private final DebriefRunner debriefRunner = mock(DebriefRunner.class);
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final AiTraderDecisionMapper decisionMapper = mock(AiTraderDecisionMapper.class);
 
@@ -85,7 +89,7 @@ class TraderActionServiceTest {
             mock(AiTraderMapper.class), mock(DebriefRunner.class), mock(ReviewRunner.class));
 
     private final TraderActionService service = new TraderActionService(
-            traderService, scheduler, reviewScheduler, reviewRunner, traderMapper, decisionMapper, new MessageCatalog());
+            traderService, scheduler, reviewScheduler, reviewRunner, debriefRunner, traderMapper, decisionMapper, new MessageCatalog());
 
     // ---------- 夹具 ----------
 
@@ -141,9 +145,11 @@ class TraderActionServiceTest {
         assertThat(service.clearNote(ME, TID).ok()).isFalse();
         assertThat(service.wake(ME, TID).ok()).isFalse();
         assertThat(service.review(ME, TID).ok()).isFalse();
+        assertThat(service.debrief(ME, TID, 42L).ok()).isFalse();
 
         verify(scheduler, never()).tryManualWake(any());
         verify(reviewRunner, never()).review(any(), anyLong());
+        verify(debriefRunner, never()).manualDue(any(), anyLong(), anyLong());
         verify(traderMapper, never()).update(any(), any());
     }
 
@@ -376,6 +382,80 @@ class TraderActionServiceTest {
         }
         service.review(ME, TID);
         verify(reviewRunner, after(300).times(1)).review(any(), anyLong());
+    }
+
+    /** 平仓了的一笔：币和平仓时刻 */
+    private static FuturesPositionDTO closedAt(long closeMs) {
+        FuturesPositionDTO pos = new FuturesPositionDTO();
+        pos.setSymbol("BTCUSDT");
+        pos.setUpdatedAt(Instant.ofEpochMilli(closeMs).atZone(ZoneId.systemDefault()).toLocalDateTime());
+        return pos;
+    }
+
+    /** 立即复盘一笔：拿到复盘位之后按库里最新的交易员判和跑，能做就异步开跑并当场答复，跑完放掉复盘位 */
+    @Test
+    void 立即复盘能做就异步开跑() throws Exception {
+        owned(running());
+        AiTrader fresh = running();
+        when(traderMapper.selectById(TID)).thenReturn(fresh);
+        DebriefRunner.Due due = new DebriefRunner.Due(closedAt(1_785_110_400_000L), new AiTraderPlan());
+        when(debriefRunner.manualDue(eq(fresh), eq(42L), anyLong())).thenReturn(new DebriefRunner.ManualDue(due, null));
+
+        ActionResult r = service.debrief(ME, TID, 42L);
+
+        assertThat(r.ok()).isTrue();
+        assertThat(r.message()).contains("时间线");
+        verify(scheduler).runningAt(TID, "BTCUSDT", 1_785_110_400_000L);
+        verify(debriefRunner, timeout(2000)).debrief(fresh, due);
+        for (int i = 0; i < 200 && reviewScheduler.isBusy(TID); i++) {
+            Thread.sleep(10);
+        }
+        assertThat(reviewScheduler.isBusy(TID)).isFalse();
+    }
+
+    /** 这一笔不能做：回原因，当场放掉复盘位，不开跑 */
+    @Test
+    void 立即复盘不能做时回原因并放位() {
+        AiTrader t = running();
+        owned(t);
+        when(debriefRunner.manualDue(eq(t), eq(42L), anyLong())).thenReturn(new DebriefRunner.ManualDue(null, "trader.debrief.done"));
+
+        ActionResult r = service.debrief(ME, TID, 42L);
+
+        assertThat(r.ok()).isFalse();
+        assertThat(r.message()).contains("已经复盘过");
+        assertThat(reviewScheduler.isBusy(TID)).isFalse();
+        verify(debriefRunner, never()).debrief(any(), any());
+    }
+
+    /** 平仓那一刻就在跑、看得到这个币的唤醒轮还没跑完：回绝等它跑完，当场放位，不开跑 */
+    @Test
+    void 平仓时在跑的轮没跑完时拒绝立即复盘() {
+        AiTrader t = running();
+        owned(t);
+        DebriefRunner.Due due = new DebriefRunner.Due(closedAt(1_785_110_400_000L), new AiTraderPlan());
+        when(debriefRunner.manualDue(eq(t), eq(42L), anyLong())).thenReturn(new DebriefRunner.ManualDue(due, null));
+        when(scheduler.runningAt(TID, "BTCUSDT", 1_785_110_400_000L)).thenReturn(true);
+
+        ActionResult r = service.debrief(ME, TID, 42L);
+
+        assertThat(r.ok()).isFalse();
+        assertThat(r.message()).contains("还没跑完");
+        assertThat(reviewScheduler.isBusy(TID)).isFalse();
+        verify(debriefRunner, never()).debrief(any(), any());
+    }
+
+    /** 复盘位被占着：当场回绝，连这一笔都不去查 */
+    @Test
+    void 正在复盘时拒绝立即复盘() {
+        owned(running());
+        assertThat(reviewScheduler.tryOccupy(TID)).isTrue();
+
+        ActionResult r = service.debrief(ME, TID, 42L);
+
+        assertThat(r.ok()).isFalse();
+        assertThat(r.message()).contains("正在复盘");
+        verify(debriefRunner, never()).manualDue(any(), anyLong(), anyLong());
     }
 
     /** 复盘位被占着（单笔复盘或 08:00 的统一复盘在跑）：当场回绝，连素材都不去查 */

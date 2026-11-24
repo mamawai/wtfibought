@@ -90,8 +90,9 @@ class CaseFileBuilderTest {
         assertThat(p.hourly().getFirst().high()).isEqualByComparingTo("105.6");
         assertThat(p.hourly().getFirst().close()).isEqualByComparingTo("95");
         assertThat(p.bestAfter4h()).isEqualByComparingTo("111");
-        assertThat(p.bestAfter24h()).isEqualByComparingTo("112");
-        assertThat(p.targetsAfter24h()).isEqualTo(1);
+        assertThat(p.bestAfter()).isEqualByComparingTo("112");
+        assertThat(p.targetsAfter()).isEqualTo(1);
+        assertThat(p.afterMs()).isEqualTo(24 * 3_600_000L);
     }
 
     @Test
@@ -123,13 +124,15 @@ class CaseFileBuilderTest {
         assertThat(p.minTo1R()).isEqualTo(10);
         assertThat(p.firstBackAt()).isEqualTo(T0 + 4 * M5);
         assertThat(p.bestAfter4h()).isEqualByComparingTo("89");
-        assertThat(p.bestAfter24h()).isNull();
-        assertThat(p.targetsAfter24h()).isNull();
+        // 只看得到出场后 4 小时：这一段里最低 89，到过目标 90
+        assertThat(p.bestAfter()).isEqualByComparingTo("89");
+        assertThat(p.targetsAfter()).isEqualTo(1);
+        assertThat(p.afterMs()).isEqualTo(48 * M5);
     }
 
-    /** 出场后一根都覆盖不到 4h：三个出场后指标全空 */
+    /** 平仓那根是 T0+5m，出场后只有 T0+10m 一根，覆盖 5 分钟：4 小时那格空，看得到的这一段照算最有利价和到过几档 */
     @Test
-    void afterExitCoverageUnderFourHoursLeavesAfterMetricsNull() {
+    void afterExitCoverageUnderFourHoursKeepsWhatItCovers() {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
                 bar(T0, new double[]{100, 101, 99.5, 100.5}),
                 bar(T0 + 2 * M5, new double[]{100.5, 103, 100, 102.5})));
@@ -138,8 +141,25 @@ class CaseFileBuilderTest {
 
         assertThat(p.mfePrice()).isEqualByComparingTo("101");
         assertThat(p.bestAfter4h()).isNull();
-        assertThat(p.bestAfter24h()).isNull();
-        assertThat(p.targetsAfter24h()).isNull();
+        assertThat(p.bestAfter()).isEqualByComparingTo("103");
+        assertThat(p.targetsAfter()).isZero();
+        assertThat(p.afterMs()).isEqualTo(M5);
+    }
+
+    /** 出场那根之后一根都没有：出场后几项全空，覆盖 0 */
+    @Test
+    void noBarAfterExitLeavesAfterMetricsEmpty() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 101, 99.5, 100.5}),
+                bar(T0 + M5, new double[]{100.5, 103, 100, 102.5})));
+
+        CaseFileBuilder.Path p = builder.build(position("LONG", "100", "102.5", T0, T0 + 6 * 60_000L), plan("95", "110", null)).path();
+
+        assertThat(p.mfePrice()).isEqualByComparingTo("103");
+        assertThat(p.afterMs()).isZero();
+        assertThat(p.bestAfter4h()).isNull();
+        assertThat(p.bestAfter()).isNull();
+        assertThat(p.targetsAfter()).isNull();
     }
 
     @Test
@@ -152,7 +172,8 @@ class CaseFileBuilderTest {
         assertThat(p.mfeR()).isNull();
         assertThat(p.minToHalfR()).isNull();
         assertThat(p.hourly()).isEmpty();
-        assertThat(p.targetsAfter24h()).isNull();
+        assertThat(p.targetsAfter()).isNull();
+        assertThat(p.afterMs()).isZero();
     }
 
     /**
@@ -174,9 +195,10 @@ class CaseFileBuilderTest {
 
         // 净 -50 ÷（10 × 2）
         assertThat(r.actualR()).isEqualByComparingTo("-2.5");
-        assertThat(r.fav24R()).isEqualByComparingTo("3.25");
-        assertThat(r.adv24R()).isEqualByComparingTo("-1.75");
-        assertThat(r.hold24R()).isEqualByComparingTo("2.25");
+        assertThat(r.favR()).isEqualByComparingTo("3.25");
+        assertThat(r.advR()).isEqualByComparingTo("-1.75");
+        assertThat(r.holdR()).isEqualByComparingTo("2.25");
+        assertThat(r.spanMs()).isEqualTo(24 * 3_600_000L);
         assertThat(r.widths()).extracting(CaseFileBuilder.WidthOutcome::outcome).containsExactly(
                 CaseFileBuilder.Outcome.STOP, CaseFileBuilder.Outcome.STOP,
                 CaseFileBuilder.Outcome.TARGET, CaseFileBuilder.Outcome.TARGET);
@@ -294,7 +316,7 @@ class CaseFileBuilderTest {
         return plan;
     }
 
-    /** K 线没覆盖到开仓后 24 小时：拿满 24 小时的位置留空，两头都没碰到的记未决 */
+    /** K 线没覆盖到开仓后 24 小时：拿满 24 小时的位置留空，两头都没碰到的记未决，覆盖了多久照实记 */
     @Test
     void replayLeavesHoldBlankAndWidthsOpenWhenBarsRunOut() {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
@@ -304,9 +326,11 @@ class CaseFileBuilderTest {
         CaseFileBuilder.Replay r = builder.replay(position("SHORT", "100", "100.5", T0, T0 + 6 * 60_000L), plan("102", "95", null));
 
         assertThat(r.actualR()).isNull();
-        assertThat(r.fav24R()).isEqualByComparingTo("0.5");
-        assertThat(r.adv24R()).isEqualByComparingTo("-0.5");
-        assertThat(r.hold24R()).isNull();
+        assertThat(r.favR()).isEqualByComparingTo("0.5");
+        assertThat(r.advR()).isEqualByComparingTo("-0.5");
+        assertThat(r.holdR()).isNull();
+        // 开仓那根之后只有 T0+5m 一根
+        assertThat(r.spanMs()).isEqualTo(M5);
         assertThat(r.widths()).allMatch(w -> w.outcome() == CaseFileBuilder.Outcome.OPEN && w.r() == null);
     }
 
@@ -481,7 +505,9 @@ class CaseFileBuilderTest {
         var replay = builder.replay(position("LONG", "100", "104", filledAt, T0 + 2 * M5), plan);
         assertThat(replay.untouched().outcome()).isEqualTo(CaseFileBuilder.Outcome.TARGET);
         assertThat(replay.untouched().r()).isEqualByComparingTo("1.96");
-        assertThat(replay.adv24R()).isEqualByComparingTo("-0.25");
+        assertThat(replay.advR()).isEqualByComparingTo("-0.25");
+        // 成交在 T0 那根，重放从 T0+5m 那根算起，K 线到 T0+15m
+        assertThat(replay.spanMs()).isEqualTo(2 * M5);
     }
 
     @Test
@@ -556,7 +582,7 @@ class CaseFileBuilderTest {
                 .untouched().r()).isEqualByComparingTo("-1.03");
     }
 
-    /** 价格正好碰到限价不算成交，要穿过去：只碰到限价 100 的档一直没成交，之后到了目标也是未决 */
+    /** 价格正好碰到限价不算成交，要穿过去：只碰到限价 100 的档一直没成交，重放里首档没成交就没有重放 */
     @ParameterizedTest
     @CsvSource({"LONG,98,104", "SHORT,102,96"})
     void limitJustTouchedDoesNotFill(String side, String stop, String target) {
@@ -564,10 +590,17 @@ class CaseFileBuilderTest {
         when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
                 bar(T0 + M5, isLong ? new double[]{100.5, 101, 100, 100.5} : new double[]{99.5, 100, 99, 99.5}),
                 bar(T0 + 2 * M5, isLong ? new double[]{100.5, 104.5, 100.2, 104} : new double[]{99.5, 99.8, 95.5, 96})));
-        var replay = builder.replay(position(side, "100", "100", T0, T0 + 2 * M5),
-                ladder(entry("100", "1", stop, target, "CANCELLED", T0 + 2 * M5, "0")));
-        assertThat(replay.untouched().outcome()).isEqualTo(CaseFileBuilder.Outcome.OPEN);
-        assertThat(replay.fav24R()).isNull();
+        assertThat(builder.replay(position(side, "100", "100", T0, T0 + 2 * M5),
+                ladder(entry("100", "1", stop, target, "CANCELLED", T0 + 2 * M5, "0")))).isNull();
+    }
+
+    /** 刚平仓：市价首档成交那根之后还没有 K 线，重放里首档还没成交，没有重放 */
+    @Test
+    void justClosedMarketEntryHasNoReplayYet() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 100.5, 97.5, 98})));
+        assertThat(builder.replay(position("LONG", "100", "98", T0 + 60_000L, T0 + 4 * 60_000L),
+                ladder(entry(null, "1", "98", "104", "FILLED", T0 + 60_000L, "0.04")))).isNull();
     }
 
     /**
@@ -603,7 +636,8 @@ class CaseFileBuilderTest {
         var replay = builder.replay(position("LONG", "100", "99.9", T0 + 60_000L, T0 + 180_000L),
                 ladder(entry(null, "1", "98", null, "FILLED", T0 + 60_000L, "0.04")));
 
-        assertThat(replay.hold24R()).isEqualByComparingTo("0.50");
+        assertThat(replay.holdR()).isEqualByComparingTo("0.50");
+        assertThat(replay.spanMs()).isEqualTo(24 * 3_600_000L);
     }
 
     private static KlineBar bar(long openTime, double[] ohlc) {

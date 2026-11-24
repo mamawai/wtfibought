@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.learning;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -11,6 +12,7 @@ import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.trader.TraderModelFactory;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
@@ -24,6 +26,8 @@ import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -38,7 +42,9 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -73,6 +79,8 @@ class DebriefRunnerTest {
     private final AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
+    private final RunningDebriefs running = new RunningDebriefs();
+    private final TraderPlanStore planStore = mock(TraderPlanStore.class);
 
     private final DebriefRunner runner = new DebriefRunner(assembler,
             new DebriefToolkit(decisionMapper, planMapper, simTradeClient,
@@ -80,7 +88,8 @@ class DebriefRunnerTest {
             mock(IndicatorToolkit.class),
             new NewsToolkit(mock(NewsCache.class), new NewsFlashLocalizer(mock(NewsEventMapper.class))),
             new LocalizedToolCallbacks(prompts),
-            modelFactory, decisionMapper, planMapper, simTradeClient, prompts, langResolver, new ExperienceOpParser(prompts));
+            modelFactory, decisionMapper, planMapper, simTradeClient, prompts, langResolver, new ExperienceOpParser(prompts),
+            running, planStore);
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
@@ -189,6 +198,91 @@ class DebriefRunnerTest {
                 .contains("复盘对象：仓位 [42] BTCUSDT LONG").contains("【主人的交易指令】").contains("只做突破，不抄底。")
                 .contains("【这笔单子的事实表】").contains("【各轮决策】").contains("#75 规律");
         assertThat(all.stripTrailing()).endsWith("输出语言：中文。");
+    }
+
+    /** 复盘对象那一行写着平仓后过了多久：刚平几分钟、几小时、过了 24 小时，写法和事实表的时长一样 */
+    @ParameterizedTest
+    @CsvSource({"180000,3分钟", "18000000,5小时", "90000000,25小时"})
+    void subjectSaysHowLongAgoItClosed(long sinceMs, String since) {
+        String user = runner.userPrompt(trader(), pos(42L, NOW - sinceMs),
+                new DebriefMaterialAssembler.DebriefMaterial("", "", "", 0), NOW, AgentLang.ZH);
+
+        assertThat(user).contains(" 平仓，到现在过了 " + since + "；现在是 ");
+    }
+
+    /** 跑的时候记着这个交易员正在复盘哪个仓位，跑完清掉 */
+    @Test
+    void debriefMarksThePositionWhileRunning() {
+        ChatModel model = toolModel();
+        List<Long> seen = new ArrayList<>();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            seen.add(running.positionOf(7L));
+            return reply(new AssistantMessage(OUTPUT));
+        });
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.debrief(trader(), due());
+
+        assertThat(seen).containsExactly(42L);
+        assertThat(running.positionOf(7L)).isNull();
+    }
+
+    /**
+     * 立即复盘的准入：本局 sim 已平仓位里有它、平仓那根 K 线收进来了、有计划绑着、没忽略、没复盘成功过才放行；
+     * 计划还没归档也放行，逐档记录按 sim 的订单盖一遍；做没做过只数成功的 DEBRIEF 行
+     */
+    @Test
+    void manualDueChecksPositionTimingPlanStaleAndDone() {
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos(42L, NOW - H)));
+        AiTraderPlan live = plan(42L);
+        live.setStatus(AiTraderPlan.STATUS_LIVE);
+        when(planMapper.selectOne(any())).thenReturn(live);
+        when(decisionMapper.selectCount(any())).thenReturn(0L);
+
+        DebriefRunner.ManualDue ok = runner.manualDue(trader(), 42L, NOW);
+
+        assertThat(ok.refusal()).isNull();
+        assertThat(ok.due().position().getId()).isEqualTo(42L);
+        assertThat(ok.due().plan()).isSameAs(live);
+        verify(planStore).overlayEntries(eq(List.of(live)), eq(Set.of()), any(), eq(AgentLang.ZH));
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<LambdaQueryWrapper<AiTraderDecision>> counted = ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
+        verify(decisionMapper).selectCount(counted.capture());
+        // MP 条件值懒求值：先拼一次 SQL，参数才落进 paramNameValuePairs
+        counted.getValue().getTargetSql();
+        assertThat(counted.getValue().getParamNameValuePairs().values())
+                .contains(AiTraderDecision.KIND_DEBRIEF, AiTraderDecision.STATUS_OK, 42L);
+
+        assertThat(runner.manualDue(trader(), 43L, NOW).refusal()).isEqualTo("trader.debrief.notFound");
+        assertThat(runner.manualDue(trader(), 42L, NOW - H + 6 * 60_000L).refusal()).isEqualTo("trader.debrief.tooEarly");
+        when(decisionMapper.selectCount(any())).thenReturn(1L);
+        assertThat(runner.manualDue(trader(), 42L, NOW).refusal()).isEqualTo("trader.debrief.done");
+        live.setStale(true);
+        assertThat(runner.manualDue(trader(), 42L, NOW).refusal()).isEqualTo("trader.debrief.stale");
+        when(planMapper.selectOne(any())).thenReturn(null);
+        assertThat(runner.manualDue(trader(), 42L, NOW).refusal()).isEqualTo("trader.debrief.noPlan");
+    }
+
+    /** 已归档的计划逐档记录对过账了，不再去盖订单状态 */
+    @Test
+    void manualDueLeavesArchivedPlanEntriesAlone() {
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos(42L, NOW - H)));
+        AiTraderPlan closed = plan(42L);
+        closed.setStatus(AiTraderPlan.STATUS_CLOSED);
+        when(planMapper.selectOne(any())).thenReturn(closed);
+        when(decisionMapper.selectCount(any())).thenReturn(0L);
+
+        assertThat(runner.manualDue(trader(), 42L, NOW).due().plan()).isSameAs(closed);
+        verify(planStore, never()).overlayEntries(any(), any(), any(), any());
+    }
+
+    /** 手动复盘最早的时刻：平仓那根 5m 收盘后再过一根，14:03 平仓的 14:10 才能做 */
+    @Test
+    void manualDebriefIsReadyOneBarAfterTheClosingBar() {
+        long bar = 1785110400000L;          // 某根 5m 的开盘时刻
+        long m5 = 300_000L;
+        assertThat(DebriefRunner.manualReady(bar + 180_000L, bar + 2 * m5 - 1)).isFalse();
+        assertThat(DebriefRunner.manualReady(bar + 180_000L, bar + 2 * m5)).isTrue();
     }
 
     /** 没有【归类】段：记成 ERROR，正文照存 */
@@ -336,19 +430,33 @@ class DebriefRunnerTest {
         verify(simTradeClient, never()).getClosedPositions(anyLong(), anyInt());
     }
 
-    /** 失败一次等 1 小时再试，失败两次等 24 小时，失败三次不再试；成功过就不再跑 */
+    /** 自动的失败一次等 1 小时再试，失败两次等 24 小时，失败三次不再试；到期之前手动点失败的不算次数 */
     @Test
     void failedDebriefIsRetriedAfterOneHourThenADayThenGivenUp() {
         String error = AiTraderDecision.STATUS_ERROR;
-        assertThat(DebriefRunner.attemptable(List.of(), NOW)).isTrue();
-        assertThat(DebriefRunner.attemptable(List.of(attempt(1L, error, NOW - H + 1)), NOW)).isFalse();
-        assertThat(DebriefRunner.attemptable(List.of(attempt(1L, error, NOW - H)), NOW)).isTrue();
+        long due = NOW - 100 * H;
+        assertThat(DebriefRunner.attemptable(List.of(), due, NOW)).isTrue();
+        assertThat(DebriefRunner.attemptable(List.of(attempt(1L, error, NOW - H + 1)), due, NOW)).isFalse();
+        assertThat(DebriefRunner.attemptable(List.of(attempt(1L, error, NOW - H)), due, NOW)).isTrue();
         List<AiTraderDecision> twice = List.of(attempt(1L, error, NOW - 30 * H), attempt(1L, error, NOW - 24 * H + 1));
-        assertThat(DebriefRunner.attemptable(twice, NOW)).isFalse();
-        assertThat(DebriefRunner.attemptable(twice, NOW + 1)).isTrue();
-        assertThat(DebriefRunner.attemptable(List.of(attempt(1L, error, NOW - 90 * H), attempt(1L, error, NOW - 80 * H),
-                attempt(1L, error, NOW - 50 * H)), NOW)).isFalse();
-        assertThat(DebriefRunner.attemptable(List.of(attempt(1L, error, NOW - 30 * H),
-                attempt(1L, AiTraderDecision.STATUS_OK, NOW - 29 * H)), NOW)).isFalse();
+        assertThat(DebriefRunner.attemptable(twice, due, NOW)).isFalse();
+        assertThat(DebriefRunner.attemptable(twice, due, NOW + 1)).isTrue();
+        List<AiTraderDecision> thrice = List.of(attempt(1L, error, NOW - 90 * H), attempt(1L, error, NOW - 80 * H),
+                attempt(1L, error, NOW - 50 * H));
+        assertThat(DebriefRunner.attemptable(thrice, due, NOW)).isFalse();
+        assertThat(DebriefRunner.attemptable(thrice, NOW - 40 * H, NOW)).isTrue();
+    }
+
+    /** 到期之前主人手动点失败过三次：到期了自动复盘照样做 */
+    @Test
+    void manualFailuresBeforeTheDueTimeDoNotStopTheAutoDebrief() {
+        long closeMs = NOW - 26 * H;
+        String error = AiTraderDecision.STATUS_ERROR;
+        when(planMapper.selectList(any())).thenReturn(List.of(plan(1L)));
+        when(decisionMapper.selectList(any())).thenReturn(List.of(attempt(1L, error, closeMs + H),
+                attempt(1L, error, closeMs + 2 * H), attempt(1L, error, closeMs + 3 * H)));
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos(1L, closeMs)));
+
+        assertThat(runner.next(trader(), NOW).position().getId()).isEqualTo(1L);
     }
 }

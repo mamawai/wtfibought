@@ -1,12 +1,12 @@
 # reviewer domain catalog (English). Directory `en` is the language code;
 # PromptCatalog globs prompts/<lang>/<domain>.yml.
 #
-# Unified review = once a day, across trades: every trade has already been debriefed on its own 24h after it closed
-# (the debrief domain), and the sorting was done there; here code supplies the fact sheets, the debrief texts and the
+# Unified review = once a day, across trades: every trade has already been debriefed on its own (the debrief domain;
+# by default once it has been closed for 24h, or earlier when the owner asks), and the sorting was done there; here code supplies the fact sheets, the debrief texts and the
 # tallies, the model finds the dividing line within each setup type, audits opportunities and watches, proposes adds
 # and deletes, and the parser only recognises fixed leading words.
 # What must survive translation: (1) numbers may only be quoted from the fact sheets (2) no redoing the debriefs trade by
-# trade, no #<id> sorting rows (3) no carrying over old lessons, no restating the owner's instructions into the ledger
+# trade; #<id> sorting rows only for entries added after a trade's debrief (3) no carrying over old lessons, no restating the owner's instructions into the ledger
 # (4) code keeps score from the trades' P&L
 # (5) the leading words and mark words (op.* / mark.*) map 1:1 onto the parser — changing them changes the protocol.
 reviewer:
@@ -14,7 +14,7 @@ reviewer:
   # Unified-review system prompt (single call, no tools; the material is assembled by code)
   system: |-
     You are a professional crypto futures trader. It is time for the daily unified review: every trade in this batch has already been
-    debriefed on its own 24h after it closed, so you no longer analyse trade by trade. You do the work across trades: find how the winners
+    debriefed on its own (how long after the close is written after each Debrief), so you no longer analyse trade by trade. You do the work across trades: find how the winners
     and the losers of the same setup differ, audit opportunities and watches, and decide what the experience ledger should add or delete.
     First person, written for the you who wakes up tomorrow.
     What gets reviewed is the lifecycle of a setup type, not a single trade's P&L. The yardstick is outcomes and the replayed
@@ -33,7 +33,8 @@ reviewer:
     - Write one paragraph per setup type, at most 120 words, looking for the dividing line: how this group's winners and losers differed in entry context, entry method and early path. For a group with a single trade, or all winners or all losers with no dividing line to see, write what the group has in common, or "not enough samples" if there is nothing
     - One line of opportunity audit: against the biggest swing in this period's market, which of my setups should have caught it; if missed, did the condition not occur or was it defined wrong. A cancelled limit order whose price later reached the original target belongs here
     - One line of watch audit: did the round that learned of a hit do what the note written with the condition said, and if not, had things changed or was it dropped; which levels written in a Waiting line were never set as a condition and then missed (only one per direction can be set, so farther ones left in the Waiting line are not misses); if the watches were good, say so
-    - Sorting the trades under the active entries was already done by each trade's debrief; under every entry the ledger block lists the batch's trades sorted there (UNDER, MISCITED; KEPT, BROKEN for an execution gap). Do not write #<id> sorting rows: they are ignored. Code keeps score from these trades' P&L, so do not judge for or against an entry yourself
+    - Sorting the trades under the active entries is done by each trade's debrief; under every entry the ledger block lists the batch's trades sorted there (UNDER, MISCITED; KEPT, BROKEN for an execution gap). Code keeps score from these trades' P&L, so do not judge for or against an entry yourself
+    - An entry added to the ledger after a trade's debrief was never seen by that debrief: where a trade lists "Entries added after this trade's debrief", judge that trade against each listed entry yourself and write #<id> sorting rows under [LEDGER UPDATES]. Judge it the way a debrief does, only by whether the situation at entry and while holding matches the entry's condition, not by whether the trade won or lost: for hypotheses and rules, an opportunity or execution entry whose situation this trade met and followed, or a restriction entry whose situation it met and was taken anyway, is UNDER; for an execution gap whose situation this trade met, KEPT if it did what the entry says, BROKEN if it did not; write nothing where none applies. Write no other #<id> sorting rows: they are ignored
     - Whether an entry is promoted or dropped is decided by code from the tally of the trades under it: at least 5 trades under it, from at least 3 different days, with the net on its side, turns it into a rule the trader sees — the trades listed on its ADD row count too, but it is only promoted once a later review puts new trades under it; after promotion, once 5 more trades are under it and their net has turned against it, it goes back to a hypothesis; 10 reviews in a row with no new trades under it retire it, except a restriction that has already been promoted
     - The ledger has a quota, and the line under its header shows how much is taken: an ADD into a full bucket is not recorded. To add into a full bucket, write a DELETE row for a hypothesis that occupies that same bucket: a RESTRICTION hypothesis when RESTRICTION is full, a hypothesis of that setup type when the setup type is full, any hypothesis when the active total is full. If that bucket holds no hypothesis to delete, the ADD cannot go in, and nothing else should be deleted for it. DELETE is only for freeing quota: do not delete a hypothesis over one period's results; an execution gap whose commitment no longer exists may also be deleted
     - Only three kinds may be added: execution gaps (what I wrote down myself in a plan, a watch note or a Waiting line to do and did not do, or a hard line with a number in the owner's instructions that I did not keep; it must land on specific trades; where a debrief text's "Anything written down and not done" line says there was something, you decide whether it becomes an execution gap), hypotheses (a way of trading observed in this batch; hypotheses are not shown to the trader), findings (a limit or requirement in the owner's instructions is costing money — for the owner). What the owner's instructions already lay down may not be written into the ledger as a hypothesis; do not recopy last period's lessons; do not re-add what the ledger already holds
@@ -58,8 +59,9 @@ reviewer:
     ADD <setup type code or GENERAL> <ENTRY|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action> | <evidence> | UNDER <position ids> | SOURCE #<id>
     FINDING | <text, at most 160 characters> | <evidence, at most 120 characters>
     DELETE #<id> | <reason>
+    #<id> <UNDER|KEPT|BROKEN> <position id> | <basis, at most 80 characters>
     NO_UPDATES
-    Separate fields with "|", one row per line, nothing else. Position ids are bare numbers separated by commas. On an ADD row the trailing UNDER (KEPT and BROKEN for an execution gap) and SOURCE are optional. Setup type codes are the English labels as they appear in the material (e.g. PULLBACK, BREAKOUT); DELETE applies to hypotheses and execution gaps only; when there is no row to write at all, write the single line NO_UPDATES
+    Separate fields with "|", one row per line, nothing else. Position ids are bare numbers separated by commas. On an ADD row the trailing UNDER (KEPT and BROKEN for an execution gap) and SOURCE are optional. A #<id> sorting row is only for an entry listed under a trade in the material, with that trade's position id only. Setup type codes are the English labels as they appear in the material (e.g. PULLBACK, BREAKOUT); DELETE applies to hypotheses and execution gaps only; when there is no row to write at all, write the single line NO_UPDATES
 
   # Update-section mark. ExperienceOpParser slices on THIS language's set: the prompt just said which set to use, the other set is a format failure
   mark:
@@ -126,20 +128,25 @@ reviewer:
 
     # ---- case material ----
     # How to read a fact sheet: shared by the unified review's trade block and the debrief's fact-sheet block (CaseFileRenderer.guide)
-    caseGuide: "A target is written as price(percent of the position it closes), several rungs for a laddered take-profit, none when no take-profit was set. A trade entered in rungs has an extra entry-plan row: each rung's price × quantity, followed by when it filled or was cancelled and why. The path row is measured from the position's final average entry, and its R = the distance from that average to the plan's stop. The replay row asks what would have happened had nothing been changed after the order: each entry rung waits to fill at its original price (rungs that did fill use the actual fill price), and the stop and take-profit rungs stay as placed; 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop — actual and replay are both in that unit, so a trade that filled only in part shows a small actual R. Walked bar by bar on 5m candles from the first fill until 24h after the actual close, and whatever has not fully settled by then is unresolved; a bar touching both the stop and a take-profit rung counts as the stop; each rung reached settles its share and the rest walks on; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled (a remainder stopped out later is in the P&L), and a trade with no take-profit can only end as stop or undecided; at the wider stops the rungs are unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms. Actual and replay are both after trading fees and neither includes funding; replay exits at the stop and target prices, without slippage. For a trade marked as including adds, the actual side includes the PnL of the adds while the replay looks at the initial batch only"
-    casesHeader: "[THIS BATCH'S TRADES] (the trades that have been debriefed and have not been through a unified review yet, grouped by setup type. Each trade is led by its position id in square brackets; the ledger updates use it. Each trade is the fact sheet computed by code, and under Debrief the text of its own debrief written 24h after it closed. {{guide}})"
+    caseGuide: "A target is written as price(percent of the position it closes), several rungs for a laddered take-profit, none when no take-profit was set. A trade entered in rungs has an extra entry-plan row: each rung's price × quantity, followed by when it filled or was cancelled and why. The path row is measured from the position's final average entry, and its R = the distance from that average to the plan's stop. The replay row asks what would have happened had nothing been changed after the order: each entry rung waits to fill at its original price (rungs that did fill use the actual fill price), and the stop and take-profit rungs stay as placed; 1R = the price loss if every rung of the initial batch fills and all of it exits at the original stop — actual and replay are both in that unit, so a trade that filled only in part shows a small actual R. Walked bar by bar on 5m candles from the first fill until 24h after the actual close (or up to the last candle so far, with how much is covered stated in the row), and whatever has not fully settled by then is unresolved; a bar touching both the stop and a take-profit rung counts as the stop; each rung reached settles its share and the rest walks on; once the whole position has settled, entry rungs still unfilled no longer count as filled. target means a rung was reached and everything that filled has settled (a remainder stopped out later is in the P&L), and a trade with no take-profit can only end as stop or undecided; at the wider stops the rungs are unchanged and size shrinks to keep the same risk amount, the bracket is the P&L in those terms. Actual and replay are both after trading fees and neither includes funding; replay exits at the stop and target prices, without slippage. For a trade marked as including adds, the actual side includes the PnL of the adds while the replay looks at the initial batch only"
+    casesHeader: "[THIS BATCH'S TRADES] (the trades that have been debriefed and have not been through a unified review yet, grouped by setup type. Each trade is led by its position id in square brackets; the ledger updates use it. Each trade is the fact sheet computed by code, then Debrief with how long after the close it was written, and the text of that debrief under it; where the ledger gained entries after that debrief, they are listed under the text. {{guide}})"
     casesNone: No trades in this batch
     caseGroup: "{{play}} ({{n}} trades, {{wins}} won, net {{net}})"
     caseGeneral: untyped
-    # Under a trade's fact sheet: its debrief text, each line indented two more spaces
-    caseDebrief: "  Debrief:"
+    # Under a trade's fact sheet: its debrief text, each line indented two more spaces; after is how long after the close the debrief started
+    caseDebrief: "  Debrief (written {{after}} after the close):"
+    # Under a trade's debrief text: active entries added to the ledger after that debrief started; the unified review sorts this trade against them
+    caseGap: "  Entries added after this trade's debrief: {{ids}} (sort this trade against them yourself)"
     caseTrade: "- [{{id}}] {{symbol}} {{side}} {{opened}} → {{closed}} (held {{held}}) | entry {{entry}} stop {{stop}} target {{target}} exit {{exit}}, {{manner}} | net {{pnl}}, funding {{funding}}"
-    casePath: "  Price path (relative to final average entry): max favourable {{mfe}} ({{mfeAt}}, {{mfeR}}) | max adverse {{mae}} ({{maeR}}) | minutes to +0.5R / +1R {{tHalf}} / {{t1}} | first close back through entry {{firstBack}} | best price 4h / 24h after exit {{best4}} / {{best24}}, {{targetsAfter}}"
+    casePath: "  Price path (relative to final average entry): max favourable {{mfe}} ({{mfeAt}}, {{mfeR}}) | max adverse {{mae}} ({{maeR}}) | minutes to +0.5R / +1R {{tHalf}} / {{t1}} | first close back through entry {{firstBack}} | {{after}}"
     caseTargetsAfter: reached {{hit}}/{{total}} of the original targets
     caseNoTarget: no take-profit was set
-    caseAfterShort: not enough data after the exit
-    # Replay row (CaseFileBuilder.Replay): actual R, direction over the 24h after entry, outcome per stop width
-    caseReplay: "  Replay: actual {{actual}} | within 24h of the first fill max favourable {{fav}}, max adverse {{adv}}, held 24h with no stop {{hold}} | stop {{widths}}"
+    # The after-exit part of the path row (CaseFileRenderer.afterExit): a full 24h, only part of it so far, no candles after the exit
+    caseAfterFull: "best price 4h / 24h after exit {{best4}} / {{best}}, {{targets}}"
+    caseAfterPartial: "only {{span}} after exit so far: best price within 4h / {{span}} {{best4}} / {{best}}, {{targets}}"
+    caseAfterNone: no candles after the exit
+    # Replay row (CaseFileBuilder.Replay): actual R, direction over up to 24h after the first fill, outcome per stop width
+    caseReplay: "  Replay: actual {{actual}} | within {{span}} of the first fill max favourable {{fav}}, max adverse {{adv}}, held 24h with no stop {{hold}} | stop {{widths}}{{walked}}"
     replayOriginal: "as placed {{outcome}}"
     replayWidth: "{{width}}x {{outcome}}"
     replaySep: ", "
@@ -147,6 +154,11 @@ reviewer:
     replayStop: stopped ({{r}})
     replayOpen: unresolved
     replayHoldShort: under 24h
+    # The replay row's favourable/adverse window when it covers the full 24h
+    replaySpanFull: 24h
+    # Candles after the close cover less than 24h and some width is still unresolved: how far each width was walked
+    replayWalked: " (each width walked only to {{span}} after the close)"
+    replayWalkedNone: " (no candles after the close yet; each width walked only to the close)"
     # Replay summary over all of this batch's trades; the rows come from PlayStatsAssembler.replayLines
     caseReplaySummary: "This batch's replay summary:"
     # Plans archived without ever binding a position

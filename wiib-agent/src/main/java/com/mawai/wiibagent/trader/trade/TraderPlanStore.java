@@ -632,11 +632,11 @@ public class TraderPlanStore {
     }
 
     /**
-     * 把计划各档盖上 sim 订单的最新状态，给页面看。只改传进来的这几份，不写库：新成交和撤单留给唤醒开头的对账去报，撤单原因也是那时候写。
-     * 标着挂着的档，订单号不在 pendingIds 里了才去查它的订单组
+     * 把计划各档盖上 sim 订单的最新状态，给页面和手动单笔复盘看。只改传进来的这几份，不写库：新成交和撤单留给唤醒开头的对账去报。
+     * 标着挂着的档，订单号不在 pendingIds 里了才去查它的订单组；撤掉的档没写原因的，按 lang 照对账的写法补上
      */
     public void overlayEntries(List<AiTraderPlan> plans, Set<Long> pendingIds,
-                               Function<String, List<FuturesOrderResponse>> groupOrders) {
+                               Function<String, List<FuturesOrderResponse>> groupOrders, AgentLang lang) {
         for (AiTraderPlan plan : plans) {
             List<PlanEntry> entries = PlanEntry.read(plan);
             List<PlanEntry> gone = entries.stream()
@@ -652,6 +652,9 @@ public class TraderPlanStore {
                 // 查不到的、还在触发中的照旧显示挂着
                 if (order != null && ("FILLED".equals(order.getStatus()) || "CANCELLED".equals(order.getStatus()))) {
                     settle(e, order);
+                    if ("CANCELLED".equals(order.getStatus()) && (e.getReason() == null || e.getReason().isBlank())) {
+                        e.setReason(cancelReason(order.getCancelReason(), lang));
+                    }
                 }
             }
             PlanEntry.save(plan, entries);

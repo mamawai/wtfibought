@@ -30,6 +30,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static com.mawai.wiibcommon.entity.AiTraderExperienceTrade.MARK_UNDER;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -73,9 +74,12 @@ class ReviewRunnerTest {
     private final ReviewRunner runner = new ReviewRunner(assembler, modelFactory,
             decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), planStore);
 
-    /** 单笔复盘合并出来的归类：42 号在 #1 名下 */
+    /** 单笔复盘写的归类：42 号在 #1 名下 */
     private static final List<ExperienceLedger.Classify> CLASSIFIES = List.of(
             new ExperienceLedger.Classify(1L, List.of(new ExperienceLedger.Mark(MARK_UNDER, 42L))));
+    /** 现役条目：#1 规律；#9 假设，比 42 号的单笔复盘新 */
+    private static final List<AiTraderExperience> ACTIVE = List.of(
+            active(1L, AiTraderExperience.KIND_RULE), active(9L, AiTraderExperience.KIND_HYPOTHESIS));
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
@@ -102,11 +106,15 @@ class ReviewRunnerTest {
     }
 
     private void stubMaterial() {
-        stubMaterial(TRADES);
+        stubMaterial(TRADES, Map.of());
     }
 
-    /** trades：本批单子；有单子时带上单笔复盘合并出来的归类和计划行 id，没有时都是空的 */
     private void stubMaterial(Map<Long, ExperienceLedger.PeriodTrade> trades) {
+        stubMaterial(trades, Map.of());
+    }
+
+    /** trades：本批单子；有单子时带上单笔复盘写的归类和计划行 id，没有时都是空的。gaps：要这篇补归类的（单子 → 条目） */
+    private void stubMaterial(Map<Long, ExperienceLedger.PeriodTrade> trades, Map<Long, Set<Long>> gaps) {
         when(assembler.lastReview(7L, 1)).thenReturn(null);
         when(assembler.hasNewMaterial(any(), anyLong(), anyLong())).thenReturn(true);
         when(assembler.assemble(any(), anyLong(), anyLong(), any())).thenReturn(
@@ -117,7 +125,8 @@ class ReviewRunnerTest {
                         "【本期行情】\n- BTCUSDT 81144 → 86579，低到高 8.1%\n",
                         "【盯盘布防】\n- 期间布防 0 条（—）；命中 0 条；复盘时仍在盯 0 条\n",
                         "【经验账本】（现役 1 条）\n#1 规律 风险限制 执行型 PULLBACK ｜ 止损不小于 1 个 1h ATR ｜ 名下 5 笔 ｜ 证据 x\n",
-                        trades, trades.isEmpty() ? List.of() : CLASSIFIES, trades.isEmpty() ? List.of() : List.of(101L)));
+                        trades, trades.isEmpty() ? Map.of() : Map.of(42L, CLASSIFIES), gaps, ACTIVE,
+                        trades.isEmpty() ? List.of() : List.of(101L)));
     }
 
     private ChatModel modelReturning(String... texts) {
@@ -190,6 +199,33 @@ class ReviewRunnerTest {
         verify(model, times(1)).call(any(Prompt.class));
     }
 
+    /**
+     * 某笔做单笔复盘之后账本才新增的条目：这篇给它补的编号归类行认，和单笔复盘写的一起合成每条一行落账；
+     * 名单外的编号归类行照旧不认。只写了补归类行也算认出了东西，不记 ERROR
+     */
+    @Test
+    void sortingRowsForEntriesNewerThanTheDebriefAreKept() {
+        stubMaterial(TRADES, Map.of(42L, Set.of(9L)));
+        ChatModel model = modelReturning("""
+                【本期复盘】
+                战绩：起始权益 10000.00 → 期末权益 9800.00，期间收益率 -2.00%
+                【经验更新】
+                #9 名下 42 ｜ 回踩没破 EMA20 才进
+                #1 引用不符 42 ｜ 不在补归类的名单里""");
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.review(trader(), BOUNDARY);
+
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExperienceLedger.Op>> ops = ArgumentCaptor.forClass((Class) List.class);
+        verify(ledger).apply(eq(7L), eq(1), eq(900L), ops.capture(), eq(AgentLang.ZH), eq(TRADES));
+        assertThat(ops.getValue()).containsExactly(CLASSIFIES.getFirst(),
+                new ExperienceLedger.Classify(9L, List.of(new ExperienceLedger.Mark(MARK_UNDER, 42L))));
+    }
+
     /** 转正、降级、退役和名额满了没记进账本的新增，都追加在复盘正文末尾，一行一条，结账的在前 */
     @Test
     void settledChangesAndOverCapAddsAreListedAtTheEndOfTheReviewText() {
@@ -239,19 +275,19 @@ class ReviewRunnerTest {
         String all = allText(prompt.getValue());
         // 身份：跨单子，不逐笔重做
         assertThat(all).contains("写给明天").contains("你不再逐笔分析").contains("找分界线").contains("不要逐笔重做");
-        // 事实纪律：数字只许引用、不复述指令、不继承旧教训；归类不归它写；新增只收三个格子
+        // 事实纪律：数字只许引用、不复述指令、不继承旧教训；归类只补单笔复盘之后才新增的条目；新增只收三个格子
         assertThat(all).contains("只许原样复述")
                 .contains("主人指令里的规定不能当假设写进账本").contains("上期的教训不许重抄")
-                .contains("你不写编号归类行，写了也不算数")
+                .contains("除此之外不写编号归类行，写了也不算数")
                 .contains("由你决定要不要立成执行缺口")
                 .contains("新增的格子只有入场条件、风险限制、执行缺口三种").contains("已经转正的限制型不算在内")
                 .contains("但要等之后的复盘又有新单子记进它名下才会转正");
         assertThat(prompts.get(AgentLang.EN, "reviewer.system"))
-                .contains("Do not write #<id> sorting rows")
+                .contains("Write no other #<id> sorting rows")
                 .contains("it is only promoted once a later review puts new trades under it");
-        // 输出契约：没有编号归类行
+        // 输出契约：编号归类行只有补归类那一种
         assertThat(all).contains("【本期复盘】").contains("【经验更新】").contains("分界线：…")
-                .contains("新增 <单子类型代码或 通用>").doesNotContain("#<编号> 名下");
+                .contains("新增 <单子类型代码或 通用>").contains("#<编号> <名下|守|破> <仓位编号>");
         // 窗口行、五块素材、主人指令在场，指令排在素材前
         assertThat(all).contains("复盘窗口").contains("现在是 ");
         assertThat(all).contains("【战绩表】").contains("本局论点战绩").contains("【本批单子】")
@@ -393,6 +429,13 @@ class ReviewRunnerTest {
         AiTraderExperience e = new AiTraderExperience();
         e.setId(id);
         e.setText(text);
+        return e;
+    }
+
+    private static AiTraderExperience active(long id, String kind) {
+        AiTraderExperience e = new AiTraderExperience();
+        e.setId(id);
+        e.setKind(kind);
         return e;
     }
 }

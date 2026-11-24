@@ -380,6 +380,13 @@ public class TraderController {
         return Result.ok(actionService.review(userId, id));
     }
 
+    @PostMapping("/{id}/debrief/{positionId}")
+    @Operation(summary = "立即复盘一笔已平仓的单子（异步跑；复盘成功过的、没绑计划的、忽略了的不做）")
+    public Result<TraderActionService.ActionResult> debrief(@CurrentUserId long userId, @PathVariable long id,
+                                                             @PathVariable long positionId) {
+        return Result.ok(actionService.debrief(userId, id, positionId));
+    }
+
     /** rounds 空=1 轮（等同"念一次就清"）；越界由 service 钳到 1~24 */
     public record NoteRequest(String note, Integer rounds) {
     }

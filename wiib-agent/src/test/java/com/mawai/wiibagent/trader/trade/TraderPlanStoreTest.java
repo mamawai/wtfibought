@@ -309,16 +309,18 @@ class TraderPlanStoreTest {
 
     // ==================== 页面读法：各档盖上订单的最新状态 ====================
 
-    /** 两次唤醒之间成交、撤掉的档按订单显示，触发中的照旧，不写库 */
+    /** 两次唤醒之间成交、撤掉的档按订单显示，撤掉的照对账的写法补上原因，触发中的照旧，不写库 */
     @Test
     void overlayShowsSettledEntriesWithoutSaving() {
         AiTraderPlan plan = grouped(42L, entry(1L, "PENDING"), entry(2L, "PENDING"), entry(3L, "PENDING"), entry(4L, "PENDING"));
+        FuturesOrderResponse cancelled = groupOrder(2, "CANCELLED"); cancelled.setCancelReason("GROUP_CLOSED");
         store.overlayEntries(List.of(plan), Set.of(4L), _ -> List.of(
-                groupOrder(1, "FILLED"), groupOrder(2, "CANCELLED"), groupOrder(3, "TRIGGERED"), groupOrder(4, "PENDING")));
+                groupOrder(1, "FILLED"), cancelled, groupOrder(3, "TRIGGERED"), groupOrder(4, "PENDING")), AgentLang.ZH);
         List<PlanEntry> entries = PlanEntry.read(plan);
         assertThat(entries).extracting(PlanEntry::getStatus).containsExactly("FILLED", "CANCELLED", "PENDING", "PENDING");
         assertThat(entries.getFirst().getFilledPrice()).isEqualByComparingTo("98990");
         assertThat(entries.getFirst().getClosedAt()).isEqualTo(BOUNDARY - 1000);
+        assertThat(entries.get(1).getReason()).isEqualTo("仓位了结，平台撤单");
         verify(mapper, never()).updateById(any(AiTraderPlan.class));
     }
 
@@ -328,7 +330,7 @@ class TraderPlanStoreTest {
         AiTraderPlan plan = grouped(42L, entry(1L, "FILLED"), entry(2L, "PENDING"));
         store.overlayEntries(List.of(plan), Set.of(2L), _ -> {
             throw new AssertionError("订单组不该被查");
-        });
+        }, AgentLang.ZH);
         assertThat(PlanEntry.read(plan)).extracting(PlanEntry::getStatus).containsExactly("FILLED", "PENDING");
     }
 

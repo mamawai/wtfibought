@@ -31,12 +31,13 @@ import java.util.concurrent.TimeoutException;
 /**
  * 统一复盘回路：代码备料（战绩 / 论点战绩 / 本批单子的事实表和单笔复盘正文 / 行情 / 布防 / 账本）
  * → 一次模型调用写跨单子的分析 + 经验更新表（新增、发现、删除）
- * → 落账（{@link ExperienceLedger}：各笔单笔复盘的归类行合并后按仓位编号记到经验名下，连同本篇的新增、发现、删除）
+ * → 落账（{@link ExperienceLedger}：各笔单笔复盘的归类行和这篇补的合并后按仓位编号记到经验名下，连同本篇的新增、发现、删除）
  * → 给本批单子盖上这篇复盘的编号 → 代码结账（转正、降级、闲置退役）→ 账本渲染写回 ai_trader.memory。
  * REVIEW 决策行公开上时间线：正文 + 更新表 + 代码记账段；memory_after 存账本渲染快照。
  * <p>
- * 收哪些单子不看时间，看有没有做完单笔复盘、进没进过统一复盘；行情、布防、撤单、权益的窗口整体晚 24 小时
- * （见 {@link #WINDOW_LAG_MS}）。归类只来自单笔复盘，这篇输出里的编号归类行不认。
+ * 收做完单笔复盘、没进过统一复盘、平仓不晚于窗口右端的单子；行情、布防、撤单、权益的窗口整体晚 24 小时
+ * （见 {@link #WINDOW_LAG_MS}）。归类来自单笔复盘；某笔做单笔复盘之后账本才新增的条目，由这篇给那一笔补归类，
+ * 这篇输出里别的编号归类行不认。
  * 没有素材（没有可收的单子、窗口内也无开仓动作）静默跳过，窗口并入下次。
  * 失败语义：ERROR 行留痕、账本不动、本批单子不盖编号下次还在、不计连败；
  * 经验更新一行都认不出、也没写「本期无更新」也算失败，只是正文照存。
@@ -115,12 +116,13 @@ public class ReviewRunner {
                 return;
             }
             ExperienceOpParser.ReviewParsed parsed = parser.parse(output, lang);
-            // 归类只来自单笔复盘，这篇输出里的编号归类行不认
+            // 编号归类行只收补给"单笔复盘时还没有的条目"的那几对，别的不认
+            Map<Long, List<ExperienceLedger.Classify>> gapLines = material.gapLines(parsed.ops());
             List<ExperienceLedger.Op> written = parsed.ops().stream()
                     .filter(op -> !(op instanceof ExperienceLedger.Classify)).toList();
             d.setReasoning(output.strip());
             d.setLatencyMs((int) (System.currentTimeMillis() - start));
-            if (written.isEmpty() && !parsed.noUpdates()) {
+            if (written.isEmpty() && gapLines.isEmpty() && !parsed.noUpdates()) {
                 // 一行都认不出、也没写「本期无更新」：记成 ERROR，正文照存，账本不动；本批单子没盖编号，下次复盘还在
                 d.setStatus(AiTraderDecision.STATUS_ERROR);
                 d.setError(prompts.get(lang, "reviewer.error.noOps"));
@@ -131,8 +133,8 @@ public class ReviewRunner {
             d.setStatus(AiTraderDecision.STATUS_OK);
             // 先落行拿 id
             decisionMapper.insert(d);
-            // 各笔单笔复盘合并出来的归类在前，本篇的新增、发现、删除在后
-            List<ExperienceLedger.Op> ops = new ArrayList<>(material.classifies());
+            // 归类在前（各笔单笔复盘的，加这篇补的），本篇的新增、发现、删除在后
+            List<ExperienceLedger.Op> ops = new ArrayList<>(material.classifies(gapLines));
             ops.addAll(written);
             ExperienceLedger.Applied applied = ledger.apply(trader.getId(), trader.getRoundNo(), d.getId(), ops, lang,
                     material.trades());

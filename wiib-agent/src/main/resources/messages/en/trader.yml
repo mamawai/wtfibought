@@ -81,3 +81,13 @@ trader:
     started: Unified review started; a REVIEW entry will appear on the arena decision timeline in a few minutes. A failure leaves an ERROR entry, so it never just goes quiet
     noMaterial: No trade is ready for a unified review right now (a trade joins once it has been closed for 24h and debriefed) and there is no new opening action, so it was skipped (no model call spent)
     busy: It is reviewing right now (a debrief or a unified review is running) - try again once that one finishes
+
+  # Debrief one trade now (from its trade card)
+  debrief:
+    started: Debrief of this trade started; a debrief will appear on the decision timeline in a few minutes and this card will show it as debriefed. A failure leaves an ERROR entry
+    notFound: This trade is not among this round's closed trades
+    tooEarly: This trade just closed and its closing candle is not in yet; try again in a few minutes
+    noPlan: This trade has no trading plan bound to it, so it cannot be debriefed
+    stale: This trade is ignored, so it is not debriefed
+    done: This trade has already been debriefed
+    roundRunning: A wake round that was running when this trade closed has not finished yet (it may be the one that closed it); try again once it finishes

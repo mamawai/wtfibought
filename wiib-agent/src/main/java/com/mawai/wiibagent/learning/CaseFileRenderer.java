@@ -61,11 +61,9 @@ public class CaseFileRenderer {
                 Map.entry("tHalf", p.minToHalfR() == null ? none : String.valueOf(p.minToHalfR())),
                 Map.entry("t1", p.minTo1R() == null ? none : String.valueOf(p.minTo1R())),
                 Map.entry("firstBack", p.firstBackAt() == null ? none : HM_FMT.format(Instant.ofEpochMilli(p.firstBackAt()))),
-                Map.entry("best4", or(p.bestAfter4h(), none)),
-                Map.entry("best24", or(p.bestAfter24h(), none)),
-                Map.entry("targetsAfter", targetsAfter(TargetRung.of(plan), p.targetsAfter24h(), lang))))).append('\n');
+                Map.entry("after", afterExit(p, plan, lang))))).append('\n');
         if (c.replay() != null) {
-            sb.append(replayLine(c.replay(), lang)).append('\n');
+            sb.append(replayLine(c.replay(), p.afterMs(), lang)).append('\n');
         }
         if (!p.hourly().isEmpty()) {
             List<KlineBar> hourly = p.hourly().size() > MAX_HOURLY
@@ -98,18 +96,31 @@ public class CaseFileRenderer {
         return rungs.isEmpty() ? prompts.get(lang, "reviewer.label.none") : TargetRung.text(rungs);
     }
 
-    /** "之后到过原目标 1/2 档"；没设止盈、数据不够各有一句。reached 为 null＝出场后数据不够 24 小时 */
+    /** "到过原目标 1/2 档"；没设止盈写另一句 */
     String targetsAfter(List<TargetRung> targets, Integer reached, AgentLang lang) {
-        int total = targets.size();
-        if (total == 0) {
-            return prompts.get(lang, "reviewer.label.caseNoTarget");
-        }
-        return reached == null ? prompts.get(lang, "reviewer.label.caseAfterShort")
-                : prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", reached, "total", total));
+        return targets.isEmpty() ? prompts.get(lang, "reviewer.label.caseNoTarget")
+                : prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", reached, "total", targets.size()));
     }
 
-    /** 一笔的重放行：实际几 R、开仓后 24 小时的顺向逆向与拿满的位置、每档止损宽度的结局 */
-    String replayLine(CaseFileBuilder.Replay r, AgentLang lang) {
+    /** 路径行出场后那一段：满 24 小时、只看得到一段、出场后没有 K 线，三种写法 */
+    private String afterExit(CaseFileBuilder.Path p, AiTraderPlan plan, AgentLang lang) {
+        if (p.afterMs() == 0) {
+            return prompts.get(lang, "reviewer.label.caseAfterNone");
+        }
+        String none = prompts.get(lang, "reviewer.label.none");
+        String key = p.afterMs() >= CaseFileBuilder.AFTER_LONG_MS ? "reviewer.label.caseAfterFull" : "reviewer.label.caseAfterPartial";
+        return prompts.get(lang, key, Map.of(
+                "best4", or(p.bestAfter4h(), none),
+                "best", or(p.bestAfter(), none),
+                "targets", targetsAfter(TargetRung.of(plan), p.targetsAfter(), lang),
+                "span", humanize(prompts, p.afterMs(), lang)));
+    }
+
+    /**
+     * 一笔的重放行：实际几 R、首档成交后最多 24 小时的顺向逆向（没满 24 小时写实际多久）与拿满 24 小时的位置、每档止损宽度的结局。
+     * afterMs 是平仓后的 K 线覆盖了多久（{@link CaseFileBuilder.Path#afterMs}）：没满 24 小时、又有一档还没了结的，写各档只走到了哪
+     */
+    String replayLine(CaseFileBuilder.Replay r, long afterMs, AgentLang lang) {
         List<String> widths = new ArrayList<>();
         for (CaseFileBuilder.WidthOutcome w : r.widths()) {
             String outcome = switch (w.outcome()) {
@@ -121,12 +132,19 @@ public class CaseFileRenderer {
                     ? prompts.get(lang, "reviewer.label.replayOriginal", Map.of("outcome", outcome))
                     : prompts.get(lang, "reviewer.label.replayWidth", Map.of("width", w.width().toPlainString(), "outcome", outcome)));
         }
+        String walked = afterMs >= CaseFileBuilder.AFTER_LONG_MS
+                || r.widths().stream().noneMatch(w -> w.outcome() == CaseFileBuilder.Outcome.OPEN) ? ""
+                : afterMs == 0 ? prompts.get(lang, "reviewer.label.replayWalkedNone")
+                : prompts.get(lang, "reviewer.label.replayWalked", Map.of("span", humanize(prompts, afterMs, lang)));
         return prompts.get(lang, "reviewer.label.caseReplay", Map.of(
                 "actual", r.actualR() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.actualR()),
-                "fav", r.fav24R() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.fav24R()),
-                "adv", r.adv24R() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.adv24R()),
-                "hold", r.hold24R() == null ? prompts.get(lang, "reviewer.label.replayHoldShort") : signedR(r.hold24R()),
-                "widths", String.join(prompts.get(lang, "reviewer.label.replaySep"), widths)));
+                "span", r.spanMs() < CaseFileBuilder.DIRECTION_MS ? humanize(prompts, r.spanMs(), lang)
+                        : prompts.get(lang, "reviewer.label.replaySpanFull"),
+                "fav", r.favR() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.favR()),
+                "adv", r.advR() == null ? prompts.get(lang, "reviewer.label.none") : signedR(r.advR()),
+                "hold", r.holdR() == null ? prompts.get(lang, "reviewer.label.replayHoldShort") : signedR(r.holdR()),
+                "widths", String.join(prompts.get(lang, "reviewer.label.replaySep"), widths),
+                "walked", walked));
     }
 
     /** 一笔的交易行：仓位编号 / 币 / 方向 / 开平时刻 / 持有 / 入场 止损 目标 出场 / 了结方式 / 净额 / 资金费 */
@@ -138,7 +156,7 @@ public class CaseFileRenderer {
                 Map.entry("side", pos.getSide()),
                 Map.entry("opened", BeijingTime.shortFormat(TradePairing.msOf(pos.getCreatedAt()))),
                 Map.entry("closed", BeijingTime.shortFormat(TradePairing.msOf(pos.getUpdatedAt()))),
-                Map.entry("held", humanize(TradePairing.msOf(pos.getUpdatedAt()) - TradePairing.msOf(pos.getCreatedAt()), lang)),
+                Map.entry("held", humanize(prompts, TradePairing.msOf(pos.getUpdatedAt()) - TradePairing.msOf(pos.getCreatedAt()), lang)),
                 Map.entry("entry", plain(pos.getEntryPrice())),
                 Map.entry("stop", plan == null ? none : plain(plan.getStopLossPrice())),
                 Map.entry("target", targets(TargetRung.of(plan), lang)),
@@ -183,7 +201,7 @@ public class CaseFileRenderer {
         String none = prompts.get(lang, "reviewer.label.none");
         long pendingMs = TradePairing.msOf(pos.getCreatedAt()) - ctx.path("placedAt").asLong();
         String pending = "LIMIT".equals(ctx.path("orderType").asString(null)) && ctx.has("placedAt") && pendingMs >= 0
-                ? prompts.get(lang, "reviewer.label.casePending", Map.of("held", humanize(pendingMs, lang)))
+                ? prompts.get(lang, "reviewer.label.casePending", Map.of("held", humanize(prompts, pendingMs, lang)))
                 : "";
         return prompts.get(lang, "reviewer.label.caseCtx", Map.ofEntries(
                 Map.entry("pending", pending),
@@ -217,7 +235,8 @@ public class CaseFileRenderer {
         return parts.isEmpty() ? none : String.join("；", parts);
     }
 
-    private String humanize(long ms, AgentLang lang) {
+    /** 时长写成几分钟、几小时、几天：不到 2 小时写分钟，不到 2 天写小时 */
+    static String humanize(PromptCatalog prompts, long ms, AgentLang lang) {
         long min = Math.max(0, ms / 60_000);
         if (min < 120) {
             return prompts.get(lang, "reviewer.label.duration.minutes", Map.of("n", min));

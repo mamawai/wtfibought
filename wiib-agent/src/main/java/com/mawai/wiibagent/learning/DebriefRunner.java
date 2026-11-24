@@ -18,6 +18,7 @@ import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.wakeup.WakeTrace;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -37,6 +38,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
@@ -47,12 +49,12 @@ import java.util.stream.Collectors;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 单笔复盘：一笔单子平仓满 24 小时后，一个带工具的 ReAct 会话只判这一笔，落一行 DEBRIEF。
+ * 单笔复盘：一笔单子平仓满 24 小时后自动做，主人也可以提前点（{@link #manualDue}）；一个带工具的 ReAct 会话只判这一笔，落一行 DEBRIEF。
  * 代码备开场素材（{@link DebriefMaterialAssembler}），模型用只读工具查当时的情况，输出【单笔复盘】正文和【归类】行。
  * 这里不写账本：归类行留在正文里，统一复盘时由代码合并落账。
  * <p>
- * 失败语义：超时、模型报错、输出为空、没有【归类】段都记 ERROR 行，过后重试（见 {@link #RETRY_DELAYS_MS}）；
- * 试完还失败的这笔不进账本。失败不计连败。过程不上现场流，只落 trace_json。
+ * 失败语义：超时、模型报错、输出为空、没有【归类】段都记 ERROR 行，过后自动重试（见 {@link #attemptable}）；
+ * 自动试满还失败的不再自动做，主人还能手动点，复盘成功了照样进账本。失败不计连败。过程不上现场流，只落 trace_json。
  */
 @Slf4j
 @Component
@@ -81,6 +83,8 @@ public class DebriefRunner {
     private final PromptCatalog prompts;
     private final UserLangResolver userLangResolver;
     private final ExperienceOpParser parser;
+    private final RunningDebriefs running;
+    private final TraderPlanStore planStore;
 
     /** 总时长注入点：测试把它调短 */
     int timeoutSeconds = TIMEOUT_SECONDS;
@@ -90,8 +94,9 @@ public class DebriefRunner {
     }
 
     /**
-     * 现在该复盘的一笔，没有返回 null。候选是绑了仓位、已归档、主人没标不算数、还没进过统一复盘的计划行；
-     * 平仓满 24 小时（见 {@link #ready}）、不超过 7 天、还能再试的里面取平仓最早的。平仓时刻以 sim 的已平仓位为准
+     * 现在该复盘的一笔，没有返回 null。候选是绑了仓位、已归档、主人没忽略、还没进过统一复盘的计划行；
+     * 平仓满 24 小时（见 {@link #ready}）、不超过 7 天、还能再试（见 {@link #attemptable}）的里面取平仓最早的。
+     * 平仓时刻以 sim 的已平仓位为准
      */
     public Due next(AiTrader trader, long nowMs) {
         long oldest = nowMs - MAX_AGE_MS;
@@ -110,7 +115,7 @@ public class DebriefRunner {
         if (planByPos.isEmpty()) {
             return null;
         }
-        // 复盘成功过的、试满了的、还没到重试时刻的先去掉，剩下有候选才去问 sim
+        // 复盘成功过的先去掉，剩下有候选才去问 sim；重试次数和间隔要拿平仓时刻算到期，问过 sim 再判
         Map<Long, List<AiTraderDecision>> attempts = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                         .select(AiTraderDecision::getPositionId, AiTraderDecision::getStatus, AiTraderDecision::getWakeTime)
                         .eq(AiTraderDecision::getTraderId, trader.getId())
@@ -118,7 +123,8 @@ public class DebriefRunner {
                         .eq(AiTraderDecision::getKind, AiTraderDecision.KIND_DEBRIEF)
                         .in(AiTraderDecision::getPositionId, planByPos.keySet()))
                 .stream().collect(Collectors.groupingBy(AiTraderDecision::getPositionId));
-        planByPos.keySet().removeIf(id -> !attemptable(attempts.getOrDefault(id, List.of()), nowMs));
+        planByPos.keySet().removeIf(id -> attempts.getOrDefault(id, List.of()).stream()
+                .anyMatch(d -> AiTraderDecision.STATUS_OK.equals(d.getStatus())));
         if (planByPos.isEmpty()) {
             return null;
         }
@@ -126,7 +132,8 @@ public class DebriefRunner {
                 .filter(p -> planByPos.containsKey(p.getId()))
                 .filter(p -> {
                     long closeMs = TradePairing.msOf(p.getUpdatedAt());
-                    return closeMs >= oldest && ready(closeMs, nowMs);
+                    return closeMs >= oldest && ready(closeMs, nowMs)
+                            && attemptable(attempts.getOrDefault(p.getId(), List.of()), dueAt(closeMs), nowMs);
                 })
                 .min(Comparator.comparing(FuturesPositionDTO::getUpdatedAt))
                 .map(p -> new Due(p, planByPos.get(p.getId())))
@@ -134,7 +141,7 @@ public class DebriefRunner {
     }
 
     /**
-     * 这笔能复盘了没有。到期时刻分两段算：
+     * 自动复盘的到期时刻，分两段算：
      * <ol>
      * <li>平仓落在哪根 5m 里，就从那根的开盘往后数 24 小时。事实表要看到平仓后 24 小时的走势，
      *     最后要用的那一根 K 线正好在这个时刻收盘。</li>
@@ -144,31 +151,99 @@ public class DebriefRunner {
      * </ol>
      * 例：14:02 平仓，落在 14:00 开盘的那根 → 最后一根在第二天 14:00 收盘 → 第二天 14:05 的扫描才做它。
      */
-    static boolean ready(long closeMs, long nowMs) {
+    static long dueAt(long closeMs) {
         long closeBar = closeMs - Math.floorMod(closeMs, CaseFileBuilder.BAR_MS);
-        long lastBarClosed = closeBar + WAIT_MS;
-        return nowMs >= lastBarClosed + CaseFileBuilder.BAR_MS;
+        return closeBar + WAIT_MS + CaseFileBuilder.BAR_MS;
     }
 
-    /** 这笔现在还能不能跑：没成功过，失败没试满，离上一次失败够久 */
-    static boolean attemptable(List<AiTraderDecision> attempts, long nowMs) {
-        if (attempts.isEmpty()) {
+    /** 这笔到没到自动复盘的时刻（{@link #dueAt}） */
+    static boolean ready(long closeMs, long nowMs) {
+        return nowMs >= dueAt(closeMs);
+    }
+
+    /**
+     * 手动复盘能不能做了：平仓那根 5m 收盘后再过一根。
+     * 和 {@link #dueAt} 的第 2 条一样，多等一根，平仓那根肯定已经在库里，事实表不会少它
+     */
+    public static boolean manualReady(long closeMs, long nowMs) {
+        long closeBar = closeMs - Math.floorMod(closeMs, CaseFileBuilder.BAR_MS);
+        return nowMs >= closeBar + 2 * CaseFileBuilder.BAR_MS;
+    }
+
+    /**
+     * 没复盘成功过的这笔，现在还能不能自动再跑：到期之后的失败没试满，离上一次失败够久。
+     * 到期之前主人手动点失败的不算次数
+     */
+    static boolean attemptable(List<AiTraderDecision> attempts, long dueMs, long nowMs) {
+        List<Long> failed = attempts.stream().map(AiTraderDecision::getWakeTime).filter(t -> t >= dueMs).toList();
+        if (failed.isEmpty()) {
             return true;
         }
-        if (attempts.stream().anyMatch(d -> AiTraderDecision.STATUS_OK.equals(d.getStatus()))
-                || attempts.size() > RETRY_DELAYS_MS.length) {
+        if (failed.size() > RETRY_DELAYS_MS.length) {
             return false;
         }
-        long lastFailed = attempts.stream().mapToLong(AiTraderDecision::getWakeTime).max().orElseThrow();
-        return nowMs >= lastFailed + RETRY_DELAYS_MS[attempts.size() - 1];
+        long lastFailed = failed.stream().mapToLong(Long::longValue).max().orElseThrow();
+        return nowMs >= lastFailed + RETRY_DELAYS_MS[failed.size() - 1];
     }
 
-    /** 复盘一笔，成败都落一行 DEBRIEF */
+    /** 手动复盘的准入结果：能做给 due；不能做给 refusal，是消息词表 trader.debrief.* 的 key */
+    public record ManualDue(Due due, String refusal) {
+    }
+
+    /**
+     * 主人点"立即复盘"的那一笔：本局 sim 已平仓位里有它、平仓那根 K 线已经落库（{@link #manualReady}）、
+     * 有计划行绑着它、主人没忽略、还没复盘成功过。不看自动复盘的重试次数、间隔和 7 天上限。
+     * 计划还没归档（下一轮唤醒才归档）也放行：各档记的是上次唤醒对账时的状态，这里按 sim 的订单盖一遍，只改这一份、不写库
+     */
+    public ManualDue manualDue(AiTrader trader, long positionId, long nowMs) {
+        FuturesPositionDTO pos = simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT).stream()
+                .filter(p -> p.getId() == positionId).findFirst().orElse(null);
+        if (pos == null) {
+            return new ManualDue(null, "trader.debrief.notFound");
+        }
+        if (!manualReady(TradePairing.msOf(pos.getUpdatedAt()), nowMs)) {
+            return new ManualDue(null, "trader.debrief.tooEarly");
+        }
+        AiTraderPlan plan = planMapper.selectOne(new LambdaQueryWrapper<AiTraderPlan>()
+                .eq(AiTraderPlan::getTraderId, trader.getId())
+                .eq(AiTraderPlan::getRoundNo, trader.getRoundNo())
+                .eq(AiTraderPlan::getPositionId, positionId)
+                .orderByAsc(AiTraderPlan::getId)
+                .last("LIMIT 1"));
+        if (plan == null) {
+            return new ManualDue(null, "trader.debrief.noPlan");
+        }
+        if (Boolean.TRUE.equals(plan.getStale())) {
+            return new ManualDue(null, "trader.debrief.stale");
+        }
+        // 失败过的不挡，只有复盘成功过的才算做过
+        boolean done = decisionMapper.selectCount(new LambdaQueryWrapper<AiTraderDecision>()
+                .eq(AiTraderDecision::getTraderId, trader.getId())
+                .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
+                .eq(AiTraderDecision::getKind, AiTraderDecision.KIND_DEBRIEF)
+                .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
+                .eq(AiTraderDecision::getPositionId, positionId)) > 0;
+        if (done) {
+            return new ManualDue(null, "trader.debrief.done");
+        }
+        if (AiTraderPlan.STATUS_LIVE.equals(plan.getStatus())) {
+            planStore.overlayEntries(List.of(plan), Set.of(),
+                    group -> simTradeClient.getGroupOrders(trader.getSimUserId(), group), userLangResolver.of(trader.getUserId()));
+        }
+        return new ManualDue(new Due(pos, plan), null);
+    }
+
+    /** 复盘一笔，成败都落一行 DEBRIEF；跑的时候记着这个交易员正在复盘哪个仓位 */
     public void debrief(AiTrader trader, Due due) {
-        AiTraderDecision d = debriefRow(trader, due);
-        decisionMapper.insert(d);
-        log.info("[Debrief] 单笔复盘落行 traderId={} positionId={} status={} 模型调用{}次 工具{}次",
-                trader.getId(), d.getPositionId(), d.getStatus(), d.getModelCalls(), d.getToolCalls());
+        running.start(trader.getId(), due.position().getId());
+        try {
+            AiTraderDecision d = debriefRow(trader, due);
+            decisionMapper.insert(d);
+            log.info("[Debrief] 单笔复盘落行 traderId={} positionId={} status={} 模型调用{}次 工具{}次",
+                    trader.getId(), d.getPositionId(), d.getStatus(), d.getModelCalls(), d.getToolCalls());
+        } finally {
+            running.end(trader.getId());
+        }
     }
 
     /** 跑一笔单笔复盘，给出要落的那一行，这里不落库（wake_time 是开跑的时刻） */
@@ -285,14 +360,16 @@ public class DebriefRunner {
         }
     }
 
-    /** 单笔复盘的用户消息：复盘对象 + 主人指令 + 事实表 + 各轮决策 + 账本 + 收尾 */
+    /** 单笔复盘的用户消息：复盘对象（带平仓后过了多久） + 主人指令 + 事实表 + 各轮决策 + 账本 + 收尾 */
     String userPrompt(AiTrader trader, FuturesPositionDTO pos, DebriefMaterialAssembler.DebriefMaterial m,
                       long nowMs, AgentLang lang) {
+        long closeMs = TradePairing.msOf(pos.getUpdatedAt());
         StringBuilder sb = new StringBuilder();
         sb.append(prompts.get(lang, "debrief.label.subject", Map.of(
                 "id", pos.getId(), "symbol", pos.getSymbol(), "side", pos.getSide(),
                 "opened", BeijingTime.format(TradePairing.msOf(pos.getCreatedAt())),
-                "closed", BeijingTime.format(TradePairing.msOf(pos.getUpdatedAt())),
+                "closed", BeijingTime.format(closeMs),
+                "since", CaseFileRenderer.humanize(prompts, nowMs - closeMs, lang),
                 "now", BeijingTime.format(nowMs)))).append("\n\n");
         // 主人亲笔原样注入不翻译
         sb.append(prompts.get(lang, "debrief.label.ownerInstructions")).append('\n');
