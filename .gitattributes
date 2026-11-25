@@ -1,0 +1,2 @@
+# shell 脚本在 Windows 上检出也是 LF
+*.sh text eol=lf

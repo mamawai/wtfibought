@@ -1,0 +1,83 @@
+# push 到 master（只改文档、前端这些不跑）：构建、跑单测、打包；部署停在 production 环境的审批上，点了才发。
+# 手动触发可以点名服务。按 feed → sim → agent 逐个冷切，步骤见 deploy/ci/ship.sh
+name: deploy
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "wiib-feed/**"
+      - "wiib-sim/**"
+      - "wiib-agent/**"
+      - "wiib-common/**"
+      - "wiib-quant/**"
+      - "pom.xml"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - "sql/migrations/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "要发的服务：feed,sim,agent 里选，逗号分隔；空 = 按改动算"
+        required: false
+        default: ""
+
+# 同一时刻只跑一个，排队的只留最新一个
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: 构建、跑单测
+        run: mvn -B -pl wiib-feed,wiib-sim,wiib-agent -am package -DskipTests=false
+      - name: 收拢产物
+        run: |
+          mkdir release
+          tar -czf release/bundle.tgz deploy docker-compose.yml \
+            wiib-feed/Dockerfile wiib-sim/Dockerfile wiib-agent/Dockerfile sql/migrations
+          for s in feed sim agent; do cp wiib-$s/target/wiib-$s-*.jar release/$s.jar; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: 配 SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: 部署
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SERVICES: ${{ inputs.services }}
+        run: bash deploy/ci/ship.sh

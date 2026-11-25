@@ -5,6 +5,10 @@
 #      wiib-quant 是 agent 依赖的库，-am 会带上，不用单列
 #   3. docker compose up -d --build
 #
+# 线上由 CI 发（.github/workflows/deploy.yml → deploy/deploy.sh）：镜像在服务器上打成 wiib-<服务>:<提交哈希>，
+# 再把 wiib-<服务>:current 指过去，这里的 image 用的就是它；部署时脚本会拿这个版本的本文件覆盖服务器上的。
+# 服务器上手工 up -d --build 会绕过部署记录（deploy/state/<服务> 记的哈希），之后 CI 按记录算改动会算错。
+#
 # Python 服务 wiib-alpha 单独一个文件，不跟着这里的 up -d --build 一起重建：
 #   wiib-alpha → alpha-compose.yml  docker compose -f alpha-compose.yml up -d --build
 # 两个文件共用外部网络 wiib-network，容器名就是网络里的主机名，跨文件照样 wiib-sim:8080 寻址。
@@ -35,6 +39,7 @@ services:
   wiib-feed:
     <<: *svc-base
     build: { context: ./wiib-feed, dockerfile: Dockerfile }
+    image: wiib-feed:current
     container_name: wiib-feed
     # docker stop 的宽限：feed 关连接秒级
     stop_grace_period: 20s
@@ -51,6 +56,7 @@ services:
   wiib-sim:
     <<: *svc-base
     build: { context: ./wiib-sim, dockerfile: Dockerfile }
+    image: wiib-sim:current
     container_name: wiib-sim
     # 等后台活最多 10s + Web 容器优雅关停最多 30s（SockJS 降级成 xhr-streaming 的长请求会等满）+ 销毁余量
     stop_grace_period: 60s
@@ -69,6 +75,7 @@ services:
   wiib-agent:
     <<: *svc-base
     build: { context: ./wiib-agent, dockerfile: Dockerfile }
+    image: wiib-agent:current
     container_name: wiib-agent
     # 等手上的活最多 60s + 提前收尾后再等 35s + Web 容器优雅关停最多 30s + 销毁余量
     stop_grace_period: 150s
