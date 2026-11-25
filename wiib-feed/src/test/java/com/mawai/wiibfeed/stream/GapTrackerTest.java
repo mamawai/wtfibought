@@ -1,5 +1,6 @@
 package com.mawai.wiibfeed.stream;
 
+import com.mawai.wiibcommon.handover.Start;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -63,6 +64,31 @@ class GapTrackerTest {
         tracker().publishGap();
 
         verify(publisher, never()).publish(anyString());
+    }
+
+    /** 交接上任：Redis 里的最后一帧是旧实例刚写的，第一次连上不发；之后断了再连照常发 */
+    @Test
+    void 交接上任第一次连上不发_之后照常() {
+        when(valueOps.get("feed:last-msg:Spot")).thenReturn("1700000000000");
+        GapTracker t = tracker();
+        t.skipFirstGap(Start.HANDOVER);
+
+        t.publishGap();
+        verify(publisher, never()).publish(anyString());
+
+        t.publishGap();
+        assertThat(publishedJson()).contains("\"from\":1700000000000");
+    }
+
+    @Test
+    void 冷启动上任第一次连上照常发() {
+        when(valueOps.get("feed:last-msg:Spot")).thenReturn("1700000000000");
+        GapTracker t = tracker();
+        t.skipFirstGap(Start.COLD);
+
+        t.publishGap();
+
+        assertThat(publishedJson()).contains("\"from\":1700000000000");
     }
 
     /** 每帧都写 Redis 纯浪费：5s 内多次 touch 只写一次 */

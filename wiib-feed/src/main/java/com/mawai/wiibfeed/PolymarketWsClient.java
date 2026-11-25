@@ -4,10 +4,10 @@ import com.mawai.wiibcommon.market.PolymarketPriceClient;
 import com.mawai.wiibcommon.market.PredictionStreamChannels;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
-import jakarta.annotation.PostConstruct;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.connection.RedisStreamCommands.TrimOptions;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
@@ -46,12 +46,12 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <h3>调用顺序</h3>
  * <ol>
  *     <li>
- *         Spring 创建 Bean 后调用 {@link #init()}。
+ *         在任时开口（{@link #open}），待命的实例不连。
  *         这里创建共享的 {@link HttpClient}、定时线程池，以及两条 WS 连接对象：
  *         live-data 用来接 BTC Chainlink 价格，CLOB 用来接当前回合 UP/DOWN 盘口。
  *     </li>
  *     <li>
- *         {@link #init()} 立即执行 {@code liveDataWs.connect()}。
+ *         {@link #open} 立即执行 {@code liveDataWs.connect()}。
  *         live-data 连接成功后回调 {@link #onLiveDataConnected(WebSocket)}，
  *         订阅 btc/usd 的 {@code crypto_prices_twap_sixty} 主题。
  *     </li>
@@ -61,19 +61,19 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *         官网 TWAP 盘显示的当前价就是这条流。
  *     </li>
  *     <li>
- *         {@link #init()} 同时启动两条文本 {@code PING} 心跳：live-data 每 5 秒、CLOB 每 10 秒。
+ *         {@link #open} 同时启动两条文本 {@code PING} 心跳：live-data 每 5 秒、CLOB 每 10 秒。
  *         Polymarket WS 需要应用层心跳保活；心跳返回的 {@code PONG} 在 {@link WsConnection} 内过滤，
  *         不进入业务 JSON 解析。两条连接都开了 30 秒静默看门狗：PONG 不算消息，30 秒没有业务消息就重连。
  *         两条连接另外每秒看一次数据旧不旧（{@link #reconnectIfLagging}）：CLOB 盘口消息时间旧过 3 秒、
  *         LiveData 的 TWAP 时间旧过 5 秒，就换一条新连接。
  *     </li>
  *     <li>
- *         {@link #init()} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
+ *         {@link #open} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
  *         再 {@link #flushBook()} 把有变化的盘口写进 Redis 盘口快照（带回合）、广播 {@code /topic/prediction/market}；
  *         每秒一次 {@link #repushBook()}，给刚打开页面的人补推一次当前盘口，CLOB 连着时顺带整份重写快照当心跳。
  *     </li>
  *     <li>
- *         {@link #init()} 启动虚拟线程执行 {@link #prepareCurrentMarket(long)}。
+ *         {@link #open} 启动虚拟线程执行 {@link #prepareCurrentMarket(long)}。
  *         这是服务在一个 5 分钟回合中途启动时的补偿逻辑：
  *         先创建当前回合，再准备当前回合的 CLOB token，并开始轮询 openPrice。
  *     </li>
@@ -117,11 +117,13 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *         {@code settle} 事件，由 sim 结算上一回合。
  *     </li>
  * </ol>
+ * 进活的口：开口是上面这些（建连、心跳、拍子、备当前回合），关口是断连、停拍子。
+ * {@link #ready()}：LiveData 连着，当前回合已经备好
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PolymarketWsClient implements SmartLifecycle {
+public class PolymarketWsClient implements Intake {
 
     private final MarketBroadcaster broadcastService;
     private final CacheService cacheService;
@@ -176,8 +178,8 @@ public class PolymarketWsClient implements SmartLifecycle {
     /** 盘口一拍的间隔：换回合检查 + 盘口写 Redis、推页面 */
     private static final long BOOK_TICK_MS = 50;
 
-    @PostConstruct
-    public void init() {
+    @Override
+    public void open(Start how) {
         scheduler = Executors.newScheduledThreadPool(2,
                 Thread.ofVirtual().name("polymarket-ws-", 0).factory());
         httpClient = HttpClient.newBuilder()
@@ -258,7 +260,7 @@ public class PolymarketWsClient implements SmartLifecycle {
     }
 
     @Override
-    public void stop() {
+    public void close() {
         shutdown.set(true);
         if (liveDataWs != null) liveDataWs.close();
         if (clobWs != null) clobWs.close();
@@ -266,9 +268,10 @@ public class PolymarketWsClient implements SmartLifecycle {
         if (httpClient != null) httpClient.close();
     }
 
-    @Override public boolean isRunning() { return !shutdown.get() && scheduler != null; }
-    @Override public int getPhase() { return 1; }
-    @Override public void start() { /* init via @PostConstruct */ }
+    @Override
+    public boolean ready() {
+        return liveDataWs != null && liveDataWs.isConnected() && round != null;
+    }
 
     // ==================== WS 连接/重新连接 ============
 

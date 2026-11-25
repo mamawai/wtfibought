@@ -68,7 +68,7 @@ slot_wait_drained() {
   done
 }
 
-# 哪些服务有 /internal/handoff 接口
+# 哪些服务有 /internal/handoff 接口：三个都有
 has_handoff() {
-  [[ $1 == sim || $1 == agent ]]
+  [[ $1 == feed || $1 == sim || $1 == agent ]]
 }
