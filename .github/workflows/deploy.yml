@@ -1,4 +1,5 @@
 # push 到 master（只改文档、前端这些不跑）：构建、跑单测、打包；部署停在 production 环境的审批上，点了才发。
+# 仓库变量 AUTO_DEPLOY 里列了的服务（比如 agent,sim）不用审批，见 deploy-auto。
 # 手动触发可以点名服务、选模式。按 feed → sim → agent 逐个发，默认交接，还没有交接的服务服务器上自己改走冷切；
 # 提交信息带 [cold] 的那个服务走冷切。步骤见 deploy/ci/ship.sh
 name: deploy
@@ -66,8 +67,48 @@ jobs:
           name: release
           path: release/
 
-  deploy:
+  # 自动部署：仓库变量 AUTO_DEPLOY 设了（比如 agent,sim）才有这个 job。这次要发的服务全在名单里，走不用审批的
+  # production-auto 直接发；有一个不在名单里，就整批交给下面要审批的 deploy，保持 feed → sim → agent 的先后
+  deploy-auto:
     needs: build
+    if: vars.AUTO_DEPLOY != ''
+    runs-on: ubuntu-latest
+    environment: production-auto
+    outputs:
+      manual: ${{ steps.ship.outputs.manual }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: 配 SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: 部署
+        id: ship
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SERVICES: ${{ inputs.services }}
+          MODE: ${{ inputs.mode }}
+          AUTO_DEPLOY: ${{ vars.AUTO_DEPLOY }}
+        run: bash deploy/ci/ship.sh
+
+  # 要审批的部署：没开自动部署，或者这次有不在自动名单里的服务
+  deploy:
+    needs: [build, deploy-auto]
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (needs.deploy-auto.result == 'skipped' || needs.deploy-auto.outputs.manual == 'true')
     runs-on: ubuntu-latest
     environment: production
     steps:

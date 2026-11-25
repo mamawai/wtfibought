@@ -3,6 +3,7 @@
 # 按 feed → sim → agent 逐个部署，每个等到切换完成再发下一个（不等旧实例清空），有一个失败就停。
 # 环境变量：DEPLOY_HOST、DEPLOY_USER、GITHUB_SHA、GITHUB_RUN_ID、GITHUB_RUN_ATTEMPT；
 # SERVICES 是手动触发时点名的服务，可空；MODE 是手动触发时选的模式，push 来的是空，按 handover。
+# AUTO_DEPLOY 只在自动部署的 job 里给：这次要发的服务有不在它里面的，什么都不发，在 GITHUB_OUTPUT 里写 manual=true 交给要审批的 job。
 # 产物在 release/（bundle.tgz、feed.jar、sim.jar、agent.jar），私钥在 ~/.ssh/deploy_key
 set -euo pipefail
 
@@ -48,6 +49,17 @@ if [[ -z $plan ]]; then
 fi
 mapfile -t todo <<<"$plan"
 echo "这次发：$(paste -sd ',' <<<"$plan")"
+
+if [[ -n ${AUTO_DEPLOY:-} ]]; then
+  for line in "${todo[@]}"; do
+    s=${line% *}
+    if [[ ",${AUTO_DEPLOY//[[:space:]]/}," != *",$s,"* ]]; then
+      echo "$s 不在自动部署名单（$AUTO_DEPLOY）里，这一批交给要审批的部署"
+      echo "manual=true" >>"$GITHUB_OUTPUT"
+      exit 0
+    fi
+  done
+fi
 
 upload release/bundle.tgz upload-bundle "$sha"
 for line in "${todo[@]}"; do
