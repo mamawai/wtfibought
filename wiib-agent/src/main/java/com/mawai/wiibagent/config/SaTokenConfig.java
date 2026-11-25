@@ -4,12 +4,13 @@ import com.mawai.wiibcommon.config.BaseSaTokenConfig;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Sa-Token 配置：白名单制，放行清单之外的接口一律需要登录。
  * 本进程自己不签发登录（token 由 sim 签发，两进程共享同一份 Redis）。
- * 放行的是 swagger/error 这些静态门面和下面几个游客只读的 GET，actuator 不放。
+ * 放行的是 swagger/error 这些静态门面、/internal/**（走 InternalApiFilter 的 token 校验）和下面几个游客只读的 GET。
  */
 @Configuration
 public class SaTokenConfig extends BaseSaTokenConfig {
@@ -20,7 +21,9 @@ public class SaTokenConfig extends BaseSaTokenConfig {
 
     @Override
     protected List<String> getExcludePaths() {
-        return getDefaultExcludePaths();
+        List<String> paths = new ArrayList<>(getDefaultExcludePaths());
+        paths.add("/internal/**");
+        return paths;
     }
 
     /**

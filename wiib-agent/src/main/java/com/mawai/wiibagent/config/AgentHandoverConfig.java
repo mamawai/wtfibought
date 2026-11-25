@@ -20,6 +20,6 @@ public class AgentHandoverConfig {
 
     @Bean
     public HandoverPolicy handoverPolicy() {
-        return new HandoverPolicy(Duration.ofSeconds(60), Duration.ofSeconds(35));
+        return new HandoverPolicy("agent", 1, Duration.ofSeconds(60), Duration.ofSeconds(35));
     }
 }

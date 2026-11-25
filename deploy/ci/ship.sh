@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CI 的部署步骤，在仓库根目录跑：问服务器各服务部署的哈希 → 算这次发哪些 → 传 bundle 和 jar →
 # 按 feed → sim → agent 逐个部署，每个等出结果再发下一个，有一个失败就停。
-# 环境变量：DEPLOY_HOST、DEPLOY_USER、GITHUB_SHA；SERVICES 是手动触发时点名的服务，可空。
+# 环境变量：DEPLOY_HOST、DEPLOY_USER、GITHUB_SHA、GITHUB_RUN_ID、GITHUB_RUN_ATTEMPT；SERVICES 是手动触发时点名的服务，可空。
 # 产物在 release/（bundle.tgz、feed.jar、sim.jar、agent.jar），私钥在 ~/.ssh/deploy_key
 set -euo pipefail
 
@@ -54,7 +54,7 @@ done
 
 for s in "${todo[@]}"; do
   echo "== 部署 $s"
-  remote deploy "$s" "$sha" cold
+  remote deploy "$s" "$sha" cold "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   deadline=$((SECONDS + DEPLOY_TIMEOUT))
   while :; do
     sleep 10

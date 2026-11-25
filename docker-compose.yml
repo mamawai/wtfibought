@@ -1,17 +1,24 @@
 # ============================================================
-# WhatIfIBought 三个 Java 服务 (feed / sim / agent)
+# WhatIfIBought 三个 Java 服务 (feed / sim / agent)，每个服务两个槽位 a / b，前面一个网关。
+#
+# 网关 wiib-gateway 占住 wiib-feed / wiib-sim / wiib-agent 三个主机名和宿主端口，
+# 按 deploy/gateway/active/<服务>.conf 把流量转给在任的槽位（容器 wiib-<服务>-<槽位>）。
+# 槽位容器带 profiles: ["slot"]：裸 up -d 只起网关，槽位要点名才起。
+#
+# 线上由 CI 发（.github/workflows/deploy.yml → deploy/deploy.sh）：镜像在服务器上打成 wiib-<服务>:<提交哈希>，
+# 脚本起槽位时用环境变量 <服务>_<槽位>_TAG 指定标签，部署时拿这个版本的本文件覆盖服务器上的。
+# 服务器上别手工 up 槽位：不带 TAG 会用 :local 标签。
+#
+# 本地用 docker 跑：
 #   1. 建 .env（cp .env.example 填值，HOST 填法见 .env.example 注释）
 #   2. mvn clean package -pl wiib-feed,wiib-agent,wiib-sim -am -DskipTests
 #      wiib-quant 是 agent 依赖的库，-am 会带上，不用单列
-#   3. docker compose up -d --build
+#   3. docker build -t wiib-feed:local wiib-feed && docker build -t wiib-sim:local wiib-sim && docker build -t wiib-agent:local wiib-agent
+#   4. docker compose up -d wiib-gateway wiib-feed-a wiib-sim-a wiib-agent-a
 #
-# 线上由 CI 发（.github/workflows/deploy.yml → deploy/deploy.sh）：镜像在服务器上打成 wiib-<服务>:<提交哈希>，
-# 再把 wiib-<服务>:current 指过去，这里的 image 用的就是它；部署时脚本会拿这个版本的本文件覆盖服务器上的。
-# 服务器上手工 up -d --build 会绕过部署记录（deploy/state/<服务> 记的哈希），之后 CI 按记录算改动会算错。
-#
-# Python 服务 wiib-alpha 单独一个文件，不跟着这里的 up -d --build 一起重建：
+# Python 服务 wiib-alpha 单独一个文件：
 #   wiib-alpha → alpha-compose.yml  docker compose -f alpha-compose.yml up -d --build
-# 两个文件共用外部网络 wiib-network，容器名就是网络里的主机名，跨文件照样 wiib-sim:8080 寻址。
+# 两个文件共用外部网络 wiib-network，容器名就是网络里的主机名，跨文件照样 wiib-sim:8080 寻址（落到网关）。
 #
 # 配置只改 .env，本文件不含任何环境私有值，直接入库。
 # env_file 把 .env 全量注入容器，application.yml 占位符自行解析，
@@ -19,78 +26,134 @@
 # x-* 为复用锚点，<<: 合并到各服务。
 # ============================================================
 
+x-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 x-svc-base: &svc-base
   restart: unless-stopped
+  profiles: ["slot"]
   env_file:
     - .env
   ulimits:
     nproc: 16384
     nofile: 65536
-  logging:
-    driver: "json-file"
-    options:
-      max-size: "50m"
-      max-file: "3"
+  logging: *logging
 
-x-shared-env: &shared-env
-  TZ: ${TZ:-Asia/Singapore}
+x-feed: &feed
+  <<: *svc-base
+  # docker stop 的宽限：feed 关连接秒级
+  stop_grace_period: 20s
+  mem_limit: 3584m
+  mem_reservation: 1g
+  cpus: "2"
+
+x-sim: &sim
+  <<: *svc-base
+  # 等后台活最多 10s + Web 容器优雅关停最多 30s（SockJS 降级成 xhr-streaming 的长请求会等满）+ 销毁余量
+  stop_grace_period: 60s
+  mem_limit: 5632m
+  mem_reservation: 2g
+  cpus: "3"
+
+x-agent: &agent
+  <<: *svc-base
+  # 等手上的活最多 60s + 提前收尾后再等 35s + Web 容器优雅关停最多 30s + 销毁余量
+  stop_grace_period: 150s
+  mem_limit: 6144m
+  mem_reservation: 2g
+  cpus: "3"
 
 services:
-  wiib-feed:
-    <<: *svc-base
-    build: { context: ./wiib-feed, dockerfile: Dockerfile }
-    image: wiib-feed:current
-    container_name: wiib-feed
-    # docker stop 的宽限：feed 关连接秒级
-    stop_grace_period: 20s
-    ports:
-      - "127.0.0.1:8081:8081"
-    volumes:
-      - ./dumps/feed:/dumps      # 各服务独立子目录，避免 PID=1 dump 重名
-    environment:
-      <<: *shared-env
-    mem_limit: 3584m
-    mem_reservation: 1g
-    cpus: "2"
-
-  wiib-sim:
-    <<: *svc-base
-    build: { context: ./wiib-sim, dockerfile: Dockerfile }
-    image: wiib-sim:current
-    container_name: wiib-sim
-    # 等后台活最多 10s + Web 容器优雅关停最多 30s（SockJS 降级成 xhr-streaming 的长请求会等满）+ 销毁余量
-    stop_grace_period: 60s
+  wiib-gateway:
+    image: nginx:1.27-alpine
+    container_name: wiib-gateway
+    restart: unless-stopped
+    command: ["nginx", "-c", "/etc/nginx/wiib/nginx.conf", "-g", "daemon off;"]
     ports:
       - "127.0.0.1:8080:8080"
-    volumes:
-      - ./dumps/sim:/dumps
-    environment:
-      <<: *shared-env
-      # 容器间用服务名寻址，覆盖 yml 里的 localhost 默认
-      FEED_INTERNAL_BASE_URL: http://wiib-feed:8081
-    mem_limit: 5632m
-    mem_reservation: 2g
-    cpus: "3"
-
-  wiib-agent:
-    <<: *svc-base
-    build: { context: ./wiib-agent, dockerfile: Dockerfile }
-    image: wiib-agent:current
-    container_name: wiib-agent
-    # 等手上的活最多 60s + 提前收尾后再等 35s + Web 容器优雅关停最多 30s + 销毁余量
-    stop_grace_period: 150s
-    ports:
-      # 宿主 8082 已被占用，宿主侧映射 18082（nginx 反代 agent 路径用它；容器间仍走 wiib-agent:8082 可自行调整）
+      - "127.0.0.1:8081:8081"
+      # 宿主 8082 已被占用，宿主侧映射 18082（nginx 反代 agent 路径用它）
       - "127.0.0.1:18082:8082"
-#      - "127.0.0.1:8082:8082"
     volumes:
-      - ./dumps/agent:/dumps
+      - ./deploy/gateway:/etc/nginx/wiib:ro
+    networks:
+      default:
+        aliases: [wiib-feed, wiib-sim, wiib-agent]
+    logging: *logging
+
+  wiib-feed-a:
+    <<: *feed
+    image: wiib-feed:${FEED_A_TAG:-local}
+    container_name: wiib-feed-a
+    volumes:
+      - ./dumps/feed-a:/dumps      # 各槽位独立子目录，避免 PID=1 dump 重名
     environment:
-      <<: *shared-env
+      TZ: ${TZ:-Asia/Singapore}
+      WIIB_SLOT: a
+      WIIB_VERSION: ${FEED_A_TAG:-local}
+
+  wiib-feed-b:
+    <<: *feed
+    image: wiib-feed:${FEED_B_TAG:-local}
+    container_name: wiib-feed-b
+    volumes:
+      - ./dumps/feed-b:/dumps
+    environment:
+      TZ: ${TZ:-Asia/Singapore}
+      WIIB_SLOT: b
+      WIIB_VERSION: ${FEED_B_TAG:-local}
+
+  wiib-sim-a:
+    <<: *sim
+    image: wiib-sim:${SIM_A_TAG:-local}
+    container_name: wiib-sim-a
+    volumes:
+      - ./dumps/sim-a:/dumps
+    environment:
+      TZ: ${TZ:-Asia/Singapore}
+      WIIB_SLOT: a
+      WIIB_VERSION: ${SIM_A_TAG:-local}
+      # 容器间按主机名寻址（落到网关），覆盖 yml 里的 localhost 默认
+      FEED_INTERNAL_BASE_URL: http://wiib-feed:8081
+
+  wiib-sim-b:
+    <<: *sim
+    image: wiib-sim:${SIM_B_TAG:-local}
+    container_name: wiib-sim-b
+    volumes:
+      - ./dumps/sim-b:/dumps
+    environment:
+      TZ: ${TZ:-Asia/Singapore}
+      WIIB_SLOT: b
+      WIIB_VERSION: ${SIM_B_TAG:-local}
+      FEED_INTERNAL_BASE_URL: http://wiib-feed:8081
+
+  wiib-agent-a:
+    <<: *agent
+    image: wiib-agent:${AGENT_A_TAG:-local}
+    container_name: wiib-agent-a
+    volumes:
+      - ./dumps/agent-a:/dumps
+    environment:
+      TZ: ${TZ:-Asia/Singapore}
+      WIIB_SLOT: a
+      WIIB_VERSION: ${AGENT_A_TAG:-local}
       SIM_INTERNAL_BASE_URL: http://wiib-sim:8080
-    mem_limit: 6144m
-    mem_reservation: 2g
-    cpus: "3"
+
+  wiib-agent-b:
+    <<: *agent
+    image: wiib-agent:${AGENT_B_TAG:-local}
+    container_name: wiib-agent-b
+    volumes:
+      - ./dumps/agent-b:/dumps
+    environment:
+      TZ: ${TZ:-Asia/Singapore}
+      WIIB_SLOT: b
+      WIIB_VERSION: ${AGENT_B_TAG:-local}
+      SIM_INTERNAL_BASE_URL: http://wiib-sim:8080
 
 networks:
   default:

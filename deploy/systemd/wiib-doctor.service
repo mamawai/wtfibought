@@ -1,0 +1,9 @@
+# 对齐网关：每个服务的网关指的槽位要和 Redis 里的在任槽位一样。由 wiib-doctor.timer 每分钟拉起一次。
+# 装法：拷到 /etc/systemd/system/，systemctl daemon-reload && systemctl enable --now wiib-doctor.timer
+[Unit]
+Description=wiib 网关和在任槽位对齐
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+ExecStart=/bin/bash /root/whatifibought/deploy/scripts/deploy.sh doctor

@@ -1,0 +1,9 @@
+[Unit]
+Description=每分钟对齐一次 wiib 网关
+
+[Timer]
+OnCalendar=minutely
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

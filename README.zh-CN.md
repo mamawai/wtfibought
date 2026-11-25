@@ -115,7 +115,10 @@ WhatIfIBought 的重头戏是回测练习、量化策略模拟和 AI Trader：
    ```bash
    docker network create wiib-network
    cp .env.example .env           # 或用 Docker Compose：它读的是 .env，不是 .env.local
-   docker compose up -d --build   # 要先跑上一步的打包，Dockerfile 只 COPY jar 不编译
+   # 要先跑上一步的打包，Dockerfile 只 COPY jar 不编译
+   for s in feed sim agent; do docker build -t wiib-$s:local wiib-$s; done
+   # 每个服务有 a / b 两个槽位、前面一个网关；本地起 a 就够
+   docker compose up -d wiib-gateway wiib-feed-a wiib-sim-a wiib-agent-a
    ```
 
 完整步骤（前置检查、策略配置、BYOK 密钥、环境变量速查）见 [docs/deploy.md](docs/deploy.md)。

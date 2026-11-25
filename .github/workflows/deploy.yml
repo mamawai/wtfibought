@@ -41,6 +41,12 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+      - name: 身份（Role）只在 handover 包里用
+        run: |
+          if grep -rnE 'wiibcommon\.handover\.Role\b' --include=*.java wiib-*/src/main | grep -v '/wiibcommon/handover/'; then
+            echo "com.mawai.wiibcommon.handover.Role 只能在 handover 包里引用"
+            exit 1
+          fi
       - name: 构建、跑单测
         run: mvn -B -pl wiib-feed,wiib-sim,wiib-agent -am package -DskipTests=false
       - name: 收拢产物

@@ -2124,7 +2124,8 @@ class TraderWakeupLoopTest {
                 new org.springframework.beans.factory.support.DefaultListableBeanFactory();
         beans.registerSingleton("runs", runs);
         Handover handover = new Handover(beans.getBeanProvider(Intake.class), beans.getBeanProvider(InFlight.class),
-                new HandoverPolicy(Duration.ofSeconds(5), Duration.ofSeconds(5)));
+                new HandoverPolicy("agent", 1, Duration.ofSeconds(5), Duration.ofSeconds(5)), null, _ -> {
+        }, "", "");
 
         Thread wake = Thread.startVirtualThread(() -> runner.doWake(trader, round(trader, null), 1785171600000L, 600,
                 TraderWakeupRunner.baseDecision(trader, 1785171600000L), List.of(), AgentLang.ZH));

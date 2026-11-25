@@ -11,4 +11,9 @@ public interface Intake {
 
     /** 关口。返回时已经停稳：读循环退出了，最后进来的那件活已经交出去了 */
     void close();
+
+    /** 开口之后是不是真的在进活了 */
+    default boolean ready() {
+        return true;
+    }
 }

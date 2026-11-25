@@ -4,7 +4,8 @@
 #   deployed <服务>                    这个服务现在部署的哈希，没部署过输出空
 #   upload-bundle <哈希>               标准输入收 bundle，解到 releases/<哈希>/
 #   upload-jar <服务> <哈希>           标准输入收 jar，存成 releases/<哈希>/<服务>.jar
-#   deploy <服务> <哈希> <模式>        用 systemd-run 起部署任务（脱离 ssh 会话），立刻返回
+#   deploy <服务> <哈希> <模式> <请求号>   用 systemd-run 起部署任务（脱离 ssh 会话），立刻返回；
+#                                    请求号是 CI 的 <run_id>-<run_attempt>，同一个请求号重复调（ssh 重试）不重起
 #   deploy-status <服务> <哈希>        第一行 running / ok / failed / none，后面是日志末尾
 # 手工装一次（放在 <项目目录>/deploy/ 下，chmod +x），尽量不动；其余脚本随 bundle 来
 set -euo pipefail
@@ -17,6 +18,7 @@ die() { echo "ci-entry: $*" >&2; exit 2; }
 check_service() { [[ ${1:-} =~ ^(feed|sim|agent)$ ]] || die "服务名只能是 feed / sim / agent"; }
 check_hash() { [[ ${1:-} =~ ^[0-9a-f]{7,40}$ ]] || die "哈希不对"; }
 check_mode() { [[ ${1:-} =~ ^(handover|cold)$ ]] || die "模式只能是 handover / cold"; }
+check_request() { [[ ${1:-} =~ ^[0-9]{1,20}-[0-9]{1,5}$ ]] || die "请求号不对"; }
 check_argc() { [[ $1 -eq $2 ]] || die "参数个数不对"; }
 
 # 部署任务的结果：<服务>.status 里写的；写着 running 但任务已经没了，是脚本被杀没来得及写，算 failed
@@ -59,22 +61,25 @@ case $cmd in
     ;;
 
   deploy)
-    check_argc ${#argv[@]} 4
+    check_argc ${#argv[@]} 5
     hash=${argv[2]}
     mode=${argv[3]}
+    request=${argv[4]}
     check_service "$svc"
     check_hash "$hash"
     check_mode "$mode"
+    check_request "$request"
     dir=$RELEASES/$hash
     [[ -f $dir/deploy/deploy.sh ]] || die "这个哈希的 bundle 还没传"
     [[ -f $dir/$svc.jar ]] || die "这个哈希的 $svc.jar 还没传"
-    # 同一个服务和哈希正在跑、或者已经发成功并且现在就是它的，不再起
     status=$(deploy_state "$dir" "$svc" "$hash")
-    current=$(sed -n 's/^current=//p' "$STATE/$svc" 2>/dev/null || true)
-    if [[ $status == running || ($status == ok && $current == "$hash") ]]; then
+    # 同一个请求号已经起过（ssh 重试）：不再起，回它的状态
+    if [[ $(cat "$dir/$svc.request" 2>/dev/null || true) == "$request" ]]; then
       echo "$status"
       exit 0
     fi
+    [[ $status != running ]] || die "这个服务和哈希的另一次部署还在跑"
+    echo "$request" >"$dir/$svc.request"
     echo running >"$dir/$svc.status"
     systemd-run --unit="wiib-deploy-$svc-${hash:0:12}" --collect --quiet --setenv=HOME="${HOME:-/root}" \
       /bin/bash "$dir/deploy/deploy.sh" "$svc" "$hash" "--$mode" || { echo failed >"$dir/$svc.status"; die "起部署任务失败"; }
