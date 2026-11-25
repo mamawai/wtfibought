@@ -7,6 +7,8 @@ import com.mawai.wiibcommon.handover.Start;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -21,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongPredicate;
 import java.util.function.Supplier;
 
 /**
@@ -28,7 +31,9 @@ import java.util.function.Supplier;
  * 按 traderId 订阅，只有主人连得进来（准入在 controller 判）；一次唤醒一个 {@link Run} 句柄，runner 只碰它。
  * 单实例部署，进程内 Map 即可。
  * <p>
- * 进活的口是"实时页订阅"：关口时把所有订阅连接完成掉，之后来的先接下再马上完成（不回业务错误），前端退避后重连。
+ * 进活的口是"实时页订阅"：关着时新来的先接下再马上完成（不回业务错误），前端退避后重连；已经连着的不动。
+ * 已经连着的按 trader 完成：交接时旧实例不持有的（脚本调 release-streams）、旧实例放手一个 trader 时它的；
+ * 进程关停时全部完成（上下文关闭事件在 Web 容器优雅关停之前）。
  */
 @Slf4j
 @Component
@@ -49,9 +54,9 @@ public class TraderLiveHub implements Intake {
     private final Map<Long, Set<Run>> runs = new ConcurrentHashMap<>();
     /** traderId → 订阅者；空闲时也挂着，等下一轮 run_start */
     private final Map<Long, Set<Sink>> traderSubscribers = new ConcurrentHashMap<>();
-    /** 所有 SSE 通道，心跳用 */
-    private final Set<SseChannel> channels = ConcurrentHashMap.newKeySet();
-    /** 订阅的口。和登记通道在同一把锁（this）里改：要么登记在前、关口时一并完成，要么看到关着当场完成 */
+    /** 所有 SSE 通道 → 看的哪个 trader，心跳和按 trader 完成用 */
+    private final Map<SseChannel, Long> channels = new ConcurrentHashMap<>();
+    /** 订阅的口。和登记通道在同一把锁（this）里改：看到关着就当场完成 */
     private boolean open;
     /** 心跳专用：只发注释帧，单线程够所有订阅者用；虚拟线程不支持定时调度故用平台线程 */
     private final ScheduledExecutorService heartbeatScheduler =
@@ -76,25 +81,45 @@ public class TraderLiveHub implements Intake {
         open = true;
     }
 
-    /** 关口：把还活着的订阅连接逐个完成掉，哪个完成时报错就跳过它接着完成下一个 */
+    /** 关口：新来的订阅当场完成，已经连着的不动 */
     @Override
     public synchronized void close() {
         open = false;
-        for (SseChannel channel : channels) {
-            if (channel.isClosed()) {
-                continue;
+    }
+
+    /** 进程关停：全部订阅连接完成掉 */
+    @EventListener(ContextClosedEvent.class)
+    public void onContextClosed() {
+        complete(_ -> true);
+    }
+
+    /** 这个 trader 的订阅连接完成掉（旧实例放手它时） */
+    public void completeFor(long traderId) {
+        complete(id -> id == traderId);
+    }
+
+    /** 不在名单里的 trader 的订阅连接完成掉（交接切完网关后，旧实例不持有的） */
+    public void completeExcept(Set<Long> keep) {
+        complete(id -> !keep.contains(id));
+    }
+
+    /** 逐个完成还活着的连接，哪个完成时报错就跳过它接着完成下一个 */
+    private void complete(LongPredicate which) {
+        channels.forEach((channel, traderId) -> {
+            if (channel.isClosed() || !which.test(traderId)) {
+                return;
             }
             try {
                 channel.complete();
             } catch (Exception e) {
-                log.debug("[TraderLive] 关口完成订阅连接失败: {}", e.toString());
+                log.debug("[TraderLive] 完成订阅连接失败: {}", e.toString());
             }
-        }
+        });
     }
 
     private void heartbeat() {
-        channels.removeIf(SseChannel::isClosed);
-        channels.forEach(SseChannel::heartbeat);
+        channels.keySet().removeIf(SseChannel::isClosed);
+        channels.keySet().forEach(SseChannel::heartbeat);
     }
 
     // ========== 运行侧 ==========
@@ -219,7 +244,7 @@ public class TraderLiveHub implements Intake {
                 emitter.complete();
                 return emitter;
             }
-            attach(emitter, channel, () -> subscribers(traderId).remove(sink));
+            attach(emitter, channel, traderId, () -> subscribers(traderId).remove(sink));
         }
         subscribeTrader(traderId, sink);
         return emitter;
@@ -255,8 +280,8 @@ public class TraderLiveHub implements Intake {
     }
 
     /** emitter 生命周期：完成/超时/出错都标关、摘心跳、摘订阅 */
-    private void attach(SseEmitter emitter, SseChannel channel, Runnable unsubscribe) {
-        channels.add(channel);
+    private void attach(SseEmitter emitter, SseChannel channel, long traderId, Runnable unsubscribe) {
+        channels.put(channel, traderId);
         Runnable close = () -> {
             channel.markClosed();
             channels.remove(channel);

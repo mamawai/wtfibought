@@ -14,6 +14,7 @@ import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.chat.store.ChatRowKind;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
+import com.mawai.wiibagent.handover.PeerRelay;
 import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
@@ -134,7 +135,7 @@ class ChatRegenerateTest {
                 history, contextStore, streamer, rewinder, runRegistry,
                 ChatTestEndpoints.childRuns(contextStore), ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
-                Executors.newVirtualThreadPerTaskExecutor());
+                Executors.newVirtualThreadPerTaskExecutor(), mock(PeerRelay.class));
         return new Harness(controller, history, contextStore, turnRunner, gate);
     }
 
@@ -316,7 +317,7 @@ class ChatRegenerateTest {
                 approvals, mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, new ChatTurnRewinder(history, contextStore, ChatTestEndpoints.PROMPTS),
                 runRegistry, childRuns, ChatTestEndpoints.prefs(), ChatTestEndpoints.openGate(10), new MessageCatalog(),
-                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), executor);
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), executor, mock(PeerRelay.class));
         ChatWorkbenchController.RegenerateRequest request = new ChatWorkbenchController.RegenerateRequest();
         request.setSessionId(SESSION);
 

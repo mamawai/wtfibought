@@ -58,7 +58,8 @@ class TraderSchedulerTest {
 
     /** 起新轮的口开着：进程启动时由编排开口 */
     private TraderScheduler sched(EconCalendarGate gate) {
-        TraderScheduler s = new TraderScheduler(traderMapper, runner, new MessageCatalog(), gate, watchSentinel, watchStore);
+        TraderScheduler s = new TraderScheduler(traderMapper, runner, new MessageCatalog(), gate, watchSentinel, watchStore,
+                new Desks(), TraderPeer.NONE, mock(PresetExecutor.class), mock(TraderLiveHub.class));
         s.open(Start.COLD);
         return s;
     }

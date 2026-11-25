@@ -40,6 +40,11 @@ public class TraderWatchStore {
                 .orderByAsc(AiTraderWatch::getId));
     }
 
+    /** 按 id 读一条条件；没有返回 null。对端转来的预案、触发按 id 读回来用 */
+    public AiTraderWatch byId(long id) {
+        return mapper.selectById(id);
+    }
+
     /** 全站还在盯的条件，哨兵装名单用 */
     public List<AiTraderWatch> allArmed() {
         return mapper.selectList(new LambdaQueryWrapper<AiTraderWatch>()

@@ -2,6 +2,7 @@ package com.mawai.wiibagent.news;
 
 import com.mawai.wiibagent.runtime.AiAgentRuntime;
 import com.mawai.wiibagent.runtime.AiAgentRuntimeManager;
+import com.mawai.wiibcommon.handover.Paced;
 import com.mawai.wiibquant.external.blockbeats.BlockBeatsNewsClient;
 import com.mawai.wiibquant.market.domain.news.NewsFlash;
 import com.mawai.wiibquant.market.service.NewsCache;
@@ -74,8 +75,9 @@ public class NewsEventCollector {
     public record BackfillResult(int fetched, int inserted, boolean failed) {
     }
 
-    /** 周期见 news.collect.interval-ms。initialDelay 让开启动高峰，也给 Admin 配模型留缓冲 */
-    @Scheduled(fixedDelayString = "${news.collect.interval-ms:1800000}", initialDelay = 60_000)
+    /** 每分钟看一眼，离上次跑完满 news.collect.interval-ms 才跑。initialDelay 让开启动高峰，也给 Admin 配模型留缓冲 */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
+    @Paced(key = "agent:news", every = "${news.collect.interval-ms:1800000}")
     public void collect() {
         if (!enabled) {
             return;

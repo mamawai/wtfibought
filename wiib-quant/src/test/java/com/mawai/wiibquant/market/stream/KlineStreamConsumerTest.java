@@ -49,7 +49,7 @@ class KlineStreamConsumerTest {
         MapRecord<String, String, String> record =
                 StreamRecords.newRecord().in(MarketStreamChannels.KLINE_CLOSED_STREAM).ofMap(fields);
 
-        consumer.onMessage(record);
+        consumer.onRecord(record);
 
         // Stream 9 字段 → 重建 KlineBar → republish 正确事件（字段契约对齐校验）
         assertThat(events).singleElement().isInstanceOf(KlineClosedEvent.class);

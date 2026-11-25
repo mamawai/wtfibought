@@ -15,6 +15,7 @@ import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
+import com.mawai.wiibagent.handover.PeerRelay;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
@@ -226,7 +227,7 @@ class ChatWakeTest {
                 mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class), mock(WorkbenchRunRegistry.class),
                 childRuns, ChatTestEndpoints.prefs(), gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS,
-                ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());
+                ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor(), mock(PeerRelay.class));
         ChatWorkbenchController.WakeRequest request = new ChatWorkbenchController.WakeRequest();
         request.setSessionId(SESSION);
 

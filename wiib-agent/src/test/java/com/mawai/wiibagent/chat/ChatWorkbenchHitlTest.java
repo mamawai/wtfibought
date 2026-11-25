@@ -10,6 +10,7 @@ import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
+import com.mawai.wiibagent.handover.PeerRelay;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
@@ -169,14 +170,15 @@ class ChatWorkbenchHitlTest {
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
         ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry,
                 ChatTestEndpoints.compactor());
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(ChatTestEndpoints.userSlotRedis(), "", 10);
         ChatHistoryService history = mock(ChatHistoryService.class);
         streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, registry, ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),
                 registry, mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class),
                 runRegistry, childRuns, ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
-                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor(),
+                mock(PeerRelay.class));
     }
 
     /** 跑一轮，返回这一轮发出去的全部 SSE 事件 */

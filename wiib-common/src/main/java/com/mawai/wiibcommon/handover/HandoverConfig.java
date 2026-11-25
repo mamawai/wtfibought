@@ -6,6 +6,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.servlet.function.RouterFunction;
 import org.springframework.web.servlet.function.RouterFunctions;
 import org.springframework.web.servlet.function.ServerResponse;
@@ -28,23 +29,47 @@ public class HandoverConfig {
     }
 
     @Bean
+    public PacedAspect pacedAspect(ObjectProvider<StringRedisTemplate> redis) {
+        return new PacedAspect(redis);
+    }
+
+    @Bean
     public ActiveSlot activeSlot(ObjectProvider<StringRedisTemplate> redis, HandoverPolicy policy) {
         return new ActiveSlot(redis, policy.service());
     }
 
-    /** 槽位和版本来自容器的环境变量 WIIB_SLOT、WIIB_VERSION；本地开发和单测不设 */
+    /** 槽位来自容器的环境变量 WIIB_SLOT，本地开发和单测不设 */
     @Bean
-    public Handover handover(ObjectProvider<Intake> intakes, ObjectProvider<InFlight> works, HandoverPolicy policy,
-                             ActiveSlot activeSlot, ApplicationEventPublisher events,
-                             @Value("${WIIB_SLOT:}") String slot, @Value("${WIIB_VERSION:}") String version) {
-        return new Handover(intakes, works, policy, activeSlot, events, slot, version);
+    public PeerClient peerClient(HandoverPolicy policy, @Value("${WIIB_SLOT:}") String slot,
+                                 @Value("${server.port:8080}") int port, @Value("${internal.api.token:}") String token) {
+        return new PeerClient(policy.service(), slot, port, token);
     }
 
-    /** /internal/handoff 下的接口，走 InternalApiFilter 的 token 校验 */
+    /** 槽位和版本来自容器的环境变量 WIIB_SLOT、WIIB_VERSION */
+    @Bean
+    public Handover handover(ObjectProvider<Intake> intakes, ObjectProvider<InFlight> works,
+                             ObjectProvider<Carried> carried, HandoverPolicy policy, ActiveSlot activeSlot,
+                             PeerClient peerClient, ApplicationEventPublisher events,
+                             @Value("${WIIB_SLOT:}") String slot, @Value("${WIIB_VERSION:}") String version) {
+        return new Handover(intakes, works, carried, policy, activeSlot, peerClient, events, slot, version);
+    }
+
+    /** /internal/handoff 下的接口，走 InternalApiFilter 的 token 校验；身份转换不合法回 409 */
     @Bean
     public RouterFunction<ServerResponse> handoffRoutes(Handover handover) {
         return RouterFunctions.route()
                 .GET("/internal/handoff/status", _ -> ServerResponse.ok().body(handover.status()))
+                .POST("/internal/handoff/yield", _ -> ServerResponse.ok().body(handover.yieldRole()))
+                .POST("/internal/handoff/takeover", req -> {
+                    handover.takeover(req.body(Handover.Note.class));
+                    return ServerResponse.ok().build();
+                })
+                .POST("/internal/handoff/resume", _ -> {
+                    handover.resume();
+                    return ServerResponse.ok().build();
+                })
+                .onError(IllegalStateException.class,
+                        (e, _) -> ServerResponse.status(HttpStatus.CONFLICT).body(e.getMessage()))
                 .build();
     }
 

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# CI 的部署步骤，在仓库根目录跑：问服务器各服务部署的哈希 → 算这次发哪些 → 传 bundle 和 jar →
-# 按 feed → sim → agent 逐个部署，每个等出结果再发下一个，有一个失败就停。
-# 环境变量：DEPLOY_HOST、DEPLOY_USER、GITHUB_SHA、GITHUB_RUN_ID、GITHUB_RUN_ATTEMPT；SERVICES 是手动触发时点名的服务，可空。
+# CI 的部署步骤，在仓库根目录跑：问服务器各服务部署的哈希 → 算这次发哪些、各用什么模式 → 传 bundle 和 jar →
+# 按 feed → sim → agent 逐个部署，每个等到切换完成再发下一个（不等旧实例清空），有一个失败就停。
+# 环境变量：DEPLOY_HOST、DEPLOY_USER、GITHUB_SHA、GITHUB_RUN_ID、GITHUB_RUN_ATTEMPT；
+# SERVICES 是手动触发时点名的服务，可空；MODE 是手动触发时选的模式，push 来的是空，按 handover。
 # 产物在 release/（bundle.tgz、feed.jar、sim.jar、agent.jar），私钥在 ~/.ssh/deploy_key
 set -euo pipefail
 
 sha=$GITHUB_SHA
-# 一个服务从起部署到出结果最多等多久
-DEPLOY_TIMEOUT=1200
+# 一个服务从起部署到出结果最多等多久：上一次交接下来的旧实例还在收尾要先等它（agent 最多 35 分钟），再加等切换时刻的 5 分钟
+DEPLOY_TIMEOUT=3000
 
 # 调一次服务器上的 ci-entry：连不上（退出码 255）最多重试 4 次，远端命令自己失败不重试；
 # 输入文件每次重新打开，重试时从头传
@@ -39,22 +40,25 @@ for s in feed sim agent; do
 done
 echo "服务器上现在是：feed=${deployed[feed]:-没部署过} sim=${deployed[sim]:-没部署过} agent=${deployed[agent]:-没部署过}"
 
-plan=$(bash deploy/ci/plan.sh "$sha" "${SERVICES:-}" "${deployed[feed]}" "${deployed[sim]}" "${deployed[agent]}")
+plan=$(bash deploy/ci/plan.sh "$sha" "${SERVICES:-}" "${MODE:-handover}" \
+  "${deployed[feed]}" "${deployed[sim]}" "${deployed[agent]}")
 if [[ -z $plan ]]; then
   echo "这次没有要发的服务"
   exit 0
 fi
 mapfile -t todo <<<"$plan"
-echo "这次发：${todo[*]}"
+echo "这次发：$(paste -sd ',' <<<"$plan")"
 
 upload release/bundle.tgz upload-bundle "$sha"
-for s in "${todo[@]}"; do
-  upload "release/$s.jar" upload-jar "$s" "$sha"
+for line in "${todo[@]}"; do
+  upload "release/${line% *}.jar" upload-jar "${line% *}" "$sha"
 done
 
-for s in "${todo[@]}"; do
-  echo "== 部署 $s"
-  remote deploy "$s" "$sha" cold "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+for line in "${todo[@]}"; do
+  s=${line% *}
+  mode=${line#* }
+  echo "== 部署 $s（$mode）"
+  remote deploy "$s" "$sha" "$mode" "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   deadline=$((SECONDS + DEPLOY_TIMEOUT))
   while :; do
     sleep 10

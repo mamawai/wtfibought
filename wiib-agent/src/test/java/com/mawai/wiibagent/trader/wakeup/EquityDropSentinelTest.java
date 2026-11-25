@@ -156,6 +156,20 @@ class EquityDropSentinelTest {
         verify(simTradeClient, times(1)).getEquity(row.getSimUserId());
     }
 
+    /** 交接带走查到哪根：旧实例查过的那根，新实例不再查 */
+    @Test
+    void closeCheckedOnOldIsNotCheckedOnNew() {
+        close(0, "10000");
+        EquityDropSentinel neu = new EquityDropSentinel(traderMapper, simTradeClient, fired::add);
+        neu.offload = Runnable::run;
+        neu.nowMs = sentinel.nowMs;
+
+        neu.accept(sentinel.export());
+        neu.onKlineClosed(new KlineClosedEvent(this, "ETHUSDT", "5m", CLOSE));
+
+        verify(simTradeClient, times(1)).getEquity(row.getSimUserId());
+    }
+
     /** 停机后重放的旧 K 线不查 */
     @Test
     void staleCloseIsNotChecked() {

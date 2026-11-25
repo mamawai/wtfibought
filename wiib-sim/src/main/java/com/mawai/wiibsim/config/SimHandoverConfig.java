@@ -12,7 +12,7 @@ import java.time.Duration;
 
 /**
  * sim 挂到交接骨架上。关口的先后：定时器 → 标记价订阅（MatchPriceConsumer）→ 成交流（TradeStreamConsumer）
- * → 预测回合流（PredictionRoundConsumer）。关停时等后台活最多 10 秒，不提前收尾
+ * → 预测回合流（PredictionRoundConsumer）。关停时等后台活最多 10 秒，不提前收尾；让位后 8 秒没等到对端接手就自己恢复在任
  */
 @Configuration
 @Import(HandoverConfig.class)
@@ -20,7 +20,7 @@ public class SimHandoverConfig {
 
     @Bean
     public HandoverPolicy handoverPolicy() {
-        return new HandoverPolicy("sim", 1, Duration.ofSeconds(10), Duration.ZERO);
+        return new HandoverPolicy("sim", 1, Duration.ofSeconds(10), Duration.ZERO, Duration.ofSeconds(8));
     }
 
     /** 会改账的后台活都交给它，关停时等它清零。按 Executor 类型注入拿到的是它 */

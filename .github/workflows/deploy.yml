@@ -1,5 +1,6 @@
 # push 到 master（只改文档、前端这些不跑）：构建、跑单测、打包；部署停在 production 环境的审批上，点了才发。
-# 手动触发可以点名服务。按 feed → sim → agent 逐个冷切，步骤见 deploy/ci/ship.sh
+# 手动触发可以点名服务、选模式。按 feed → sim → agent 逐个发，默认交接，还没有交接的服务服务器上自己改走冷切；
+# 提交信息带 [cold] 的那个服务走冷切。步骤见 deploy/ci/ship.sh
 name: deploy
 
 on:
@@ -22,6 +23,11 @@ on:
         description: "要发的服务：feed,sim,agent 里选，逗号分隔；空 = 按改动算"
         required: false
         default: ""
+      mode:
+        description: "handover = 交接（还没有交接的服务自动冷切）；cold = 全部冷切"
+        type: choice
+        options: [handover, cold]
+        default: handover
 
 # 同一时刻只跑一个，排队的只留最新一个
 concurrency:
@@ -86,4 +92,5 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           SERVICES: ${{ inputs.services }}
+          MODE: ${{ inputs.mode }}
         run: bash deploy/ci/ship.sh

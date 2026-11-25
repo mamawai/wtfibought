@@ -8,10 +8,12 @@ import com.mawai.wiibcommon.handover.Intake;
 import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
+import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
@@ -26,13 +28,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 盯盘哨兵：盯模型用 set_watch 布的条件。触及价位和到时刻看 markPrice tick（~1s），命中就广播一条 {@link TriggerFired}
  * 让调度器叫醒；周期收盘由调度器在 5m 收盘时来问 {@link #closeHits}，这样命中能并进同一刻的例行唤醒而不是叫两次。
  * 带动作的条件（预案）命中后先交给 {@link PresetExecutor} 执行，它说要叫醒才叫。
  * 命中：库里 ARMED → FIRED（CAS，并发 tick 只有一个赢），赢了才从名单摘掉。
- * 名单在内存里按币放着，条件一变（{@link WatchesChanged}）整份重载。
+ * 名单在内存里按币放着，条件一变（{@link WatchesChanged}，别的实例改的由事件桥转来）整份重载，每根 5m 收盘也重载一次。
  * 进活的口：开口是载入名单、订阅价格，关口是退订、等正在比对的 tick 比完。
  */
 @Slf4j
@@ -51,6 +54,8 @@ public class WatchSentinel implements MessageListener, Intake {
     private volatile Map<String, List<AiTraderWatch>> armed = Map.of();
     /** 价格回调的闸 */
     private final DeliveryGate gate = new DeliveryGate();
+    /** 最近一次按收盘重载名单的 5m 边界 */
+    private final AtomicLong reloadedBoundary = new AtomicLong();
 
     /** 开口：载入在盯名单，订阅价格 */
     @Override
@@ -69,10 +74,23 @@ public class WatchSentinel implements MessageListener, Intake {
         gate.close();
     }
 
-    /** 条件变了整份重载；replace 在事务里，提交后再读 */
+    /** 条件变了整份重载；replace 在事务里，提交后再读。另一个实例改的由事件桥转过来 */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onChanged(WatchesChanged event) {
         reload();
+    }
+
+    /** 每根 5m 收盘重载一次（每个币各来一次事件，同一根只重载一次）：事件桥上漏掉的变更在这里补上 */
+    @EventListener
+    public void onKlineClosed(KlineClosedEvent event) {
+        if (!"5m".equalsIgnoreCase(event.interval())) {
+            return;
+        }
+        long boundary = event.closeTime() + 1;
+        long prev = reloadedBoundary.get();
+        if (prev < boundary && reloadedBoundary.compareAndSet(prev, boundary)) {
+            reload();
+        }
     }
 
     synchronized void reload() {

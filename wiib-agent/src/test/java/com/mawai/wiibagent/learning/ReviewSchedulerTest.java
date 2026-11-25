@@ -3,6 +3,7 @@ package com.mawai.wiibagent.learning;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.wakeup.TraderPeer;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
@@ -47,7 +49,7 @@ class ReviewSchedulerTest {
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final DebriefRunner debriefRunner = mock(DebriefRunner.class);
     private final ReviewRunner reviewRunner = mock(ReviewRunner.class);
-    private final ReviewScheduler scheduler = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner);
+    private final ReviewScheduler scheduler = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
     private final DebriefRunner.Due due = new DebriefRunner.Due(new FuturesPositionDTO(), new AiTraderPlan());
 
     {
@@ -207,6 +209,43 @@ class ReviewSchedulerTest {
         verify(debriefRunner, timeout(2_000)).debrief(t, due);
         verify(debriefRunner, after(300).times(1)).debrief(any(), any());
         assertThat(scheduler.isBusy(7L)).isFalse();
+    }
+
+    /** A8：交接时有复盘在跑：新实例替旧实例占着这个位，点播回忙；旧实例复盘完通知放手，新实例跟着放 */
+    @Test
+    void reviewSlotHeldAcrossHandover() {
+        TraderPeer toNew = mock(TraderPeer.class);
+        ReviewScheduler old = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, toNew);
+        old.open(Start.COLD);
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        assertThat(old.tryOccupy(7L)).isTrue();
+
+        old.close();
+        neu.accept(old.export());
+        neu.open(Start.HANDOVER);
+
+        assertThat(old.heldHereCount()).isEqualTo(1);
+        assertThat(neu.tryOccupy(7L)).isFalse();
+        assertThat(neu.count()).isZero();
+
+        old.release(7L);
+        verify(toNew, timeout(2_000)).released(7L, TraderPeer.Held.REVIEW);
+        assertThat(old.heldHereCount()).isZero();
+        neu.releasedByOld(7L);
+        assertThat(neu.tryOccupy(7L)).isTrue();
+    }
+
+    /** 旧实例没了：替它占着的复盘位全部放掉 */
+    @Test
+    void deadOldReleasesAllHeldReviewSlots() {
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        neu.accept(MAPPER.readTree("{\"held\":[7,8],\"lastBoundary\":1}"));
+        neu.open(Start.HANDOVER);
+
+        neu.releaseAllHeldByOld();
+
+        assertThat(neu.tryOccupy(7L)).isTrue();
+        assertThat(neu.tryOccupy(8L)).isTrue();
     }
 
     /** 停机后重放的旧事件、不是 5m 的事件：不处理 */

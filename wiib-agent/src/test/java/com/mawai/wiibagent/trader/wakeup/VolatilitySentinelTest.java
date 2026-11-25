@@ -213,6 +213,37 @@ class VolatilitySentinelTest {
         verify(mapper, times(2)).selectList(any());
     }
 
+    /** 交接带走进行中这段行情里还没被叫过的人：新实例待命时照常攒窗口，接手后接着这段行情，叫过的不再叫 */
+    @Test
+    void handoverCarriesWhoIsStillPending() {
+        AiTraderMapper mapper = mock(AiTraderMapper.class);
+        SimTradeClient sim = mock(SimTradeClient.class);
+        ApplicationEventPublisher newEvents = mock(ApplicationEventPublisher.class);
+        VolatilitySentinel old = alerting(new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim,
+                mock(ApplicationEventPublisher.class)));
+        VolatilitySentinel neu = new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim, newEvents);
+        old.offload = Runnable::run;
+        neu.offload = Runnable::run;
+        when(mapper.selectList(any())).thenReturn(List.of(alertTrader(7L, "1.0"), alertTrader(8L, "1.5")));
+        FuturesPositionDTO btc = mock(FuturesPositionDTO.class);
+        when(btc.getSymbol()).thenReturn("BTCUSDT");
+        when(sim.getAllPositions(any())).thenReturn(List.of(btc));
+
+        long t0 = 1_786_200_000_000L;
+        for (VolatilitySentinel s : List.of(old, neu)) {
+            s.onPriceTick("BTCUSDT", new BigDecimal("100000"), t0);
+            s.onPriceTick("BTCUSDT", new BigDecimal("100650"), t0 + 1_000); // 0.65%：旧实例上 7 报了
+        }
+        old.close();
+        neu.accept(old.export());
+        neu.open(Start.HANDOVER);
+        neu.onPriceTick("BTCUSDT", new BigDecimal("100950"), t0 + 3_000);   // 0.95%：够到 8 的阈值
+
+        assertThat(old.export().toString()).isEqualTo("{\"pending\":{\"BTCUSDT\":[8]}}");
+        verify(newEvents, times(1)).publishEvent(firedFor(8L));
+        verify(newEvents, never()).publishEvent(firedFor(7L));
+    }
+
     /** 过线之后的查库不在喂 tick 的那条线程上跑：那条是全应用共用的 Redis 订阅线程 */
     @Test
     void heavyWorkRunsOffTheTickThread() {

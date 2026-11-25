@@ -3,7 +3,8 @@
 RELEASES=$ROOT/releases
 STATE=$ROOT/deploy/state
 
-log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
+# 写标准错误，在 $(...) 里调到也进日志
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >&2; }
 die() { log "失败：$*"; exit 1; }
 
 # .env 里某个键的值，没有这个键输出空。认 export 前缀；带引号的取引号里面，不带的去掉行尾 \r、" #" 起的注释和尾部空白

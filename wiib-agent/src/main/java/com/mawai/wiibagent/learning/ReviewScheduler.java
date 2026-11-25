@@ -2,8 +2,10 @@ package com.mawai.wiibagent.learning;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.wakeup.TraderPeer;
 import com.mawai.wiibagent.trader.wakeup.WakeIntervals;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.Carried;
 import com.mawai.wiibcommon.handover.InFlight;
 import com.mawai.wiibcommon.handover.Intake;
 import com.mawai.wiibcommon.handover.Start;
@@ -13,13 +15,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 复盘的调度：5m K 线收盘当时钟。每根收盘给每个交易员扫一次到期的单笔复盘；
@@ -32,12 +39,14 @@ import java.util.function.LongSupplier;
  * <p>
  * 进活的口是"起新复盘"：关着时 {@link #tryOccupy} 一律抢不到（点播复盘、立即复盘也从这里占位），
  * 统一复盘等到位子也不跑。占着的复盘位是一份手上的活（reviews）。
+ * 交接时带走的是"review-slots"：旧实例让位时占着的复盘位和处理到哪根。新实例接手时替旧实例把这些位占上，
+ * 旧实例放掉一个就通知新实例，新实例跟着放
  */
 @Slf4j
 @Component
 @Order(50)
 @RequiredArgsConstructor
-public class ReviewScheduler implements Intake, InFlight {
+public class ReviewScheduler implements Intake, InFlight, Carried {
 
     /** 收盘超过这么久（一根 5m）的 K 线事件算旧事件，不扫 */
     static final long STALE_EVENT_MS = 300_000L;
@@ -47,6 +56,7 @@ public class ReviewScheduler implements Intake, InFlight {
     private final AiTraderMapper traderMapper;
     private final DebriefRunner debriefRunner;
     private final ReviewRunner reviewRunner;
+    private final TraderPeer peer;
 
     /** 复盘位，每个交易员一把 */
     private final Map<Long, Semaphore> slots = new ConcurrentHashMap<>();
@@ -54,18 +64,34 @@ public class ReviewScheduler implements Intake, InFlight {
     private final AtomicLong lastBoundary = new AtomicLong(-1);
     /** 起新复盘的口 */
     private volatile boolean open;
+    /** 旧实例：关口时占着的复盘位，放掉时通知对端 */
+    private final Set<Long> heldAtClose = ConcurrentHashMap.newKeySet();
+    /** 新实例：替旧实例占着的复盘位 */
+    private final Set<Long> heldForOld = ConcurrentHashMap.newKeySet();
 
     /** 墙钟注入点 */
     LongSupplier nowMs = System::currentTimeMillis;
 
+    /** 开口：不再替对端记占着的位 */
     @Override
     public void open(Start how) {
         open = true;
+        heldAtClose.clear();
     }
 
+    /** 关口：此刻自己占着的复盘位记下来，放掉时通知对端 */
     @Override
     public void close() {
         open = false;
+        slots.forEach((id, s) -> {
+            if (s.availablePermits() == 0 && !heldForOld.contains(id)) {
+                heldAtClose.add(id);
+                // 记上的同时被放掉了（release 那边没摘到）：摘掉
+                if (s.availablePermits() > 0) {
+                    heldAtClose.remove(id);
+                }
+            }
+        });
     }
 
     @Override
@@ -73,10 +99,55 @@ public class ReviewScheduler implements Intake, InFlight {
         return "reviews";
     }
 
-    /** 占着的复盘位数 */
+    /** 自己占着的复盘位数（替旧实例占着的不算） */
     @Override
     public int count() {
-        return (int) slots.values().stream().filter(s -> s.availablePermits() == 0).count();
+        return (int) slots.entrySet().stream()
+                .filter(e -> e.getValue().availablePermits() == 0 && !heldForOld.contains(e.getKey())).count();
+    }
+
+    @Override
+    public String key() {
+        return "review-slots";
+    }
+
+    /** 还占着的复盘位，和处理到哪根 */
+    @Override
+    public JsonNode export() {
+        ObjectNode out = MAPPER.createObjectNode();
+        heldAtClose.forEach(out.putArray("held")::add);
+        out.put("lastBoundary", lastBoundary.get());
+        return out;
+    }
+
+    /** 替旧实例把它占着的复盘位占上；处理到哪根取大的 */
+    @Override
+    public void accept(JsonNode state) {
+        lastBoundary.accumulateAndGet(state.path("lastBoundary").asLong(-1), Math::max);
+        state.path("held").forEach(n -> {
+            long id = n.asLong();
+            if (slot(id).tryAcquire()) {
+                heldForOld.add(id);
+            }
+        });
+        log.info("[ReviewSched] 收下交接单：替旧实例占着复盘位 {}", heldForOld);
+    }
+
+    /** 新实例：旧实例放掉了这个复盘位，替它占着的跟着放 */
+    public void releasedByOld(long traderId) {
+        if (heldForOld.remove(traderId)) {
+            slot(traderId).release();
+        }
+    }
+
+    /** 新实例：旧实例没了（探活失败），替它占着的全部放掉 */
+    public void releaseAllHeldByOld() {
+        List.copyOf(heldForOld).forEach(this::releasedByOld);
+    }
+
+    /** 旧实例：关口时占着、还没放掉的复盘位数 */
+    public int heldHereCount() {
+        return heldAtClose.size();
     }
 
     @EventListener
@@ -173,7 +244,11 @@ public class ReviewScheduler implements Intake, InFlight {
         return true;
     }
 
+    /** 放掉复盘位；关口时就占着的（旧实例收尾中），通知对端 */
     public void release(long traderId) {
         slot(traderId).release();
+        if (heldAtClose.remove(traderId)) {
+            Thread.startVirtualThread(() -> peer.released(traderId, TraderPeer.Held.REVIEW));
+        }
     }
 }

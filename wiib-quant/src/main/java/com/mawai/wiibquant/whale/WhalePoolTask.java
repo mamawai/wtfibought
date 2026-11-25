@@ -10,10 +10,13 @@ import com.mawai.wiibquant.mapper.WhaleAddressMapper.Row;
 import com.mawai.wiibquant.whale.WhaleQualifier.Candidate;
 import com.mawai.wiibquant.whale.WhaleQualifier.Rules;
 import com.mawai.wiibquant.whale.WhaleQualifier.Verdict;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.RoleChanged;
+import com.mawai.wiibcommon.handover.Start;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -38,19 +41,34 @@ import java.util.function.LongSupplier;
  * 失败语义：排行榜下载失败只是本轮没有新候选，已知账户照常认证；单个地址任一请求失败就跳过它，行不动。
  * 新账户过了门 1 才建行，门 1 拦下的不存。
  * 池子不绑死在排行榜上：它下线了已知账户照常跑，只是不再有新人。
+ * <p>
+ * 进活的口是一个停止标志：关口（让位、关停）时置上，在途的这一轮还没发的请求不再发，这一轮不落库，下一轮重来。一轮约 3 小时，不等它。
  */
 @Slf4j
 @Component
+@Order(45)
 @RequiredArgsConstructor
-public class WhalePoolTask {
+public class WhalePoolTask implements Intake {
 
     private final HyperliquidClient client;
     private final WhaleAddressMapper mapper;
     private final WhaleProperties props;
     /** 启动补跑与 cron 撞上时后者跳过 */
     private final AtomicBoolean running = new AtomicBoolean();
+    /** 关口时置上 */
+    private volatile boolean stopped;
 
     LongSupplier nowMs = System::currentTimeMillis;
+
+    @Override
+    public void open(Start how) {
+        stopped = false;
+    }
+
+    @Override
+    public void close() {
+        stopped = true;
+    }
 
     /** 每日 04:30 新加坡时间 */
     @Scheduled(cron = "${whale.pool.cron:0 30 4 * * *}", zone = "Asia/Singapore")
@@ -60,10 +78,10 @@ public class WhalePoolTask {
         }
     }
 
-    /** 启动时表为空就在虚拟线程上补跑一次；查表失败只记 warn */
-    @EventListener(ApplicationReadyEvent.class)
-    public void bootstrap() {
-        if (!props.isEnabled()) {
+    /** 冷启动上任时表为空就在虚拟线程上补跑一次（交接上任不跑）；查表失败只记 warn */
+    @EventListener
+    public void bootstrap(RoleChanged changed) {
+        if (changed.how() != Start.COLD || !props.isEnabled()) {
             return;
         }
         Thread.ofVirtual().name("whale-pool-bootstrap").start(() -> {
@@ -148,6 +166,10 @@ public class WhalePoolTask {
                 }
             }
         }
+        if (stopped) {
+            log.info("[WhalePool] 口关了，本轮不落库");
+            return;
+        }
 
         // 门 1：用已到手的状态，不再花权重
         List<Verdict> passed = new ArrayList<>();
@@ -164,6 +186,9 @@ public class WhalePoolTask {
         try (ExecutorService pool = executor()) {
             for (Verdict v : needRole) {
                 pool.submit(() -> {
+                    if (stopped) {
+                        return;
+                    }
                     String addr = v.candidate().address();
                     try {
                         roles.put(addr, client.userRole(addr, Bucket.POOL));
@@ -172,6 +197,10 @@ public class WhalePoolTask {
                     }
                 });
             }
+        }
+        if (stopped) {
+            log.info("[WhalePool] 口关了，本轮不落库");
+            return;
         }
         List<Verdict> withRole = new ArrayList<>(passed.size());
         for (Verdict v : passed) {
@@ -218,6 +247,9 @@ public class WhalePoolTask {
 
     /** subAccounts 展开：子账户带内联状态，角色天然 subAccount */
     private void expand(String master, Map<String, Candidate> out) {
+        if (stopped) {
+            return;
+        }
         try {
             for (SubAccount s : client.subAccounts(master, Bucket.POOL)) {
                 out.put(s.address(), new Candidate(s.address(), master, "subAccount", s.state()));
@@ -228,6 +260,9 @@ public class WhalePoolTask {
     }
 
     private void fetchState(String address, String parent, Map<String, Known> known, Map<String, Candidate> out) {
+        if (stopped) {
+            return;
+        }
         try {
             AccountState state = client.clearinghouseState(address, Bucket.POOL);
             Known k = known.get(address);

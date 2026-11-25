@@ -1,9 +1,12 @@
 package com.mawai.wiibagent.chat.gate;
 
+import com.mawai.wiibagent.chat.ChatTestEndpoints;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.handover.Start;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -14,6 +17,9 @@ import static com.mawai.wiibagent.chat.gate.ChatConcurrencyGate.Owner.PROMPT_GEN
 import static com.mawai.wiibagent.chat.gate.ChatConcurrencyGate.Owner.WORKBENCH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 /**
  * 行情配额按 IP 算，BYOK 分摊得了 LLM 成本、分摊不了它。闸门是把并发夹死的唯一手段，
@@ -23,9 +29,43 @@ class ChatConcurrencyGateTest {
 
     /** 开着口的闸：进程启动时由编排开口 */
     private static ChatConcurrencyGate opened(int limit) {
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(limit);
+        return ChatTestEndpoints.openGate(limit);
+    }
+
+    /** Redis 一时出错：这次照样报错，但本实例的用户位不能就此卡死，好了之后能接着占 */
+    @Test
+    void Redis出错不留下占着的用户位() {
+        StringRedisTemplate redis = ChatTestEndpoints.userSlotRedis();
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(redis, "", 10);
         gate.open(Start.COLD);
-        return gate;
+        when(redis.opsForValue().setIfAbsent(anyString(), anyString(), any(Duration.class)))
+                .thenThrow(new IllegalStateException("连不上 Redis"))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> gate.tryAcquire(1L, WORKBENCH)).isInstanceOf(IllegalStateException.class);
+        assertThat(gate.count()).isZero();
+        assertThat(gate.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
+    }
+
+    /** 交接期间两个实例共用 Redis 里的用户位：一边占着，另一边这个用户也算占线、发不了；谁占着决定拒绝码 */
+    @Test
+    void 另一个实例占着也算占线() {
+        StringRedisTemplate redis = ChatTestEndpoints.userSlotRedis();
+        ChatConcurrencyGate a = new ChatConcurrencyGate(redis, "a", 10);
+        ChatConcurrencyGate b = new ChatConcurrencyGate(redis, "b", 10);
+        a.open(Start.COLD);
+        b.open(Start.HANDOVER);
+
+        assertThat(a.tryAcquire(1L, PROMPT_GEN)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
+        assertThat(b.isBusy(1L)).isTrue();
+        assertThatThrownBy(() -> b.acquireOrThrow(1L, WORKBENCH))
+                .hasFieldOrPropertyWithValue("code", ErrorCode.PROMPT_GEN_RUNNING.getCode());
+        assertThat(b.count()).isZero();
+
+        b.release(1L);
+        assertThat(a.isBusy(1L)).isTrue();
+        a.release(1L);
+        assertThat(b.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
     }
 
     /** 接新对话的口关着（服务关停中）：新的一轮直接拒，给"服务正在更新"的码，不占用户位 */

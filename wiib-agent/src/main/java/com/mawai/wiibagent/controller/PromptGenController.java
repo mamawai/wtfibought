@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.controller;
 
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.handover.PeerFallback;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.llm.SseChannel;
@@ -114,6 +115,7 @@ public class PromptGenController {
         return stream(userId, channel -> service.reply(channel, userId, model, session, history));
     }
 
+    @PeerFallback
     @PostMapping("/cancel")
     @Operation(summary = "叫停在跑的这一轮（跑到下一个检查点收尾，已经说的、读的照常落库）；没在跑返回 false")
     public Result<Boolean> cancel(@CurrentUserId long userId) {

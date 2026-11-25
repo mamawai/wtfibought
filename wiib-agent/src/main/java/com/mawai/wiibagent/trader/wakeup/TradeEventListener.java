@@ -6,40 +6,40 @@ import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.entity.AiTrader;
-import com.mawai.wiibcommon.handover.DeliveryGate;
-import com.mawai.wiibcommon.handover.Intake;
-import com.mawai.wiibcommon.handover.Start;
+import com.mawai.wiibcommon.handover.RedisStreamReader;
 import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jspecify.annotations.NonNull;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.annotation.Order;
-import org.springframework.data.redis.connection.Message;
-import org.springframework.data.redis.connection.MessageListener;
-import org.springframework.data.redis.listener.ChannelTopic;
-import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.ReadOffset;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongSupplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价单开出新仓），
+ * 持仓事件监听：读 sim 写进 Stream 的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价单开出新仓），
  * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就广播一条 {@link TriggerFired}；不是 trader 的用户直接忽略。
  * 止盈触发不叫醒，不广播：平掉一部分、仓位还在的记一行，下一轮开场白报；整仓平完的由唤醒开头的对账报结局。
- * 准入（时段 / 交给哪一轮）全在调度器，这里只认人。进活的口：开口是订阅，关口是退订、等正在回调的那几条交出去。
+ * 发生超过 5 分钟的事件不叫醒（唤醒开头的对账会报结局），止盈记一行照做。
+ * 准入（时段 / 交给哪一轮）全在调度器，这里只认人。
+ * 进活的口：开口是开始读，关口是停读并等读循环退出（{@link RedisStreamReader}）。消费组 agent 第一次建组从头读
  */
 @Slf4j
 @Component
 @Order(30)
-@RequiredArgsConstructor
-public class TradeEventListener implements MessageListener, Intake {
+public class TradeEventListener extends RedisStreamReader {
 
-    private final RedisMessageListenerContainer listenerContainer;
+    /** 发生超过这么久的事件不叫醒 */
+    static final long STALE_MS = 300_000L;
+
     private final AiTraderMapper traderMapper;
     private final ApplicationEventPublisher events;
     /** 止盈平掉一部分时查一下仓位还在不在 */
@@ -48,52 +48,50 @@ public class TradeEventListener implements MessageListener, Intake {
     private final UnreportedEvents unreported;
     private final UserLangResolver userLangResolver;
     private final PromptCatalog prompts;
-    /** 持仓事件回调的闸 */
-    private final DeliveryGate gate = new DeliveryGate();
 
-    @Override
-    public void open(Start how) {
-        gate.open();
-        listenerContainer.addMessageListener(this, new ChannelTopic(TradeEvent.CHANNEL));
-        log.info("[TradeEvent] 订阅 {}", TradeEvent.CHANNEL);
+    /** 墙钟注入点 */
+    LongSupplier nowMs = System::currentTimeMillis;
+
+    public TradeEventListener(StringRedisTemplate redisTemplate, RedisConnectionFactory connectionFactory,
+                              AiTraderMapper traderMapper, ApplicationEventPublisher events,
+                              SimTradeClient simTradeClient, UnreportedEvents unreported,
+                              UserLangResolver userLangResolver, PromptCatalog prompts) {
+        super(redisTemplate, connectionFactory, TradeEvent.STREAM, "agent", ReadOffset.from("0"), "agent", "TradeEvent");
+        this.traderMapper = traderMapper;
+        this.events = events;
+        this.simTradeClient = simTradeClient;
+        this.unreported = unreported;
+        this.userLangResolver = userLangResolver;
+        this.prompts = prompts;
     }
 
+    /** 一条记录：字段 json 读回 TradeEvent 再处理；坏消息和处理失败只丢这一条 */
     @Override
-    public void close() {
-        listenerContainer.removeMessageListener(this);
-        gate.close();
-    }
-
-    @Override
-    public void onMessage(@NonNull Message message, byte[] pattern) {
-        gate.pass(() -> handle(message));
-    }
-
-    private void handle(Message message) {
+    protected void onRecord(MapRecord<String, String, String> record) {
         TradeEvent event;
         try {
-            event = MAPPER.readValue(message.getBody(), TradeEvent.class);
+            event = MAPPER.readValue(record.getValue().get("json"), TradeEvent.class);
         } catch (Exception e) {
-            log.warn("[TradeEvent] 解析失败: {}", e.toString());
+            log.warn("[TradeEvent] 解析失败 id={} msg={}", record.getId(), e.toString());
             return;
         }
-        // 查库不占 redis-sub 线程；异步之后没人接得住，不打日志就彻底无声
-        Thread.startVirtualThread(() -> {
-            try {
-                onEvent(event);
-            } catch (Exception e) {
-                log.warn("[TradeEvent] 处理失败 type={} userId={} msg={}", event.type(), event.userId(), e.toString());
-            }
-        });
+        try {
+            onEvent(event);
+        } catch (Exception e) {
+            log.warn("[TradeEvent] 处理失败 type={} userId={} msg={}", event.type(), event.userId(), e.toString());
+        }
     }
 
     void onEvent(TradeEvent event) {
         List<AiTrader> traders = traderMapper.selectList(new LambdaQueryWrapper<AiTrader>()
                 .eq(AiTrader::getSimUserId, event.userId())
                 .eq(AiTrader::getStatus, AiTrader.STATUS_RUNNING));
+        boolean stale = nowMs.getAsLong() - event.at() > STALE_MS;
         for (AiTrader t : traders) {
             if (TradeEvent.TAKE_PROFIT.equals(event.type())) {
                 noteTakeProfit(t, event);
+            } else if (stale) {
+                log.info("[TradeEvent] 事件超过 5 分钟，不叫醒 traderId={} type={} at={}", t.getId(), event.type(), event.at());
             } else {
                 events.publishEvent(new TriggerFired(t.getId(), new EventTrigger(event)));
             }

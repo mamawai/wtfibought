@@ -26,4 +26,9 @@ public class ActiveSlot {
     public boolean claim(String slot) {
         return Boolean.TRUE.equals(redis.getObject().opsForValue().setIfAbsent(key, slot));
     }
+
+    /** 记成 slot（接手、恢复在任时） */
+    public void set(String slot) {
+        redis.getObject().opsForValue().set(key, slot);
+    }
 }

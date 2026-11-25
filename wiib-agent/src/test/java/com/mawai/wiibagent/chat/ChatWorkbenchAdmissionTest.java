@@ -8,6 +8,7 @@ import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
+import com.mawai.wiibagent.handover.PeerRelay;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -64,7 +65,7 @@ class ChatWorkbenchAdmissionTest {
                 mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class),
                 runRegistry, ChatTestEndpoints.childRuns(contextStore), ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
-                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor);
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor, mock(PeerRelay.class));
     }
 
     private static void chat(ChatWorkbenchController controller, long userId) {
@@ -150,7 +151,7 @@ class ChatWorkbenchAdmissionTest {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
         when(factory.leavesFor(any(), any())).thenReturn(null);   // runner 是 mock，一帧不吐就返回
         CountDownLatch released = new CountDownLatch(1);
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1) {
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(ChatTestEndpoints.userSlotRedis(), "", 1) {
             @Override
             public void release(long userId) {
                 super.release(userId);

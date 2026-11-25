@@ -13,6 +13,7 @@ import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.Carried;
 import com.mawai.wiibcommon.handover.Handover;
 import com.mawai.wiibcommon.handover.HandoverPolicy;
 import com.mawai.wiibcommon.handover.InFlight;
@@ -2124,8 +2125,10 @@ class TraderWakeupLoopTest {
                 new org.springframework.beans.factory.support.DefaultListableBeanFactory();
         beans.registerSingleton("runs", runs);
         Handover handover = new Handover(beans.getBeanProvider(Intake.class), beans.getBeanProvider(InFlight.class),
-                new HandoverPolicy("agent", 1, Duration.ofSeconds(5), Duration.ofSeconds(5)), null, _ -> {
-        }, "", "");
+                beans.getBeanProvider(Carried.class),
+                new HandoverPolicy("agent", 1, Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ZERO), null, null,
+                _ -> {
+                }, "", "");
 
         Thread wake = Thread.startVirtualThread(() -> runner.doWake(trader, round(trader, null), 1785171600000L, 600,
                 TraderWakeupRunner.baseDecision(trader, 1785171600000L), List.of(), AgentLang.ZH));

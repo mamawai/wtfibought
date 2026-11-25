@@ -30,12 +30,15 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -46,6 +49,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 不看 trader 是不是在运行、在不在唤醒时段：预案和止损止盈单一样是挂出去的承诺。
  * 执行放在虚拟线程上，不占行情线程和 K 线事件线程；同一个 trader 这时要醒，先等它的预案做完（{@link #awaitIdle}）。
  * 在执行的预案是一份手上的活（presets），秒级，关停时等它做完。
+ * 交接期间被旧实例持有的 trader，预案转给旧实例执行（要过旧实例进程里的账户闸）；旧实例只在还持有时执行转来的
  */
 @Slf4j
 @Component
@@ -62,6 +66,9 @@ public class PresetExecutor implements InFlight {
     private final MessageCatalog messages;
     /** 每个 trader 一个账户闸，预案动作也从这里过 */
     private final AccountGates gates;
+    /** 被旧实例持有的看这里 */
+    private final Desks desks;
+    private final TraderPeer peer;
 
     /** trader → 它还没做完的预案 */
     private final Map<Long, Set<CompletableFuture<Boolean>>> running = new ConcurrentHashMap<>();
@@ -81,21 +88,86 @@ public class PresetExecutor implements InFlight {
      * @return 做完后给出要不要为这次命中叫醒模型
      */
     public CompletableFuture<Boolean> submit(AiTraderWatch w, BigDecimal price, long at) {
+        if (desks.isHeldByOld(w.getTraderId())) {
+            return track(w.getTraderId(), () -> forward(w, price, at));
+        }
+        return track(w.getTraderId(), () -> executeHere(w, price, at));
+    }
+
+    /** 登记一件预案（awaitIdle 等得到它），在虚拟线程上跑 work；出错按"结果未知，要叫醒"。先摘登记再完成 */
+    private CompletableFuture<Boolean> track(long traderId, BooleanSupplier work) {
         CompletableFuture<Boolean> done = new CompletableFuture<>();
-        Set<CompletableFuture<Boolean>> mine = running.computeIfAbsent(w.getTraderId(), _ -> ConcurrentHashMap.newKeySet());
+        Set<CompletableFuture<Boolean>> mine = running.computeIfAbsent(traderId, _ -> ConcurrentHashMap.newKeySet());
         mine.add(done);
         Thread.startVirtualThread(() -> {
+            boolean wake;
             try {
-                // 和这个 trader 各轮的交易动作排着队做
-                done.complete(gates.of(w.getTraderId()).exclusive(() -> execute(w, price, at)));
+                wake = work.getAsBoolean();
             } catch (Exception e) {
-                log.warn("[Preset] 执行出错 traderId={} watchId={} msg={}", w.getTraderId(), w.getId(), e.toString());
-                done.complete(true);
-            } finally {
-                mine.remove(done);
+                log.warn("[Preset] 执行出错 traderId={} msg={}", traderId, e.toString());
+                wake = true;
             }
+            mine.remove(done);
+            done.complete(wake);
         });
         return done;
+    }
+
+    /** 和这个 trader 各轮的交易动作排着队做 */
+    private boolean executeHere(AiTraderWatch w, BigDecimal price, long at) {
+        return gates.of(w.getTraderId()).exclusive(() -> execute(w, price, at));
+    }
+
+    /** 新实例：转给持有它的旧实例执行；旧实例已不持有就本地做，调不通按"结果未知，要叫醒" */
+    private boolean forward(AiTraderWatch w, BigDecimal price, long at) {
+        TraderPeer.PresetReply reply;
+        try {
+            reply = peer.preset(w.getTraderId(), w.getId(), price, at);
+        } catch (Exception e) {
+            log.warn("[Preset] 转给旧实例失败，当结果未知 traderId={} watchId={} msg={}", w.getTraderId(), w.getId(), e.toString());
+            return true;
+        }
+        return reply.held() ? reply.wake() : executeHere(w, price, at);
+    }
+
+    /**
+     * 旧实例：新实例转来的预案。还持有这个 trader 就在 desk 锁里登记、执行、等它做完；不持有（或条件找不到）回"不持有"，
+     * 新实例本地做
+     */
+    public TraderPeer.PresetReply runForPeer(long watchId, BigDecimal price, long at) {
+        AiTraderWatch w = watchStore.byId(watchId);
+        if (w == null) {
+            return new TraderPeer.PresetReply(false, false);
+        }
+        List<CompletableFuture<Boolean>> started = new ArrayList<>(1);
+        if (!desks.whileHeldHere(w.getTraderId(), () -> started.add(track(w.getTraderId(), () -> executeHere(w, price, at))))) {
+            return new TraderPeer.PresetReply(false, false);
+        }
+        return new TraderPeer.PresetReply(true, started.getFirst().join());
+    }
+
+    /** 这个 trader 有没有预案还没做完 */
+    public boolean busy(long traderId) {
+        Set<CompletableFuture<Boolean>> mine = running.get(traderId);
+        return mine != null && !mine.isEmpty();
+    }
+
+    /** 有预案还没做完的 trader */
+    public Set<Long> busyTraders() {
+        Set<Long> out = new HashSet<>();
+        running.forEach((id, mine) -> {
+            if (!mine.isEmpty()) {
+                out.add(id);
+            }
+        });
+        return out;
+    }
+
+    /** 这个 trader 此刻手上的预案都做完时完成 */
+    public CompletableFuture<Void> whenIdle(long traderId) {
+        Set<CompletableFuture<Boolean>> mine = running.get(traderId);
+        return mine == null ? CompletableFuture.completedFuture(null)
+                : CompletableFuture.allOf(mine.toArray(CompletableFuture[]::new));
     }
 
     @Override
