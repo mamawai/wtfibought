@@ -47,7 +47,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.mawai.wiibagent.learning.CaseFileRenderer.nullSafe;
-import static com.mawai.wiibagent.learning.CaseFileRenderer.plain;
+import static com.mawai.wiibagent.learning.CaseFileRenderer.price;
 import static com.mawai.wiibagent.learning.CaseFileRenderer.signed;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -384,8 +384,8 @@ public class ReviewMaterialAssembler {
                 AiTraderPlan plan = c.plan();
                 sb.append(prompts.get(lang, "reviewer.label.cancelledRow", Map.of(
                         "symbol", plan.getSymbol(), "side", plan.getSide(),
-                        "limit", plain(c.limit()),
-                        "stop", plain(c.stop()),
+                        "limit", price(c.limit()),
+                        "stop", price(c.stop()),
                         "target", caseRenderer.targets(c.targets(), lang),
                         "closed", BeijingTime.shortFormat(c.cancelledAt()),
                         "reason", c.entry() == null ? prompts.get(lang, "trader.cancelReason.unknown") : nullSafe(c.entry().getReason()),
@@ -455,8 +455,8 @@ public class ReviewMaterialAssembler {
         return PlanEntry.read(plan).stream()
                 .filter(e -> !e.isAdd() && "FILLED".equals(e.getStatus()))
                 .min(Comparator.comparing(PlanEntry::getClosedAt))
-                .map(e -> prompts.get(lang, "reviewer.label.heldFirstFill", Map.of("price", plain(e.getFilledPrice()))))
-                .orElseGet(() -> prompts.get(lang, "reviewer.label.heldAverage", Map.of("price", plain(pos.getEntryPrice()))));
+                .map(e -> prompts.get(lang, "reviewer.label.heldFirstFill", Map.of("price", price(e.getFilledPrice()))))
+                .orElseGet(() -> prompts.get(lang, "reviewer.label.heldAverage", Map.of("price", price(pos.getEntryPrice()))));
     }
 
     /**
@@ -537,9 +537,9 @@ public class ReviewMaterialAssembler {
             }
             sb.append(prompts.get(lang, "reviewer.label.marketRow", Map.of(
                     "symbol", symbol,
-                    "open", plain(w.open()), "close", plain(w.close()),
-                    "low", plain(w.low()), "lowAt", BeijingTime.shortFormat(w.lowAt()),
-                    "high", plain(w.high()), "highAt", BeijingTime.shortFormat(w.highAt()),
+                    "open", price(w.open()), "close", price(w.close()),
+                    "low", price(w.low()), "lowAt", BeijingTime.shortFormat(w.lowAt()),
+                    "high", price(w.high()), "highAt", BeijingTime.shortFormat(w.highAt()),
                     "range", w.lowToHighPct()))).append('\n');
         }
         return sb.toString();

@@ -15,6 +15,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -73,7 +74,7 @@ public class CaseFileRenderer {
                 if (!closes.isEmpty() && closes.charAt(closes.length() - 1) != ' ') {
                     closes.append(' ');
                 }
-                closes.append(plain(b.close()));
+                closes.append(price(b.close()));
             }
             sb.append(prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", closes.toString()))).append('\n');
         }
@@ -121,13 +122,14 @@ public class CaseFileRenderer {
                 "span", humanize(prompts, p.afterMs(), lang)));
     }
 
-    /** 出场后最有利价比出场价往有利方向多走了多少，带正负号；没有最有利价给 none */
+    /** 出场后最有利价比出场价往有利方向多走了多少，带正负号，小数位和出场价写出来的一样；没有最有利价给 none */
     private static String beyondExit(BigDecimal best, FuturesPositionDTO pos, String none) {
         if (best == null) {
             return none;
         }
-        BigDecimal gap = "LONG".equals(pos.getSide()) ? best.subtract(pos.getClosedPrice()) : pos.getClosedPrice().subtract(best);
-        return signed(gap.stripTrailingZeros());
+        BigDecimal exit = pos.getClosedPrice();
+        BigDecimal gap = "LONG".equals(pos.getSide()) ? best.subtract(exit) : exit.subtract(best);
+        return signed(gap.setScale(priceScale(exit), RoundingMode.HALF_UP).stripTrailingZeros());
     }
 
     /**
@@ -171,10 +173,10 @@ public class CaseFileRenderer {
                 Map.entry("opened", BeijingTime.shortFormat(TradePairing.msOf(pos.getCreatedAt()))),
                 Map.entry("closed", BeijingTime.shortFormat(TradePairing.msOf(pos.getUpdatedAt()))),
                 Map.entry("held", humanize(prompts, TradePairing.msOf(pos.getUpdatedAt()) - TradePairing.msOf(pos.getCreatedAt()), lang)),
-                Map.entry("entry", plain(pos.getEntryPrice())),
-                Map.entry("stop", plan == null ? none : plain(plan.getStopLossPrice())),
+                Map.entry("entry", price(pos.getEntryPrice())),
+                Map.entry("stop", plan == null ? none : price(plan.getStopLossPrice())),
                 Map.entry("target", targets(TargetRung.of(plan), lang)),
-                Map.entry("exit", plain(pos.getClosedPrice())),
+                Map.entry("exit", price(pos.getClosedPrice())),
                 Map.entry("manner", TradePairing.closeManner(prompts, pos, lang)),
                 Map.entry("pnl", signed(pos.getClosedPnl())),
                 Map.entry("funding", pos.getFundingFeeTotal() == null ? none : signed(pos.getFundingFeeTotal()))));
@@ -190,7 +192,7 @@ public class CaseFileRenderer {
             String state = switch (entry.getStatus()) {
                 case "FILLED" -> {
                     filled = filled.add(entry.getQuantity());
-                    yield prompts.get(lang, "reviewer.label.entryFilled", Map.of("price", plain(entry.getFilledPrice()),
+                    yield prompts.get(lang, "reviewer.label.entryFilled", Map.of("price", price(entry.getFilledPrice()),
                             "time", BeijingTime.shortFormat(entry.getClosedAt())));
                 }
                 case "CANCELLED" -> prompts.get(lang, "reviewer.label.entryCancelled",
@@ -200,7 +202,7 @@ public class CaseFileRenderer {
                 default -> prompts.get(lang, "reviewer.label.entryPending");
             };
             rows.add(prompts.get(lang, "reviewer.label.entryRow", Map.of(
-                    "price", entry.getLimitPrice() == null ? prompts.get(lang, "reviewer.label.entryMarket") : plain(entry.getLimitPrice()),
+                    "price", entry.getLimitPrice() == null ? prompts.get(lang, "reviewer.label.entryMarket") : price(entry.getLimitPrice()),
                     "qty", plain(entry.getQuantity()), "add", entry.isAdd() ? prompts.get(lang, "reviewer.label.entryAdd") : "", "state", state)));
         }
         return prompts.get(lang, "reviewer.label.caseEntries", Map.of("entries", String.join(" / ", rows),
@@ -267,6 +269,16 @@ public class CaseFileRenderer {
         return v == null ? "?" : v.stripTrailingZeros().toPlainString();
     }
 
+    /** 价位：按 priceScale 四舍五入，末尾的 0 去掉 */
+    static String price(BigDecimal v) {
+        return v == null ? "?" : v.setScale(priceScale(v), RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();
+    }
+
+    /** 价位写几位小数：至少 2 位，凑够 6 位有效数字（BTC 2 位、ZEC 3 位、DOGE 6 位） */
+    static int priceScale(BigDecimal v) {
+        return Math.max(2, 6 - (v.precision() - v.scale()));
+    }
+
     static String signed(BigDecimal v) {
         if (v == null) {
             return "?";
@@ -283,7 +295,7 @@ public class CaseFileRenderer {
     }
 
     private static String or(BigDecimal v, String none) {
-        return v == null ? none : plain(v);
+        return v == null ? none : price(v);
     }
 
     /** 数字按原样十进制给（0.0001 不写成 1.0E-4） */

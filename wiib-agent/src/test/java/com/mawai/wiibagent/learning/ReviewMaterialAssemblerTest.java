@@ -386,6 +386,39 @@ class ReviewMaterialAssemblerTest {
                 .doesNotContain("各档只走到");
     }
 
+    /** 吃多档盘口的出场价、加仓后的均价带 8 位小数：事实表里取整写，价差和出场价写出来的小数位一样 */
+    @Test
+    void caseRoundsLongDecimalPrices() {
+        long openMs = FROM + H;
+        long closeMs = FROM + 2 * H;
+        FuturesPositionDTO pos = closedPos("SHORT", "60404.11267605", "60313.68751174", "192.61", openMs, closeMs);
+        pos.setId(44L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos));
+        AiTraderPlan plan = planOf("BTCUSDT", "TREND_FOLLOW", openMs, false);
+        plan.setSide("SHORT");
+        plan.setPositionId(44L);
+        plan.setStopLossPrice(new BigDecimal("61280"));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        stubDecisionLists(List.of(debrief(44L, "")), List.of());
+        when(historyStore.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong())).thenReturn(List.of(
+                bar5m(openMs, "60404.1", "60500", "60300", "60350"),
+                bar5m(closeMs + M5, "60313.7", "60400", "59586.3", "59600")));
+
+        String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
+
+        assertThat(cases).contains("入场 60404.11 止损 61280").contains("出场 60313.69，");
+        // 60313.68751174 − 59586.3 = 727.38751174，跟出场价一样写 2 位小数
+        assertThat(cases).contains("内最有利 — / 59586.3（比出场价多走 — / +727.39）");
+    }
+
+    /** 价位写法：至少 2 位小数、凑够 6 位有效数字，末尾的 0 去掉 */
+    @Test
+    void priceKeepsSixSignificantDigitsAndAtLeastTwoDecimals() {
+        assertThat(CaseFileRenderer.price(new BigDecimal("770.10738775"))).isEqualTo("770.107");
+        assertThat(CaseFileRenderer.price(new BigDecimal("0.14532149"))).isEqualTo("0.145321");
+        assertThat(CaseFileRenderer.price(new BigDecimal("58420"))).isEqualTo("58420");
+    }
+
     /** 平仓后的 K 线没满 24 小时、又有一档没了结：重放行写各档只走到了哪；满 24 小时、各档都了结了不写 */
     @Test
     void replayLineSaysHowFarTheWidthsWereWalked() {
