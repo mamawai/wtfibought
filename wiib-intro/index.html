@@ -7,8 +7,8 @@
 <meta name="description" content="Agentic trading · 让你的模型替你试一遍 每一步决策都可见 · 真实行情 真实资金费率 真实杠杆档位 · 所有数据均为模拟资金 不构成投资建议">
 <link rel="canonical" href="https://intro.wtfibought.com/">
 <meta name="robots" content="index, follow">
-<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0c0d" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="WhatIfIBought">
 <meta property="og:url" content="https://intro.wtfibought.com/">
@@ -20,9 +20,11 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="apple-touch-icon-180.png">
-<!-- 首屏大标题要等 Archivo 到了才起跳，提前拉 -->
-<link rel="preload" href="fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin>
+<!-- 首屏大标题要等 Geist 到了才起跳，提前拉 -->
+<link rel="preload" href="fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="intro.css">
+<link rel="stylesheet" href="board.css">
+<link rel="stylesheet" href="flow.css">
 <script>
   // 主题必须赶在首帧之前定，否则暗色用户每次冷启动都要闪一下白
   (function () {
@@ -36,67 +38,69 @@
 </head>
 <body>
 
-<!-- 顶栏：字标 + 章节导航（橙方块跟着当前章节走）+ 右侧工具；底下 2px 墨线，线上一颗橙方块跟着阅读进度走 -->
-<header class="site-head">
-  <div class="wrap bar">
-    <a class="logo" href="https://wtfibought.com" aria-label="WhatIfIBought"><span class="full">WHATIFIBOUGHT</span><span class="short">WIIB</span><i>.</i></a>
-    <nav class="head-nav" id="head-nav">
-      <span class="nav-dot" aria-hidden="true"></span>
+<!-- 顶栏：字标 + 章节导航（当前章节前一颗橙点）+ 右侧工具；往下滚出一根细线，字标收成 WIIB.，正中浮出图形 logo（同主站） -->
+<header class="hdr" id="hdr">
+  <div class="wrap top">
+    <a class="logo" id="logo" href="https://wtfibought.com" aria-label="WhatIfIBought">WHATIFIBOUGHT<i>.</i></a>
+    <nav class="nav" id="head-nav">
       <a href="#s-dash" data-t="navDash"></a>
       <a href="#s-wake" data-t="navWake"></a>
-      <a href="#s-eod" data-t="navEod"></a>
+      <a href="#s-review" data-t="navReview"></a>
       <a href="#s-chat" data-t="navChat"></a>
       <a href="#s-alpha" data-t="navAlpha"></a>
       <a href="#s-base" data-t="navBase"></a>
     </nav>
     <div class="tools">
-      <button class="tool" id="btn-lang" aria-label="Language"><svg data-icon="languages"></svg></button>
-      <button class="tool" id="btn-theme" aria-label="Theme"><svg data-icon="sun"></svg></button>
-      <a class="tool" href="https://github.com/mamawai/wtfibought" aria-label="GitHub"><svg data-icon="github"></svg></a>
-      <a class="btn sm fill head-cta" href="https://wtfibought.com"><span data-t="navCta"></span><svg data-icon="arrow-right"></svg></a>
+      <button type="button" id="btn-lang" aria-label="Language"><svg data-icon="languages"></svg></button>
+      <button type="button" id="btn-theme" aria-label="Theme"><svg data-icon="sun"></svg></button>
+      <a href="https://github.com/mamawai/wtfibought" aria-label="GitHub"><svg data-icon="github"></svg></a>
+      <a class="btn sm ink head-cta" href="https://wtfibought.com"><span data-t="navCta"></span><svg data-icon="arrow-right"></svg></a>
     </div>
+    <img class="hmark" src="logo.png" alt="" aria-hidden="true">
   </div>
-  <div class="rule"><i class="rule-head" aria-hidden="true"></i></div>
 </header>
 
 <main>
 
-<!-- ===== 首屏：上半截是网点烟雾衬底的标题带，2px 墨线切开；下半截是一次唤醒的六步 + 行情 ===== -->
+<!-- ===== 首屏：照主站 PC 登录页。整块铺圆点网（左下聚出示例 trader 的净值山脊），左边标题和一行事实，右边一张示例 trader 卡
+     带 data-clear 的是有字的块，烟到跟前让开 ===== -->
 <section class="hero" id="hero">
-  <div class="hero-top">
-    <canvas id="smoke" class="hero-smoke" aria-hidden="true"></canvas>
-    <div class="wrap hero-grid">
-      <div class="hero-copy">
+  <canvas class="hero-dots" id="dots" aria-hidden="true"></canvas>
+  <div class="wrap hero-in">
+    <div class="hero-l">
+      <div class="hero-copy" data-clear>
         <div class="hero-kicker reveal" data-t="heroKicker"></div>
-        <h1 class="hero-h letters" aria-label="What if I bought"><span class="ln">WHAT IF</span><span class="ln">I BOUGHT<i>.</i></span></h1>
-      </div>
-      <div class="hero-side reveal" data-delay="2">
-        <p class="sub" data-t="heroSub"></p>
-        <div class="cta-row">
-          <a class="btn lg orange" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
+        <h1 class="hero-h letters" aria-label="What if I bought"><span class="ln">What if</span><span class="ln">I bought<i>.</i></span></h1>
+        <p class="hero-say reveal" data-delay="2" data-t="heroSub"></p>
+        <div class="cta-row reveal" data-delay="3">
+          <a class="btn lg ink" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
           <a class="btn lg" href="https://github.com/mamawai/wtfibought"><svg data-icon="github"></svg><span data-t="ctaGh"></span></a>
         </div>
-        <div class="spec num" id="strip"></div>
       </div>
+      <div class="hero-facts reveal" data-delay="4" id="facts" data-clear></div>
     </div>
-  </div>
-  <div class="wrap">
-    <div class="loop reveal" data-delay="3" id="loop"></div>
-    <div class="hero-market reveal" data-delay="4" id="mount-market"></div>
+    <div class="hero-r">
+      <div class="hcard reveal" data-delay="2" id="hcard" data-clear></div>
+    </div>
   </div>
 </section>
 
-<!-- 章节头：墨线从左画到右（drawline），编号滚到位，标题从线下落出来 -->
+<!-- ===== 首屏下面：一次唤醒的六步 + 行情 ===== -->
+<div class="wrap wake1">
+  <div class="loop reveal" id="loop"></div>
+  <div id="mount-market" class="reveal" data-delay="1"></div>
+</div>
+
+<!-- 章节头：左边淡色大编号（进视口滚到位）· 标题 · 说明 -->
 
 <!-- ===== 01 看板 ===== -->
 <section class="sec" id="s-dash">
   <div class="wrap">
-    <div class="sec-head drawline">
-      <span class="sec-no num">01</span>
-      <h2 data-t="s1h"></h2>
-      <div class="sec-lead reveal" data-delay="2">
-        <p class="lead" data-t="s1lead"></p>
-        <span class="chip mute sec-note" data-t="s1note"></span>
+    <div class="sec-head">
+      <span class="sec-no num" aria-hidden="true">01</span>
+      <div>
+        <h2 class="reveal" data-t="s1h"></h2>
+        <p class="lead reveal" data-delay="1" data-t="s1lead"></p>
       </div>
     </div>
     <div id="mount-dash" class="reveal" data-delay="2"></div>
@@ -106,30 +110,49 @@
 <!-- ===== 02 流程 ===== -->
 <section class="sec" id="s-wake">
   <div class="wrap">
-    <div class="sec-head drawline">
-      <span class="sec-no num">02</span>
-      <h2 data-t="s2h"></h2>
-      <div class="sec-lead reveal" data-delay="2">
-        <p class="lead"><span data-t="s2lead"></span><span class="pc-only"><br><span data-t="s2hint"></span></span></p>
+    <div class="sec-head">
+      <span class="sec-no num" aria-hidden="true">02</span>
+      <div>
+        <h2 class="reveal" data-t="s2h"></h2>
+        <p class="lead reveal" data-delay="1"><span data-t="s2lead"></span><span class="hint pc-only" data-t="s2hint"></span></p>
       </div>
     </div>
     <div id="mount-trader" class="reveal" data-delay="2"></div>
   </div>
 </section>
 
-<!-- ===== 03 每日：三栏顶上一条交接进度线，随滚动依次点亮 停工 → 复盘 → 账本 ===== -->
-<section class="sec" id="s-eod">
+<!-- ===== 03 复盘：一条圆点时间线随滚动从左到右点亮，下面三块 ===== -->
+<section class="sec" id="s-review">
   <div class="wrap">
-    <div class="sec-head drawline">
-      <span class="sec-no num">03</span>
-      <h2 data-t="s3h"></h2>
-      <div class="sec-lead reveal" data-delay="2"><p class="lead" data-t="s3lead"></p></div>
+    <div class="sec-head">
+      <span class="sec-no num" aria-hidden="true">03</span>
+      <div>
+        <h2 class="reveal" data-t="s3h"></h2>
+        <p class="lead reveal" data-delay="1" data-t="s3lead"></p>
+      </div>
     </div>
-    <div class="pillars n3 track" id="handover">
-      <i class="hv-head" aria-hidden="true"></i>
-      <div class="pillar"><div class="pl-tag"><svg data-icon="pause"></svg>01 · STOP</div><h3 data-t="e1t"></h3><p data-t="e1p"></p><div class="facts" data-t="e1k"></div></div>
-      <div class="pillar"><div class="pl-tag"><svg data-icon="notebook-pen"></svg>02 · REVIEW</div><h3 data-t="e2t"></h3><p data-t="e2p"></p><div class="facts" data-t="e2k"></div></div>
-      <div class="pillar"><div class="pl-tag"><svg data-icon="clipboard-list"></svg>03 · LEDGER</div><h3 data-t="e3t"></h3><p data-t="e3p"></p><div class="facts" data-t="e3k"></div></div>
+    <div class="trk" id="trk">
+      <i class="trk-line" aria-hidden="true"><i></i></i>
+      <i class="trk-head" aria-hidden="true"></i>
+      <div class="tk"><b data-t="tk1t"></b><span data-t="tk1s"></span></div>
+      <div class="tk"><b data-t="tk2t"></b><span data-t="tk2s"></span></div>
+      <div class="tk"><b data-t="tk3t"></b><span data-t="tk3s"></span></div>
+      <div class="tk"><b data-t="tk4t"></b><span data-t="tk4s"></span></div>
+      <div class="tk"><b data-t="tk5t"></b><span data-t="tk5s"></span></div>
+    </div>
+    <div class="feats n3 rv-feats">
+      <div class="blk feat reveal">
+        <div class="feat-h"><span class="feat-n num">01</span><span class="tag ink sm"><svg data-icon="notebook-pen"></svg>DEBRIEF</span></div>
+        <h3 data-t="r1t"></h3><p data-t="r1p"></p><div class="kv" data-t="r1k"></div>
+      </div>
+      <div class="blk feat reveal" data-delay="1">
+        <div class="feat-h"><span class="feat-n num">02</span><span class="tag ink sm"><svg data-icon="scroll-text"></svg>REVIEW</span></div>
+        <h3 data-t="r2t"></h3><p data-t="r2p"></p><div class="kv" data-t="r2k"></div>
+      </div>
+      <div class="blk feat reveal" data-delay="2">
+        <div class="feat-h"><span class="feat-n num">03</span><span class="tag ink sm"><svg data-icon="clipboard-list"></svg>LEDGER</span></div>
+        <h3 data-t="r3t"></h3><p data-t="r3p"></p><div class="kv" data-t="r3k"></div>
+      </div>
     </div>
   </div>
 </section>
@@ -137,10 +160,12 @@
 <!-- ===== 04 对话 ===== -->
 <section class="sec" id="s-chat">
   <div class="wrap">
-    <div class="sec-head drawline">
-      <span class="sec-no num">04</span>
-      <h2 data-t="s4h"></h2>
-      <div class="sec-lead reveal" data-delay="2"><p class="lead" data-t="s4lead"></p></div>
+    <div class="sec-head">
+      <span class="sec-no num" aria-hidden="true">04</span>
+      <div>
+        <h2 class="reveal" data-t="s4h"></h2>
+        <p class="lead reveal" data-delay="1" data-t="s4lead"></p>
+      </div>
     </div>
     <div id="mount-chat" class="reveal" data-delay="2"></div>
   </div>
@@ -149,50 +174,64 @@
 <!-- ===== 05 挖因子 ===== -->
 <section class="sec" id="s-alpha">
   <div class="wrap">
-    <div class="sec-head drawline">
-      <span class="sec-no num">05</span>
-      <h2 data-t="sAh"></h2>
-      <div class="sec-lead reveal" data-delay="2">
-        <p class="lead"><span data-t="sAlead"></span><span class="pc-only"><br><span data-t="s2hint"></span></span></p>
+    <div class="sec-head">
+      <span class="sec-no num" aria-hidden="true">05</span>
+      <div>
+        <h2 class="reveal" data-t="sAh"></h2>
+        <p class="lead reveal" data-delay="1"><span data-t="sAlead"></span><span class="hint pc-only" data-t="s2hint"></span></p>
       </div>
     </div>
     <div id="mount-alpha" class="reveal" data-delay="2"></div>
   </div>
 </section>
 
-<!-- ===== 06 底层 ===== -->
+<!-- ===== 06 底层：四块 + 一句引文 ===== -->
 <section class="sec" id="s-base">
   <div class="wrap">
-    <div class="sec-head drawline">
-      <span class="sec-no num">06</span>
-      <h2 data-t="s5h"></h2>
-      <div class="sec-lead reveal" data-delay="2"><p class="lead" data-t="s5lead"></p></div>
+    <div class="sec-head">
+      <span class="sec-no num" aria-hidden="true">06</span>
+      <div>
+        <h2 class="reveal" data-t="s5h"></h2>
+        <p class="lead reveal" data-delay="1" data-t="s5lead"></p>
+      </div>
     </div>
-    <div class="pillars n4">
-      <div class="pillar reveal"><div class="pl-tag"><svg data-icon="candlestick-chart"></svg>MARKET</div><h3 data-t="b1t"></h3><p data-t="b1p"></p><div class="facts" data-t="b1k"></div></div>
-      <div class="pillar reveal" data-delay="1"><div class="pl-tag"><svg data-icon="scale"></svg>RULES</div><h3 data-t="b2t"></h3><p data-t="b2p"></p><div class="facts" data-t="b2k"></div></div>
-      <div class="pillar reveal" data-delay="2"><div class="pl-tag"><svg data-icon="layers"></svg>LEDGER</div><h3 data-t="b3t"></h3><p data-t="b3p"></p><div class="facts" data-t="b3k"></div></div>
-      <div class="pillar reveal" data-delay="3"><div class="pl-tag"><svg data-icon="server"></svg>TOPOLOGY</div><h3 data-t="b4t"></h3><p data-t="b4p"></p><div class="facts" data-t="b4k"></div></div>
+    <div class="feats n4">
+      <div class="blk feat reveal">
+        <div class="feat-h"><span class="feat-ic"><svg data-icon="candlestick-chart"></svg></span><span class="feat-lbl">MARKET</span></div>
+        <h3 data-t="b1t"></h3><p data-t="b1p"></p><div class="feat-rows" data-t="b1k"></div>
+      </div>
+      <div class="blk feat reveal" data-delay="1">
+        <div class="feat-h"><span class="feat-ic"><svg data-icon="scale"></svg></span><span class="feat-lbl">RULES</span></div>
+        <h3 data-t="b2t"></h3><p data-t="b2p"></p><div class="feat-rows" data-t="b2k"></div>
+      </div>
+      <div class="blk feat reveal" data-delay="2">
+        <div class="feat-h"><span class="feat-ic"><svg data-icon="layers"></svg></span><span class="feat-lbl">LEDGER</span></div>
+        <h3 data-t="b3t"></h3><p data-t="b3p"></p><div class="feat-rows" data-t="b3k"></div>
+      </div>
+      <div class="blk feat reveal" data-delay="3">
+        <div class="feat-h"><span class="feat-ic"><svg data-icon="server"></svg></span><span class="feat-lbl">TOPOLOGY</span></div>
+        <h3 data-t="b4t"></h3><p data-t="b4p"></p><div class="feat-rows" data-t="b4k"></div>
+      </div>
     </div>
-    <!-- 引文：关键半句被一道墨块扫过、反白 -->
+    <!-- 引文：关键半句被一道主色淡底扫过 -->
     <blockquote class="pull reveal"><p data-t="pullQ"></p></blockquote>
   </div>
 </section>
 
-<!-- ===== 07 不止 AI：每格是 App 里对应功能的入口，悬停墨色从下往上填满 ===== -->
+<!-- ===== 07 不止 AI：每格是 App 里对应功能的入口（同主站首页「入口」） ===== -->
 <section class="sec" id="s-more">
   <div class="wrap">
-    <div class="sec-head drawline">
-      <span class="sec-no num">07</span>
-      <h2 data-t="s6h"></h2>
+    <div class="sec-head">
+      <span class="sec-no num" aria-hidden="true">07</span>
+      <div><h2 class="reveal" data-t="s6h"></h2></div>
     </div>
-    <div class="tiles">
-      <a class="tile reveal" href="https://wtfibought.com/coin"><svg data-icon="candlestick-chart"></svg><h3 data-t="m1t"></h3><p data-t="m1p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
-      <a class="tile reveal" data-delay="1" href="https://wtfibought.com/backtest"><svg data-icon="flask-conical"></svg><h3 data-t="m2t"></h3><p data-t="m2p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
-      <a class="tile reveal" data-delay="2" href="https://wtfibought.com/strategies"><svg data-icon="line-chart"></svg><h3 data-t="m3t"></h3><p data-t="m3p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
-      <a class="tile reveal" href="https://wtfibought.com/ai"><svg data-icon="message-square"></svg><h3 data-t="m4t"></h3><p data-t="m4p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
-      <a class="tile reveal" data-delay="1" href="https://wtfibought.com/ranking"><svg data-icon="trending-up"></svg><h3 data-t="m5t"></h3><p data-t="m5p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
-      <a class="tile reveal" data-delay="2" href="https://wtfibought.com"><svg data-icon="smartphone"></svg><h3 data-t="m6t"></h3><p data-t="m6p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
+    <div class="ent reveal">
+      <a href="https://wtfibought.com/coin"><span class="ent-ic"><svg data-icon="candlestick-chart"></svg></span><span><b data-t="m1t"></b><span data-t="m1p"></span></span><svg class="ent-go" data-icon="arrow-up-right"></svg></a>
+      <a href="https://wtfibought.com/backtest"><span class="ent-ic"><svg data-icon="flask-conical"></svg></span><span><b data-t="m2t"></b><span data-t="m2p"></span></span><svg class="ent-go" data-icon="arrow-up-right"></svg></a>
+      <a href="https://wtfibought.com/strategies"><span class="ent-ic"><svg data-icon="line-chart"></svg></span><span><b data-t="m3t"></b><span data-t="m3p"></span></span><svg class="ent-go" data-icon="arrow-up-right"></svg></a>
+      <a href="https://wtfibought.com/ai"><span class="ent-ic"><svg data-icon="message-square"></svg></span><span><b data-t="m4t"></b><span data-t="m4p"></span></span><svg class="ent-go" data-icon="arrow-up-right"></svg></a>
+      <a href="https://wtfibought.com/ranking"><span class="ent-ic"><svg data-icon="trending-up"></svg></span><span><b data-t="m5t"></b><span data-t="m5p"></span></span><svg class="ent-go" data-icon="arrow-up-right"></svg></a>
+      <a href="https://wtfibought.com"><span class="ent-ic"><svg data-icon="smartphone"></svg></span><span><b data-t="m6t"></b><span data-t="m6p"></span></span><svg class="ent-go" data-icon="arrow-up-right"></svg></a>
     </div>
   </div>
 </section>
@@ -200,14 +239,12 @@
 <!-- ===== 收尾 ===== -->
 <section class="sec close">
   <div class="wrap">
-    <div class="close-in drawline">
-      <h2 class="reveal" data-t="closeH"></h2>
-      <div class="close-row reveal" data-delay="1">
-        <p class="lead" data-t="closeLead"></p>
-        <div class="cta-row">
-          <a class="btn lg orange" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
-          <a class="btn lg" href="https://github.com/mamawai/wtfibought"><svg data-icon="github"></svg><span data-t="ctaGh"></span></a>
-        </div>
+    <h2 class="reveal" data-t="closeH"></h2>
+    <div class="close-row reveal" data-delay="1">
+      <p class="lead" data-t="closeLead"></p>
+      <div class="cta-row">
+        <a class="btn lg ink" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
+        <a class="btn lg" href="https://github.com/mamawai/wtfibought"><svg data-icon="github"></svg><span data-t="ctaGh"></span></a>
       </div>
     </div>
   </div>
@@ -215,10 +252,10 @@
 
 </main>
 
-<!-- 页脚：链接几栏 → 撑满整宽的巨型字标（进视口逐字升起）→ 免责一行 -->
+<!-- 页脚：链接几栏 → 撑满整宽的浅灰字标（进视口逐字升起）→ 免责一行 -->
 <footer class="site-foot">
   <div class="wrap">
-    <div class="foot-top drawline">
+    <div class="foot-top">
       <div class="foot-brand">
         <p data-t="footTag"></p>
       </div>
@@ -251,6 +288,7 @@
 
 <script src="flow.js"></script>
 <script src="mock-data.js"></script>
+<script src="board.js"></script>
 <script src="intro.js"></script>
 </body>
 </html>

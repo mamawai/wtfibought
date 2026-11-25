@@ -4,7 +4,7 @@
    宽屏 = 泳道图（绝对坐标）；窄屏 = 单轨 stepper（一条总线，卡片按信号顺序竖排）
    ============================================================ */
 
-/* ---------- 基础（全站共用，intro.js 也用这几样） ---------- */
+/* ---------- 基础（全站共用，board.js、intro.js 也用这几样） ---------- */
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -21,19 +21,62 @@ function el(tag, cls, html) {
   return e;
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+/* 词条里的 {名字} 换成值 */
+const fmt = (o, vars) => T(o).replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+const fnum = (n, d = 2) => n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const signed = (n, d = 2) => (n >= 0 ? '+' : '') + fnum(n, d);
+/* 新加坡时间：月/日、时:分 */
+function sgDt(t) {
+  const d = new Date(t + 8 * 3600e3), p = n => String(n).padStart(2, '0');
+  return { day: `${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())}`, hm: `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}` };
+}
+const fmtDt = t => { const s = sgDt(t); return `${s.day} ${s.hm}`; };
+const fmtHm = t => sgDt(t).hm;
+/* 收益率大数：小数位另起一截放进 <i>，由样式压淡；正负按取整后的看（-0.004 写成 +0.00） */
+function pnlHtml(v) {
+  const r = Math.round(v * 100) / 100, [int, dec] = Math.abs(r).toFixed(2).split('.');
+  return `${r >= 0 ? '+' : '-'}${int}<i>.${dec}%</i>`;
+}
+/* 只在文字变了才写：每秒重算时不打断用户正在选的字 */
+const putText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
+/* 手机只放文字，面板、流程图、行情板都不挂 */
+const MOBILE = matchMedia('(max-width: 900px)');
+/* ?shot 是截长图用的：入场动画全关 */
+const SHOT = location.search.includes('shot');
 
+/* 数位滚动：每个数字是一条 0–9 竖排带子，start 是起始停在哪一位，滚到 data-d 那一位由调用方写 transform */
+const stripHtml = (d, start, delay = 0) => `<span class="dg"><span class="dstrip" data-d="${d}" style="transform:translateY(-${start}em);transition-delay:${delay}ms">${'0123456789'.split('').map(x => `<i>${x}</i>`).join('')}</span></span>`;
+const randDigit = () => Math.floor(Math.random() * 10);
+/* 数字 → 数位带子：数字字符变成 0–9 竖排带，逗号小数点原样；from=从随机位起滚 */
+function digitsHtml(v, dec, from) {
+  const s = v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  return s.split('').map((ch, i) => /\d/.test(ch) ? stripHtml(ch, from ? randDigit() : ch, i * 40) : `<span class="dc">${ch}</span>`).join('');
+}
+/* 只滚数位，不重建节点；位数变了才整体重画 */
+function rollTo(el, v, dec) {
+  const s = v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  const strips = el.querySelectorAll('.dstrip');
+  const digits = s.replace(/[^\d]/g, '');
+  if (strips.length !== digits.length) { el.innerHTML = digitsHtml(v, dec, false); return; }
+  strips.forEach((st, i) => { st.style.transitionDelay = '0ms'; st.style.transform = `translateY(-${digits[i]}em)`; });
+}
+
+const SVGNS = 'http://www.w3.org/2000/svg';
 const UI = {
-  trace: 'TRACE',
-  st: { idle: { zh: 'IDLE · 待机', en: 'IDLE' }, run: { zh: 'RUN · 运行中', en: 'RUNNING' }, sleep: { zh: 'SLEEP · 休眠', en: 'SLEEPING' }, hitl: { zh: 'HITL · 等用户确认', en: 'HITL · AWAITING USER' }, paused: { zh: 'PAUSED · 已暂停', en: 'PAUSED' }, bg: { zh: 'BG · 后台子运行在跑', en: 'BG · CHILD RUNS ACTIVE' }, wake: { zh: 'WAKE · 唤醒轮', en: 'WAKE · FOLLOW-UP TURN' } },
-  play: { zh: '播放', en: 'Play' }, pause: { zh: '暂停', en: 'Pause' }, restart: { zh: '重放', en: 'Replay' },
-  auto: { zh: '轮播', en: 'AUTO' },
+  st: {
+    run: { zh: '运行中', en: 'Running' }, sleep: { zh: '休眠', en: 'Sleeping' }, hitl: { zh: '等用户确认', en: 'Awaiting the user' },
+    paused: { zh: '已暂停', en: 'Paused' }, bg: { zh: '后台子运行在跑', en: 'Child runs active' }, wake: { zh: '唤醒轮', en: 'Follow-up turn' },
+    still: { zh: '静态全图', en: 'Static diagram' }
+  },
+  play: { zh: '播放', en: 'Play' }, pause: { zh: '暂停', en: 'Pause' }, restart: { zh: '重放', en: 'Replay' }, speed: { zh: '倍速', en: 'Speed' },
+  auto: { zh: '轮播', en: 'Auto' },
   reduced: { zh: '系统开了「减少动态效果」，展示静态全图。', en: 'Reduced motion is on — showing the static diagram.' },
   legend: {
-    title: { zh: '图例', en: 'LEGEND' },
-    pulse: { zh: '脉冲 = 数据在走', en: 'pulse = data moving' },
-    led: { zh: 'LED = 闸门在过', en: 'LED = a gate passing' },
+    pulse: { zh: '橙点 = 数据在走', en: 'orange = data moving' },
+    led: { zh: '绿灯 = 闸门放行', en: 'green = gate passed' },
     back: { zh: '虚线 = 回边', en: 'dashed = feedback edge' },
-    bad: { zh: '红脉冲 = 被拒', en: 'red pulse = rejected' },
+    bad: { zh: '红点 = 被拒', en: 'red = rejected' },
+    dim: { zh: '灰点 = 回执', en: 'grey = result coming back' },
     click: { zh: '点节点看说明', en: 'click a node to read' }
   }
 };
@@ -44,72 +87,100 @@ const PANELS = [
     id: 'trader',
     num: 'HARNESS 01',
     title: { zh: 'trader agent', en: 'trader agent' },
-    sub: { zh: '唯一会动真账本的 · 配套每日复盘', en: 'touches the real ledger · with daily review' },
-    w: 1180, h: 700,
-    legend: { x: 16, y: 528, w: 170, h: 124 },
+    sub: { zh: '唯一会动真账本的 · 几轮可并行', en: 'the only one that touches the real ledger · rounds run in parallel' },
+    w: 1168, h: 672,
     lanes: [
-      { x: 216, y: 34, t: { zh: '一次唤醒 · ONE WAKEUP', en: 'ONE WAKEUP' } },
-      { x: 216, y: 436, t: { zh: '日终交接 · END OF DAY', en: 'END OF DAY' } }
+      { x: 224, y: 34, t: { zh: '一次唤醒 · 几轮可以并行', en: 'One wake · rounds run in parallel' } },
+      { x: 456, y: 376, t: { zh: '复盘 · 有自己的位子，不挡唤醒', en: 'Reviews · own slot, never block a wake' } }
     ],
     nodes: [
-      { id: 'clock', x: 16, y: 16, w: 170, h: 76, tag: 'CLOCK', icon: 'clock',
-        title: { zh: 'K 线收盘事件', en: 'Candle close' },
-        sub: { zh: '心跳 · 对齐 15m/1h/4h 边界', en: 'heartbeat · 15m/1h/4h boundary' },
-        detail: { zh: 'TraderScheduler 以 5m K 线收盘事件为时钟，对齐到各 trader 选定的心跳档位（15m/1h/4h）边界，每根收盘醒一次，复查持仓、挂单和盯盘条件；同一边界多币多次触发按边界去重。边界撞上美国 High 级数据公布时刻，先过财经日历等待闸，最多等 30 秒拿到实际值再发。丢失的 K 线不补跑——陈旧信号没有意义。两次心跳之间，由盯盘条件命中、持仓事件和波动警报叫醒它。', en: 'TraderScheduler uses 5m candle-close events as its clock, aligned to each trader’s heartbeat (15m/1h/4h): one wakeup per close to re-check positions, orders and watch conditions. Duplicate fires on one boundary are deduped. When a boundary lands on a US High-impact data release, the econ-calendar gate waits up to 30s for the actual value first. Lost candles are never replayed — stale signals are worthless. Between heartbeats, watch hits, position events and volatility alerts wake it.' } },
-      { id: 'sentinel', x: 16, y: 106, w: 170, h: 96, tag: 'SENTRY', icon: 'activity',
-        title: { zh: '波动哨兵', en: 'Volatility sentinel' },
+      // 左列：六路叫醒
+      { id: 'clock', x: 16, y: 16, w: 176, h: 86, tag: 'CLOCK', icon: 'clock',
+        title: { zh: 'K 线收盘 · 例行', en: 'Candle close · routine' },
+        sub: { zh: '心跳 1h / 4h · 撞上数据公布先等实际值', en: '1h / 4h heartbeat · waits for data prints' },
+        detail: { zh: 'TraderScheduler 拿 5m K 线收盘当唯一时钟，心跳档位只有 1h / 4h：到档位边界发一次例行唤醒，同一边界多币多次触发按边界去重。边界撞上美国 High 级数据公布，先过财经日历等待闸，最多等 30 秒拿到实际值再发，开场白里的日历才带得上刚公布的数。唤醒时段（新加坡时间）外不发；丢的 K 线不补跑——陈旧信号没有意义。到点时有整盘轮在跑就插话进它；只有单币轮在跑不影响，例行照常起一轮整盘轮。', en: 'TraderScheduler uses the 5m candle close as its only clock, and the heartbeat is 1h or 4h: each boundary fires one routine wake, deduped per boundary across symbols. When a boundary lands on a US High-impact release, the econ-calendar gate waits up to 30s for the actual value first, so the opening can carry the fresh print. Nothing fires outside the wake window (Singapore time), and lost candles are never replayed — stale signals are worthless. If a book round is still running at the boundary the routine is interjected into it; single-symbol rounds don’t matter — the routine still starts a book round.' } },
+      { id: 'sentinel', x: 16, y: 114, w: 176, h: 90, tag: 'SENTRY', icon: 'activity',
+        title: { zh: '波动警报', en: 'Volatility alert' },
         rows: [
-          { id: 'amp', t: { zh: '5min 振幅 > 阈值×灵敏度', en: 'range > thresh × sens' } },
-          { id: 'hold', t: { zh: '持仓/挂单才叫 · 一段一次', en: 'holders · once/move' } }
+          { id: 'amp', t: { zh: '振幅 > 阈值×灵敏度', en: 'range > thresh × sens' } },
+          { id: 'hold', t: { zh: '有仓位才叫 · 一段一次', en: 'holders · once a move' } }
         ],
-        detail: { zh: '盯 markPrice tick（约 1s 一跳）的 5 分钟滚动振幅，超过「币基准阈值 × trader 灵敏度」且该 trader（1h/4h 档）持有该币仓位或挂单才触发警报唤醒。边沿触发：振幅穿上基准线算一段行情开始，回落到基准线八成以下才算结束，一段行情每人只报一次；唤醒时段外不叫。空仓者不惊动，它是心跳的补充而非替代。', en: 'Watches the 5-minute rolling range of markPrice ticks. Fires an alert wakeup only when range exceeds the per-symbol threshold × trader sensitivity AND that (1h/4h) trader holds a position or order in the symbol. Edge-triggered: crossing the threshold starts a move, dropping back under 80% of it ends the move, and each trader hears about a move once; nothing fires outside the wake window. Flat traders are never disturbed.' } },
-      { id: 'watch', x: 16, y: 216, w: 170, h: 92, tag: 'WATCH', icon: 'eye',
+        detail: { zh: 'VolatilitySentinel 盯 markPrice tick（约 1 秒一跳）的 5 分钟滚动振幅，超过「币基准阈值 × trader 灵敏度」、并且这个 trader 持有该币仓位或挂单，才发警报。边沿触发：振幅穿上基准线算一段行情开始，回落到基准八成以下才算结束，一段行情每人只报一次。叫醒的是只处理这个币的单币轮（这个币已有一轮在跑就插话进去）。空仓的不惊动，唤醒时段外不叫——它补的是心跳之间的空档，不替代心跳。', en: 'VolatilitySentinel watches the 5-minute rolling range of markPrice ticks (about one a second). It fires only when the range beats the per-symbol threshold × the trader’s sensitivity AND the trader holds a position or order in that symbol. Edge-triggered: crossing the threshold starts a move, falling under 80% of it ends the move, and each trader hears about a move once. It wakes the single-symbol round for that coin, or interjects into it if one is running. Flat traders are never disturbed and nothing fires outside the wake window — it fills the gap between heartbeats, it doesn’t replace them.' } },
+      { id: 'watch', x: 16, y: 216, w: 176, h: 106, tag: 'WATCH', icon: 'eye',
         title: { zh: '盯盘条件', en: 'Watch conditions' },
         rows: [
           { id: 'touch', t: { zh: '触及价位 · 到时刻', en: 'touch price · at time' } },
-          { id: 'close', t: { zh: '周期收盘站上/跌破', en: 'close above/below' } }
+          { id: 'close', t: { zh: '周期收盘站上/跌破', en: 'close above / below' } },
+          { id: 'preset', t: { zh: '预案：命中当场减风险', en: 'standing order on hit' } }
         ],
-        detail: { zh: '模型自己用 set_watch 给每个币布的条件，命中就叫醒它：价格触及某个价位、某个周期的 K 线收盘站上或跌破某个价位、到了某个时刻。触及和到时刻看 markPrice tick，收盘类在 5m 收盘时按周期边界判；每币向上、向下、到时刻各最多一条，命中一条摘一条。每条带一句备注，醒来时开场白原样带上——相当于给下一轮的自己留话。条件还可以带一个预案：命中那一刻平台替它移止损、平掉一部分或全部、撤一张挂单，只会减风险、不会开仓；移止损和撤单做完不叫醒，下一轮开场白报。两次心跳之间什么时候再看盘，由它自己定。', en: 'Conditions the model arms per symbol with set_watch; a hit wakes it: price touching a level, a candle of some timeframe closing above or below a level, or a given time. Touch and time are checked on markPrice ticks, closes on the 5m close at each timeframe’s boundary; at most one upward, one downward and one timed per symbol, each one disarmed when it fires. Every condition carries a note the opening message brings back on waking — a message to its next self. A condition may also carry a standing order: the moment it fires the platform moves a stop, closes part or all of a position, or cancels a pending order — risk-reducing only, never an entry; after a stop move or a cancel it is not woken and the next opening reports it. Between heartbeats it decides when to look again.' } },
-      { id: 'event', x: 16, y: 322, w: 170, h: 92, tag: 'EVENT', icon: 'bell',
+        detail: { zh: '模型自己用 set_watch 布的条件，命中就叫醒它：价格触及某个价位、某个周期的 K 线收盘站上或跌破某个价位、到了某个时刻。触及和到时刻看 markPrice tick，收盘类在 5m 收盘时按周期边界判；每币向上、向下、到时刻各最多一条，命中一条摘一条。每条带一句备注，醒来时开场白原样带上——给下一轮的自己留话；命中叫醒的是为哪个币布的那个币的单币轮。\n条件还能带一个预案：命中那一刻由代码当场移止损、平掉一部分或全部、撤一张挂单，只减风险、不开仓，时间线记一行「预案执行」；移止损和撤单做完不叫醒，平仓做成了或动作没做成才叫。', en: 'Conditions the model arms per symbol with set_watch; a hit wakes it: price touching a level, a candle of some timeframe closing above or below a level, or a given time. Touch and time are checked on markPrice ticks, closes on the 5m close at each timeframe’s boundary; at most one upward, one downward and one timed per symbol, each disarmed when it fires. Every condition carries a note the opening brings back verbatim — a message to its next self — and a hit wakes the single-symbol round of the coin it was armed for.\nA condition may also carry a standing order: the moment it fires, code moves a stop, closes part or all of a position, or cancels an order — risk-reducing only, never an entry — and the timeline logs a “Standing order” row. A stop move or a cancel does not wake it; a close that went through, or an order that failed, does.' } },
+      { id: 'event', x: 16, y: 334, w: 176, h: 90, tag: 'EVENT', icon: 'bell',
         title: { zh: '持仓事件', en: 'Position events' },
         rows: [
-          { id: 'ev', t: { zh: '止损 · 止盈 · 强平', en: 'stop · target · liq.' } },
-          { id: 'fill', t: { zh: '限价单成交', en: 'limit order filled' } }
+          { id: 'ev', t: { zh: '止损 · 强平 · 限价成交', en: 'stop · liq · fill' } },
+          { id: 'tp', t: { zh: '止盈不叫醒', en: 'take-profit: no wake' } }
         ],
-        detail: { zh: 'sim 在止损、止盈、强平、限价单成交的那一刻发事件，agent 当场叫醒它：先对账，再决定这个币下一步是重进、观望还是撤掉剩下的挂单。持仓变了不用等到下一次心跳才知道。', en: 'sim emits an event the moment a stop, a target, a liquidation or a limit fill happens, and the agent wakes the trader on the spot: reconcile first, then decide whether to re-enter, wait or cancel the remaining orders on that symbol. A changed position no longer waits for the next heartbeat.' } },
-      { id: 'manual', x: 16, y: 428, w: 170, h: 76, tag: 'MANUAL', icon: 'mouse-pointer-click',
-        title: { zh: '手动唤醒 / 点播复盘', en: 'Manual wake / on-demand review' },
-        detail: { zh: '主人从动作面板（或研判工作台弹出的表单）手动唤醒；不受唤醒时段过滤，但同样过互斥和预算预检——距下一根 K 线不足 30 秒不让点。', en: 'The owner triggers a wakeup from the action panel (or a form pushed into chat). It skips the wake-window filter but still passes the mutex and the budget precheck — less than 30s to the next candle and the button stays locked.' } },
-      { id: 'sched', x: 216, y: 62, w: 196, h: 150, tag: 'SCHED', icon: 'timer',
-        title: { zh: 'TraderScheduler 准入', en: 'Scheduler admission' },
+        detail: { zh: 'sim 在止损、强平、限价单成交的那一刻发事件，叫醒只处理这个币的单币轮：先对账，再决定这个币下一步是重进、观望还是撤掉剩下的挂单。止盈触发不叫醒——分档止盈平掉一部分、仓位还在的记一行，下一轮开场白报。全仓爆仓这种不归某一个币的事叫醒整盘轮。持仓变了不用等到下一次心跳才知道。', en: 'sim emits an event the moment a stop, a liquidation or a limit fill happens, waking the single-symbol round for that coin: reconcile first, then decide whether to re-enter, wait or cancel the remaining orders there. A take-profit does not wake it — a partial target that leaves the position open is logged and reported in the next opening. Something that belongs to no single coin, like a cross-margin liquidation, wakes the book round. A changed position doesn’t wait for the next heartbeat.' } },
+      { id: 'drop', x: 16, y: 436, w: 176, h: 90, tag: 'DRAWDOWN', icon: 'trending-down',
+        title: { zh: '权益回落警报', en: 'Equity drawdown alert' },
         rows: [
-          { id: 'mutex', led: true, t: { zh: '每 trader 互斥 · 非例行排队', en: 'mutex · non-routine queued' } },
-          { id: 'window', led: true, t: { zh: '唤醒时段过滤（新加坡时间）', en: 'wake window (Singapore time)' } },
-          { id: 'budget', led: true, t: { zh: '预算 ≤900s · 边界前 5s 截止', en: 'budget ≤900s · −5s deadline' } },
-          { id: 'hand', led: true, t: { zh: '日终交接窗口内一律拒', en: 'blocked during handover' } }
+          { id: 'peak', t: { zh: '从最高点回落到比例', en: 'drop from the peak' } },
+          { id: 'book', t: { zh: '叫醒一轮整盘轮', en: 'wakes a book round' } }
         ],
-        detail: { zh: '准入四件事：每 trader 互斥——上一轮没跑完时，例行心跳记 SKIPPED 不排队（要最新信号），波动警报、持仓事件、盯盘命中先排着，上一轮一结束合成一轮叫醒；唤醒时段过滤（时段外静默跳过）；预算计算——截止到下一边界前 5 秒、上限 900 秒，距边界不足 30 秒判「触发过晚」放弃且不算失败；日终交接的停工窗口里一切新唤醒一律拒，没叫的持仓事件和盯盘命中下一次唤醒开头照样报。不设全局并发上限，只按 trader 互斥。', en: 'Four checks: a per-trader mutex — while the last round is still running a heartbeat records SKIPPED instead of queueing (only the latest signal matters), but alerts, position events and watch hits wait in line and are merged into one wakeup the moment the round ends; the wake-window filter; and the budget — capped at 900s, ending 5s before the next boundary; under 30s left means “too late”, abandoned without counting as a failure. During the daily-handover blackout every new wakeup is refused; position events and watch hits that did not get to wake it are reported at the start of the next one. There is no global concurrency cap, only the per-trader mutex.' } },
-      // 前三个进系统提示词，后五个进开场白（user 消息）
-      { id: 'asm', x: 442, y: 62, w: 196, h: 148, tag: 'PROMPT', icon: 'file-text',
+        detail: { zh: 'EquityDropSentinel：主人设了比例才启用。每根 5m 收盘查一次权益，参照点是上次报警之后到过的最高点；回落到设定比例就叫醒一轮整盘轮，参照点从当时的权益重新记。平台只叫醒，不平仓，也不限制开仓；开场白在第一段问题前面多问一句：你现在持有和挂着的方向，行情是不是已经变了。两次例行之间只有单币轮在跑，没有哪一轮看整个账户，它补的是这一块；被它叫醒的那一轮没跑成的，下一次整盘轮补报。', en: 'EquityDropSentinel only runs once the owner sets a percentage. On every 5m close it checks equity against the highest point reached since the last alert; a drop of that size wakes a book round and the reference resets to the equity at that moment. The platform only wakes it — no forced close, no limit on opening — and the opening first asks whether the market has turned against what it holds and has resting. Between routines only single-symbol rounds may be running and none of them looks at the whole account; this covers that. If the round it woke fails, the next book round reports it.' } },
+      { id: 'manual', x: 16, y: 538, w: 176, h: 72, tag: 'MANUAL', icon: 'mouse-pointer-click',
+        title: { zh: '手动唤醒', en: 'Manual wake' },
+        sub: { zh: '主人点 · 一轮整盘的', en: 'owner clicks · a book round' },
+        detail: { zh: '主人从动作面板（或对话里弹出的表单）手动唤醒，不受唤醒时段限制。手动唤醒是一轮整盘的：已经有整盘轮在跑才拦，单币轮在跑不拦；距下一根 K 线不足 30 秒不让点——面板上显示的拒因就是真点下去会拿到的那句。点播复盘不在这里，走复盘位。', en: 'The owner wakes it from the action panel (or a form pushed into chat), regardless of the wake window. A manual wake is a book round: it is refused only while a book round is running, never because of a single-symbol round, and it is locked within 30s of the next candle — the reason shown on the panel is exactly what a click would get. On-demand reviews are not here; they use the review slot.' } },
+      // 中间：准入分发 → 提示词 → 循环 → 决策行
+      { id: 'sched', x: 224, y: 62, w: 200, h: 146, tag: 'SCHED', icon: 'split',
+        title: { zh: '准入分发', en: 'Admission & routing' },
+        rows: [
+          { id: 'window', t: { zh: '时段过滤 · 新加坡时间', en: 'wake window · SGT' } },
+          { id: 'route', t: { zh: '在跑就插话 · 没有新起一轮', en: 'join live round, else new' } },
+          { id: 'budget', t: { zh: '预算 ≤900s · 边界前 5s', en: 'budget ≤900s · −5s edge' } }
+        ],
+        chips: [
+          { lab: { zh: '一轮整盘 + 每个币一轮', en: 'one book round + one per symbol' } },
+          { id: 'book', t: { zh: '整盘', en: 'book' } }, { id: 'BTC', t: 'BTC' }, { id: 'ETH', t: 'ETH' }, { id: 'SOL', t: 'SOL' }
+        ],
+        detail: { zh: '准入分发都在 TraderScheduler：先判还在运行、在唤醒时段内（新加坡时间，时段外静默跳过，手动不受限），再定交给哪一轮。\n一个 trader 同时可以跑一轮整盘轮（管全部可交易币：例行、手动、权益回落、全仓爆仓）和每个币各一轮单币轮（盯盘命中、波动警报、限价成交、止损或强平，只处理那个币）。一条触发先交给正在处理这个币的单币轮，没有就交给在跑的整盘轮——都是插话：循环每次调模型前取一次，作为一条新消息接在对话末尾；都没有就新起一轮单币轮。那一轮没读到就结束的，触发重新分发，不丢。\n预算截止到下一根 K 线前 5 秒、上限 900 秒，距边界不足 30 秒判「触发过晚」放弃，不算失败。\n几轮动的是同一个账户：账户闸（AccountGate）让下单、平仓、改止损、撤单、布盯盘、预案执行、开头的取账户加对账一次只做一件；SeenAccount 记着每一轮上次看到的每个币的持仓、挂单、盯盘条件，动手前现查比对，变了这次不执行，先把变化告诉它，它重新提交才执行。', en: 'Admission and routing live in TraderScheduler: still running, inside the wake window (Singapore time; silently skipped outside it, manual wakes exempt), then which round gets it.\nA trader can run one book round (all tradable symbols: routine, manual, equity drawdown, a cross-margin liquidation) plus one single-symbol round per coin (watch hits, volatility alerts, limit fills, stops and liquidations for that coin). A trigger goes first to the round already handling that coin, else to the running book round — either way it is an interjection, read before the next model call and appended as a new message — and if neither exists a new single-symbol round starts. A round that ends before reading it hands the trigger back for re-dispatch; nothing is lost.\nThe budget ends 5s before the next candle, capped at 900s; under 30s left is “too late”, dropped without counting as a failure.\nAll rounds touch one account: the AccountGate runs orders, closes, stop moves, cancels, watches, standing orders and each round’s opening reconcile one at a time, and SeenAccount remembers what each round last saw per coin — positions, orders, watches — so if anything changed before it acts, the action is held, the change is reported, and only a resubmission goes through.' } },
+      { id: 'asm', x: 456, y: 62, w: 212, h: 174, tag: 'PROMPT', icon: 'file-text',
         title: { zh: '系统提示词 + 开场白', en: 'System prompt + opening' },
         chips: [
-          { id: 'c1', t: { zh: '平台规则', en: 'platform rules' } },
+          { lab: { zh: '系统提示词 · 所有轮共用', en: 'system prompt · shared by every round' } },
+          { id: 'c1', t: { zh: '平台规则', en: 'rules' } },
           { id: 'c2', t: { zh: '经验账本', en: 'ledger' } },
-          { id: 'c4', t: { zh: '交易指令', en: 'instructions' } },
-          { id: 'c5', t: { zh: '事件·账户', en: 'events+account' } },
-          { id: 'cw', t: { zh: '盯盘条件', en: 'watches' } },
-          { id: 'c6', t: { zh: '上轮结论', en: 'last conclusion' } },
-          { id: 'c7', t: { zh: '论点战绩', en: 'play stats' } },
-          { id: 'c8', t: { zh: '财经日历', en: 'econ calendar' } },
-          { id: 'c9', t: { zh: '主人留言', en: 'owner note' } }
+          { id: 'c3', t: { zh: '主人指令', en: 'instructions' } },
+          { lab: { zh: '开场白 · 按唤醒种类拆', en: 'opening · by wake kind' } },
+          { id: 'o1', t: { zh: '为什么醒', en: 'why awake' } },
+          { id: 'o2', t: { zh: '承诺', en: 'commitments' } },
+          { id: 'o3', t: { zh: '整盘事实', en: 'book facts' } },
+          { id: 'o4', t: { zh: '单币事实', en: 'this symbol' } },
+          { id: 'o5', t: { zh: '账户概况', en: 'account' } },
+          { id: 'o6', t: { zh: '上轮结论', en: 'conclusions' } },
+          { id: 'o7', t: { zh: '主人留言', en: 'owner note' } }
         ],
-        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、经验账本里的规律和执行缺口、主人的交易指令——目标、边界、偏好来自主人，打法由模型自己定，平台不带交易观点。状态进开场白：上次醒来后的事件、账户（持仓附自上次决策以来的波动、浮盈几 R、止损打掉亏权益多少）、在盯的盯盘条件、上一轮结论、行情快照（各币和 BTC 的涨跌、美股参考）、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the rules and execution gaps from the experience ledger, and the owner’s instructions — goal, limits and preferences come from the owner, and how to trade is the model’s own call. State goes into the opening message: events since the last wake, the account (each position with what it went through since the last decision, its open profit in R and what its stop would cost in equity), the watch conditions still armed, the last conclusion, the market snapshot (changes for each symbol and BTC, plus a US equities reference), play stats, the econ calendar, with the owner’s note last.' } },
-      { id: 'agent', x: 668, y: 84, w: 180, h: 104, tag: 'REACT', icon: 'cpu',
+        detail: { zh: '每一轮现读现拼，零热更新机制。系统提示词所有轮共用一份：平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、经验账本里的规律和执行缺口、主人的交易指令——目标、边界、偏好来自主人，打法由模型自己定。\n为什么醒、管哪些币、分几段走都写在开场白里。整盘轮先窄后宽：第一段只念它自己留下的承诺（持仓与挂单的失效条件、每条盯盘离现价多远或还有多久、上一轮的等待行，代码逐条列事实）要它处置；答完追加第二段——各币自上次唤醒以来的开高低收、行情快照、财经日历、论点战绩、最近轨迹——看整盘、布防、收尾。没承诺、没留言、不是被触发叫醒的并成一段；开了联网的走三段，前两段不许开仓。\n单币轮动作在前：只带这个币的事实、一段只给数字的账户概况和一行 BTC 大盘参考。\n主人留言只压在整盘轮开场白末尾。结论按币增量：没写的币由代码带着它最近一次那段进【上一轮结论】。', en: 'Reassembled fresh every round, no hot-reload machinery. One system prompt is shared by every round: platform rules (facts only: environment, tools, specs, guardrails, closing format), the rules and execution gaps from the experience ledger, and the owner’s instructions — goals, limits and preferences come from the owner, how to trade is the model’s call.\nWhy it woke, which symbols it handles and how many parts it runs live in the opening. A book round goes narrow, then wide: part one reads only its own commitments (each position’s and order’s invalidation, how far each watch is from price or how long until it fires, last round’s waiting lines — listed by code) and asks it to deal with them; then part two adds each symbol’s OHLC since its last wake, the market snapshot, econ calendar, play stats and recent rounds for a whole-book look, arming and the close. No commitments, no note and no trigger means one part; with web search on there are three, and the first two may not open.\nA single-symbol round acts first: only that coin’s facts, a numbers-only account summary and one BTC reference line.\nThe owner’s note rides only at the end of a book round’s opening. Conclusions are per-symbol deltas: a coin left out carries its latest section into [Last conclusion].' } },
+      { id: 'agent', x: 700, y: 62, w: 200, h: 118, tag: 'REACT', icon: 'cpu',
         title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
-        rows: [ { id: 'stateless', t: { zh: '无状态 · 不强制 tool_choice', en: 'stateless · tool_choice never forced' } } ],
-        detail: { zh: '一次唤醒 = 一个无状态 ReactLoop 会话（自写的 ReAct 循环），BYOK 模型（主人的 key，AES-GCM 加密存库）。不强制 tool_choice（Opus 5.5 这类模型不收 any / required）：「先读事实、用工具求证」写在开场白里。单轮模型调用上限 12 次——会并行的模型两三次就取完数，不并行的一轮一个，多币求证要这个余量；最后一次能执行工具时贴一句收尾提示，下一次直接给结论。连同 900 秒预算与连败 5 次暂停，停止条件都在模型之外。', en: 'One wakeup = one stateless ReactLoop session (a hand-written ReAct loop) on the owner’s BYOK model (key stored AES-GCM encrypted). tool_choice is never forced (models like Opus 5.5 reject any / required): “read the facts, verify with tools” lives in the opening message. Cap of 12 model calls per wake — parallel callers finish in two or three, serial ones need the headroom to check several symbols; the last tool-capable call gets a wrap-up hint so the next one concludes. With the 900s budget and pause-after-5-failures, every stop condition lives outside the model.' } },
-      { id: 'data', x: 888, y: 16, w: 180, h: 240, tag: 'TOOLS', icon: 'database',
+        rows: [
+          { id: 'scope', t: { zh: '本轮 · 整盘 / 单币', en: 'scope · book / one symbol' } },
+          { id: 'inbox', t: { zh: '调模型前先取插话', en: 'interjections each call' } }
+        ],
+        detail: { zh: '一轮 = 一个无状态 ReactLoop 会话（自写的 ReAct 循环），BYOK 模型（主人的 key，AES-GCM 加密存库）。不强制 tool_choice（Opus 5.5 这类模型不收 any / required）：「先读事实、用工具求证」写在开场白里。同一批 tool_call 里的数据工具并发执行，批里有动作工具就整批串行。循环每次调模型前取一次插话，接在对话末尾。单轮模型调用上限 12 次，分两段时第二段多 1 次收尾、最多 13；最后一次能执行工具时贴一句收尾提示。连同单轮 900 秒、连败 5 次自动暂停，停止条件都在模型之外。', en: 'One round = one stateless ReactLoop session (a hand-written ReAct loop) on the owner’s BYOK model (key stored AES-GCM encrypted). tool_choice is never forced (models like Opus 5.5 reject any / required): “read the facts, verify with tools” lives in the opening. Data tools in one batch run in parallel; a batch with any action tool runs serially. Before each model call the loop reads interjections and appends them. Cap of 12 model calls per round, 13 when it runs in two parts; the last tool-capable call gets a wrap-up hint. With the 900s limit and auto-pause after 5 failures, every stop condition lives outside the model.' } },
+      { id: 'dec', x: 700, y: 216, w: 200, h: 132, tag: 'OUTPUT', icon: 'scroll-text',
+        title: { zh: 'ai_trader_decision', en: 'ai_trader_decision' },
+        rows: [
+          { id: 'full', t: { zh: '决策全文 + 动作轨迹 + 权益', en: 'text · actions · equity' } },
+          { id: 'seg', t: { zh: '结论按币增量', en: 'conclusions per symbol' } },
+          { id: 'plan2', t: { zh: '计划 → ai_trader_plan', en: 'plans → ai_trader_plan' } }
+        ],
+        badge: { zh: '全站公开', en: 'Public' },
+        detail: { zh: '推理全文、交易动作、开仓论点与失效条件全部公开上决策时间线；单币轮的决策行记着它只处理的那个币，时间线上标「只处理 ETH」。结论按币增量：每轮只写有变化的币，单币轮只写自己那一段、不写总评；结论里写的账本 #编号由代码计数。计划了结归档不删，是单笔复盘和统一复盘的原料。思考过程另走一条线：逐字吐字和每次工具的入参回执实时推给主人（唤醒现场，几轮同时在跑各推各的），也落库可回看，但只有主人看得到——公开的只到决策正文为止。', en: 'Full reasoning, trade actions, theses and invalidations all go public on the decision timeline; a single-symbol round’s row records its coin and the timeline marks it “ETH only”. Conclusions are per-symbol deltas: each round writes only the coins that changed, and a single-symbol round writes just its own section with no overview; any ledger #id cited there is counted by code. Settled plans are archived, never deleted — raw material for the debrief and the unified review. The process runs on a separate line: token-by-token output and every tool’s arguments and results stream live to the owner (several rounds stream side by side) and are kept for replay, but only the owner sees them — the public part stops at the decision text.' } },
+      // 右列：循环里被调用的
+      { id: 'data', x: 944, y: 16, w: 208, h: 234, tag: 'TOOLS', icon: 'database',
         title: { zh: '数据工具 ×11', en: 'Data tools ×11' },
         rows: [
           { id: 'klines', t: 'klines' }, { id: 'kstruct', t: 'kline_structure' },
@@ -119,15 +190,15 @@ const PANELS = [
           { id: 'whale', t: 'whale_positions' }, { id: 'cross', t: 'cross_asset_snapshot' },
           { id: 'news', t: 'news_search' }
         ],
-        detail: { zh: 'K 线 / 结构 / 指标 / 行情快照（多空比、持仓量、主动买卖、资金费、清算、盘口、逐笔成交的原始读数，不打分）/ 期权 IV / 资金费历史 / 盘口深度 / 衍生品序列（持仓量、多空比、主动买卖）/ Hyperliquid 大户持仓 / 跨资产快照（美股指数、美元、美债收益率、VIX、黄金、原油）/ BlockBeats 快讯（可按关键词查历史）。行情数据工具能查任意 Binance USDT 永续，不限于可交易的那几个；主人开了联网搜索、端点也开了的另挂一个 web_search。中性事实，不带平台观点。', en: 'Candles / structure / indicators / market snapshot (raw readings, no scoring: long-short ratios, open interest, taker flow, funding, liquidations, book, trades) / option IV / funding history / orderbook depth / derivatives series (open interest, long-short ratios, taker flow) / Hyperliquid whale positions / cross-asset snapshot (US indices, the dollar, Treasury yields, VIX, gold, crude) / BlockBeats news (history searchable by keyword). The market data tools cover any Binance USDT perpetual, not only the tradable symbols; a trader whose owner switched web search on, on an endpoint that has it, also gets web_search. Neutral facts, no platform opinions.' } },
-      { id: 'guard', x: 888, y: 272, w: 180, h: 96, tag: 'GUARD', icon: 'shield-check',
+        detail: { zh: 'K 线 / 结构 / 指标 / 行情快照（多空比、持仓量、主动买卖、资金费、清算、盘口、逐笔成交的原始读数，不打分）/ 期权 IV / 资金费历史 / 盘口深度 / 衍生品序列（持仓量、多空比、主动买卖）/ Hyperliquid 大户持仓 / 跨资产快照（美股指数、美元、美债收益率、VIX、黄金、原油）/ BlockBeats 快讯（可按关键词查历史）。行情数据工具能查任意 Binance USDT 永续，不限于可交易的那几个；同一批调用并发执行。主人开了联网搜索、端点也开了的另挂一个 web_search。中性事实，不带平台观点。', en: 'Candles / structure / indicators / market snapshot (raw readings, no scoring: long-short ratios, open interest, taker flow, funding, liquidations, book, trades) / option IV / funding history / orderbook depth / derivatives series (open interest, long-short ratios, taker flow) / Hyperliquid whale positions / cross-asset snapshot (US indices, the dollar, Treasury yields, VIX, gold, crude) / BlockBeats news (history searchable by keyword). The market data tools cover any Binance USDT perpetual, not only the tradable symbols, and one batch runs in parallel. A trader whose owner switched web search on, on an endpoint that has it, also gets web_search. Neutral facts, no platform opinions.' } },
+      { id: 'guard', x: 944, y: 264, w: 208, h: 90, tag: 'GUARD', icon: 'shield-check',
         title: { zh: 'TradeGuard 硬校验', en: 'TradeGuard' },
         rows: [
-          { id: 'spec', t: { zh: '杠杆/保证金/仓位/双开', en: 'lev/margin/slots/hedge' } },
+          { id: 'spec', t: { zh: '杠杆 · 保证金 · 仓位 · 双开', en: 'lev · margin · hedge' } },
           { id: 'veto', t: { zh: '止损必填 · 越界即拒', en: 'SL required · veto' } }
         ],
         detail: { zh: '开仓入口一票否决：币种白名单、杠杆区间、保证金占比、同币杠杆一致、单仓模式、禁对冲都来自主人的设定；止损必填且方向要对，止盈可以不设、设了最多分 3 档且每档都在有利一侧，限价偏离现价不超过 5%。越界一律拒绝而不是悄悄截断——平台把数字改小模型不知道，后面的止损计算全是错的。拒因原样返回，还把能用的数量区间算好给它，模型改了就能重试；所有调用（含被拒的）都记入动作轨迹。盯盘条件也在这里过一道：每币向上、向下、到时刻各最多一条，类型要认得、价格类要给正价位，触及类的价位已经被现价越过就拒（布下去会立刻触发）。', en: 'A veto at the open: symbol whitelist, leverage range, margin share, same-symbol leverage, single-position mode and no-hedge all come from the owner; a stop-loss is required and must sit on the right side, a take-profit is optional — up to 3 rungs, each on the profit side — and a limit price may not stray more than 5% from mark. Out-of-range orders are rejected, never silently clamped — a size the model didn’t choose poisons every stop calculation after it. The reason goes back verbatim with the allowed quantity range worked out, so the model can fix and retry; every call, rejected ones included, lands in the action trace. Watch conditions pass here too: at most one upward, one downward and one timed per symbol, a known kind, a positive level for price kinds, and a touch level the price has already crossed is refused (it would fire at once).' } },
-      { id: 'trade', x: 888, y: 384, w: 180, h: 208, tag: 'TOOLS', icon: 'wrench',
+      { id: 'trade', x: 944, y: 368, w: 208, h: 202, tag: 'TOOLS', icon: 'wrench',
         title: { zh: '交易工具 ×9', en: 'Trade tools ×9' },
         rows: [
           { id: 'acct', t: 'get_account' }, { id: 'open', t: 'open_position' },
@@ -135,50 +206,68 @@ const PANELS = [
           { id: 'tp', t: 'set_take_profit' }, { id: 'plan', t: 'write_plan' },
           { id: 'cancel', t: 'cancel_order' }, { id: 'watch', t: 'set_watch' }
         ],
-        detail: { zh: '非 Spring bean：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与币种白名单。开仓要带止损、论点标签、数据引用和失效条件，计划随开仓落库、之后不可改；止盈可以不设，也可以分最多 3 档各平一部分。回执报这笔的往返手续费、止损是几倍 ATR、风险占权益多少，设了止盈的再给扣费后的盈亏比，只报数不评价。止损只许收紧不许放宽；止盈可以往近挪、往远挪或撤掉。write_plan 只给没有计划的持仓补立；set_watch 给一个币布盯盘条件，一次整组替换，条件上可以挂预案。平仓要写一句理由。什么时候退出由模型自己判断，主人的交易指令里有要求的按主人的。', en: 'Not Spring beans: constructed fresh per wakeup, bound to this trader’s sim sub-account and symbol whitelist. An open carries its stop, thesis tag, data citation and invalidation; the plan is stored with the position and never edited; a take-profit is optional and may be split into up to 3 rungs, each closing part. The receipt reports round-trip fees, the stop in ATR multiples and the share of equity at risk, plus reward-to-risk after fees when a take-profit is set — facts, no verdict. Stops can only be tightened, never loosened; a take-profit may move nearer, farther, or be removed. write_plan only backfills a position that has none; set_watch arms a symbol’s watch conditions, replacing the whole set at once, and a condition may carry a standing order. A close needs a one-line reason. When to exit is the model’s own judgement, within whatever the owner’s instructions require.' } },
-      { id: 'sim', x: 888, y: 608, w: 180, h: 76, tag: 'SIM', icon: 'server',
+        detail: { zh: '非 Spring bean：每一轮 new 一个，绑定该 trader 的 sim 子账户、币种白名单和账户闸；单币轮的交易和盯盘工具只认自己那个币（对别的币动手被拒并说明原因），查行情的工具不限币。每个写动作在账户闸里排队，动手前和这一轮上次看到的账户比一下，变了先告诉它、它重新提交才执行。开仓要带止损、论点标签、数据引用和失效条件，计划随开仓落库、之后不可改；止盈可以不设，也可以分最多 3 档各平一部分。回执报这笔的往返手续费、止损是几倍 ATR、风险占权益多少，设了止盈的再给扣费后的盈亏比，只报数不评价。止损只许收紧不许放宽；止盈可以往近挪、往远挪或撤掉。write_plan 只给没有计划的持仓补立；set_watch 给一个币布盯盘条件，一次整组替换，条件上可以挂预案。平仓要写一句理由。什么时候退出由模型自己判断，主人的交易指令里有要求的按主人的。', en: 'Not Spring beans: built fresh every round, bound to this trader’s sim sub-account, symbol whitelist and account gate; in a single-symbol round the trade and watch tools accept only that coin (anything else is refused with the reason), while market tools take any symbol. Every write queues at the account gate and is checked against what this round last saw — if the account changed, it is told first and must resubmit. An open carries its stop, thesis tag, data citation and invalidation; the plan is stored with the position and never edited; a take-profit is optional and may be split into up to 3 rungs, each closing part. The receipt reports round-trip fees, the stop in ATR multiples and the share of equity at risk, plus reward-to-risk after fees when a take-profit is set — facts, no verdict. Stops can only be tightened, never loosened; a take-profit may move nearer, farther, or be removed. write_plan only backfills a position that has none; set_watch arms a symbol’s watch conditions, replacing the whole set at once, and a condition may carry a standing order. A close needs a one-line reason. When to exit is the model’s own judgement, within whatever the owner’s instructions require.' } },
+      { id: 'sim', x: 944, y: 584, w: 208, h: 72, tag: 'SIM', icon: 'server',
         title: { zh: 'wiib-sim 子账户', en: 'wiib-sim account' },
         sub: { zh: '模拟盘账本 · 唯一事实源', en: 'the ledger of record' },
         detail: { zh: '真实开平仓落在 wiib-sim 的子账户上，与真人、量化策略走同一套账本规则：真实档位杠杆、真实资金费、自动强平。', en: 'Real opens and closes land on a wiib-sim sub-account under the same ledger rules as humans and quant strategies: real leverage tiers, real funding, automatic liquidation.' } },
-      { id: 'dec', x: 658, y: 246, w: 200, h: 118, tag: 'OUTPUT', icon: 'scroll-text',
-        title: { zh: 'ai_trader_decision', en: 'ai_trader_decision' },
-        rows: [
-          { id: 'full', t: { zh: '决策全文 + 动作轨迹 + 权益', en: 'reasoning, actions, equity' } },
-          { id: 'plan2', t: { zh: '计划 → ai_trader_plan 归档不删', en: 'plans → ai_trader_plan' } }
+      // 下半：复盘两层，从右往左回到提示词
+      { id: 'debrief', x: 700, y: 402, w: 200, h: 218, tag: 'DEBRIEF', icon: 'notebook-pen',
+        title: { zh: '单笔复盘 agent', en: 'Debrief agent' },
+        sub: { zh: '平仓满 24h · 或主人点立即复盘', en: 'closed 24h ago · or “Debrief now”' },
+        counter: { label: { zh: '模型调用 · ≤1800s', en: 'model calls · ≤1800s' }, max: 16 },
+        chips: [
+          { id: 'rd', t: 'round_detail' }, { id: 'th', t: 'trade_history' },
+          { id: 'kl', t: 'klines' }, { id: 'in', t: 'indicators' },
+          { id: 'ks', t: 'kline_structure' }, { id: 'na', t: 'news_archive' }
         ],
-        badge: { zh: '全站公开', en: 'PUBLIC' },
-        detail: { zh: '推理全文、交易动作、开仓论点与失效条件全部公开上决策时间线；计划了结归档不删，是每日 reviewer 复盘「论点 → 结局」配对的原料。思考过程另走一条线：逐字吐字和每次工具的入参回执实时推给主人（唤醒现场），也落库可回看，但只有主人看得到——公开的只到决策正文为止。', en: 'Full reasoning, trade actions, theses and invalidation conditions all go public on the decision timeline. Settled plans are archived, never deleted — they are the raw material for the daily reviewer’s thesis→outcome pairing. The process runs on a separate line: token-by-token output and every tool’s arguments and results stream live to the owner and are kept for replay, but only the owner can see them — the public part stops at the decision text.' } },
-      { id: 'rev', x: 216, y: 460, w: 200, h: 128, tag: 'REVIEW', icon: 'file-text',
-        title: { zh: 'reviewer workflow', en: 'reviewer workflow' },
-        sub: { zh: '日线边界 · 自己看自己', en: 'daily · self-review' },
+        stream: 2,
+        detail: { zh: '带只读工具的 ReAct。一笔单子平仓满 24 小时自动做；主人也能在交易卡上点「立即复盘」，平仓那根 5m 收进来就能点，这时事实表只算到复盘那一刻，出场后的走势还看不到就不判方向错还是被洗掉。\n素材代码备好：这一笔的事实表（路径指标、重放）、开仓那轮到平仓后第一轮的各轮决策（全给不截断）、经验账本现役条目。6 个只读工具都能查历史时刻：round_detail、trade_history、klines / indicators / kline_structure（带 endTime）、news_archive。上限 16 次调用、1800 秒。\n纪律：数字只引用事实表和工具回执；分清当时看得到的和之后才发生的；只判这一笔，不提新规矩；归类只看条件对不对得上，不看赚亏。输出【单笔复盘】正文 +【归类】行，落 DEBRIEF 决策行公开，不碰账本。失败的 1 小时、24 小时后重试，不计连败。', en: 'A ReAct loop with read-only tools. It runs once a trade has been closed for 24h; the owner can also hit “Debrief now” on the trade card once the closing 5m candle is in — the fact sheet then stops at that moment, and with the post-exit path still unseen it does not judge wrong direction versus shake-out.\nCode prepares the material: the trade’s fact sheet (path metrics, replay), every round from the entry to the first after the close (in full) and the live ledger entries. Six read-only tools can all look back in time: round_detail, trade_history, klines / indicators / kline_structure (with endTime) and news_archive. Capped at 16 calls and 1800s.\nRules: numbers only from the fact sheet and tool results; separate what could be seen then from what came later; judge this trade only, no new rules; sort by whether the conditions match, never by profit. Output: the [DEBRIEF] body plus [SORTING] rows, published as a DEBRIEF row; the ledger is never touched. Failures retry after 1h and 24h and never count toward the failure streak.' } },
+      { id: 'review', x: 456, y: 402, w: 212, h: 196, tag: 'REVIEW', icon: 'clipboard-list',
+        title: { zh: '统一复盘 workflow', en: 'Unified review workflow' },
+        sub: { zh: '每天 08:00 · 单次调用 · 无工具', en: 'daily 08:00 · one call · no tools' },
         rows: [
-          { id: 'r1', t: { zh: '案例事实表代码算好', en: 'case facts precomputed' } },
-          { id: 'r2', t: { zh: '单次调用 · 无工具', en: 'single call · no tools' } },
-          { id: 'r3', t: { zh: '经验更新 → 账本记账', en: 'ledger booked by code' } }
+          { id: 'u1', t: { zh: '收做完单笔复盘的 · ≤20 笔', en: 'debriefed trades · ≤20' } },
+          { id: 'u2', t: { zh: '每类单子写一段分界线', en: 'a dividing line per setup' } },
+          { id: 'u3', t: { zh: '没单子 · 静默跳过', en: 'nothing new → skipped' } }
         ],
-        detail: { zh: '不是 agent：素材由代码算齐（战绩表 / 本局论点战绩 / 按单子类型分组的案例事实表与路径指标 / 本期行情 / 账本现状），模型只负责解读，没机会挑对自己有利的行情。复盘按单子类型做案例：亏单答失败怎么界定、失败后怎么处理，赢单答对在哪、少赚了多少，界定必须是可观察的价格、根数或时间。产出落进经验账本：模型只把单子归到经验名下，盈亏由代码按单子记账；名下满 5 笔、来自至少 3 个不同的日子、合计的钱站在它这边才转成规律，转正后新增满 5 笔合计反过来就降回假设，连续 10 篇复盘没有新单子自动退役，退役不删；主人可钉住、退役、否决。窗口内没了结也没开仓的一天直接跳过。', en: 'Not an agent: materials come precomputed in code (scorecard, this round’s play stats, case fact tables with path metrics grouped by setup type, the day’s market, the ledger as it stands); the model only interprets — it never cherry-picks. Reviews are case studies by setup type: a losing trade answers how failure is defined and what to do after it, a winner answers what was right and what was left on the table, and every definition must be an observable price, candle count or time. The output lands in the experience ledger: the model only files trades under entries and code books their profit and loss; a hypothesis becomes a rule with 5 trades under it from at least 3 different days and the total on its side, drops back once 5 new trades after promotion add up the other way, and retires after 10 reviews in a row with no new trade; retired entries are kept; the owner can pin, retire or veto. A day with nothing settled and nothing opened is skipped.' } }
+        stream: 2,
+        detail: { zh: '不是 agent：每天新加坡 08:00 一次（也能点播），单次调用、没有工具。\n素材代码算齐：战绩表、论点战绩、本批单子（做完单笔复盘、还没进过统一复盘的，一篇最多 20 笔，按单子类型分组，每笔事实表 + 单笔复盘正文）、本期行情、盯盘布防、经验账本。窗口整体晚 24 小时，平仓到进账本是 24 到 48 小时；提前做了单笔复盘的也要等窗口盖住它平仓那一刻。\n每个单子类型写一段分界线：赢的和亏的差在哪，看不出写「样本不足」；再审机会和布防。经验更新只提新增、发现、删除。没有可收的单子、窗口内也没开过仓就静默跳过，不烧钱。\n复盘位每个 trader 一个，单笔复盘、统一复盘、点播复盘共用，一次只跑一个，不占唤醒位、不挡唤醒，日线边界对交易只是一根普通边界。', en: 'Not an agent: once a day at 08:00 Singapore time (or on demand), a single call with no tools.\nCode gathers the material: the scorecard, play stats, the batch (debriefed trades not yet in a unified review — up to 20, grouped by setup, each with its fact sheet and debrief), the period’s market, the watches and the ledger. The window runs 24h behind, so a close reaches the ledger in 24 to 48 hours; a trade debriefed early still waits until the window covers its close.\nEach setup gets a dividing line — where winners and losers differed, or “not enough samples” — plus an opportunity and a watch audit. Ledger updates only propose adds, findings and deletes. With nothing to collect and no opens in the window it is skipped silently, at no cost.\nEach trader has one review slot shared by debriefs, the unified review and on-demand reviews, one at a time and separate from the wakes, so it never blocks one — for trading, the daily boundary is just another candle.' } },
+      { id: 'ledger', x: 224, y: 402, w: 200, h: 126, tag: 'LEDGER · CODE', icon: 'book-marked',
+        title: { zh: '经验账本 · 代码记账', en: 'Experience ledger' },
+        rows: [
+          { id: 'l1', t: { zh: '合并各笔【归类】', en: 'merges debrief sorting' } },
+          { id: 'l2', t: { zh: '按名下单子记钱', en: 'books money per trade' } },
+          { id: 'l3', t: { zh: '转正 · 降级 · 退役', en: 'promote · demote · retire' } },
+          { id: 'l4', t: { zh: '渲染 → 下一轮注入', en: 'rendered → next wake' } }
+        ],
+        detail: { zh: '落账全在代码：合并本批各笔单笔复盘的【归类】行，按名下单子记钱、笔数、平仓日——模型不给经验投票。\n假设名下满 5 笔、来自至少 3 个不同平仓日、合计站在它这边（限制型看负数）才转成规律；转正后又满 5 笔合计反过来就降回假设；连续 10 篇统一复盘名下没有新单子自动退役（已转正的限制型不算）。上限现役 10 条、同类 3 条、限制型 2 条；新增只收入场条件、风险限制、执行缺口三种。转正、降级、退役的结果追加在复盘正文末尾。\n账本渲染成文本写回 memory，下一轮唤醒注入——注入的只有规律和破满 2 笔的执行缺口。主人可钉住、退役、恢复、删除。', en: 'Booking is all code: it merges the [SORTING] rows of the batch’s debriefs and books money, trade count and close days per entry — the model never votes on lessons.\nA hypothesis becomes a rule with 5 trades under it from at least 3 different close days and the total on its side (negative for restrictions); after promotion, 5 more trades adding up the other way demote it; 10 unified reviews in a row with no new trade retire it (a promoted restriction excepted). Caps: 10 live entries, 3 per kind, 2 restrictions; new entries may only be entry conditions, risk limits or execution gaps. Promotions, demotions and retirements are appended to the review text.\nThe ledger is rendered back into memory and injected into the next wake — only rules, and execution gaps broken at least twice. The owner can pin, retire, restore or delete entries.' } }
     ],
     edges: [
-      // 五路叫醒共用 x=201 那条竖线，按从上到下的顺序分别进准入节点
-      { id: 'ck-sch', from: 'clock', to: 'sched', pts: [[186, 54], [201, 54], [201, 82], [216, 82]] },
-      { id: 'sn-sch', from: 'sentinel', to: 'sched', pts: [[186, 154], [201, 154], [201, 112], [216, 112]] },
-      { id: 'wt-sch', from: 'watch', to: 'sched', pts: [[186, 262], [201, 262], [201, 142], [216, 142]] },
-      { id: 'ev-sch', from: 'event', to: 'sched', pts: [[186, 368], [201, 368], [201, 172], [216, 172]] },
-      { id: 'mn-sch', from: 'manual', to: 'sched', pts: [[186, 466], [201, 466], [201, 202], [216, 202]] },
-      { id: 'sch-asm', from: 'sched', to: 'asm', pts: [[412, 136], [442, 136]] },
-      { id: 'asm-ag', from: 'asm', to: 'agent', pts: [[638, 136], [668, 136]] },
-      { id: 'ag-data', from: 'agent', to: 'data', pts: [[848, 116], [888, 116]] },
-      // 开仓、布盯盘先过 TradeGuard；移止损止盈、平仓、撤单直接到交易工具。两条共用 x=868 那条竖线
-      { id: 'ag-guard', from: 'agent', to: 'guard', pts: [[848, 164], [868, 164], [868, 320], [888, 320]] },
-      { id: 'ag-trade', from: 'agent', to: 'trade', pts: [[848, 164], [868, 164], [868, 440], [888, 440]] },
-      { id: 'guard-trade', from: 'guard', to: 'trade', pts: [[978, 368], [978, 384]] },
-      { id: 'trade-sim', from: 'trade', to: 'sim', pts: [[978, 592], [978, 608]] },
-      { id: 'ag-dec', from: 'agent', to: 'dec', pts: [[758, 188], [758, 246]] },
-      { id: 'dec-rev', from: 'dec', to: 'rev', pts: [[758, 364], [758, 522], [416, 522]] },
-      { id: 'notes-asm', from: 'rev', to: 'asm', cls: 'back', pts: [[316, 460], [316, 412], [540, 412], [540, 210]] }
+      // 六路叫醒共用 x=208 那条竖线，从同一个口进准入
+      { id: 'ck-sch', from: 'clock', to: 'sched', pts: [[192, 52], [208, 52], [208, 150], [224, 150]] },
+      { id: 'sn-sch', from: 'sentinel', to: 'sched', pts: [[192, 150], [224, 150]] },
+      { id: 'wt-sch', from: 'watch', to: 'sched', pts: [[192, 252], [208, 252], [208, 150], [224, 150]] },
+      { id: 'ev-sch', from: 'event', to: 'sched', pts: [[192, 370], [208, 370], [208, 150], [224, 150]] },
+      { id: 'dd-sch', from: 'drop', to: 'sched', pts: [[192, 472], [208, 472], [208, 150], [224, 150]] },
+      { id: 'mn-sch', from: 'manual', to: 'sched', pts: [[192, 574], [208, 574], [208, 150], [224, 150]] },
+      { id: 'sch-asm', from: 'sched', to: 'asm', pts: [[424, 150], [456, 150]] },
+      { id: 'asm-ag', from: 'asm', to: 'agent', pts: [[668, 150], [700, 150]] },
+      { id: 'ag-data', from: 'agent', to: 'data', pts: [[900, 100], [944, 100]] },
+      // 开仓、布盯盘先过 TradeGuard；移止损止盈、平仓、撤单直接到交易工具。两条共用 x=922 那条竖线
+      { id: 'ag-guard', from: 'agent', to: 'guard', pts: [[900, 160], [922, 160], [922, 309], [944, 309]] },
+      { id: 'ag-trade', from: 'agent', to: 'trade', pts: [[900, 160], [922, 160], [922, 450], [944, 450]] },
+      { id: 'guard-trade', from: 'guard', to: 'trade', pts: [[1048, 354], [1048, 368]] },
+      { id: 'trade-sim', from: 'trade', to: 'sim', pts: [[1048, 570], [1048, 584]] },
+      { id: 'ag-dec', from: 'agent', to: 'dec', pts: [[800, 180], [800, 216]] },
+      { id: 'dec-deb', from: 'dec', to: 'debrief', pts: [[800, 348], [800, 402]] },
+      { id: 'deb-rev', from: 'debrief', to: 'review', pts: [[700, 460], [668, 460]] },
+      { id: 'rev-led', from: 'review', to: 'ledger', pts: [[456, 460], [424, 460]] },
+      // 账本回注提示词：从两条泳道中间那条空廊道绕上去
+      { id: 'led-asm', from: 'ledger', to: 'asm', cls: 'back', pts: [[324, 402], [324, 290], [540, 290], [540, 236]] }
     ],
     foot: [
-      { zh: '日线交接：交易 ▸ 全体复盘 · 停工窗口拒绝一切唤醒', en: 'Daily handover: trade ▸ all reviews · blackout window rejects every wakeup' },
+      { zh: '几轮并行：一轮整盘 + 每个币一轮 · 账户闸一次只做一件 · 复盘有自己的位子，不挡唤醒', en: 'Rounds in parallel: one for the whole book + one per symbol · the account gate does one thing at a time · reviews have their own slot and never block a wake' },
       { zh: '连败 5 次 → PAUSED · 权益 < 初始 1% → LIQUIDATED', en: '5 straight failures → PAUSED · equity < 1% of seed → LIQUIDATED' }
     ]
   },
@@ -199,20 +288,20 @@ const PANELS = [
       { id: 'gates', x: 16, y: 174, w: 150, h: 130, tag: 'GATE', icon: 'shield-check',
         title: { zh: '四道准入', en: 'Four gates' },
         rows: [
-          { id: 'g1', led: true, t: { zh: '端点解析 · 2201', en: 'endpoint · 2201' } },
-          { id: 'g2', led: true, t: { zh: '叶子缓存 LRU32 · 2202', en: 'leaf LRU32 · 2202' } },
-          { id: 'g3', led: true, t: { zh: '用户并发闸 · 2203', en: 'user gate · 2203' } },
-          { id: 'g4', led: true, t: { zh: '全局闸 10 槽 · 2204', en: 'global ×10 · 2204' } }
+          { id: 'g1', t: { zh: '端点解析 · 2201', en: 'endpoint · 2201' } },
+          { id: 'g2', t: { zh: '叶子缓存 LRU32 · 2202', en: 'leaf LRU32 · 2202' } },
+          { id: 'g3', t: { zh: '用户并发闸 · 2203', en: 'user gate · 2203' } },
+          { id: 'g4', t: { zh: '全局闸 10 槽 · 2204', en: 'global ×10 · 2204' } }
         ],
         detail: { zh: '四道准入全在建流之前：解析端点、按配置指纹取/建叶子（LRU 32，指纹含 userId 做数据隔离）、用户并发闸、全局 10 槽。全过了才建 SSE 流——一旦响应变成 event-stream，再报错前端就拿不到结构化错误码了。', en: 'All four gates run before the stream exists: endpoint resolution, leaf fetch/build by config fingerprint (LRU 32; userId is in the fingerprint for data isolation), the per-user gate, the 10-slot global gate. Only then is the SSE stream created — once the response is an event-stream, errors can no longer carry structured codes.' } },
-      { id: 'main', x: 226, y: 120, w: 270, h: 300, tag: 'MAIN AGENT', icon: 'zap',
+      { id: 'main', x: 226, y: 120, w: 270, h: 308, tag: 'MAIN AGENT', icon: 'zap',
         title: { zh: '主 agent · 深模型', en: 'main agent · deep model' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 8 },
-        // 顺序按正好排满三行定的
         chips: [
-          { id: 'cmk', t: 'market ×4' }, { id: 'cin', t: 'indicators ×3' }, { id: 'ctr', t: 'trader_* ×6' },
-          { id: 'cfm', t: 'wake / review / note' }, { id: 'cbh', t: 'analyze_my_behavior' },
-          { id: 'cnw', t: 'news_search' }, { id: 'cda', t: 'run_deep_analysis' }, { id: 'cdg', t: 'delegate' }
+          { id: 'cmk', t: 'market ×4' }, { id: 'cin', t: 'indicators ×3' }, { id: 'cmc', t: 'macro ×5' },
+          { id: 'ctr', t: 'trader_* ×6' }, { id: 'cfm', t: 'wake / review / note' },
+          { id: 'cnw', t: 'news_search' }, { id: 'cbh', t: 'analyze_my_behavior' },
+          { id: 'cda', t: 'run_deep_analysis' }, { id: 'cdg', t: 'delegate' }
         ],
         rows: [
           { id: 'par', t: { zh: '同批 tool_call 并发执行', en: 'same-batch tool calls run in parallel' } },
@@ -220,7 +309,7 @@ const PANELS = [
           { id: 'ws', t: { zh: '服务端搜索 · 端点勾选才有', en: 'server search · if the endpoint allows' } }
         ],
         stream: 3,
-        detail: { zh: '一轮只有这一个 agent：深模型 + 25 个工具的 ReactLoop，流式作答。取什么数它自己定，同一批 tool_call 在虚拟线程上并发、回执按原顺序接回；不强制 tool_choice（Opus 5.5 这类模型不收强制），「先取数再答」写在系统提示词里。用户自己名下的 trader 由它直接查：六个只读工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。一个人最多 3 个 trader，trader_list 列名单，查询能按名字点；没点名、本会话也没记住的，当场弹一张选择卡等用户选，30 秒没选或点了停止就结束这一轮。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户，名下有几个时先选是哪个；run_deep_analysis 当场烧钱，走 HITL 闸，批准后转后台子运行；读得多的活用 delegate 派给后台 worker。每次调模型前先把收件箱里到的子运行报告排进上下文。', en: 'The only agent in a turn: a ReactLoop on the deep model with 25 tools, streaming its answer. It decides what to fetch; tool calls in one batch run in parallel on virtual threads and their results are paired back in order. tool_choice is never forced (models like Opus 5.5 reject it); “fetch first, then answer” lives in the system prompt. It reads the user’s own traders directly through six read-only tools baked to the userId inside the leaf — which is why userId must be part of the cache fingerprint. A user can have up to 3 traders: trader_list gives the roster and queries can name one; with no name and none remembered for the session, a pick card pops up on the spot, and 30 seconds without a pick, or a stop, ends the turn. The three trader actions merely push a form into the chat (the user presses the button, picking which trader first when there are several); run_deep_analysis burns money at once, so it passes the HITL gate and then runs as a background child run; heavy reading goes to background workers via delegate. Before every model call, the inbox of arrived child-run reports is appended to the context.' } },
+        detail: { zh: '一轮只有这一个 agent：深模型 + 25 个工具的 ReactLoop，流式作答——行情 4、指标 3、衍生品序列、财经日历、大户持仓、跨资产、资金流（图上合成 macro ×5）、快讯、trader 只读 6、动作表单 3、行为分析、run_deep_analysis、delegate。\n取什么数它自己定，同一批 tool_call 在虚拟线程上并发、回执按原顺序接回；不强制 tool_choice（Opus 5.5 这类模型不收强制），「先取数再答」写在系统提示词里。用户自己名下的 trader 由它直接查：六个只读工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。一个人最多 3 个 trader，trader_list 列名单，查询能按名字点；没点名、本会话也没记住的，当场弹一张选择卡等用户选，30 秒没选或点了停止就结束这一轮。\nwake / review / note 三个动作只往对话里推表单，按下按钮的是用户，名下有几个时先选是哪个；run_deep_analysis 当场烧钱，走 HITL 闸，批准后转后台子运行；读得多的活用 delegate 派给后台 worker。每次调模型前先把收件箱里到的子运行报告排进上下文。', en: 'The only agent in a turn: a ReactLoop on the deep model with 25 tools, streaming its answer — market 4, indicators 3, derivatives series, econ calendar, whale positions, cross-asset and fund flows (drawn as macro ×5), news, 6 read-only trader tools, 3 action forms, behaviour analysis, run_deep_analysis and delegate.\nIt decides what to fetch; tool calls in one batch run in parallel on virtual threads and their results are paired back in order. tool_choice is never forced (models like Opus 5.5 reject it); “fetch first, then answer” lives in the system prompt. It reads the user’s own traders directly through six read-only tools baked to the userId inside the leaf — which is why userId must be part of the cache fingerprint. A user can have up to 3 traders: trader_list gives the roster and queries can name one; with no name and none remembered for the session, a pick card pops up on the spot, and 30 seconds without a pick, or a stop, ends the turn.\nThe three trader actions merely push a form into the chat (the user presses the button, picking which trader first when there are several); run_deep_analysis burns money at once, so it passes the HITL gate and then runs as a background child run; heavy reading goes to background workers via delegate. Before every model call, the inbox of arrived child-run reports is appended to the context.' } },
       { id: 'cr', x: 556, y: 40, w: 230, h: 150, tag: 'CHILD RUNS', icon: 'layers',
         title: 'ChildRunRegistry',
         rows: [
@@ -239,8 +328,8 @@ const PANELS = [
       { id: 'wa', x: 836, y: 150, w: 170, h: 92, tag: 'WORKER', icon: 'candlestick-chart',
         title: { zh: 'analyst · 浅模型', en: 'analyst · light model' },
         rows: [
-          { id: 'am', t: { zh: '行情 ×4 · 指标 ×3', en: 'market ×4 · indicators ×3' } },
-          { id: 'ab', t: { zh: '只读 · 不许再派', en: 'read-only · no further dispatch' } }
+          { id: 'am', t: { zh: '行情 ×4 · 指标 ×3', en: 'market 4 · indicators 3' } },
+          { id: 'ab', t: { zh: '只读 · 不许再派', en: 'read-only · no delegate' } }
         ],
         detail: { zh: '行情分析员预设：浅模型 + 行情 4 个 + 指标 3 个（klines / indicators / kline_structure）。按任务书涉及的币和周期逐个取数，不凭记忆给数字；简报先结论后数据、给出失效条件。同样看不到主对话、没有 delegate。', en: 'The analyst preset: light model + 4 market tools + 3 indicator tools (klines / indicators / kline_structure). It fetches symbol by symbol and timeframe by timeframe as the brief requires and never quotes a number from memory; the brief leads with conclusions, backs them with the data and names an invalidation. It too is blind to the main conversation and has no delegate.' } },
       { id: 'da', x: 836, y: 260, w: 170, h: 92, tag: 'CHILD', icon: 'scale',
@@ -249,8 +338,8 @@ const PANELS = [
           { id: 'd1', t: 'Bull ∥ Bear → Judge' },
           { id: 'd2', t: { zh: '3 次深模型调用', en: '3 deep-model calls' } }
         ],
-        detail: { zh: 'run_deep_analysis 过了 HITL 闸门不再同步跑：spawn 一个子运行立刻返回 RUNNING，主 agent 先答能答的。子运行里 Bull 与 Bear 在虚拟线程上并行辩论，再由 Judge 裁决，阶段进度挂在过程轨的子运行条目上；裁决作为报告回灌，主 agent 被唤醒补答。', en: 'Once through the HITL gate, run_deep_analysis no longer runs inline: it spawns a child run and returns RUNNING at once, and the main agent answers what it can. Inside, Bull and Bear argue in parallel on virtual threads, then the Judge rules; stage progress shows on the child-run entry of the process rail. The verdict comes back as a report and the main agent is woken to follow up.' } },
-      { id: 'hitl', x: 1016, y: 190, w: 150, h: 184, tag: 'HITL', icon: 'shield-check', hitl: true,
+        detail: { zh: 'run_deep_analysis 过了 HITL 闸门也不在轮里同步跑：spawn 一个子运行立刻返回 RUNNING，主 agent 先答能答的。子运行里 Bull 与 Bear 在虚拟线程上并行辩论，再由 Judge 裁决，阶段进度挂在过程轨的子运行条目上；裁决作为报告回灌，主 agent 被唤醒补答。', en: 'Even once through the HITL gate, run_deep_analysis doesn’t run inside the turn: it spawns a child run and returns RUNNING at once, and the main agent answers what it can. Inside, Bull and Bear argue in parallel on virtual threads, then the Judge rules; stage progress shows on the child-run entry of the process rail. The verdict comes back as a report and the main agent is woken to follow up.' } },
+      { id: 'hitl', x: 1016, y: 190, w: 150, h: 186, tag: 'HITL', icon: 'shield-check', hitl: true,
         title: 'run_deep_analysis',
         rows: [
           { id: 'hsym', t: { zh: '标的 ETHUSDT', en: 'symbol ETHUSDT' } },
@@ -259,7 +348,7 @@ const PANELS = [
         ],
         btns: { ok: { zh: '确认执行', en: 'Approve' }, no: { zh: '取消', en: 'Dismiss' } },
         detail: { zh: '闸门不在工具体内，是主 agent 的 ReactLoop 执行工具前先问的一道关（ApprovalGate）：授权键 = sessionId + 工具名 + 归一化标的。卡片上写 ETHUSDT、模型改口要 BTCUSDT 时键不匹配，重新弹卡——判断发生在信息完整的那一层。', en: 'The gate is not inside the tool: the main agent’s ReactLoop asks it before running any tool (ApprovalGate). Approval key = sessionId + tool + normalized symbol. If the card says ETHUSDT and the model switches to BTCUSDT, the key mismatches and a new card pops — the judgment lives at the layer that has full information.' } },
-      { id: 'hist', x: 226, y: 460, w: 270, h: 100, tag: 'STORE', icon: 'database',
+      { id: 'hist', x: 226, y: 460, w: 270, h: 108, tag: 'STORE', icon: 'database',
         title: { zh: '会话历史', en: 'Session history' },
         rows: [
           { id: 'ow', t: { zh: '终态整体覆盖写', en: 'final state overwrites whole' } },
@@ -271,8 +360,8 @@ const PANELS = [
         title: { zh: '唤醒轮 · /wake', en: 'follow-up · /wake' },
         rows: [
           { id: 'w1', t: 'done.pending = true' },
-          { id: 'w2', t: { zh: '前端本地空闲时发起', en: 'fired when the client is idle' } },
-          { id: 'w3', t: { zh: '答案带【补充回答】标头', en: 'answer headed [Follow-up]' } }
+          { id: 'w2', t: { zh: '前端本地空闲时发起', en: 'fired when idle' } },
+          { id: 'w3', t: { zh: '答案带【补充回答】标头', en: 'answer: [Follow-up]' } }
         ],
         detail: { zh: '报告落进上下文而没有哪一轮答过，后端就标 pending，随 done 帧与 status 接口一起下发。唤醒由前端发起：本地没有轮在跑、排队消息也发完了，才 POST /wake；不欠就 2208（别的标签页先接走了，或后端重启丢了标记）。唤醒轮不落 user 行，用户侧消息是一条唤醒指令，答案带【补充回答】标头、不给重新生成；其余与普通轮一样收尾。', en: 'When a report lands in the context and no turn has answered it, the backend marks pending and sends it with the done frame and the status endpoint. The client starts the follow-up: only when nothing runs locally and the queue is drained does it POST /wake; if nothing is owed the call gets 2208 (another tab took it, or a restart lost the flag). The follow-up turn stores no user row — its user-side message is a wake instruction — and its answer carries the [Follow-up] header and cannot be regenerated; otherwise it ends like any other turn.' } }
     ],
@@ -285,7 +374,7 @@ const PANELS = [
       { id: 'cr-da', from: 'cr', to: 'da', pts: [[786, 160], [801, 160], [801, 306], [836, 306]] },
       { id: 'cr-m', from: 'cr', to: 'main', cls: 'back', pts: [[556, 170], [516, 170], [516, 300], [496, 300]] },
       { id: 'cr-h', from: 'cr', to: 'hist', cls: 'back', pts: [[671, 190], [671, 510], [496, 510]] },
-      { id: 'm-h', from: 'main', to: 'hist', pts: [[361, 420], [361, 460]] },
+      { id: 'm-h', from: 'main', to: 'hist', pts: [[361, 428], [361, 460]] },
       { id: 'h-w', from: 'hist', to: 'wake', cls: 'back', pts: [[226, 510], [166, 510]] },
       { id: 'w-m', from: 'wake', to: 'main', cls: 'back', pts: [[91, 444], [91, 430], [200, 430], [200, 380], [226, 380]] },
       { id: 's-u', from: 'main', to: 'user', cls: 'answer', pts: [[361, 120], [361, 16], [91, 16], [91, 64]] }
@@ -301,10 +390,9 @@ const PANELS = [
     title: { zh: '因子挖掘 agent', en: 'factor-mining agent' },
     sub: { zh: '生成角色 ↔ 评审角色 · 代码硬门判真假', en: 'generator ↔ reviewer · code gates decide' },
     w: 1180, h: 620,
-    legend: { x: 946, y: 60, w: 218, h: 124 },
     lanes: [
       { x: 216, y: 22, t: { zh: '每条候选并行 · PER CANDIDATE', en: 'PER CANDIDATE · IN PARALLEL' } },
-      { x: 466, y: 420, t: { zh: '一轮收尾 · END OF ROUND', en: 'END OF ROUND' } }
+      { x: 466, y: 422, t: { zh: '一轮收尾 · END OF ROUND', en: 'END OF ROUND' } }
     ],
     nodes: [
       { id: 'camp', x: 16, y: 50, w: 170, h: 112, tag: 'CAMPAIGN', icon: 'route',
@@ -345,18 +433,18 @@ const PANELS = [
           { id: 're', t: { zh: '不合法 → 带毛病再要', en: 'invalid → ask again' } }
         ],
         detail: { zh: '表达式就是 Python 表达式：$列引用面板的列（K 线、成交、资金费、溢价、持仓、多空比……），只放行 + − × ÷ 和 35 个算子（Qlib 风格的时序算子加 3 个截面算子），窗口必须是 1~2016 根的整数字面量。复杂度上限解析时就卡：不同的子式 ≤40、不同的窗口值 ≤6、不同的常量值 ≤6、截面算子 ≤2。按不同的数，同一个东西重复写不多算，拦的是堆参数而不是长公式。不是 JSON、不合法、和这条假设评估过的某版一模一样，都带着毛病再要，三次不行就停。', en: 'An expression is a Python expression: $column reads a panel column (candles, volume, funding, premium, open interest, long/short ratios…), and only + − × ÷ and 35 operators are allowed (Qlib-style time-series operators plus 3 cross-sectional ones); windows must be integer literals from 1 to 2016 bars. Complexity is capped at parse time: ≤40 distinct sub-expressions, ≤6 distinct window values, ≤6 distinct constants, ≤2 cross-sectional operators. Counting distinct values means repeating the same thing costs nothing — the cap stops parameter stuffing, not long formulas. Not JSON, invalid, or identical to a version already evaluated for this hypothesis: it is asked again with the problem attached, three strikes and it stops.' } },
-      { id: 'eval', x: 466, y: 180, w: 190, h: 214, tag: 'GATES · CODE', icon: 'shield-check',
+      { id: 'eval', x: 466, y: 180, w: 190, h: 220, tag: 'GATES · CODE', icon: 'shield-check',
         title: { zh: '硬门 G0–G10', en: 'Hard gates G0–G10' },
         sub: { zh: '只看搜索段 · 代码判，不是模型', en: 'search span only · code, not a model' },
         rows: [
-          { id: 'g0', led: true, t: { zh: 'G0 前视 · G1 样本', en: 'G0 lookahead · G1 n' } },
-          { id: 'g2', led: true, t: { zh: 'G2 IC · 顶组减底组', en: 'G2 IC · top − bottom' } },
-          { id: 'g3', led: true, t: { zh: 'G3 四段 · G4 三档', en: 'G3 4 segs · G4 3 horizons' } },
-          { id: 'g5', led: true, t: { zh: 'G5 多空腿排列检验', en: 'G5 long-short permutation' } },
-          { id: 'g6', led: true, t: { zh: 'G6 冗余 · G7 复杂度', en: 'G6 redundancy · G7 size' } },
-          { id: 'g8', led: true, t: { zh: 'G8 结构原创', en: 'G8 new structure' } },
-          { id: 'g9', led: true, t: { zh: 'G9 交易方案增量', en: 'G9 scheme Sharpe gain' } },
-          { id: 'g10', led: true, t: { zh: 'G10 方向对上声明', en: 'G10 sign = declared' } }
+          { id: 'g0', t: { zh: 'G0 前视 · G1 样本', en: 'G0 lookahead · G1 n' } },
+          { id: 'g2', t: { zh: 'G2 IC · 顶组减底组', en: 'G2 IC · top − bottom' } },
+          { id: 'g3', t: { zh: 'G3 四段 · G4 三档', en: 'G3 4 segs · G4 3 horizons' } },
+          { id: 'g5', t: { zh: 'G5 多空腿排列检验', en: 'G5 long-short permutation' } },
+          { id: 'g6', t: { zh: 'G6 冗余 · G7 复杂度', en: 'G6 redundancy · G7 size' } },
+          { id: 'g8', t: { zh: 'G8 结构原创', en: 'G8 new structure' } },
+          { id: 'g9', t: { zh: 'G9 交易方案增量', en: 'G9 scheme Sharpe gain' } },
+          { id: 'g10', t: { zh: 'G10 方向对上声明', en: 'G10 sign = declared' } }
         ],
         detail: { zh: '全池几百个币逐币求值，campaign 和手填评估合起来同时最多两条在算。门全部只看搜索段：G0 截断重算查前视；G1 样本量；G2 主档 24h 月度截面 IC ≥0.01、t ≥3，且截尾后顶组减底组 t ≥2；G3 四段至少三段同号、最近一段必须同号；G4 6/12/24h 三档同号；G5 多空腿（头尾 1/5 进场、2/5 才出、按波动分仓）的截面排列检验；G6 和参照集（老效应 + Alpha158）、库、观察区的截面 |ρ| < 0.7；G7 复杂度；G8 抹掉窗口和常量后的结构不和已知重合；G9 加进实盘交易方案后净 Sharpe 至少升 0.1；G10 IC 符号和声明的方向一致。另报一份回归掉老效应和 24h 反转之后还剩多少 IC，当标签不当门。', en: 'Every coin in a pool of hundreds is evaluated; campaign candidates and manual evaluations together run at most two at a time. Every gate reads only the search span: G0 truncate-and-recompute lookahead check; G1 sample size; G2 24h monthly cross-sectional IC ≥ 0.01 with t ≥ 3, plus a trimmed top-minus-bottom spread with t ≥ 2; G3 at least three of four segments agree, the latest one included; G4 the 6/12/24h horizons agree; G5 a cross-sectional permutation test of the long-short leg (enter at the outer fifths, exit past two fifths, vol-sized); G6 cross-sectional |ρ| < 0.7 against the reference set (known effects + Alpha158), the library and the watch list; G7 complexity; G8 the structure with windows and constants masked must be new; G9 adding it to the live trading scheme lifts net Sharpe by at least 0.1; G10 the IC sign matches the declared direction. The IC left after regressing out known effects and 24h reversal is reported as a label, not a gate.' } },
       { id: 'rev', x: 706, y: 92, w: 200, h: 196, tag: 'REVIEW AGENT', icon: 'scale',
@@ -413,7 +501,7 @@ const PANELS = [
       { id: 'eval-gen', from: 'eval', to: 'gen', cls: 'back', pts: [[466, 350], [446, 350], [446, 310], [426, 310]] },
       { id: 'eval-rev', from: 'eval', to: 'rev', pts: [[656, 240], [681, 240], [681, 190], [706, 190]] },
       { id: 'rev-gen', from: 'rev', to: 'gen', cls: 'back', pts: [[806, 92], [806, 42], [380, 42], [380, 50]] },
-      { id: 'rev-batch', from: 'rev', to: 'batch', pts: [[806, 288], [806, 404], [380, 404], [380, 448]] },
+      { id: 'rev-batch', from: 'rev', to: 'batch', pts: [[806, 288], [806, 410], [380, 410], [380, 448]] },
       { id: 'bt-gen', from: 'batch', to: 'gen', pts: [[260, 448], [260, 332]] },
       { id: 'bt-ho', from: 'batch', to: 'hold', pts: [[426, 510], [466, 510]] },
       { id: 'ho-obs', from: 'hold', to: 'obs', pts: [[656, 510], [706, 510]] },
@@ -427,15 +515,15 @@ const PANELS = [
   }
 ];
 
-/* 窄屏 stepper：卡片顺序 + 缩进层级。所有边都走左侧同一条总线，不再分左右廊道 */
+/* 窄屏 stepper：卡片顺序 + 缩进层级 + 分组括注。所有边都走左侧同一条总线 */
 const STEP = {
   trader: {
-    order: ['clock', 'sentinel', 'watch', 'event', 'manual', 'sched', 'asm', 'agent', 'data', 'guard', 'trade', 'sim', 'dec', 'rev'],
+    order: ['clock', 'sentinel', 'watch', 'event', 'drop', 'manual', 'sched', 'asm', 'agent', 'data', 'guard', 'trade', 'sim', 'dec', 'debrief', 'review', 'ledger'],
     indent: { data: 1, guard: 1, trade: 1, sim: 2 },
     groups: [
-      { from: 'clock', to: 'manual', t: { zh: '五种唤醒源 · 任一即可', en: 'five wake sources' } },
+      { from: 'clock', to: 'manual', t: { zh: '六路叫醒 · 任一路都行', en: 'six ways to wake it' } },
       { from: 'data', to: 'sim', t: { zh: '决策循环里被调用', en: 'called from inside the loop' } },
-      { from: 'rev', to: 'rev', t: { zh: '日终交接 · 一天一次', en: 'end of day · once daily' } }
+      { from: 'debrief', to: 'ledger', t: { zh: '复盘 · 有自己的位子，不挡唤醒', en: 'reviews · own slot, never block a wake' } }
     ]
   },
   chat: {
@@ -457,9 +545,30 @@ const STEP = {
 };
 
 /* ---------- 渲染 ---------- */
-/* 导线：折线直角拐弯 */
-function orthPath(pts) {
-  return pts.map(([x, y], i) => `${i ? 'L' : 'M'} ${x} ${y}`).join(' ');
+/* 导线：直角折线，拐角倒成小圆角（半径不超过两边各一半） */
+function orthPath(pts, r = 8) {
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i - 1], [x, y] = pts[i], [nx, ny] = pts[i + 1];
+    const k = Math.min(r, Math.hypot(x - px, y - py) / 2, Math.hypot(nx - x, ny - y) / 2);
+    d += ` L ${x - Math.sign(x - px) * k} ${y - Math.sign(y - py) * k} Q ${x} ${y} ${x + Math.sign(nx - x) * k} ${y + Math.sign(ny - y) * k}`;
+  }
+  const [lx, ly] = pts[pts.length - 1];
+  return `${d} L ${lx} ${ly}`;
+}
+
+function nodeHtml(n) {
+  let h = `<div class="nhead"><svg data-icon="${n.icon}"></svg><span class="ntag">${n.tag}</span><span class="ndot"></span></div>`;
+  h += `<div class="ntitle">${esc(T(n.title))}</div>`;
+  if (n.sub) h += `<div class="nsub">${esc(T(n.sub))}</div>`;
+  if (n.counter) h += `<div class="ncount"><b data-c>0</b><span>/ <em data-cm>${n.counter.max}</em> · ${esc(T(n.counter.label))}</span></div>`;
+  if (n.rows) h += `<div class="nrows">${n.rows.map(r => `<div class="nrow" data-row="${r.id}"><i></i><span>${esc(T(r.t))}</span></div>`).join('')}</div>`;
+  // 胶囊里带 lab 的是一组的小标题
+  if (n.chips) h += `<div class="nchips">${n.chips.map(c => c.lab ? `<span class="nclab">${esc(T(c.lab))}</span>` : `<span class="nchip" data-chip="${c.id}">${esc(T(c.t))}</span>`).join('')}</div>`;
+  if (n.stream) h += `<div class="nstream">${'<div class="sline"></div>'.repeat(n.stream)}</div>`;
+  if (n.badge) h += `<span class="tag sm npub">${esc(T(n.badge))}</span>`;
+  if (n.btns) h += `<div class="hitl-btns"><button type="button" class="btn sm ink wide" data-ok>${esc(T(n.btns.ok))}</button><button type="button" class="btn sm wide">${esc(T(n.btns.no))}</button></div>`;
+  return h;
 }
 
 function renderPanel(cfg, mount) {
@@ -467,88 +576,71 @@ function renderPanel(cfg, mount) {
   panel.id = 'panel-' + cfg.id;
 
   const head = el('div', 'panel-head');
-  const led = el('span', 'led');
-  const title = el('div', 'panel-title');
-  title.innerHTML = `<span class="pn">${cfg.num}</span><b>${esc(T(cfg.title))}</b><small>${esc(T(cfg.sub))}</small>`;
+  const lamp = el('span', 'lamp');
+  const title = el('div', 'panel-title', `<span class="pn">${cfg.num}</span><b>${esc(T(cfg.title))}</b><small>${esc(T(cfg.sub))}</small>`);
   const status = el('div', 'panel-status');
   const transport = el('div', 'transport');
-  const bPlay = el('button', 'ibtn'); bPlay.innerHTML = '<svg data-icon="pause"></svg>'; bPlay.title = T(UI.pause);
-  const bRe = el('button', 'ibtn'); bRe.innerHTML = '<svg data-icon="rotate-ccw"></svg>'; bRe.title = T(UI.restart);
-  const bSpd = el('button', 'ibtn txt num'); bSpd.textContent = '1.0×';
+  const btn = (cls, html, tip) => { const b = el('button', cls, html); b.type = 'button'; b.title = T(tip); return b; };
+  const bPlay = btn('ib sm', '<svg data-icon="pause"></svg>', UI.pause);
+  const bRe = btn('ib sm', '<svg data-icon="rotate-ccw"></svg>', UI.restart);
+  const bSpd = btn('ib sm tx num', '1.0×', UI.speed);
   transport.append(bPlay, bRe, bSpd);
-  head.append(led, title, status, transport);
+  head.append(lamp, title, status, transport);
 
   const wrap = el('div', 'canvas-wrap');
   const canvas = el('div', 'canvas');
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('class', 'wires');
+  svg.setAttribute('aria-hidden', 'true');
   // 总线底轨：只在 stepper 模式画
-  const rail = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  const rail = document.createElementNS(SVGNS, 'path');
   rail.setAttribute('class', 'rail');
   svg.appendChild(rail);
   const paths = {};
   for (const eg of cfg.edges) {
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const p = document.createElementNS(SVGNS, 'path');
     if (eg.cls) p.classList.add(eg.cls);
     svg.appendChild(p);
     paths[eg.id] = p;
   }
+  // 脉冲层放最后，永远压在线上面
+  const pulses = document.createElementNS(SVGNS, 'g');
+  svg.appendChild(pulses);
   canvas.appendChild(svg);
 
-  const view = { cfg, panel, led, status, bPlay, bRe, bSpd, svg, rail, paths, nodes: {}, tlines: null, canvas, wrap, box: {}, mode: null, lanes: [], groups: [], legend: null };
+  const view = { cfg, panel, lamp, status, bPlay, bRe, bSpd, svg, rail, paths, pulses, nodes: {}, tlines: null, canvas, wrap, legend: null, box: {}, mode: null, lanes: [], groups: [] };
 
-  for (const ln of cfg.lanes || []) {
-    const d = el('div', 'lane-label' + (ln.right ? ' right' : ''), esc(T(ln.t)));
+  for (const ln of cfg.lanes) {
+    const d = el('div', 'lane-label', esc(T(ln.t)));
     canvas.appendChild(d);
     view.lanes.push({ cfg: ln, el: d });
   }
 
   for (const n of cfg.nodes) {
-    const d = el('div', 'node' + (n.hitl ? ' hitl-card' : ''));
-    let inner = `<div class="nhead"><svg data-icon="${n.icon}"></svg><span class="ntag">${n.tag}</span><span class="ndot"></span></div>`;
-    inner += `<div class="ntitle">${esc(T(n.title))}</div>`;
-    if (n.sub) inner += `<div class="nsub">${esc(T(n.sub))}</div>`;
-    if (n.counter) inner += `<div class="ncount"><b data-c>0</b><span>/ ${n.counter.max} · ${esc(T(n.counter.label))}</span></div>`;
-    if (n.rows) inner += `<div class="nrows${n.rows.every(r => typeof r.t === 'string') ? ' cols' : ''}">${n.rows.map(r => `<div class="nrow" data-row="${r.id}">${r.led ? '<span class="rled"></span>' : '<span class="rled" style="opacity:.15"></span>'}<span>${esc(T(r.t))}</span></div>`).join('')}</div>`;
-    if (n.chips) inner += `<div class="nchips">${n.chips.map(c => `<span class="nchip" data-chip="${c.id}">${esc(T(c.t))}</span>`).join('')}</div>`;
-    if (n.stream) inner += `<div class="nstream">${'<div class="sline"></div>'.repeat(n.stream)}</div>`;
-    if (n.badge) inner += `<span class="badge-pub">${esc(T(n.badge))}</span>`;
-    if (n.btns) inner += `<div class="hitl-btns"><button class="hitl-btn ok">${esc(T(n.btns.ok))}</button><button class="hitl-btn">${esc(T(n.btns.no))}</button></div>`;
-    d.innerHTML = inner;
+    const d = el('div', 'node' + (n.hitl ? ' hitl-card' : ''), nodeHtml(n));
     if (!n.hitl) d.addEventListener('click', ev => { ev.stopPropagation(); showPop(view, n); });
     canvas.appendChild(d);
     view.nodes[n.id] = d;
   }
 
-  // 图例：放在 cfg.legend 给的那块空地，只在宽屏出现
-  if (cfg.legend) {
-    const lg = UI.legend;
-    const legend = el('div', 'legend');
-    legend.innerHTML = `<div class="lg-t">${esc(T(lg.title))}</div>
-      <div class="lg-row"><span class="lg-pulse"></span>${esc(T(lg.pulse))}</div>
-      <div class="lg-row"><span class="lg-led"></span>${esc(T(lg.led))}</div>
-      <div class="lg-row"><span class="lg-dash"></span>${esc(T(lg.back))}</div>
-      <div class="lg-row"><span class="lg-pulse bad"></span>${esc(T(lg.bad))}</div>
-      <div class="lg-row"><svg data-icon="mouse-pointer-click"></svg>${esc(T(lg.click))}</div>`;
-    canvas.appendChild(legend);
-    view.legend = legend;
-  }
   // stepper 的分组括注
-  for (const g of (STEP[cfg.id].groups || [])) {
+  for (const g of STEP[cfg.id].groups) {
     const d = el('div', 'step-group', `<span>${esc(T(g.t))}</span>`);
     canvas.appendChild(d);
     view.groups.push({ cfg: g, el: d });
   }
-  wrap.appendChild(canvas);
+
+  // 图例：画布底下一行，左边和节点对齐
+  const lg = UI.legend;
+  const legend = el('div', 'legend', `<span><i class="lg-dot"></i>${esc(T(lg.pulse))}</span><span><i class="lg-dot ok"></i>${esc(T(lg.led))}</span><span><i class="lg-dash"></i>${esc(T(lg.back))}</span><span><i class="lg-dot bad"></i>${esc(T(lg.bad))}</span><span><i class="lg-dot dim"></i>${esc(T(lg.dim))}</span><span><svg data-icon="mouse-pointer-click"></svg>${esc(T(lg.click))}</span>`);
+  view.legend = legend;
+  wrap.append(canvas, legend);
 
   const trace = el('div', 'trace');
-  trace.innerHTML = `<div class="trace-head">${UI.trace}<span class="led run"></span></div>`;
-  const tlines = el('div', 'trace-lines');
-  trace.appendChild(tlines);
-  view.tlines = tlines;
+  view.tlines = el('div', 'trace-box');
+  trace.appendChild(view.tlines);
 
-  const foot = el('div', 'panel-foot');
-  foot.innerHTML = cfg.foot.map(f => `<span>${esc(T(f))}</span>`).join('');
+  const foot = el('div', 'panel-foot', cfg.foot.map(f => `<span>${esc(T(f))}</span>`).join(''));
 
   panel.append(head, wrap, trace, foot);
   mount.appendChild(panel);
@@ -556,31 +648,33 @@ function renderPanel(cfg, mount) {
   return view;
 }
 
-/* 节点详情浮层 */
+/* 节点说明浮层：宽屏放节点旁边，字多的放宽一档；窄屏压在卡片上。量完高度再定位置，不出画布 */
+const POP_W = 300, POP_WIDE = 440, POP_TALL = 400;
 let popEl = null;
 function closePop() { if (popEl) { popEl.remove(); popEl = null; } }
 function showPop(view, n) {
   closePop();
   const box = view.box[n.id];
-  const pop = el('div', 'pop');
-  pop.innerHTML = `<div class="pt">${esc(T(n.title))}<button class="px" aria-label="close"><svg data-icon="x"></svg></button></div><div class="pd">${esc(T(n.detail || n.sub || ''))}</div>`;
+  // 说明里的 \n 是分段
+  const pop = el('div', 'pop', `<div class="pt"><b>${esc(T(n.title))}</b><button type="button" class="ib sm" aria-label="close"><svg data-icon="x"></svg></button></div><div class="pd">${T(n.detail || n.sub || '').split('\n').map(s => `<p>${esc(s)}</p>`).join('')}</div>`);
+  pop.addEventListener('click', ev => ev.stopPropagation());
+  pop.querySelector('button').addEventListener('click', closePop);
+  view.canvas.appendChild(pop);
+  icons(pop);
+  let top = box.y;
   if (view.mode === 'step') {
-    // 窄屏：浮层压在节点自己身上，宽度跟卡片走
     pop.style.left = box.x + 'px';
     pop.style.width = box.w + 'px';
-    pop.style.top = (box.y + 24) + 'px';
+    top = box.y + 30;
   } else {
-    const cw = view.canvas.clientWidth;
+    let w = POP_W;
+    if (pop.offsetHeight > POP_TALL) { w = POP_WIDE; pop.style.width = w + 'px'; }
     let left = box.x + box.w + 12;
-    if (left + 250 > cw) left = Math.max(8, box.x - 262);
+    if (left + w > view.canvas.clientWidth) left = Math.max(8, box.x - w - 12);
     pop.style.left = left + 'px';
-    pop.style.top = Math.min(box.y, view.canvas.clientHeight - 150) + 'px';
   }
-  pop.addEventListener('click', ev => ev.stopPropagation());
-  pop.querySelector('.px').addEventListener('click', closePop);
-  view.canvas.appendChild(pop);
+  pop.style.top = Math.max(0, Math.min(top, view.canvas.clientHeight - pop.offsetHeight)) + 'px';
   popEl = pop;
-  icons(pop);
 }
 document.addEventListener('click', closePop);
 
@@ -590,14 +684,13 @@ document.addEventListener('click', closePop);
    每条边 = 出卡片头行 → 上总线 → 沿总线走到目标卡头行 → 进卡片。
    所有边共用一条轨，只有点亮的那条会显色，脉冲永远沿轨走，一眼看得出方向。
    高度实测（中英文换行不同，写死必截断）。既不横滚，也不 scale 糊字。 */
-const STEP_RAIL = 14;     // 总线 x
-const STEP_PAD_L = 30;    // 卡片左边缘（一级）
-const STEP_INDENT = 16;   // 每级缩进
-const STEP_PAD_R = 12;
-const STEP_GAP = 12;      // 卡片竖向间距（窄屏卡片只剩一行标题，间距跟着收）
-const STEP_GAP_GROUP = 30; // 分组之间多留一点，给括注
-const STEP_TOP = 14;
-const STUB_Y = 19;        // 出/入卡片的线落在卡片竖向中线附近（单行卡高约 38）
+const STEP_RAIL = 20;     // 总线 x
+const STEP_PAD_L = 38;    // 卡片左边缘（一级）
+const STEP_INDENT = 18;   // 每级缩进
+const STEP_PAD_R = 20;
+const STEP_GAP = 10;      // 卡片竖向间距
+const STEP_LABEL = 26;    // 分组括注占的高
+const STUB_Y = 18;        // 出 / 入卡片的线落在单行卡的竖向中线
 
 function applyLayout(view) {
   const cfg = view.cfg;
@@ -612,8 +705,7 @@ function applyLayout(view) {
   if (mode === 'wide') {
     CW = cfg.w; CH = cfg.h;
     for (const n of cfg.nodes) {
-      const d = view.nodes[n.id];
-      d.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`;
+      view.nodes[n.id].style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`;
       view.box[n.id] = { x: n.x, y: n.y, w: n.w, h: n.h };
     }
     for (const eg of cfg.edges) view.paths[eg.id].setAttribute('d', orthPath(eg.pts));
@@ -622,18 +714,12 @@ function applyLayout(view) {
       ln.el.style.display = '';
       ln.el.style.left = ln.cfg.x + 'px'; ln.el.style.top = ln.cfg.y + 'px';
     }
-    if (view.legend) {
-      const lg = cfg.legend;
-      view.legend.style.cssText = `left:${lg.x}px;top:${lg.y}px;width:${lg.w}px;height:${lg.h}px`;
-    }
-    for (const g of view.groups) g.el.style.display = 'none';
   } else {
     const sp = STEP[cfg.id];
     CW = avail;
     const floats = sp.float || {};
     const indentOf = id => (sp.indent && sp.indent[id]) || 0;
-    const groupStart = new Set((sp.groups || []).map(g => g.from));
-    const groupEnd = new Set((sp.groups || []).map(g => g.to));
+    const groupStart = new Set(sp.groups.map(g => g.from));
 
     // ① 先写宽度、高度放开，② 一次性量高，③ 再落 top —— 只触发一次回流
     for (const id of sp.order) {
@@ -642,19 +728,18 @@ function applyLayout(view) {
     }
     for (const id in floats) {
       const f = floats[id];
-      const base = view.box[f.over] || { x: STEP_PAD_L, w: CW - STEP_PAD_L - STEP_PAD_R };
       view.nodes[id].style.cssText = `left:${STEP_PAD_L + f.inset}px;top:0px;width:${CW - STEP_PAD_L - STEP_PAD_R - f.inset * 2}px;height:auto`;
     }
     const hs = sp.order.map(id => view.nodes[id].offsetHeight);
-    let y = STEP_TOP;
+    let y = 0;
     sp.order.forEach((id, i) => {
-      if (groupStart.has(id)) y += 22;                 // 括注占位
+      if (groupStart.has(id)) y += STEP_LABEL;
       const x = STEP_PAD_L + indentOf(id) * STEP_INDENT;
       view.nodes[id].style.top = y + 'px';
       view.box[id] = { x, y, w: CW - x - STEP_PAD_R, h: hs[i] };
-      y += hs[i] + (groupEnd.has(id) ? STEP_GAP_GROUP : STEP_GAP);
+      y += hs[i] + STEP_GAP;
     });
-    CH = y - STEP_GAP + STEP_TOP;
+    CH = y - STEP_GAP;
     for (const id in floats) {
       const f = floats[id], base = view.box[f.over], top = base.y + f.dy;
       view.nodes[id].style.top = top + 'px';
@@ -670,18 +755,17 @@ function applyLayout(view) {
     const first = view.box[sp.order[0]], last = view.box[sp.order[sp.order.length - 1]];
     view.rail.setAttribute('d', `M ${STEP_RAIL} ${first.y + STUB_Y} V ${last.y + STUB_Y}`);
     for (const ln of view.lanes) ln.el.style.display = 'none';
-    if (view.legend) view.legend.style.display = 'none';
     for (const g of view.groups) {
-      const from = view.box[g.cfg.from], to = view.box[g.cfg.to];
-      g.el.style.display = '';
+      const from = view.box[g.cfg.from];
       g.el.style.left = from.x + 'px';
-      g.el.style.top = (from.y - 15) + 'px';
-      g.el.style.height = (to.y + to.h - from.y + 15) + 'px';
+      g.el.style.top = from.y + 'px';
     }
   }
   view.canvas.style.width = CW + 'px';
   view.canvas.style.height = CH + 'px';
   view.svg.setAttribute('viewBox', `0 0 ${CW} ${CH}`);
+  view.legend.style.width = CW + 'px';
+  view.legend.style.paddingLeft = (mode === 'wide' ? 16 : STEP_PAD_L) + 'px';
   return changed;
 }
 
@@ -738,7 +822,11 @@ const ICONS = {
   'bitcoin': '<path d="M11.767 19.089c4.924.868 6.14-6.025 1.216-6.894m-1.216 6.894L5.86 18.047m5.908 1.042-.347 1.97m1.563-8.864c4.924.869 6.14-6.025 1.215-6.893m-1.215 6.893-3.94-.694m5.155-6.2L8.29 4.26m5.908 1.042.348-1.97M7.48 20.364l3.126-17.727"/>',
   'gem': '<path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/>',
   'chevrons-up': '<path d="m17 11-5-5-5 5"/><path d="m17 18-5-5-5 5"/>',
-  'languages': '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>'
+  'languages': '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+  'trending-down': '<path d="M16 17h6v-6"/><path d="m22 17-8.5-8.5-5 5L2 7"/>',
+  'split': '<path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3"/><path d="m15 9 6-6"/>',
+  'book-marked': '<path d="M10 2v8l3-3 3 3V2"/><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>',
+  'repeat': '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>'
 };
 function icons(scope) {
   (scope || document).querySelectorAll('svg[data-icon]').forEach(s => {
@@ -747,7 +835,7 @@ function icons(scope) {
     s.setAttribute('viewBox', '0 0 24 24');
     s.setAttribute('fill', 'none');
     s.setAttribute('stroke', 'currentColor');
-    s.setAttribute('stroke-width', '2');
+    s.setAttribute('stroke-width', '1.75');
     s.setAttribute('stroke-linecap', 'round');
     s.setAttribute('stroke-linejoin', 'round');
     s.innerHTML = body;
@@ -761,6 +849,7 @@ class Runner {
     this.v = view; this.script = script; this.scenes = scenes;
     this.pinned = null;   // 钉住的场景序号，null=轮播
     this.speed = 1; this.paused = false; this.runId = 0; this.userPaused = false;
+    this._st = 'run';
     this.clock = 8 * 3600 * 1000; // 08:00:00 起步的假钟
   }
   chk(id) { if (id !== this.runId) throw new Abort(); }
@@ -774,30 +863,37 @@ class Runner {
     this.chk(id);
   }
   node(nid) { return this.v.nodes[nid]; }
-  on(nid) { this.node(nid).classList.add('on'); this.node(nid).classList.remove('done', 'err'); }
-  done(nid) { this.node(nid).classList.remove('on', 'err'); this.node(nid).classList.add('done'); }
+  on(nid) { this.node(nid).classList.add('on'); this.node(nid).classList.remove('done', 'err', 'hold'); }
+  done(nid) { this.node(nid).classList.remove('on', 'err', 'hold'); this.node(nid).classList.add('done'); }
   err(nid) { this.node(nid).classList.add('err'); }
   clearErr(nid) { this.node(nid).classList.remove('err'); }
+  hold(nid) { this.node(nid).classList.remove('on', 'done'); this.node(nid).classList.add('hold'); }
   row(nid, rid, cls = 'hit', keep = false) {
     const r = this.node(nid).querySelector(`[data-row="${rid}"]`);
-    if (!r) return;
     r.classList.add(cls);
     if (!keep) setTimeout(() => r.classList.remove(cls), 1100 / this.speed);
   }
-  ledOk(nid, rid) { const r = this.node(nid).querySelector(`[data-row="${rid}"]`); if (r) r.classList.add('ok'); }
+  ledOk(nid, rid) { this.node(nid).querySelector(`[data-row="${rid}"]`).classList.add('ok'); }
   clearRows(nid) { this.node(nid).querySelectorAll('.nrow').forEach(r => r.classList.remove('hit', 'ok', 'bad')); }
-  chip(nid, cid) { const c = this.node(nid).querySelector(`[data-chip="${cid}"]`); if (c) c.classList.add('hit'); }
-  count(nid, val) { const b = this.node(nid).querySelector('[data-c]'); if (b) b.textContent = val; }
-  hold(nid) { this.node(nid).classList.remove('on'); this.node(nid).classList.add('hold'); }
-  unhold(nid) { this.node(nid).classList.remove('hold'); }
-  scene(m) { this.sceneText = T(m); this.status(this._st || 'run'); }
-  status(k) { this._st = k; this.v.status.textContent = (this.sceneText ? this.sceneText + '   ' : '') + T(UI.st[k]); }
+  chip(nid, cid, cls = 'hit') { this.node(nid).querySelector(`[data-chip="${cid}"]`).classList.add(cls); }
+  count(nid, val) { this.node(nid).querySelector('[data-c]').textContent = val; }
+  /* 改行字 / 计数上限：原文记在 data-orig 上，reset 时换回去 */
+  swap(e, s) { if (e.dataset.orig == null) e.dataset.orig = e.textContent; e.textContent = s; }
+  text(nid, rid, msg) { this.swap(this.node(nid).querySelector(`[data-row="${rid}"] span`), T(msg)); this.row(nid, rid, 'hit', true); }
+  max(nid, v) { this.swap(this.node(nid).querySelector('[data-cm]'), v); }
+  /* 假钟拨到这一幕的时刻 */
+  at(hms) { const [h, m, s] = hms.split(':').map(Number); this.clock = ((h * 60 + m) * 60 + s) * 1000; }
+  status(k) { this._st = k; this.paint(); }
+  paint() {
+    const k = this.userPaused ? 'paused' : this._st;
+    this.v.lamp.dataset.st = k;
+    this.v.status.textContent = T(UI.st[k]);
+  }
   log(tag, msg, cls) {
     this.clock += 300 + Math.random() * 1500; // 假钟随手走
     const d = new Date(this.clock);
     const tt = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`;
-    const line = el('div', 'tline' + (cls ? ' ' + cls : ''));
-    line.innerHTML = `<span class="tt">${tt}</span><span class="tg">${tag}</span><span>${esc(T(msg))}</span>`;
+    const line = el('div', 'tline' + (cls ? ' ' + cls : ''), `<span class="tt">${tt}</span><span class="tg">${tag}</span><span class="tm">${esc(T(msg))}</span>`);
     this.v.tlines.appendChild(line);
     const kids = this.v.tlines.children;
     while (kids.length > 6) kids[0].remove();
@@ -807,27 +903,28 @@ class Runner {
     const path = this.v.paths[eid];
     const id = this.runId;
     path.classList.add('on');
+    this.v.svg.insertBefore(path, this.v.pulses);   // 点亮的那条挪到最上面，不被并行的线盖住
     const len = path.getTotalLength();
-    // 脉冲是个小方块，s=边长的一半，坐标按中心换算成左上角
-    const s = opts.r || 3.5;
-    const c = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    c.setAttribute('width', s * 2); c.setAttribute('height', s * 2);
-    c.setAttribute('class', 'pulse' + (opts.cls ? ' ' + opts.cls : ''));
-    this.v.svg.appendChild(c);
+    const r = opts.r || 3.5;
+    const g = document.createElementNS(SVGNS, 'g');
+    g.setAttribute('class', 'pulse' + (opts.cls ? ' ' + opts.cls : ''));
+    g.innerHTML = `<circle class="halo" r="${r * 2}"/><circle r="${r}"/>`;
+    const at = k => { const p = path.getPointAtLength((opts.reverse ? 1 - k : k) * len); g.setAttribute('transform', `translate(${p.x} ${p.y})`); };
+    at(0);
+    this.v.pulses.appendChild(g);
     const dur = (opts.dur || 650) / this.speed;
     return new Promise((res, rej) => {
       let elapsed = 0, last = null;
       const step = ts => {
         // 被新一轮打断：和 sleep 一样抛 Abort，旧剧本停在这一步
-        if (id !== this.runId) { c.remove(); path.classList.remove('on'); return rej(new Abort()); }
+        if (id !== this.runId) { g.remove(); path.classList.remove('on'); return rej(new Abort()); }
         if (this.paused) { last = null; return requestAnimationFrame(step); }
         if (last == null) last = ts;
         elapsed += ts - last; last = ts;
         const k = Math.min(elapsed / dur, 1);
-        const p = path.getPointAtLength((opts.reverse ? 1 - k : k) * len);
-        c.setAttribute('x', p.x - s); c.setAttribute('y', p.y - s);
+        at(k);
         if (k < 1) requestAnimationFrame(step);
-        else { c.remove(); if (!opts.hold) setTimeout(() => { if (id === this.runId) path.classList.remove('on'); }, 350); res(); }
+        else { g.remove(); if (!opts.hold) setTimeout(() => { if (id === this.runId) path.classList.remove('on'); }, 350); res(); }
       };
       requestAnimationFrame(step);
     });
@@ -835,8 +932,7 @@ class Runner {
   /* 发出去不等它走完的脉冲（回复流式回传那条线）：被打断就算了 */
   blip(eid, opts) { this.pulse(eid, opts).catch(e => { if (!(e instanceof Abort)) throw e; }); }
   async type(nid, idx, msg) {
-    const lines = this.node(nid).querySelectorAll('.sline');
-    const target = lines[idx]; if (!target) return;
+    const target = this.node(nid).querySelectorAll('.sline')[idx];
     const text = T(msg);
     for (let i = 1; i <= text.length; i++) {
       target.textContent = text.slice(0, i);
@@ -846,18 +942,20 @@ class Runner {
   clearStream(nid) { this.node(nid).querySelectorAll('.sline').forEach(s => s.textContent = ''); }
   hitl(showing) { this.node('hitl').classList.toggle('show', showing); }
   hitlPress() {
-    const b = this.node('hitl').querySelector('.hitl-btn.ok');
-    if (b) { b.classList.add('pressed'); setTimeout(() => b.classList.remove('pressed'), 900 / this.speed); }
+    const b = this.node('hitl').querySelector('[data-ok]');
+    b.classList.add('pressed'); setTimeout(() => b.classList.remove('pressed'), 900 / this.speed);
   }
   reset() {
     const v = this.v;
     Object.values(v.nodes).forEach(n => n.classList.remove('on', 'done', 'err', 'hold', 'show'));
     v.panel.querySelectorAll('.nrow').forEach(r => r.classList.remove('hit', 'ok', 'bad'));
-    v.panel.querySelectorAll('.nchip').forEach(c => c.classList.remove('hit'));
+    v.panel.querySelectorAll('.nchip').forEach(c => c.classList.remove('hit', 'busy'));
     v.panel.querySelectorAll('[data-c]').forEach(b => b.textContent = '0');
     v.panel.querySelectorAll('.sline').forEach(s => s.textContent = '');
+    v.panel.querySelectorAll('[data-orig]').forEach(e => { e.textContent = e.dataset.orig; delete e.dataset.orig; });
     Object.values(v.paths).forEach(p => p.classList.remove('on'));
-    v.svg.querySelectorAll('.pulse').forEach(c => c.remove());
+    v.pulses.replaceChildren();
+    v.tlines.replaceChildren();
   }
   async run() {
     const id = ++this.runId;
@@ -868,246 +966,321 @@ class Runner {
         this.chk(id);
         const scene = this.pinned ?? (cycle++ % this.scenes.length);
         if (this.onScene) this.onScene(scene);
-        this.v.led.classList.add('run');
         this.status('run');
         await this.script(this, scene);
         this.status('sleep');
-        this.v.led.classList.remove('run');
         await this.sleep(2600);
         this.reset();
       }
     } catch (e) { if (!(e instanceof Abort)) throw e; }
   }
-  stop() { this.runId++; this.v.led.classList.remove('run'); }
+  stop() { this.runId++; }
 }
 
-/* ---------- 剧本：trader 五个场景轮播 ---------- */
+/* ---------- 剧本：trader 六个场景轮播（时刻和数字对着看板上 kestrel 的示例） ---------- */
 const TR_SCENES = [
   { zh: 'A · 例行唤醒 → 开仓', en: 'A · routine wake → open' },
-  { zh: 'B · 盯盘命中 → 求证处置', en: 'B · watch hit → verify and act' },
-  { zh: 'C · 警报唤醒 → 失效退出', en: 'C · alert wake → invalidation exit' },
-  { zh: 'D · 例行唤醒 → 观望布防', en: 'D · routine wake → wait and arm' },
-  { zh: 'E · 日线交接 → 复盘', en: 'E · daily handover → review' }
+  { zh: 'B · 盯盘命中 → 单币轮', en: 'B · watch hit → one-symbol round' },
+  { zh: 'C · 波动警报 → 失效退出', en: 'C · alert → invalidation exit' },
+  { zh: 'D · 例行 → 观望布防', en: 'D · routine → wait and arm' },
+  { zh: 'E · 立即复盘 → 单笔复盘', en: 'E · review now → debrief' },
+  { zh: 'F · 08:00 统一复盘 → 账本', en: 'F · 08:00 unified review → ledger' }
 ];
+const TR_SCOPE = {
+  book: { zh: '本轮 · 整盘', en: 'scope · whole book' },
+  ETH: { zh: '本轮 · 只处理 ETH', en: 'scope · ETH only' },
+  SOL: { zh: '本轮 · 只处理 SOL', en: 'scope · SOL only' }
+};
 
-/* 共用前半段：触发 → 准入 → 组装 → 进循环；src 是叫醒它的那一路 */
-async function trEnter(c, src) {
-  if (src === 'alert') {
-    c.on('sentinel');
-    c.row('sentinel', 'amp', 'hit'); c.row('sentinel', 'hold', 'hit');
-    c.log('SENTRY', { zh: '5min 振幅 2.4% 超阈值 · 持有 ETH → 警报唤醒', en: '5min range 2.4% over threshold · holds ETH → alert wakeup' }, 'warn');
-    await c.sleep(700);
-    await c.pulse('sn-sch');
-  } else if (src === 'watch') {
-    // 它上一轮自己布的条件：收盘类在 5m 收盘时按周期边界判
-    c.on('watch');
-    c.row('watch', 'close', 'hit');
-    c.log('WATCH', { zh: '盯盘命中：ETH 15m 收盘 3076 跌破 3080 · 备注「跌破就收紧止损锁利润」', en: 'watch hit: ETH 15m closed at 3076, below 3080 · note “if it breaks, tighten the stop to lock profit”' }, 'warn');
-    await c.sleep(800);
-    await c.pulse('wt-sch');
-  } else if (src === 'calendar') {
-    // 边界撞上数据公布：先等实际值再发，开场白里的财经日历才带得上刚公布的数
-    c.on('clock');
-    c.log('CLOCK', { zh: '1h 边界 22:00 撞上 ISM 制造业 PMI 公布 · 先等实际值', en: '1h boundary at 22:00 lands on the ISM PMI release · waiting for the actual' }, 'warn');
-    await c.sleep(1100);
-    c.log('CLOCK', { zh: '实际值已到（等了 7s）· 例行唤醒发出', en: 'actual value in (waited 7s) · routine wakeup fired' }, 'good');
-    await c.sleep(500);
-    await c.pulse('ck-sch');
-  } else {
-    c.on('clock');
-    c.log('CLOCK', { zh: '1h 边界到达 · 例行唤醒', en: '1h boundary hit · routine wakeup' });
-    await c.sleep(600);
-    await c.pulse('ck-sch');
-  }
+/* 准入分发：时段、分发、预算三道放行，再点亮交给的那一轮；from 是叫醒它的那个节点 */
+async function trRoute(c, from, round, msg) {
   c.on('sched');
-  for (const r of ['mutex', 'window', 'budget', 'hand']) { c.ledOk('sched', r); await c.sleep(280); }
-  c.log('SCHED', { zh: '互斥 ✓ 时段 ✓ 预算 900s ✓ 不在交接窗口 ✓', en: 'mutex ✓ window ✓ budget 900s ✓ no handover ✓' });
-  await c.sleep(400);
-  c.done(src === 'alert' ? 'sentinel' : src === 'watch' ? 'watch' : 'clock');
+  for (const r of ['window', 'route', 'budget']) { c.ledOk('sched', r); await c.sleep(260); }
+  c.chip('sched', round);
+  c.log('SCHED', msg);
+  await c.sleep(500);
+  c.done(from);
   await c.pulse('sch-asm');
-  c.done('sched'); c.on('asm');
-  for (const ch of ['c1', 'c2', 'c4', 'c5', 'cw', 'c6', 'c7', 'c8', 'c9']) { c.chip('asm', ch); await c.sleep(120); }
-  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 经验账本 + 交易指令）+ 开场白（事件 · 账户 · 盯盘条件 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + ledger + instructions) + opening (events · account · watches · last conclusion · calendar)' });
+  c.done('sched');
+}
+
+/* 拼提示词：系统提示词三块所有轮共用，开场白按唤醒种类亮 */
+async function trPrompt(c, round, opening, msg) {
+  c.on('asm');
+  for (const ch of ['c1', 'c2', 'c3', ...opening]) { c.chip('asm', ch); await c.sleep(110); }
+  c.log('PROMPT', msg);
   await c.sleep(500);
   await c.pulse('asm-ag');
   c.done('asm'); c.on('agent');
+  c.text('agent', 'scope', TR_SCOPE[round]);
   c.count('agent', 1);
 }
 
-/* 数据工具一来一回 */
-async function trData(c, rowId, n, msg) {
+/* 整盘轮第二段：承诺处置完才追加整盘事实，多给一次收尾 */
+async function trStage2(c, msg) {
+  c.on('asm'); c.chip('asm', 'o3');
+  c.max('agent', 13);
+  c.log('PROMPT', msg);
+  await c.sleep(400);
+  await c.pulse('asm-ag');
+  c.done('asm');
+}
+
+/* 数据工具一来一回：n 是发出这批调用的那次模型调用，同批几条一起亮 */
+async function trData(c, n, rows, msgs) {
+  c.count('agent', n);
   await c.pulse('ag-data'); c.on('data');
-  c.row('data', rowId); c.count('agent', n);
-  c.log('TOOL', msg);
+  for (const r of rows) c.row('data', r);
+  for (const m of msgs) c.log('TOOL', m);
   await c.pulse('ag-data', { reverse: true, cls: 'dim' });
   await c.sleep(300);
 }
 
-async function traderScript(c, scene) {
-  c.scene(TR_SCENES[scene]);
+/* 落决策行 */
+async function trDecide(c, rows, msg) {
+  await c.pulse('ag-dec', { dur: 800 });
+  c.done('agent'); c.on('dec');
+  for (const r of rows) c.row('dec', r, 'hit', true);
+  c.log('DB', msg, 'good');
+  await c.sleep(1100);
+  c.done('dec');
+}
 
-  if (scene === 4) {
-    // 日线交接：交易定格 → 全体复盘 → 账本注入下一唤醒
+async function traderScript(c, scene) {
+  if (scene === 0) {
+    // 09/01 21:00 整盘轮：第一段处置上一轮的等待行，第二段看整盘开仓
+    c.at('21:00:02');
     c.on('clock');
-    c.log('CLOCK', { zh: '日线边界（UTC0 / 新加坡 08:00）', en: 'daily boundary (UTC0 / 08:00 Singapore)' });
+    c.log('CLOCK', { zh: '1h 边界 21:00 · 例行唤醒', en: '1h boundary 21:00 · routine wake' });
     await c.sleep(600);
     await c.pulse('ck-sch');
-    c.on('sched');
-    c.log('SCHED', { zh: '停工窗口开始 · 一切新唤醒全拒，例行的 K 线事件直接丢弃', en: 'blackout begins · every new wakeup rejected, routine candle events dropped' }, 'warn');
-    await c.sleep(1000);
-    c.on('dec');
-    c.log('DB', { zh: '素材 = 已定格的一天：决策行 + 已归档计划', en: 'materials = the frozen day: decision rows + archived plans' });
-    await c.sleep(600);
-    await c.pulse('dec-rev', { dur: 900 });
-    c.done('dec'); c.on('rev');
-    c.row('rev', 'r1', 'hit');
-    c.log('REVIEW', { zh: '案例事实表代码算好 · 战绩只许复述禁止自算', en: 'case facts precomputed · stats quoted, never self-graded' });
-    await c.sleep(900);
-    c.row('rev', 'r2', 'hit');
-    c.log('REVIEW', { zh: '单次调用无工具 · 【本期复盘】+【经验更新】', en: 'one call, no tools · review section + ledger updates' });
-    await c.sleep(900);
-    c.row('rev', 'r3', 'hit', true);
-    c.log('REVIEW', { zh: '经验更新逐行记账 · 渲染文本写回 memory · REVIEW 决策行公开', en: 'ledger updates booked row by row · rendered text back to memory · REVIEW row goes public' }, 'good');
+    await trRoute(c, 'clock', 'book', { zh: '时段内 ✓ · 没有整盘轮在跑 → 起一轮整盘轮 · 预算 900s', en: 'inside the window ✓ · no book round running → start one · budget 900s' });
+    await trPrompt(c, 'book', ['o1', 'o2', 'o6'], { zh: '开场白第一段只念承诺：上一轮的等待行「ETH 反弹到 3,140–3,160 且资金费仍为负，再考虑做空」', en: 'opening part one reads only its commitments: last round’s waiting line “a bounce into 3,140–3,160 with funding still negative, then consider shorting ETH”' });
+    c.log('REACT', { zh: '模型调用 1/12 · 第一段：先处置自己留下的承诺', en: 'model call 1/12 · part one: deal with its own commitments' });
     await c.sleep(700);
-    c.log('SCHED', { zh: '等所有 trader 的复盘写完', en: 'wait for every trader’s review' }, 'warn');
-    await c.sleep(1100);
-    await c.pulse('notes-asm', { dur: 1100 });
-    c.done('rev'); c.on('asm');
-    c.chip('asm', 'c2');
-    c.log('SCHED', { zh: '窗口结束 · 下一次唤醒带上新账本', en: 'blackout over · the next wakeup carries the fresh ledger' }, 'good');
-    await c.sleep(1300);
-    c.done('asm'); c.done('sched'); c.done('clock');
-    return;
-  }
-
-  await trEnter(c, ['calendar', 'watch', 'alert', 'clock'][scene]);
-
-  if (scene === 0) {
-    c.log('REACT', { zh: '模型调用 1/12 · 先对照开场白里的上一轮结论', en: 'model call 1/12 · check the last conclusion from the opening first' });
-    await c.sleep(900);
-    await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 1h ×200', en: 'klines ETHUSDT 1h ×200' });
-    await trData(c, 'snap', 3, { zh: 'market_snapshot · 资金费率 −0.018%', en: 'market_snapshot · funding rate −0.018%' });
-    await trData(c, 'fund', 4, { zh: 'funding_history · 连续 3 期为负', en: 'funding_history · negative 3 periods straight' });
+    await trData(c, 1, ['klines', 'fund'], [
+      { zh: 'klines ETHUSDT 1h · 反弹到 3,158，没过前高 3,160', en: 'klines ETHUSDT 1h · bounced to 3,158, under the 3,160 high' },
+      { zh: 'funding_history · 连续 3 期为负', en: 'funding_history · negative 3 periods straight' }
+    ]);
+    c.count('agent', 2);
+    c.log('REACT', { zh: '等的条件出现了 · 第一段答完', en: 'what it was waiting for showed up · part one answered' });
+    await c.sleep(600);
+    await trStage2(c, { zh: '追加第二段：各币开高低收 · 行情快照 · 财经日历 · 论点战绩 · 最近轨迹', en: 'part two appended: each symbol’s OHLC · snapshot · econ calendar · play stats · recent rounds' });
+    await trData(c, 3, ['snap', 'depth'], [
+      { zh: 'market_snapshot · 资金费 −0.018%，空头拥挤', en: 'market_snapshot · funding −0.018%, shorts crowded' },
+      { zh: 'orderbook_depth · 25bp 内卖压 2.1×', en: 'orderbook_depth · asks 2.1× bids within 25bp' }
+    ]);
     c.done('data');
-    await c.sleep(500);
-
-    // 开仓：先被拒再修正
-    c.count('agent', 5);
+    // 开仓：先被拒，改了再过
+    c.count('agent', 4);
     await c.pulse('ag-guard'); c.on('guard');
     await c.sleep(400);
     c.err('guard'); c.row('guard', 'veto', 'bad');
-    c.log('GUARD', { zh: '拒绝：杠杆 25x 超出主人区间 3–10x', en: 'rejected: 25x outside owner range 3–10x' }, 'bad');
+    c.log('GUARD', { zh: '拒绝：杠杆 25x 超出主人区间 3–10x · 拒因原样回给模型，附上能用的数量区间', en: 'rejected: 25x is outside the owner’s 3–10x · the reason goes back verbatim with the allowed size range' }, 'bad');
     await c.pulse('ag-guard', { reverse: true, cls: 'bad' });
     await c.sleep(800);
     c.clearErr('guard');
+    c.count('agent', 5);
+    await c.pulse('ag-guard');
+    c.row('guard', 'spec');
+    c.log('GUARD', { zh: '改 8x 重试 · 校验通过', en: 'retried at 8x · passed' }, 'good');
+    await c.pulse('guard-trade'); c.on('trade'); c.row('trade', 'open');
+    await c.pulse('trade-sim'); c.on('sim');
+    c.log('SIM', { zh: 'open_position ETHUSDT 空 8x · 2.4 ETH 成交 3,142.50 · 止损 3,260 · 止盈 2,990', en: 'open_position ETHUSDT short 8x · 2.4 ETH filled at 3,142.50 · SL 3,260 · TP 2,990' });
+    await c.pulse('trade-sim', { reverse: true, cls: 'dim' });
+    c.log('PLAN', { zh: '计划随开仓落库：PULLBACK · 数据引用 · 失效条件「1h 收盘站上 3,208」', en: 'plan stored with the open: PULLBACK · citation · invalidation “1h close above 3,208”' });
+    await c.sleep(600);
+    // 同一批：BTC 限价单 + ETH 盯盘，批里有动作工具就整批串行
     c.count('agent', 6);
     await c.pulse('ag-guard');
-    c.row('guard', 'spec', 'hit');
-    c.log('GUARD', { zh: '修正重试 8x · 校验通过', en: 'corrected to 8x · passed' }, 'good');
+    c.row('guard', 'spec');
+    c.log('GUARD', { zh: 'BTC 限价离现价 0.6% ≤ 5% ✓ · ETH 盯盘条件 ✓', en: 'BTC limit 0.6% from mark ≤ 5% ✓ · ETH watch ✓' }, 'good');
     c.done('guard');
-    await c.pulse('guard-trade'); c.on('trade');
-    c.row('trade', 'open');
-    await c.pulse('trade-sim'); c.on('sim');
-    c.log('SIM', { zh: 'open_position ETHUSDT 空 8x · 止损 3260 · 止盈 2990 · 成交', en: 'open_position ETHUSDT short 8x · SL 3260 · TP 2990 · filled' });
+    await c.pulse('guard-trade'); c.row('trade', 'open');
+    await c.pulse('trade-sim');
+    c.log('SIM', { zh: 'open_position BTCUSDT 限价多 5x · 0.06 BTC 挂在 78,420 · 止损 77,800 · 止盈 81,200', en: 'open_position BTCUSDT limit long 5x · 0.06 BTC resting at 78,420 · SL 77,800 · TP 81,200' });
     await c.pulse('trade-sim', { reverse: true, cls: 'dim' });
     c.done('sim');
-    await c.sleep(400);
-    // 计划跟着开仓一起落库，不再单调 write_plan
-    c.log('PLAN', { zh: '计划随开仓落库：PULLBACK · 数据引用 · 失效条件 → ai_trader_plan', en: 'plan stored with the open: PULLBACK · citation · invalidation → ai_trader_plan' });
+    c.row('trade', 'watch');
+    c.log('TOOL', { zh: 'set_watch ETHUSDT · 15m 收盘跌破 3,080 · 备注「跌破就收紧止损锁利润」', en: 'set_watch ETHUSDT · 15m close under 3,080 · note “if it breaks, tighten the stop to lock profit”' });
     c.done('trade');
-    await c.sleep(700);
+    await c.sleep(600);
     c.count('agent', 7);
-    c.log('REACT', { zh: '模型调用 7/12 · 按固定格式写 [本轮结论]，每个币一段', en: 'model call 7/12 · closing [Conclusion] block, one section per symbol' });
+    c.log('REACT', { zh: '模型调用 7/13 · [本轮结论] 总评 + ETH、BTC 两段 · SOL 没变化不写', en: 'model call 7/13 · [Conclusion] overview + ETH and BTC · SOL unchanged, left out' });
     await c.sleep(800);
-    await c.pulse('ag-dec', { dur: 800 });
-    c.done('agent'); c.on('dec');
-    c.row('dec', 'full', 'hit', true); c.row('dec', 'plan2', 'hit', true);
-    c.log('DB', { zh: '决策全文 + 动作轨迹 + 权益 → ai_trader_decision · 公开', en: 'full reasoning + actions + equity → ai_trader_decision · public' }, 'good');
-    await c.sleep(1100);
-    c.done('dec');
-    c.log('SCHED', { zh: '休眠 · 等下一次心跳或盯盘命中', en: 'sleeping until the next heartbeat or watch hit' }, 'dim');
+    await trDecide(c, ['full', 'seg', 'plan2'], { zh: '决策行公开「例行 · 1h」· 两份计划落 ai_trader_plan', en: 'decision row published “Routine · 1h” · two plans stored in ai_trader_plan' });
 
   } else if (scene === 1) {
-    // 盯盘命中：先求证是不是插针，再按布它时写的备注处置，最后重新布防
-    c.log('REACT', { zh: '模型调用 1/12 · 开场白写明命中了哪条和当时的备注', en: 'call 1/12 · the opening names the watch that fired and its note' });
+    // 09/02 09:40 盯盘命中：只处理 ETH 的单币轮，动作在前
+    c.at('09:40:01');
+    c.on('watch'); c.row('watch', 'close', 'hit', true);
+    c.log('WATCH', { zh: '盯盘命中：ETH 5m 收盘 3,076 跌破 3,080 · 备注「跌破就收紧止损锁利润」', en: 'watch hit: ETH 5m closed at 3,076, under 3,080 · note “if it breaks, tighten the stop to lock profit”' }, 'warn');
     await c.sleep(800);
-    await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 15m · 实打实收在 3076，不是插针', en: 'klines ETHUSDT 15m · a real close at 3076, not a wick' });
-    await trData(c, 'depth', 3, { zh: 'orderbook_depth · 25bp 内卖压 1.8×', en: 'orderbook_depth · asks 1.8× bids within 25bp' });
+    await c.pulse('wt-sch');
+    await trRoute(c, 'watch', 'ETH', { zh: '时段内 ✓ · ETH 没有在跑的单币轮，也没有整盘轮可插 → 新起一轮只处理 ETH · 预算 900s', en: 'inside the window ✓ · no ETH round and no book round to join → start an ETH-only round · budget 900s' });
+    await trPrompt(c, 'ETH', ['o1', 'o4', 'o5', 'o6'], { zh: '开场白：命中哪条 + 当时的备注 · 只带 ETH 的事实 · 账户概况只给数字 · 一行 BTC 大盘参考', en: 'opening: which watch fired + its note · ETH facts only · a numbers-only account summary · one BTC reference line' });
+    c.log('REACT', { zh: '模型调用 1/12 · 动作在前，先求证是不是插针', en: 'model call 1/12 · act first, but check it isn’t a wick' });
+    await c.sleep(600);
+    await trData(c, 1, ['klines', 'depth'], [
+      { zh: 'klines ETHUSDT 5m · 09:35 那根实打实收在 3,076，不是插针', en: 'klines ETHUSDT 5m · the 09:35 candle really closed at 3,076, not a wick' },
+      { zh: 'orderbook_depth · 25bp 内卖压 1.8×', en: 'orderbook_depth · asks 1.8× bids within 25bp' }
+    ]);
     c.done('data');
-    c.count('agent', 4);
-    c.log('REACT', { zh: '条件成立 · 按备注收紧止损锁利润', en: 'condition holds · tighten the stop as the note said' });
-    await c.sleep(700);
-    await c.pulse('ag-trade');   // 移止损不过 TradeGuard，只许收紧在工具里判
-    c.on('trade'); c.row('trade', 'sl');
+    // 移止损不过 TradeGuard，只许收紧在工具里判
+    c.count('agent', 2);
+    await c.pulse('ag-trade'); c.on('trade'); c.row('trade', 'sl');
     await c.pulse('trade-sim'); c.on('sim');
-    c.log('SIM', { zh: 'set_stop_loss ETHUSDT 3208 → 3120 · 只许收紧 ✓', en: 'set_stop_loss ETHUSDT 3208 → 3120 · tighten only ✓' });
+    c.log('SIM', { zh: 'set_stop_loss ETHUSDT 3,208 → 3,120 · 账户闸排队 ✓ · 账户没变 ✓ · 只许收紧 ✓', en: 'set_stop_loss ETHUSDT 3,208 → 3,120 · account gate ✓ · account unchanged ✓ · tighten only ✓' });
     await c.pulse('trade-sim', { reverse: true, cls: 'dim' });
     c.done('sim');
-    await c.sleep(400);
-    c.count('agent', 5);
     await c.pulse('ag-guard'); c.on('guard');
-    c.log('GUARD', { zh: '盯盘条件校验 · 每路 ≤1 条 · 触及价位没被现价越过', en: 'watch check · ≤1 per direction · touch levels not already crossed' }, 'good');
+    c.log('GUARD', { zh: '盯盘条件校验 · 每路 ≤1 条 · 触及价位没被现价越过 ✓', en: 'watch check · ≤1 per direction · touch level not already crossed ✓' }, 'good');
     c.done('guard');
-    await c.pulse('guard-trade');
-    c.row('trade', 'watch');
-    c.log('TOOL', { zh: 'set_watch ETHUSDT · 15m 收盘站回 3080 · 触及 3010', en: 'set_watch ETHUSDT · 15m close back above 3080 · touch 3010' });
+    await c.pulse('guard-trade'); c.row('trade', 'watch');
+    c.log('TOOL', { zh: 'set_watch ETHUSDT · 15m 收盘站回 3,080 · 跌到 3,010（预案：平掉一半再叫醒）', en: 'set_watch ETHUSDT · 15m close back above 3,080 · touch 3,010 (standing order: close half, then wake)' });
     c.done('trade');
     await c.sleep(600);
-    await c.pulse('ag-dec', { dur: 800 });
-    c.done('agent'); c.on('dec');
-    c.row('dec', 'full', 'hit', true);
-    c.log('DB', { zh: '处置和新的盯盘条件写进结论 · 决策行公开', en: 'the action and the new watches go into the conclusion · decision public' }, 'good');
-    await c.sleep(1100);
-    c.done('dec');
-    c.log('SCHED', { zh: '休眠 · 等下一次心跳或盯盘命中', en: 'sleeping until the next heartbeat or watch hit' }, 'dim');
+    c.count('agent', 3);
+    c.log('REACT', { zh: '模型调用 3/12 · 结论只写 [ETHUSDT] 一段，不写总评', en: 'model call 3/12 · the conclusion has only [ETHUSDT], no overview' });
+    await c.sleep(700);
+    await trDecide(c, ['full', 'seg'], { zh: '决策行公开「盯盘触发 · 只处理 ETH」', en: 'decision row published “Watch hit · ETH only”' });
 
   } else if (scene === 2) {
-    c.log('REACT', { zh: '模型调用 1/12 · 先看在场计划的失效条件', en: 'call 1/12 · check the live plan’s invalidation first' });
-    await c.sleep(800);
-    await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 15m · 已收盘 3097', en: 'klines ETHUSDT 15m · closed at 3097' });
-    c.count('agent', 3);
-    c.log('REACT', { zh: '失效条件触发：已收盘的 15m 跌破计划写的 3120', en: 'invalidation hit: the closed 15m broke the plan’s 3120' }, 'warn');
+    // 波动警报：ETH 那一轮还在跑，SOL 并行另起一轮，失效条件触发就走
+    c.at('14:05:12');
+    c.on('sentinel'); c.row('sentinel', 'amp', 'hit', true); c.row('sentinel', 'hold', 'hit', true);
+    c.log('SENTRY', { zh: 'SOL 5min 振幅 2.6% 超「基准 × 灵敏度」· 持有 SOL 多单 → 警报', en: 'SOL 5-min range 2.6% beats threshold × sensitivity · holds a SOL long → alert' }, 'warn');
     await c.sleep(700);
-    await c.pulse('ag-trade');   // 平仓不过 TradeGuard，它只卡开仓和盯盘
-    c.on('trade'); c.row('trade', 'close');
-    await c.pulse('trade-sim'); c.on('sim');
-    c.log('SIM', { zh: 'close_position ETHUSDT · 全平 · 理由：失效条件触发 · 已实现 −0.6%', en: 'close_position ETHUSDT · flat · reason: invalidation hit · realized −0.6%' });
-    await c.pulse('trade-sim', { reverse: true, cls: 'dim' });
-    c.done('sim');
-    c.done('trade'); c.done('data');
-    await c.sleep(600);
-    await c.pulse('ag-dec', { dur: 800 });
-    c.done('agent'); c.on('dec');
-    c.row('dec', 'full', 'hit', true); c.row('dec', 'plan2', 'hit', true);
-    c.log('DB', { zh: '按主人指令里的退出条件离场 → 决策行公开 · 计划归档给 reviewer', en: 'exited on one of the owner’s exit rules → decision public · plan archived for the reviewer' }, 'good');
-    await c.sleep(1100);
-    c.done('dec');
-
-  } else {
-    // 观望：多数唤醒的真实形态——先复查，再把下一步要等的布成盯盘条件
-    c.log('REACT', { zh: '模型调用 1/12 · 心跳先处置：逐条过持仓失效、挂单、盯盘条件', en: 'call 1/12 · heartbeat first re-checks invalidations, orders and watches' });
-    await c.sleep(800);
-    await trData(c, 'klines', 2, { zh: 'klines BTCUSDT 1h ×200', en: 'klines BTCUSDT 1h ×200' });
-    await trData(c, 'ind', 3, { zh: 'indicators · ATR 收缩，无新信号', en: 'indicators · ATR contracting, no new signal' });
+    await c.pulse('sn-sch');
+    c.chip('sched', 'ETH', 'busy');
+    await trRoute(c, 'sentinel', 'SOL', { zh: 'ETH 那一轮还在跑，不归它管 · SOL 没有在跑的轮 → 并行新起一轮只处理 SOL', en: 'the ETH round is still running and isn’t its round · nothing on SOL → start a SOL-only round alongside' });
+    await trPrompt(c, 'SOL', ['o1', 'o4', 'o5', 'o6'], { zh: '开场白：剧烈波动 + SOL 的事实 + 账户概况 · 动作在前', en: 'opening: sharp move + SOL facts + account summary · act first' });
+    c.log('REACT', { zh: '模型调用 1/12 · 先对计划写的失效条件「15m 收盘跌破 181.0」', en: 'model call 1/12 · check the plan’s invalidation “15m close under 181.0” first' });
+    await c.sleep(700);
+    await trData(c, 1, ['klines'], [{ zh: 'klines SOLUSDT 15m · 已收盘 180.40，跌破失效位 181.0', en: 'klines SOLUSDT 15m · closed at 180.40, under the 181.0 invalidation' }]);
     c.done('data');
-    c.log('REACT', { zh: '未触失效 · 未到止盈 · 资金费无异动 → 计划不变', en: 'no invalidation · target not hit · funding quiet → plan stands' });
-    await c.sleep(800);
-    c.count('agent', 4);
+    c.count('agent', 2);
+    c.log('REACT', { zh: '失效条件触发 → 平仓', en: 'invalidation hit → close' }, 'warn');
+    await c.sleep(600);
+    // 平仓不过 TradeGuard，它只卡开仓和盯盘
+    await c.pulse('ag-trade'); c.on('trade'); c.row('trade', 'close');
+    c.log('TOOL', { zh: '账户闸：ETH 那一轮正在改止损 → 排在它后面', en: 'account gate: the ETH round is moving its stop → queued behind it' }, 'dim');
+    await c.sleep(700);
+    await c.pulse('trade-sim'); c.on('sim');
+    c.log('SIM', { zh: 'close_position SOLUSDT 全平 · 理由：失效条件触发 · 已实现 −52.30', en: 'close_position SOLUSDT flat · reason: invalidation hit · realized −52.30' });
+    await c.pulse('trade-sim', { reverse: true, cls: 'dim' });
+    c.done('sim'); c.done('trade');
+    await c.sleep(500);
+    c.count('agent', 3);
+    c.log('REACT', { zh: '模型调用 3/12 · 结论只写 [SOLUSDT]', en: 'model call 3/12 · the conclusion has only [SOLUSDT]' });
+    await c.sleep(600);
+    await trDecide(c, ['full', 'seg', 'plan2'], { zh: '决策行公开「剧烈波动 · 只处理 SOL」· 计划归档，是单笔复盘的原料', en: 'decision row published “Sharp move · SOL only” · plan archived as debrief material' });
+
+  } else if (scene === 3) {
+    // 09/02 10:00 整盘轮：多数唤醒长这样——处置承诺、看一圈、把要等的布成盯盘
+    c.at('10:00:03');
+    c.on('clock');
+    c.log('CLOCK', { zh: '1h 边界 10:00 · 例行唤醒', en: '1h boundary 10:00 · routine wake' });
+    await c.sleep(600);
+    await c.pulse('ck-sch');
+    await trRoute(c, 'clock', 'book', { zh: '时段内 ✓ · 没有整盘轮在跑 → 起一轮整盘轮（有单币轮在跑也照样起）', en: 'inside the window ✓ · no book round running → start one (single-symbol rounds don’t stop it)' });
+    await trPrompt(c, 'book', ['o1', 'o2', 'o6'], { zh: '第一段只念承诺：ETH 空单的失效条件 · BTC 限价单 · 两条 ETH 盯盘离现价多远 · 上一轮的等待行', en: 'part one reads only its commitments: the ETH short’s invalidation · the BTC limit · how far the two ETH watches are · last round’s waiting lines' });
+    c.log('REACT', { zh: '模型调用 1/12 · 逐条处置：ETH 没触失效，BTC 限价还没成交 → 先不动', en: 'model call 1/12 · one by one: ETH invalidation not hit, BTC limit unfilled → no change' });
+    await c.sleep(1000);
+    await trStage2(c, { zh: '追加第二段：各币开高低收 · 快照 · 财经日历（今晚 20:30 有美国数据）· 战绩 · 轨迹', en: 'part two appended: each symbol’s OHLC · snapshot · econ calendar (US data at 20:30 tonight) · play stats · recent rounds' });
+    await trData(c, 2, ['klines', 'ind', 'snap'], [
+      { zh: 'klines BTCUSDT 4h · 还在通道下沿 77,800 上方', en: 'klines BTCUSDT 4h · still above the 77,800 channel floor' },
+      { zh: 'indicators · ATR 收缩，没有新信号', en: 'indicators · ATR contracting, no new signal' },
+      { zh: 'market_snapshot · BTC 资金费 +0.006%', en: 'market_snapshot · BTC funding +0.006%' }
+    ]);
+    c.done('data');
+    c.count('agent', 3);
     await c.pulse('ag-guard'); c.on('guard');
-    c.log('GUARD', { zh: '盯盘条件校验 · 每路 ≤1 条 · 触及价位没被现价越过', en: 'watch check · ≤1 per direction · touch levels not already crossed' }, 'good');
+    c.log('GUARD', { zh: '盯盘条件校验 ✓', en: 'watch check ✓' }, 'good');
     c.done('guard');
-    await c.pulse('guard-trade'); c.on('trade');
-    c.row('trade', 'watch');
-    c.log('TOOL', { zh: 'set_watch BTCUSDT · 1h 收盘站上 80,200 · 触及 76,900', en: 'set_watch BTCUSDT · 1h close above 80,200 · touch 76,900' });
+    await c.pulse('guard-trade'); c.on('trade'); c.row('trade', 'watch');
+    c.log('TOOL', { zh: 'set_watch BTCUSDT · 4h 收盘跌破 77,800（撤限价单）· 到 20:25（数据公布前复查挂单）', en: 'set_watch BTCUSDT · 4h close under 77,800 (cancel the limit) · at 20:25 (review the order before the data)' });
     c.done('trade');
     await c.sleep(600);
-    await c.pulse('ag-dec', { dur: 800 });
-    c.done('agent'); c.on('dec');
-    c.row('dec', 'full', 'hit', true);
-    c.log('DB', { zh: 'WAIT · 没进场 要等的价位布成了盯盘条件 全文照样公开', en: 'WAIT · no entry, the levels it waits for are armed as watches, published in full' }, 'good');
-    await c.sleep(1100);
-    c.done('dec');
-    c.log('SCHED', { zh: '多数唤醒长这样：复查 → 布防 → 等', en: 'most wakeups look like this: re-check → arm → wait' }, 'dim');
+    c.count('agent', 4);
+    c.log('REACT', { zh: '模型调用 4/13 · 结论只写有变化的 [BTCUSDT] + 总评 · ETH、SOL 由代码带上它们上一段', en: 'model call 4/13 · only [BTCUSDT] changed, plus the overview · code carries ETH and SOL over from their last sections' });
+    await c.sleep(800);
+    await trDecide(c, ['full', 'seg'], { zh: '观望 · 要等的布成了盯盘 · 决策行公开「例行 · 1h」', en: 'waiting · what it waits for is armed as watches · decision row published “Routine · 1h”' });
+    c.log('SCHED', { zh: '多数唤醒长这样：复查 → 布防 → 等', en: 'most wakes look like this: re-check → arm → wait' }, 'dim');
+
+  } else if (scene === 4) {
+    // 09/02 09:20 单笔复盘 BTC 多 1187：主人在交易卡上提前点的
+    c.at('09:20:00');
+    c.on('dec'); c.row('dec', 'plan2', 'hit', true);
+    c.log('CARD', { zh: '主人在交易卡上点「立即复盘」· BTCUSDT 多 1187 · 平仓后 13 小时（不点就等满 24 小时自动做）', en: 'the owner hits “Debrief now” on the trade card · BTCUSDT long 1187 · 13h after the close (otherwise it runs at 24h)' });
+    await c.sleep(900);
+    c.log('SLOT', { zh: '复盘位空着 → 拿到 · 不占唤醒位，ETH 照样能被叫醒', en: 'the review slot is free → taken · no wake slot used, ETH can still be woken' });
+    await c.sleep(700);
+    await c.pulse('dec-deb', { dur: 900 });
+    c.done('dec'); c.on('debrief'); c.count('debrief', 1);
+    c.log('DEBRIEF', { zh: '素材代码备好：这一笔的事实表 · 开仓那轮到平仓后第一轮的各轮决策（全给）· 账本现役条目', en: 'material prepared by code: the trade’s fact sheet · every round from the entry to the first after the close (in full) · live ledger entries' });
+    await c.sleep(1000);
+    c.count('debrief', 2); c.chip('debrief', 'rd');
+    c.log('TOOL', { zh: 'round_detail 09/01 19:00 那轮 · 写的是「再看一根」', en: 'round_detail 09/01 19:00 · it wrote “one more candle”' });
+    await c.sleep(900);
+    c.count('debrief', 3); c.chip('debrief', 'kl');
+    c.log('TOOL', { zh: 'klines BTCUSDT 1h · endTime 09/01 20:00 · 19:00 收 78,870，已跌破失效位 78,900', en: 'klines BTCUSDT 1h · endTime 09/01 20:00 · the 19:00 close at 78,870 was already under the 78,900 invalidation' });
+    await c.sleep(900);
+    c.count('debrief', 4); c.chip('debrief', 'na');
+    c.log('TOOL', { zh: 'news_archive 09/01 18:00–20:00 · 没有相关快讯', en: 'news_archive 09/01 18:00–20:00 · nothing relevant' });
+    await c.sleep(800);
+    c.count('debrief', 6);
+    await c.type('debrief', 0, { zh: '【单笔复盘】失效条件触发后多拿了一根才平', en: '[DEBRIEF] held one candle past the invalidation' });
+    await c.type('debrief', 1, { zh: '【归类】#3 破 1187', en: '[SORTING] #3 BROKEN 1187' });
+    c.log('DB', { zh: 'DEBRIEF 行公开「单笔复盘 · BTCUSDT 多」· 只判这一笔，不碰账本', en: 'DEBRIEF row published “Debrief · BTCUSDT long” · this trade only, ledger untouched' }, 'good');
+    await c.sleep(900);
+    await c.pulse('deb-rev', { cls: 'dim', dur: 900 });
+    c.done('debrief'); c.hold('review');
+    c.log('REVIEW', { zh: '归类行等统一复盘来收：窗口盖住它平仓那一刻的那一篇（09/03 08:00）', en: 'the sorting rows wait for the unified review whose window covers the close (09/03 08:00)' }, 'warn');
+    await c.sleep(1500);
+
+  } else {
+    // 09/02 08:00：统一复盘和例行唤醒同一刻，各走各的位子
+    c.at('08:00:00');
+    c.on('clock');
+    c.log('CLOCK', { zh: '日线边界 08:00（新加坡）· 统一复盘和例行唤醒同一刻', en: 'daily boundary 08:00 (Singapore) · unified review and routine wake at once' });
+    await c.sleep(700);
+    await Promise.all([
+      (async () => {
+        await c.pulse('ck-sch');
+        c.on('sched'); c.chip('sched', 'book');
+        c.log('SCHED', { zh: '例行照常起整盘轮 · 复盘不挡唤醒（这一轮 HOLD）', en: 'the routine starts its book round as usual · reviews never block it (this one HOLDs)' }, 'dim');
+        await c.sleep(900);
+        c.done('clock'); c.done('sched');
+      })(),
+      (async () => {
+        c.on('review'); c.row('review', 'u1', 'hit', true);
+        c.log('REVIEW', { zh: '素材代码算齐：战绩表 · 论点战绩 · 本批单子（做完单笔复盘的，按类型分组）· 本期行情 · 盯盘布防 · 账本', en: 'material gathered by code: scorecard · play stats · the batch (debriefed trades, grouped by setup) · market · watches · ledger' });
+        await c.sleep(1000);
+      })()
+    ]);
+    c.row('review', 'u2', 'hit', true);
+    c.log('REVIEW', { zh: '单次调用 · 无工具 · 不是 agent', en: 'one call · no tools · not an agent' });
+    await c.sleep(600);
+    await c.type('review', 0, { zh: '【本期复盘】PULLBACK（2 笔，2 胜，净 +486.10）', en: '[REVIEW] PULLBACK (2 trades, 2 won, net +486.10)' });
+    await c.type('review', 1, { zh: '【经验更新】新增 PULLBACK 入场条件 机会型', en: '[LEDGER UPDATES] ADD PULLBACK ENTRY OPPORTUNITY' });
+    await c.sleep(500);
+    await c.pulse('rev-led');
+    c.done('review'); c.on('ledger');
+    c.row('ledger', 'l1', 'hit', true); c.row('ledger', 'l2', 'hit', true);
+    c.log('LEDGER', { zh: '合并各笔单笔复盘的【归类】· 按名下单子记钱、笔数、平仓日', en: 'merges every debrief’s [SORTING] rows · books money, trades and close days per entry' });
+    await c.sleep(1000);
+    c.row('ledger', 'l3', 'hit', true);
+    c.log('LEDGER', { zh: '#5 转为规律（当前段名下 5 笔，3 个平仓日，合计 +968.40）', en: '#5 promoted to a rule (5 trades in the current stretch, 3 close days, net +968.40)' }, 'good');
+    await c.sleep(1000);
+    c.row('ledger', 'l4', 'hit', true);
+    c.log('LEDGER', { zh: 'memory 重渲染：只放规律和破满 2 笔的执行缺口', en: 'memory re-rendered: only rules and execution gaps broken twice or more' });
+    await c.sleep(600);
+    await c.pulse('led-asm', { dur: 1100 });
+    c.done('ledger'); c.on('asm'); c.chip('asm', 'c2');
+    c.log('PROMPT', { zh: '下一轮唤醒的系统提示词带上新账本', en: 'the next wake’s system prompt carries the new ledger' }, 'good');
+    await c.sleep(1200);
+    c.done('asm');
   }
 }
 
@@ -1163,8 +1336,6 @@ async function chWake(c, storeMsg) {
 }
 
 async function chatScript(c, scene) {
-  c.scene(CH_SCENES[scene]);
-
   if (scene === 0) {
     await chGates(c, { zh: '「ETH 永续现在适合做空吗？给我来个深度研判」', en: '“Is ETH perp a short right now? Run a deep analysis.”' });
 
@@ -1180,12 +1351,14 @@ async function chatScript(c, scene) {
     // HITL：深研判要用户点头，本轮先收尾弹卡
     c.chip('main', 'cda');
     c.status('hitl');
+    c.hold('main');
     c.hitl(true);
     c.log('HITL', { zh: 'run_deep_analysis 需确认 · 键 = 会话+工具+标的 · 本轮先收尾、弹卡', en: 'run_deep_analysis needs approval · key = session+tool+symbol · the turn ends and the card pops' }, 'warn');
     await c.sleep(1800);
     c.hitlPress();
     await c.sleep(600);
     c.hitl(false);
+    c.on('main');
     c.status('run');
     c.log('HITL', { zh: '用户已确认 · 前端补发「请继续」· 新一轮里闸门放行', en: 'approved · the client sends “continue” · the gate lets it through in the next turn' }, 'good');
     c.count('main', 1);
@@ -1360,8 +1533,6 @@ async function alReview(c, verdictRow, msgs) {
 }
 
 async function alphaScript(c, scene) {
-  c.scene(AL_SCENES[scene]);
-
   if (scene === 0) {
     await alPropose(c, { zh: '假设：7 天主动买入占比一直偏高的币，之后 24h 相对更强', en: 'Hypothesis: coins with a persistently high 7-day taker-buy share outperform over the next 24h' });
     await alWrite(c, 'Mean($taker_buy_quote / $quote_volume, 96) · +1', { zh: '解析通过 · 节点 4 · 窗口 1 · 常量 0', en: 'parsed · 4 nodes · 1 window · 0 constants' });
@@ -1490,26 +1661,22 @@ function mountPanel(cfg) {
   runners.push(runner);
   views.push(view);
 
-  // 场景选择条：点谁跑谁，AUTO 恢复轮播
-  const resume = () => {
-    runner.paused = false; runner.userPaused = false;
-    view.bPlay.innerHTML = '<svg data-icon="pause"></svg>'; icons(view.bPlay);
+  // 场景选择：点谁跑谁，「轮播」恢复轮流放；选中的填墨，正在放的那一幕前面一颗橙点
+  const setPlayIcon = () => {
+    view.bPlay.innerHTML = `<svg data-icon="${runner.userPaused ? 'play' : 'pause'}"></svg>`;
+    view.bPlay.title = T(runner.userPaused ? UI.play : UI.pause);
+    icons(view.bPlay);
   };
-  const bar = el('div', 'scene-bar');
-  const autoBtn = el('button', 'scene-btn act');
-  autoBtn.textContent = T(UI.auto);
-  bar.appendChild(autoBtn);
-  const sceneBtns = runner.scenes.map(s => {
-    const b = el('button', 'scene-btn');
-    b.textContent = T(s);
-    bar.appendChild(b);
-    return b;
-  });
-  view.panel.insertBefore(bar, view.panel.children[1]);
+  const resume = () => { runner.paused = false; runner.userPaused = false; setPlayIcon(); };
+  const bar = el('div', 'chips scenes');
+  const chipBtn = html => { const b = el('button', 'chip', html); b.type = 'button'; bar.appendChild(b); return b; };
+  const autoBtn = chipBtn(`<svg data-icon="repeat"></svg>${esc(T(UI.auto))}`);
+  const sceneBtns = runner.scenes.map(s => chipBtn(esc(T(s))));
+  view.panel.insertBefore(bar, view.wrap);
   runner.onScene = live => {
-    autoBtn.classList.toggle('act', runner.pinned == null);
+    autoBtn.setAttribute('aria-pressed', runner.pinned == null);
     sceneBtns.forEach((b, i) => {
-      b.classList.toggle('act', runner.pinned === i);
+      b.setAttribute('aria-pressed', runner.pinned === i);
       b.classList.toggle('live', live === i);
     });
   };
@@ -1517,10 +1684,11 @@ function mountPanel(cfg) {
   sceneBtns.forEach((b, i) => b.addEventListener('click', () => { runner.pinned = i; resume(); runner.run(); }));
 
   if (REDUCED) {
-    // 降级成静态全图：节点、导线、LED 全部点亮，控件停用
-    Object.values(view.nodes).forEach(n => n.classList.add('on'));
+    // 降级成静态全图：节点做完态、导线全亮、行首灯全绿，控件停用
+    Object.values(view.nodes).forEach(n => n.classList.add('done'));
     Object.values(view.paths).forEach(p => p.classList.add('on'));
     view.panel.querySelectorAll('.nrow').forEach(r => r.classList.add('ok'));
+    runner.status('still');
     runner.log('NOTE', UI.reduced);
     view.bPlay.disabled = view.bRe.disabled = view.bSpd.disabled = true;
     bar.querySelectorAll('button').forEach(b => b.disabled = true);
@@ -1529,24 +1697,22 @@ function mountPanel(cfg) {
   view.bPlay.addEventListener('click', () => {
     runner.paused = !runner.paused;
     runner.userPaused = runner.paused;
-    view.bPlay.innerHTML = runner.paused ? '<svg data-icon="play"></svg>' : '<svg data-icon="pause"></svg>';
-    view.bPlay.title = runner.paused ? T(UI.play) : T(UI.pause);
-    if (runner.paused) runner.status('paused');
-    icons(view.bPlay);
+    setPlayIcon();
+    runner.paint();
   });
-  view.bRe.addEventListener('click', () => { runner.paused = false; runner.userPaused = false; view.bPlay.innerHTML = '<svg data-icon="pause"></svg>'; icons(view.bPlay); runner.run(); });
+  view.bRe.addEventListener('click', () => { resume(); runner.run(); });
   view.bSpd.addEventListener('click', () => {
-    const i = (SPEEDS.indexOf(runner.speed) + 1) % SPEEDS.length;
-    runner.speed = SPEEDS[i];
+    runner.speed = SPEEDS[(SPEEDS.indexOf(runner.speed) + 1) % SPEEDS.length];
     view.bSpd.textContent = runner.speed.toFixed(1) + '×';
   });
   // 滚出视口自动挂起，省 CPU；用户手动暂停的不抢救
-  new IntersectionObserver(es => {
+  view.io = new IntersectionObserver(es => {
     for (const e of es) {
       if (runner.userPaused) continue;
       runner.paused = !e.isIntersecting;
     }
-  }, { threshold: .12 }).observe(view.panel);
+  }, { threshold: .12 });
+  view.io.observe(view.panel);
   runner.run();
   return view;
 }
@@ -1567,6 +1733,7 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => rela
 function stopFlowPanels() {
   closePop();
   runners.forEach(r => r.stop());
+  views.forEach(v => { if (v.io) v.io.disconnect(); });
   runners = []; views = [];
   for (const cfg of PANELS) { const m = document.getElementById('mount-' + cfg.id); if (m) m.innerHTML = ''; }
 }

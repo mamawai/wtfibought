@@ -1,0 +1,262 @@
+/* ============================================================
+   示例数据那两块：首屏下面的行情板（.mkt）、01 的 trader 看板（.win 窗口框 + .tw 工作台）
+   照主站 pages/Home.css（.mk .q）、pages/ArenaDetail.css、components/arena/HeartbeatStrip.css、traderHead.css；
+   脚本在 board.js，令牌和公用原子在 intro.css
+   ============================================================ */
+
+/* ---- 行情：四类各一栏，每栏两只；.q 是一行报价，悬停垫一块圆角浅灰 ---- */
+.mkt .sec-h { margin-bottom: 12px; }
+.mkt .sec-h h2 { font-size: 15px; }
+.mk { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; }
+.mk h3 { display: flex; align-items: baseline; gap: 8px; padding-bottom: 8px; font-size: 14px; font-weight: 600; }
+.mk h3 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 400; color: var(--color-muted-foreground); }
+.mk h3 a { flex: none; margin-left: auto; }
+.mk .q { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto 62px; gap: 12px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--color-border); }
+.mk .q::before { content: ""; position: absolute; inset: 0 -10px; border-radius: 10px; background: var(--color-fill); opacity: 0; transition: opacity var(--t) var(--ease-control); }
+.mk .q > * { position: relative; }
+.mk .q b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+.mk .q b span { margin-left: 7px; font-size: 12px; font-weight: 400; color: var(--color-muted-foreground); }
+/* 价是数位滚动的带子：行高压成 1，基线才跟左右对得上 */
+.mk .q i { font-style: normal; font-size: 15px; font-weight: 500; line-height: 1; }
+.mk .q em { font-style: normal; font-size: 13px; font-weight: 500; text-align: right; }
+@media (hover: hover) { .mk .q:hover::before { opacity: 1; } }
+
+/* ---- 01 看板的窗口框：三颗灰点 + 地址胶囊 + 示例数据标签；默认折起，底下一层渐隐 + 展开钮 ---- */
+.win { position: relative; overflow: clip; border-radius: 24px; background: var(--color-background); box-shadow: 0 0 0 1px var(--color-border), 0 40px 100px -50px rgb(0 0 0 / .35); scroll-margin-top: 84px; }
+.win-bar { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 18px; border-bottom: 1px solid var(--color-border); background: var(--color-fill); }
+.win-bar > i { width: 10px; height: 10px; border-radius: 50%; background: var(--color-fill2); }
+.win-bar .addr { flex: 0 1 380px; display: flex; align-items: center; justify-content: center; gap: 6px; height: 28px; margin: 0 auto; border-radius: 8px; background: var(--color-background); font-size: 12px; color: var(--color-muted-foreground); }
+.win-bar .addr svg { width: 12px; height: 12px; }
+.win-body { padding: 0 36px 36px; }
+.win.folded .win-body { max-height: var(--fold); overflow: clip; }
+/* 渐隐层不挡点击（页签、筛选片露在里面还能点），只有钮能点 */
+.win-fold { position: absolute; left: 0; right: 0; bottom: 0; height: 150px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 26px; background: linear-gradient(transparent, var(--color-background) 68%); opacity: 0; pointer-events: none; transition: opacity var(--slow) var(--ease-control); }
+.win.folded .win-fold { opacity: 1; }
+.win.folded .win-fold .btn { pointer-events: auto; }
+.win-foot { display: flex; justify-content: center; margin-top: 44px; }
+
+/* ---- 页头：左边返回链接 + 名字 + 一行说明，右边本局收益大数 + 权益 ---- */
+.tw .trhd { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 32px; padding-top: 28px; }
+.tw .back { display: inline-flex; align-items: center; gap: 3px; margin-bottom: 12px; font-size: 13px; color: var(--color-muted-foreground); transition: color var(--t) var(--ease-control); }
+.tw .back svg { width: 14px; height: 14px; }
+.tw .nm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tw .nm b { font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -.035em; }
+.tw .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 14px; font-size: 13.5px; color: var(--color-muted-foreground); }
+.tw .ci { flex: none; }
+/* 它交易的几个币：图标叠成一小串 */
+.tw .coins { display: inline-flex; }
+.tw .coins .ci { width: 20px; height: 20px; border-radius: 50%; box-shadow: 0 0 0 2px var(--color-background); }
+.tw .coins .ci + .ci { margin-left: -5px; }
+.tw .pnl { text-align: right; }
+.tw .pnl .big { font-size: clamp(44px, 5.3vw, 76px); }
+.tw .pnl .big i { color: inherit; opacity: .5; }
+.tw .pnl .sub { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 4px 14px; margin-top: 10px; font-size: 13px; color: var(--color-muted-foreground); }
+.tw .pnl .sub b { font-size: 15px; font-weight: 500; color: var(--color-foreground); }
+
+/* ---- 心跳块：一块浅灰里四格，第二格底下一根细条是这一拍走到哪了 ---- */
+.tw .hb { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin-top: 28px; padding: 20px 24px; }
+.tw .hb .k { font-size: 12.5px; color: var(--color-muted-foreground); }
+.tw .hb .v { margin-top: 6px; font-size: 24px; font-weight: 400; line-height: 1.1; letter-spacing: -.03em; }
+.tw .hb .s { margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--color-muted-foreground); }
+.tw .hb .beat { display: block; height: 3px; margin-top: 10px; border-radius: 2px; background: var(--color-fill2); overflow: hidden; }
+.tw .hb .beat i { display: block; height: 100%; background: var(--color-foreground); transition: clip-path 1s linear; }
+
+/* ---- 记分条：六格平铺，格间一根竖线 ---- */
+.tw .sc { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 22px; }
+.tw .sc > div { padding: 2px 0 2px 20px; border-left: 1px solid var(--color-border); }
+.tw .sc > div:first-child { padding-left: 0; border-left: 0; }
+.tw .sc span { display: block; font-size: 12px; color: var(--color-muted-foreground); }
+.tw .sc b { display: block; margin-top: 5px; font-size: 18px; font-weight: 500; letter-spacing: -.02em; white-space: nowrap; }
+
+.tw .grid2 { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 40px; align-items: start; margin-top: 44px; }
+.tw .left, .tw .side { display: flex; flex-direction: column; gap: 48px; min-width: 0; }
+.tw .sec-h { margin-bottom: 14px; }
+
+/* ---- 净值曲线：上面一行读数，底下首 / 中 / 末三个时刻；第一次进视口从左往右画出来 ---- */
+.tw .rd { display: flex; flex-wrap: wrap; gap: 2px 14px; min-height: 18px; margin-bottom: 6px; font-size: 12px; color: var(--color-muted-foreground); }
+.tw .rd b { font-weight: 500; color: var(--color-foreground); }
+.tw .cv { position: relative; height: 280px; border-radius: 4px; outline-offset: 4px; touch-action: pan-y; }
+.tw .cv svg { display: block; width: 100%; height: 100%; overflow: visible; transition: clip-path 1.2s cubic-bezier(.4, 0, .2, 1); }
+.tw .cv .ln { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* 初始资金那条虚线和它右上角的字 */
+.tw .cv .bl { stroke: var(--color-line2); stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.tw .cv .bt { position: absolute; right: 0; transform: translateY(-120%); font-size: 11px; color: var(--color-faint); }
+/* 开平仓点：开仓空心圈，平仓赚绿亏红 */
+.tw .cv .evt { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--color-background); box-shadow: inset 0 0 0 2px var(--color-foreground); }
+.tw .cv .evt.g { background: var(--color-gain); box-shadow: 0 0 0 2px var(--color-background); }
+.tw .cv .evt.r { background: var(--color-loss); box-shadow: 0 0 0 2px var(--color-background); }
+.tw .cv .bt, .tw .cv .evt { transition: opacity .4s var(--ease-control) 1s; }
+.tw:not(.seen) .cv svg { clip-path: inset(0 100% 0 0); }
+.tw:not(.seen) .cv .bt, .tw:not(.seen) .cv .evt { opacity: 0; }
+/* 指着的那个点：一根竖线 + 一颗墨点 */
+.tw .cv .cur, .tw .cv .dot { display: none; position: absolute; pointer-events: none; }
+.tw .cv .cur { top: 0; bottom: 0; width: 1px; background: var(--color-line2); }
+.tw .cv .dot { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--color-foreground); box-shadow: 0 0 0 3px var(--color-background); }
+.tw .cv.hov .cur, .tw .cv.hov .dot { display: block; }
+.tw .xl { position: relative; height: 22px; font-size: 11px; color: var(--color-faint); }
+.tw .xl span { position: absolute; top: 8px; transform: translateX(-50%); white-space: nowrap; }
+.tw .xl span:first-child { transform: none; }
+.tw .xl span:last-child { transform: translateX(-100%); }
+
+/* ---- 时间线：页签那一行底下一根细线，下面筛选片和一条条决策 ---- */
+.tw .tl-h { border-bottom: 1px solid var(--color-border); }
+.tw .w-tl .chips { margin: 16px 0 4px; }
+/* 一条决策（主站的 .dc）：左边一根细线串起来，圆点的颜色跟着是什么叫醒它的 */
+.tw .dec { position: relative; padding: 18px 0 20px 26px; border-radius: 12px; scroll-margin-top: 96px; }
+.tw .dec::before { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px; background: var(--color-border); }
+.tw .dec:first-child::before { top: 26px; }
+.tw .dec:last-child::before { bottom: auto; height: 26px; }
+.tw .dec:first-child:last-child::before { display: none; }
+.tw .dec::after { content: ""; position: absolute; left: 0; top: 23px; width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--color-line2)); box-shadow: 0 0 0 3px var(--color-background); }
+.tw .dec.dot-o { --c: var(--color-primary); }
+.tw .dec.dot-w { --c: var(--color-warning); }
+/* 复盘：空心圈 */
+.tw .dec.rv::after { background: var(--color-background); box-shadow: 0 0 0 3px var(--color-background), inset 0 0 0 2px var(--color-foreground); }
+/* 从做完的交易跳过来的那一条：底色亮一下再退掉 */
+.tw .dec.hl { animation: tw-hl 1.8s var(--ease-control); }
+@keyframes tw-hl { 0%, 55% { background: var(--color-primary-soft); } 100% { background: transparent; } }
+.tw .dc-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; color: var(--color-muted-foreground); }
+.tw .dc-h b { font-weight: 500; color: var(--color-foreground); }
+.tw .dc-h .m { margin-left: auto; font-size: 12px; color: var(--color-faint); }
+.tw .look { margin-top: 10px; font-size: 13px; color: var(--color-muted-foreground); }
+.tw .look b { font-weight: 500; color: var(--color-foreground); }
+/* 交易动作：一行一个，被拒的红 */
+.tw .al { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.tw .act { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; }
+.tw .act > b { flex: none; font-weight: 600; }
+.tw .act .ad { flex: 1; min-width: 0; color: var(--color-muted-foreground); }
+.tw .act small { display: block; margin-top: 1px; font-size: 12.5px; color: var(--color-loss); overflow-wrap: anywhere; }
+.tw .act .op + small { margin-top: 6px; }
+.tw .act.bad > b { color: var(--color-loss); }
+/* 平仓：成交那一句后面跟这次的盈亏 */
+.tw .act .cl .num { margin-left: 8px; font-weight: 500; }
+/* 开仓的小面板：币和方向一行，每档一行，止损止盈一行 */
+.tw .op { max-width: 440px; padding: 7px 12px 8px; border-radius: 10px; background: var(--color-fill); font-size: 12.5px; line-height: 1.75; }
+.tw .op-h { display: flex; align-items: center; gap: 8px; }
+.tw .op-h b { font-size: 13px; font-weight: 600; color: var(--color-foreground); }
+.tw .op-h .op-p { margin-left: auto; font-size: 11.5px; color: var(--color-faint); }
+.tw .op-e, .tw .op-f { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--color-line2); }
+.tw .op-e { display: grid; grid-template-columns: max-content max-content 1fr; gap: 0 16px; }
+.tw .op-f { display: flex; flex-wrap: wrap; gap: 0 16px; }
+.tw .op .ok { color: var(--color-foreground); }
+/* 推理：长的收起，只留「展开全文」；展开按币分块，每块前一枚币码 */
+.tw .rs { max-width: 76ch; margin-top: 12px; font-size: 15px; line-height: 1.7; }
+.tw .rs .part + .part { margin-top: 8px; }
+.tw .rs .part .tag { margin-bottom: 4px; }
+.tw .rs p { white-space: pre-line; }
+.tw .lk { display: flex; gap: 16px; margin-top: 8px; font-size: 13px; }
+.tw .lk .linkb[aria-expanded="true"] { color: var(--color-foreground); text-decoration-color: var(--color-foreground); }
+/* 复盘正文：一行一项，照原样换行；长的先露 6 行（同 board.js 的 RV_LINES），底下渐隐 */
+.tw .rvb { margin-top: 12px; padding: 16px 20px; border-radius: 16px; background: var(--color-fill); font-size: 15px; line-height: 1.7; }
+.tw .rvb p { position: relative; white-space: pre-line; }
+.tw .rvb b { font-weight: 600; }
+.tw .rvb.clip p { max-height: calc(1.7em * 6); overflow: hidden; }
+.tw .rvb.clip p::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 56px; background: linear-gradient(transparent, var(--color-fill)); pointer-events: none; }
+/* 加载更早 */
+.tw .more { margin-top: 8px; }
+
+/* ---- 做完的交易 ---- */
+.tw .tc { padding: 20px 0; border-bottom: 1px solid var(--color-border); }
+.tw .tc-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.tw .tc-h .ci { width: 20px; height: 20px; }
+.tw .tc-h > b { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.tw .tc-h .pr { font-size: 13px; color: var(--color-muted-foreground); }
+.tw .tc-h .pn { margin-left: auto; font-size: 20px; font-weight: 400; letter-spacing: -.03em; }
+.tw .tc .tm { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 8px; font-size: 12.5px; color: var(--color-muted-foreground); }
+.tw .tc .pl { margin-top: 12px; font-size: 13.5px; line-height: 1.65; }
+.tw .tc .pl b { margin-right: 8px; font-weight: 600; }
+.tw .tc .pl .mute b { font-weight: 500; color: var(--color-foreground); }
+.tw .tc .lvs { display: flex; flex-wrap: wrap; gap: 2px 20px; margin-top: 8px; font-size: 12.5px; color: var(--color-muted-foreground); }
+.tw .tc .lvs b { margin-left: 5px; font-size: 14px; font-weight: 500; color: var(--color-foreground); }
+.tw .tc .lvs small { margin-left: 1px; font-size: 12px; font-weight: 400; color: var(--color-muted-foreground); }
+.tw .tc .revs { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--color-line2); }
+.tw .tc .jp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 12px; font-size: 13px; color: var(--color-muted-foreground); }
+.tw .tc .jp .btn { color: var(--color-foreground); }
+.tw .tc-more { padding-top: 16px; font-size: 12.5px; color: var(--color-faint); }
+/* 计划的修订记录（交易卡和仓位卡共用）：抬头是时刻、类型、改了什么，理由在下面一行 */
+.tw .revs { font-size: 12.5px; line-height: 1.6; color: var(--color-muted-foreground); }
+.tw .revs ul { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 0; padding: 0; list-style: none; }
+.tw .revs li > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.tw .revs .tag, .tw .revs b { color: var(--color-foreground); }
+.tw .revs b { font-weight: 600; }
+.tw .revs p { margin-top: 2px; }
+
+/* ---- 右栏：手上的仓位，一仓一块 ---- */
+.tw .hold { display: flex; flex-direction: column; gap: 12px; }
+.tw .flt { font-size: 14px; font-weight: 500; }
+.tw .pc-h { display: flex; align-items: center; gap: 10px; }
+.tw .pc-h .ci { width: 26px; height: 26px; }
+.tw .pc-h > b { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.tw .pc-h .pn { margin-left: auto; text-align: right; font-size: 20px; font-weight: 400; line-height: 1.1; letter-spacing: -.03em; }
+.tw .pc-h .pn em { display: block; margin-top: 3px; font-style: normal; font-size: 12px; letter-spacing: 0; opacity: .8; }
+.tw .pc-h .pn.wait { font-size: 13px; letter-spacing: 0; color: var(--color-muted-foreground); }
+.tw .pc-q { margin-top: 8px; font-size: 13px; color: var(--color-muted-foreground); }
+/* 止损（左）到止盈（右）的一条：开仓价到现价那一段填色，竖线是现价，短刻度是开仓价 */
+.tw .pc-bar { position: relative; height: 6px; margin: 34px 0 10px; border-radius: 3px; background: var(--color-fill2); overflow-x: clip; }
+.tw .pc-bar .f { position: absolute; inset: 0; transition: clip-path 1s linear; }
+.tw .pc-bar .f.up { background: var(--color-gain); }
+.tw .pc-bar .f.dn { background: var(--color-loss); }
+.tw .pc-bar .en { position: absolute; top: -3px; width: 1px; height: 12px; background: var(--color-muted-foreground); }
+/* 现价那一格和整条一样宽，按百分比平移；竖线画在它的左边沿 */
+.tw .pc-bar .nw { position: absolute; left: 0; top: -5px; width: 100%; height: 16px; font-style: normal; transition: transform 1s linear; }
+.tw .pc-bar .nw::before { content: ""; position: absolute; left: -1px; top: 0; width: 2px; height: 16px; border-radius: 1px; background: var(--color-foreground); }
+.tw .pc-bar .nw span { position: absolute; bottom: 20px; left: 0; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
+.tw .pc-ends { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 12.5px; font-weight: 500; }
+.tw .pc-ends em { display: block; margin-top: 2px; font-style: normal; font-weight: 400; color: var(--color-muted-foreground); }
+.tw .pc-ends .r { text-align: right; }
+.tw .pc-ord { margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--color-muted-foreground); }
+/* 计划并进来：左边一列小字标签 */
+.tw .pc-why { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); font-size: 13px; line-height: 1.6; }
+.tw .pc-why > div { display: flex; gap: 10px; }
+.tw .pc-why > div > span { flex: none; width: 64px; font-size: 12px; line-height: 1.75; color: var(--color-muted-foreground); }
+.tw .pc-why .revs ul { margin-top: 0; }
+
+/* ---- 右栏：它的盯盘；离得近的才露「快到了」 ---- */
+.tw .wa { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--color-border); }
+.tw .wa:last-child { border-bottom: 0; }
+.tw .wa .ci { width: 22px; height: 22px; margin-top: 1px; }
+.tw .wa .b { flex: 1; min-width: 0; }
+.tw .wa .b b { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 14px; font-weight: 500; }
+.tw .wa:not(.near) .b .tag { display: none; }
+.tw .wa .b > span { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.55; color: var(--color-muted-foreground); }
+.tw .wa .rr { flex: none; text-align: right; }
+.tw .wa .rr b { display: block; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.tw .wa .rr span { display: block; margin-top: 3px; font-size: 12px; color: var(--color-muted-foreground); white-space: nowrap; }
+/* 说明小问号：停上去出一块墨色气泡 */
+.tw .tip { position: relative; display: inline-flex; align-self: center; color: var(--color-faint); cursor: help; }
+.tw .tip svg { width: 13px; height: 13px; }
+.tw .tip .tb2 { position: absolute; bottom: calc(100% + 8px); left: 50%; z-index: 5; width: 232px; padding: 9px 11px; border-radius: 10px; background: var(--color-foreground); color: var(--color-on-ink); font-size: 12px; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; transform: translateX(-50%); opacity: 0; pointer-events: none; transition: opacity var(--t) var(--ease-control); }
+@media (hover: hover) { .tw .tip:hover .tb2 { opacity: 1; } }
+.tw .tip:focus-visible .tb2 { opacity: 1; }
+
+/* ---- 右栏：笔记，先露一截，被截掉了（.long）底下渐隐 ---- */
+.tw .nt-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.tw .nt-h b { font-size: 15px; font-weight: 600; }
+.tw .nt-h span { font-size: 12px; color: var(--color-muted-foreground); }
+.tw .nt-b { position: relative; max-height: 272px; overflow: hidden; font-size: 14px; line-height: 1.7; white-space: pre-line; }
+.tw .nt-b.long:not(.open)::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 56px; background: linear-gradient(transparent, var(--color-fill)); pointer-events: none; }
+.tw .nt-b.open { max-height: none; }
+.tw .nt-more { margin-top: 10px; font-size: 13px; }
+
+@media (hover: hover) { .tw .back:hover { color: var(--color-foreground); } }
+
+/* 窄桌面单栏：曲线 → 仓位 → 盯盘 → 笔记 → 时间线（时间线最长，压在最后）；行情两栏 */
+@media (max-width: 1180px) {
+  .mk { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tw .grid2 { grid-template-columns: minmax(0, 1fr); }
+  .tw .left, .tw .side { display: contents; }
+  .tw .w-curve { order: 1; }
+  .tw .w-hold { order: 3; }
+  .tw .w-watch { order: 4; }
+  .tw .w-notes { order: 5; }
+  .tw .w-tl { order: 6; }
+  /* 记分条一行六格放不下：三格两行 */
+  .tw .sc { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 16px; }
+  .tw .sc > div:nth-child(4) { padding-left: 0; border-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk .q::before, .win-fold, .tw .back, .tw .hb .beat i, .tw .cv svg, .tw .cv .bt, .tw .cv .evt,
+  .tw .pc-bar .f, .tw .pc-bar .nw, .tw .tip .tb2 { transition: none; }
+  .tw .dec.hl { animation: none; }
+}

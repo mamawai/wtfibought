@@ -1,0 +1,160 @@
+/* ============================================================
+   agent-flow 面板（脚本在 flow.js）：白底圆角大框；画布浅灰底铺一层淡圆点网，节点是白底圆角小卡
+   点亮 = 墨色描边 + 柔和投影；状态灯、行首灯和脉冲都是带光晕的小圆点（同主站顶栏状态灯）
+   ============================================================ */
+.panel { border-radius: 24px; background: var(--color-background); box-shadow: 0 0 0 1px var(--color-border); }
+
+/* 头部：状态灯 · 编号 · 标题 · 副标题，右边状态字和传输钮 */
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 18px 20px 14px; }
+.panel-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+.panel-title .pn { font-size: 11.5px; font-weight: 500; letter-spacing: .1em; color: var(--color-faint); }
+.panel-title b { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.panel-title small { font-size: 13px; color: var(--color-muted-foreground); }
+.panel-status { margin-left: auto; font-size: 12.5px; color: var(--color-muted-foreground); white-space: nowrap; }
+.transport { display: flex; gap: 4px; }
+
+/* 带光晕的小圆点，--c 是颜色 */
+.lamp, .ndot, .nrow i, .lg-dot { flex: none; border-radius: 50%; background: var(--c); transition: background-color var(--slow) var(--ease-control), box-shadow var(--slow) var(--ease-control); }
+.lamp, .ndot, .lg-dot { width: 7px; height: 7px; }
+.lamp:is([data-st="run"], [data-st="bg"], [data-st="wake"], [data-st="hitl"]),
+.node:is(.on, .done, .err, .hold) .ndot,
+.lg-dot { box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--c) 16%, transparent), 0 0 9px color-mix(in srgb, var(--c) 60%, transparent); }
+/* 头部状态灯：跑着绿、等人黄、停着灰 */
+.lamp { --c: var(--color-faint); }
+.lamp:is([data-st="run"], [data-st="bg"], [data-st="wake"]) { --c: var(--color-gain); }
+.lamp[data-st="hitl"] { --c: var(--color-warning); }
+
+/* 场景选择：.chip 原子，选中填墨；轮播正在放的那一幕前面一颗橙圆点 */
+.scenes { padding: 0 20px 16px; }
+.scenes .chip svg { width: 13px; height: 13px; }
+.scenes .chip.live::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--color-primary); }
+.scenes .chip:disabled { opacity: .45; }
+
+/* 画布：浅灰底 + 一层很淡的圆点网（呼应首屏） */
+.canvas-wrap { overflow: hidden; padding: 22px 0 18px; background-color: var(--color-fill); background-image: radial-gradient(circle, var(--color-line2) 1px, transparent 1.4px); background-size: 14px 14px; }
+.canvas { position: relative; margin: 0 auto; }
+.lane-label { position: absolute; font-size: 12px; font-weight: 500; color: var(--color-muted-foreground); white-space: nowrap; pointer-events: none; }
+
+/* 导线：平时浅灰，点亮变墨，拐角是小圆角；回边虚线，答案回传点线 */
+.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.wires path { fill: none; stroke: var(--color-line2); stroke-width: 1.5; stroke-linejoin: round; transition: stroke var(--slow) var(--ease-control); }
+.wires path.on { stroke: var(--color-foreground); }
+.wires path.back { stroke-dasharray: 4 4; }
+.wires path.answer { stroke-dasharray: 1 5; stroke-linecap: round; }
+/* 脉冲：橙 = 数据在走，红 = 被拒，灰 = 回执 */
+.pulse { --c: var(--color-primary); fill: var(--c); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--c) 70%, transparent)); }
+.pulse .halo { fill-opacity: .22; }
+.pulse.bad { --c: var(--color-loss); }
+.pulse.dim { --c: var(--color-muted-foreground); filter: none; }
+
+/* 图例：画布底下一行 */
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin: 16px auto 0; font-size: 12px; color: var(--color-muted-foreground); }
+.legend > span { display: inline-flex; align-items: center; gap: 7px; }
+.legend svg { width: 13px; height: 13px; }
+.lg-dot { --c: var(--color-primary); }
+.lg-dot.ok { --c: var(--color-gain); }
+.lg-dot.bad { --c: var(--color-loss); }
+.lg-dot.dim { --c: var(--color-faint); box-shadow: none; }
+.lg-dash { width: 16px; border-top: 1.5px dashed var(--color-muted-foreground); }
+
+/* 节点：白底圆角细线小卡。点亮 = 1.5px 墨描边 + 柔和投影；做完 = 重一档的线；出错 = 红描边红淡底；等待 = 黄描边 */
+.node {
+  position: absolute; display: flex; flex-direction: column; gap: 5px; overflow: hidden;
+  padding: 9px 11px; border-radius: 14px; background-color: var(--color-pop); box-shadow: 0 0 0 1px var(--color-hair); cursor: pointer;
+  transition: box-shadow var(--slow) var(--ease-control), opacity 240ms var(--ease-control), transform 240ms var(--ease-control);
+}
+@media (hover: hover) { .node:hover { box-shadow: 0 0 0 1px var(--color-line2); } }
+.node.done { box-shadow: 0 0 0 1px var(--color-line2); }
+.node.on { box-shadow: 0 0 0 1.5px var(--color-foreground), 0 12px 28px -14px rgb(0 0 0 / .35); }
+.node.err { box-shadow: 0 0 0 1.5px var(--color-loss); background-image: linear-gradient(var(--color-loss-soft), var(--color-loss-soft)); }
+.node.hold { box-shadow: 0 0 0 1.5px var(--color-warning); }
+.nhead { display: flex; align-items: center; gap: 6px; height: 14px; }
+.nhead svg { width: 13px; height: 13px; color: var(--color-muted-foreground); transition: color var(--slow) var(--ease-control); }
+.node:is(.on, .done) .nhead svg { color: var(--color-foreground); }
+.ntag { font-size: 10px; font-weight: 600; letter-spacing: .1em; color: var(--color-faint); white-space: nowrap; }
+/* 右上角状态灯：点亮橙（一闪一闪）、做完绿、出错红、等待黄 */
+.ndot { --c: var(--color-line2); margin-left: auto; }
+.node.on .ndot { --c: var(--color-primary); animation: flow-blink 1.4s ease-in-out infinite; }
+.node.done .ndot { --c: var(--color-gain); }
+.node.err .ndot { --c: var(--color-loss); }
+.node.hold .ndot { --c: var(--color-warning); }
+@keyframes flow-blink { 50% { opacity: .35; } }
+/* 节点宽高在 flow.js 里按坐标写死，字号和行高改了要回去核一遍不被裁 */
+.ntitle { font-size: 12.5px; font-weight: 600; line-height: 15px; }
+.nsub { font-size: 10.5px; line-height: 14px; color: var(--color-muted-foreground); }
+.ncount { display: flex; align-items: baseline; gap: 6px; height: 22px; font-size: 10.5px; color: var(--color-muted-foreground); }
+.ncount b { font-size: 22px; font-weight: 300; line-height: 1; letter-spacing: -.03em; color: var(--color-foreground); }
+.ncount em { font-style: normal; }
+/* 行：多是工具名 / 代码标识，走等宽；行首一颗小灯，放行绿、经过橙、被拒红 */
+.nrows { display: flex; flex-direction: column; margin-inline: -4px; }
+.nrow { display: flex; align-items: center; gap: 5px; padding: 1px 4px; border-radius: 6px; font-family: var(--font-mono); font-size: 9.5px; line-height: 14px; color: var(--color-muted-foreground); transition: background-color var(--slow) var(--ease-control), color var(--slow) var(--ease-control); }
+.nrow i { --c: var(--color-line2); width: 5px; height: 5px; }
+.nrow:is(.ok, .hit, .bad) i { box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 16%, transparent), 0 0 6px color-mix(in srgb, var(--c) 60%, transparent); }
+.nrow.ok i { --c: var(--color-gain); }
+.nrow.hit { background: var(--color-hair); color: var(--color-foreground); }
+.nrow.hit i { --c: var(--color-primary); }
+.nrow.bad { background: var(--color-loss-soft); color: var(--color-loss); }
+.nrow.bad i { --c: var(--color-loss); }
+/* 胶囊：点亮填墨；busy = 并行在跑的另一轮；.nclab 是一组胶囊的小标题 */
+.nchips { display: flex; flex-wrap: wrap; gap: 4px; }
+.nchip { padding: 1px 7px; border-radius: 999px; background: var(--color-hair); font-size: 10px; line-height: 15px; color: var(--color-muted-foreground); white-space: nowrap; transition: background-color var(--slow) var(--ease-control), color var(--slow) var(--ease-control); }
+.nchip.hit { background: var(--color-foreground); color: var(--color-on-ink); }
+.nchip.busy { background: var(--color-primary-soft); color: var(--color-primary); }
+.nclab { flex-basis: 100%; font-size: 10px; line-height: 14px; color: var(--color-faint); }
+/* 流式输出：每行左边一根圆头细条，空行是浅灰 */
+.nstream { display: flex; flex-direction: column; gap: 3px; }
+.sline { position: relative; min-height: 16px; padding-left: 9px; font-size: 10.5px; line-height: 16px; overflow-wrap: anywhere; }
+.sline::before { content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px; border-radius: 2px; background: var(--color-foreground); }
+.sline:empty::before { background: var(--color-line2); }
+.npub { align-self: flex-start; }
+
+/* HITL 卡：白卡黄描边，平时藏着，弹出时从下面浮上来 */
+.node.hitl-card { box-shadow: 0 0 0 1.5px var(--color-warning), var(--sh-pop); opacity: 0; transform: translateY(6px); pointer-events: none; cursor: default; }
+.node.hitl-card.show { opacity: 1; transform: none; pointer-events: auto; z-index: 5; }
+.hitl-btns { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.hitl-btns .btn.pressed { transform: scale(.96); background: var(--color-ink-h); }
+
+/* 节点说明浮层：同主站菜单，白底圆角 14 + 浮层阴影 */
+.pop { position: absolute; z-index: 30; width: 300px; padding: 10px 10px 14px 14px; border-radius: 14px; background: var(--color-pop); box-shadow: var(--sh-pop); cursor: auto; animation: flow-pop 140ms var(--ease-control); }
+@keyframes flow-pop { from { opacity: 0; transform: translateY(-4px); } }
+.pop .pt { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.pop .pt b { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; }
+.pop .pd { padding-right: 4px; font-size: 12.5px; line-height: 1.7; color: var(--color-muted-foreground); }
+.pop .pd p + p { margin-top: 6px; }
+
+/* trace：浅灰圆角块里的日志，等宽 */
+.trace { padding: 16px 20px 0; }
+.trace-box { display: flex; flex-direction: column; gap: 2px; min-height: 148px; padding: 12px 14px; border-radius: 14px; background: var(--color-fill); font-family: var(--font-mono); font-size: 11.5px; line-height: 19px; }
+.tline { display: flex; gap: 10px; color: var(--color-muted-foreground); animation: flow-in var(--slow) var(--ease-control); }
+@keyframes flow-in { from { opacity: 0; transform: translateY(3px); } }
+.tline .tt { flex: none; color: var(--color-faint); }
+.tline .tg { flex: none; width: 60px; font-weight: 600; color: var(--color-foreground); }
+.tline .tm { min-width: 0; }
+.tline.good .tg { color: var(--color-gain); }
+.tline.warn .tg { color: var(--color-warning); }
+.tline.bad .tg, .tline.bad .tm { color: var(--color-loss); }
+.tline.dim, .tline.dim .tg { color: var(--color-faint); }
+
+/* 底部说明 */
+.panel-foot { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 14px 20px 18px; font-size: 12.5px; line-height: 1.6; color: var(--color-muted-foreground); }
+.panel-foot span { display: inline-flex; align-items: baseline; gap: 8px; }
+.panel-foot span::before { content: ""; flex: none; width: 4px; height: 4px; border-radius: 50%; background: var(--color-line2); transform: translateY(-2px); }
+
+/* ===== 窄屏 stepper：节点只留 图标 + 标题 + 状态灯，一行一卡 ===== */
+.panel.step .canvas-wrap { padding: 16px 0; }
+.panel.step .node { flex-direction: row; align-items: center; gap: 9px; padding: 10px 12px; }
+.panel.step .nhead { display: contents; }
+.panel.step .ntitle { order: 1; flex: 1; min-width: 0; font-size: 13px; }
+.panel.step .ndot { order: 2; margin-left: 0; }
+.panel.step :is(.ntag, .nsub, .nrows, .nchips, .ncount, .nstream, .npub, .hitl-btns) { display: none; }
+/* 分组括注：压在组里第一张卡的上面 */
+.step-group { position: absolute; display: none; pointer-events: none; }
+.panel.step .step-group { display: block; }
+.step-group span { position: absolute; left: 0; bottom: 0; padding-bottom: 6px; font-size: 12px; font-weight: 500; color: var(--color-muted-foreground); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .node, .nhead svg, .wires path, .nrow, .nchip, .lamp, .ndot, .nrow i { transition: none; }
+  .node.on .ndot, .tline, .pop { animation: none; }
+}
+/* 截长图钩子：入场动画全关 */
+html.shot .tline, html.shot .pop { animation: none; }
