@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
@@ -308,14 +309,14 @@ class CrossBandTriggerTest {
 
         // −350 − 手续费 49650×0.0004=19.86 − 清算费 130.14，余额正好扣到 0
         ArgumentCaptor<BigDecimal> settle = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(crossMargin).settle(eq(UID), settle.capture());
+        verify(crossMargin).settle(eq(UID), settle.capture(), eq(LedgerBizType.CROSS_LIQUIDATION), isNull(), isNull());
         assertThat(settle.getValue()).isEqualByComparingTo("-500");
 
         InOrder inOrder = inOrder(lockRegistry, positionMapper, crossMargin, posLock, userLock);
         inOrder.verify(lockRegistry).tryLockAsSystem("futures:cross:liq:" + UID);
         inOrder.verify(lockRegistry).tryLockAsSystem("futures:pos:1");
         inOrder.verify(positionMapper).casClosePosition(anyLong(), anyString(), any(), any());
-        inOrder.verify(crossMargin).settle(anyLong(), any());
+        inOrder.verify(crossMargin).settle(anyLong(), any(), any(), any(), any());
         inOrder.verify(posLock).unlock();
         inOrder.verify(userLock).unlock();
     }

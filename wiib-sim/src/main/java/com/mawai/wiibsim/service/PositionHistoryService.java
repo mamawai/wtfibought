@@ -2,8 +2,8 @@ package com.mawai.wiibsim.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.mawai.wiibsim.dto.PositionFillDTO;
-import com.mawai.wiibsim.dto.PositionHistoryDTO;
+import com.mawai.wiibcommon.dto.PositionFillDTO;
+import com.mawai.wiibcommon.dto.PositionHistoryDTO;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
  * 自己看自己走 /api/futures/position-history，看别人走 /api/ranking/users/{id}/position-history，
  * 两条路查的是同一份数据，只差一道隐私门控——门控留在 controller（同 PublicTradeService 的分工），
  * 因为"看自己永远放行"这条规则得知道当前登录人是谁，这里拿不到也不该拿。
+ * AI Trader 子账户的那份走 /internal/futures/{userId}/position-history，由 agent 公开出去。
  */
 @Service
 @RequiredArgsConstructor

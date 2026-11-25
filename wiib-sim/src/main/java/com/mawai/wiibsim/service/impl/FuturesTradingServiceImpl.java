@@ -533,7 +533,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
 
         if (position.isCross()) {
-            crossMarginService.settle(userId, fill.pnl().subtract(fill.commission()));
+            crossMarginService.settle(userId, fill.pnl().subtract(fill.commission()),
+                    FUTURES_CLOSE_SETTLE, "POSITION", position.getId());
         } else {
             userMapper.atomicUpdateBalance(userId, fill.left(marginPart));
         }

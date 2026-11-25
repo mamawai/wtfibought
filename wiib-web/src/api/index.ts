@@ -686,6 +686,12 @@ export const traderApi = {
     api.get<unknown, TraderEquityPoint[]>(`/ai/trader/${id}/equity-curve`, { params: { round } }),
   /** 已了结交易（只有当前局：每局独立子账户，历史局的子账户查不回来） */
   trades: (id: number) => api.get<unknown, TradeRecordView[]>(`/ai/trader/${id}/trades`),
+  /** 资金账单（当前局子账户的资金流水，谁都能看）：id 倒序，下一页把本页最后一条的 id 传回 beforeId */
+  ledger: (id: number, limit: number, beforeId?: number) =>
+    api.get<unknown, LedgerEntry[]>(`/ai/trader/${id}/ledger`, { params: { limit, beforeId } }),
+  /** 合约持仓历史（当前局子账户已平的仓位，谁都能看）：一行一笔完整仓位，带每一次成交 */
+  positionHistory: (id: number, pageNum: number, pageSize: number) =>
+    api.get<unknown, PageResult<PositionHistoryItem>>(`/ai/trader/${id}/position-history`, { params: { pageNum, pageSize } }),
   /** 标记/取消忽略一笔已了结交易（仅本人、仅CLOSED）：AI 统计与复盘不再参考，公开记录不变 */
   setPlanStale: (id: number, planId: number, stale: boolean) =>
     api.post<unknown, void>(`/ai/trader/${id}/plan/${planId}/stale`, { stale }),

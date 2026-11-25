@@ -428,6 +428,38 @@ class TradeRecordServiceTest {
         assertThat(byPos.get(9L).debriefable()).isFalse();
     }
 
+    /**
+     * 这笔归哪篇统一复盘：进过的挂上那一篇；做完单笔复盘还没进的给预计的那一篇；
+     * 主人标了不算数的不进统一复盘，两样都没有
+     */
+    @Test
+    void reviewRefOrDueBoundaryOnTheTrade() {
+        when(sim.getClosedPositions(99L, TradeRecordService.LIMIT))
+                .thenReturn(List.of(closedLong(3L, "108"), closedLong(4L, "108"), closedLong(5L, "108")));
+        AiTraderPlan reviewed = boundPlan(21L, 3L);
+        reviewed.setReviewId(900L);
+        AiTraderPlan stale = boundPlan(23L, 5L);
+        stale.setStale(true);
+        when(planMapper.selectList(any())).thenReturn(List.of(reviewed, boundPlan(22L, 4L), stale));
+        AiTraderDecision review = decision(900L, CLOSE_MS + 172_800_000L, null, null);
+        review.setKind(AiTraderDecision.KIND_REVIEW);
+        // 开仓决策、平仓决策、单笔复盘、统一复盘四次查询
+        when(decisionMapper.selectList(any())).thenReturn(List.of(), List.of(),
+                List.of(debriefRow(600L, 3L, null), debriefRow(601L, 4L, null), debriefRow(602L, 5L, null)),
+                List.of(review));
+
+        Map<Long, TradeRecordService.TradeRecord> byPos = service.closedTrades(trader()).stream()
+                .collect(Collectors.toMap(TradeRecordService.TradeRecord::positionId, r -> r));
+
+        assertThat(byPos.get(3L).review().id()).isEqualTo(900L);
+        assertThat(byPos.get(3L).review().wakeTime()).isEqualTo(CLOSE_MS + 172_800_000L);
+        assertThat(byPos.get(3L).reviewDueAt()).isNull();
+        assertThat(byPos.get(4L).review()).isNull();
+        assertThat(byPos.get(4L).reviewDueAt()).isNotNull();
+        assertThat(byPos.get(5L).review()).isNull();
+        assertThat(byPos.get(5L).reviewDueAt()).isNull();
+    }
+
     /** sim 无已平仓位：不查计划不查决策 */
     @Test
     void emptyWhenNothingClosed() {

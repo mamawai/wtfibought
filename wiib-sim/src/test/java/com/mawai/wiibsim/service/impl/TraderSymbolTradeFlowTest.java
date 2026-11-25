@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -118,7 +119,8 @@ class TraderSymbolTradeFlowTest {
         verify(positionMapper).casClosePosition(eq(1L), eq("CLOSED"),
                 argThat(p -> p.compareTo(new BigDecimal("0.0000125")) == 0),
                 argThat(pnl -> pnl.compareTo(new BigDecimal("5.00")) == 0));
-        verify(crossMargin).settle(eq(UID), argThat(d -> d.compareTo(new BigDecimal("4.99")) == 0));
+        verify(crossMargin).settle(eq(UID), argThat(d -> d.compareTo(new BigDecimal("4.99")) == 0),
+                eq(LedgerBizType.FUTURES_CLOSE_SETTLE), eq("POSITION"), eq(1L));
         ArgumentCaptor<FuturesOrder> orders = ArgumentCaptor.forClass(FuturesOrder.class);
         verify(orderMapper, times(2)).insert(orders.capture());
         assertThat(orders.getAllValues()).extracting(FuturesOrder::getOrderSide, FuturesOrder::getStatus)

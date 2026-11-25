@@ -1,6 +1,7 @@
 package com.mawai.wiibsim.controller;
 
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
+import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.service.AccountResetService;
 import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.CrossMarginService;
@@ -9,6 +10,7 @@ import com.mawai.wiibsim.service.FuturesQueryService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.InternalOrderIdempotency;
+import com.mawai.wiibsim.service.PositionHistoryService;
 import com.mawai.wiibsim.service.TraderSymbolService;
 import com.mawai.wiibsim.service.UserService;
 import org.junit.jupiter.api.Test;
@@ -28,7 +30,8 @@ class InternalFuturesBracketsTest {
             mock(FuturesTradingService.class), mock(FuturesRiskService.class), mock(UserService.class),
             mock(AccountResetService.class), mock(InternalOrderIdempotency.class), mock(CrossMarginService.class),
             mock(TraderSymbolService.class), new FuturesLeverageBracketRegistry(), mock(AssetValuationService.class),
-            mock(FuturesMarginService.class), mock(FuturesQueryService.class));
+            mock(FuturesMarginService.class), mock(FuturesQueryService.class), mock(UserLedgerMapper.class),
+            mock(PositionHistoryService.class));
 
     @Test
     void 表里的照表_表外的给默认档_不认识的不出() {

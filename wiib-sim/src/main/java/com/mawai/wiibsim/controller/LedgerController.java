@@ -31,7 +31,7 @@ import java.util.List;
 public class LedgerController {
 
     /** 单页封顶。不卡死的话手搓一个 limit=999999 就能把一个用户的全部流水一次拉走 */
-    private static final int MAX_LIMIT = 100;
+    static final int MAX_LIMIT = 100;
 
     private final UserLedgerMapper ledgerMapper;
 

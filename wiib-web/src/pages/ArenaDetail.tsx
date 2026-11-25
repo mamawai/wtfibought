@@ -17,6 +17,8 @@ import { PnlPct } from '../components/arena/PnlPct';
 import { ScoreStrip } from '../components/arena/ScoreStrip';
 import { STATUS_META } from '../components/arena/traderStatus';
 import { TradeCard } from '../components/arena/TradeCard';
+import { TraderLedger } from '../components/arena/TraderLedger';
+import { TraderPositionHistory } from '../components/arena/TraderPositionHistory';
 import { doneTrades } from '../components/arena/traderTools';
 import { COIN_MAP, getCoin } from '../lib/coinConfig';
 import { cn, dayBounds, fmtDate, fmtDateTime, fmtNum, fmtTokens, parseServerTime, spinIcon, DAY_MS } from '../lib/utils';
@@ -29,11 +31,13 @@ const PAGE = 50;
 /** 净值曲线可选区间（天）；0=整局 */
 const RANGES = [3, 7, 14, 30, 0] as const;
 type Range = typeof RANGES[number];
-type Tab = 'timeline' | 'trades';
+type Tab = 'timeline' | 'trades' | 'ledger' | 'history';
 /** 时间线筛选：全部 / 动过仓位的 / 被叫醒的（例行心跳之外） / 单笔复盘 / 统一复盘 */
 const FILTERS = ['all', 'acted', 'woken', 'debrief', 'review'] as const;
 type Filter = typeof FILTERS[number];
 const WOKEN_KINDS = new Set(['WATCH', 'EVENT', 'ALERT', 'DRAWDOWN', 'MANUAL']);
+/** 进同一篇统一复盘的几笔单笔复盘：at 是那一篇的时刻（还没进的是预计的），review 是已经进了的那一篇 */
+interface DebriefGroup { key: string; at: number | null; review: TradeDecisionRef | null; rows: AiTraderDecisionView[] }
 
 const coinName = (symbol: string) => COIN_MAP[symbol]?.name ?? symbol.replace('USDT', '');
 
@@ -351,9 +355,29 @@ export function ArenaDetail() {
   // 单笔复盘卡上写明是哪一笔：按仓位编号找做完的交易
   const tradeByPosition = useMemo(() => new Map(trades.map(r => [r.positionId, r])), [trades]);
   const shown = decisions.filter(d => passes(d, filter));
+  // 单笔复盘按进哪一篇统一复盘归组：进了的按那一篇，还没进的按预计的那一篇，对不上交易的归到最后一组
+  const debriefGroups = useMemo(() => {
+    const groups = new Map<string, DebriefGroup>();
+    for (const d of decisions) {
+      if (d.kind !== 'DEBRIEF') continue;
+      const trade = d.positionId != null ? tradeByPosition.get(d.positionId) : undefined;
+      const review = trade?.review ?? null;
+      const at = review?.wakeTime ?? trade?.reviewDueAt ?? null;
+      const key = review ? `r${review.id}` : at != null ? `d${at}` : 'none';
+      const g = groups.get(key);
+      if (g) g.rows.push(d);
+      else groups.set(key, { key, at, review, rows: [d] });
+    }
+    // 新的在前；对不上的那组没有时刻，排最后
+    return [...groups.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }, [decisions, tradeByPosition]);
 
   // tr=这只 trader（不叫 t，那是词表查询函数）
   const tr = detail?.trader;
+  const decisionCard = (d: AiTraderDecisionView) => (
+    <DecisionCard key={d.id} d={d} mine={tr?.mine} highlight={d.id === focusId}
+                  trade={d.positionId != null ? tradeByPosition.get(d.positionId) : undefined} />
+  );
   const st = tr ? (STATUS_META[tr.status] ?? STATUS_META.PAUSED) : null;
   // round=null 表示跟随当前局，落到显示时统一成具体数字
   const viewingRound = round ?? tr?.roundNo ?? 1;
@@ -495,6 +519,8 @@ export function ArenaDetail() {
               <Tabs value={tab} onChange={setTab} items={[
                 { value: 'timeline', label: `${t('detail.timeline')}${viewingHistory ? ` · R${viewingRound}` : ''}` },
                 { value: 'trades', label: t('detail.tradesTitle'), count: trades.length },
+                { value: 'ledger', label: t('detail.ledgerTitle') },
+                { value: 'history', label: t('detail.historyTitle') },
               ]} />
               {/* 按天翻看：前后一天 + 日期框；清掉回到不限日期。只属于时间线，切到交易时隐身占位，页签那行不跳 */}
               <div className={cn('dstep', tab !== 'timeline' && 'invisible')}>
@@ -528,13 +554,26 @@ export function ArenaDetail() {
                   <div className="empty">
                     <b>{decisions.length > 0 ? t('wb.filter.none') : day ? t('detail.noDecisionsDay') : t('detail.noDecisions')}</b>
                   </div>
-                ) : (
-                  <div>
-                    {shown.map(d => (
-                      <DecisionCard key={d.id} d={d} mine={tr?.mine} highlight={d.id === focusId}
-                                    trade={d.positionId != null ? tradeByPosition.get(d.positionId) : undefined} />
+                ) : filter === 'debrief' && !viewingHistory ? (
+                  // 历史局对不上做完的交易（那是当前局的），不分组
+                  <>
+                    <p className="tab-note">{t('wb.batch.note')}</p>
+                    {debriefGroups.map(({ key, at, review, rows }) => (
+                      <div key={key}>
+                        <div className="bat">
+                          {review ? t('wb.batch.done', { time: fmtDateTime(review.wakeTime) })
+                            : at != null ? t('wb.batch.due', { time: fmtDateTime(at) }) : t('wb.batch.none')}
+                          <small className="nf">{t('wb.batch.count', { count: rows.length })}</small>
+                          {review && (
+                            <button type="button" className="linkb" onClick={() => jumpToDecision(review)}>{t('wb.batch.open')}</button>
+                          )}
+                        </div>
+                        {rows.map(decisionCard)}
+                      </div>
                     ))}
-                  </div>
+                  </>
+                ) : (
+                  <div>{shown.map(decisionCard)}</div>
                 )}
                 {hasMore && decisions.length > 0 && (
                   <button type="button" className={cn('btn wide more', loadingMore && 'busy')} onClick={loadMore}>
@@ -542,12 +581,17 @@ export function ArenaDetail() {
                   </button>
                 )}
               </>
-            ) : (
+            ) : tab === 'trades' ? (
               trades.length === 0
                 ? <div className="empty"><b>{t('detail.noTrades')}</b></div>
                 : trades.map(r => <TradeCard key={r.positionId} r={r} onJump={jumpToDecision}
                                              onToggleStale={tr?.mine ? toggleStale : undefined}
                                              onDebrief={tr?.mine ? debriefNow : undefined} />)
+            ) : tr && (
+              // 资金账单、合约持仓历史只有当前局的；开了新局、点刷新就换 key 从头拉
+              tab === 'ledger'
+                ? <TraderLedger key={`${tr.roundNo}|${refreshNonce}`} traderId={traderId} />
+                : <TraderPositionHistory key={`${tr.roundNo}|${refreshNonce}`} traderId={traderId} />
             )}
           </section>
         </div>

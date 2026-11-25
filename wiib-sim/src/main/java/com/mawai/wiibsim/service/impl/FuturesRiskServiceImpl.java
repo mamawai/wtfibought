@@ -368,7 +368,8 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         // 全仓只结盈亏净额(可为负)；逐仓返还保证金±盈亏−手续费，closeFill 已封顶，不会为负
         if (position.isCross()) {
-            crossMarginService.settle(position.getUserId(), fill.pnl().subtract(fill.commission()));
+            crossMarginService.settle(position.getUserId(), fill.pnl().subtract(fill.commission()),
+                    FUTURES_CLOSE_SETTLE, "POSITION", positionId);
         } else {
             BigDecimal returnAmount = fill.left(marginPart);
             if (returnAmount.signum() > 0) {

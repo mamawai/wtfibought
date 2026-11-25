@@ -1,5 +1,6 @@
 package com.mawai.wiibsim.controller;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mawai.wiibcommon.dto.FuturesAdjustLeverageRequest;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
@@ -8,11 +9,14 @@ import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
+import com.mawai.wiibcommon.dto.PositionHistoryDTO;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.entity.UserLedger;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
+import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.service.AccountResetService;
 import com.mawai.wiibsim.service.AssetValuationService;
 import com.mawai.wiibsim.service.CrossMarginService;
@@ -21,6 +25,7 @@ import com.mawai.wiibsim.service.FuturesQueryService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.InternalOrderIdempotency;
+import com.mawai.wiibsim.service.PositionHistoryService;
 import com.mawai.wiibsim.service.TraderSymbolService;
 import com.mawai.wiibsim.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -61,6 +66,8 @@ public class InternalFuturesTradeController {
     private final AssetValuationService assetValuationService;
     private final FuturesMarginService marginService;
     private final FuturesQueryService queryService;
+    private final UserLedgerMapper ledgerMapper;
+    private final PositionHistoryService positionHistoryService;
 
     /** 带 clientRequestId 就走幂等（调用方超时重发不会双仓），不带＝原样直发 */
     @PostMapping("/{userId}/open")
@@ -140,6 +147,26 @@ public class InternalFuturesTradeController {
                 "frozenBalance", user.getFrozenBalance() == null ? BigDecimal.ZERO : user.getFrozenBalance(),
                 "available", crossMarginService.snapshot(userId).available(),
                 "equity", assetValuationService.futuresEquity(user)));
+    }
+
+    /**
+     * 这个子账户的资金流水（AI Trader 的资金账单）：id 倒序游标翻页，beforeId 不传取最新一页，返回空数组即到底；
+     * 单页条数和用户自己的账单页一样封顶
+     */
+    @GetMapping("/{userId}/ledger")
+    public Result<List<UserLedger>> ledger(@PathVariable Long userId,
+                                           @RequestParam(required = false) Long beforeId,
+                                           @RequestParam(defaultValue = "30") int limit) {
+        return Result.ok(ledgerMapper.selectByCursor(userId, null, beforeId,
+                Math.clamp(limit, 1, LedgerController.MAX_LIMIT)));
+    }
+
+    /** 这个子账户已平仓位的历史（AI Trader 的合约持仓历史）：一行一笔完整仓位，带每一次成交；分页，新平的在前 */
+    @GetMapping("/{userId}/position-history")
+    public Result<IPage<PositionHistoryDTO>> positionHistory(@PathVariable Long userId,
+                                                             @RequestParam(defaultValue = "1") int pageNum,
+                                                             @RequestParam(defaultValue = "20") int pageSize) {
+        return Result.ok(positionHistoryService.page(userId, null, pageNum, pageSize));
     }
 
     /** 交易员登记今天要下单的币：feed 按交易员集合订行情，登记 2 小时后过期 */

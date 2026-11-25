@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.RankingDTO;
 import com.mawai.wiibcommon.util.Result;
-import com.mawai.wiibsim.dto.PositionHistoryDTO;
+import com.mawai.wiibcommon.dto.PositionHistoryDTO;
 import com.mawai.wiibsim.dto.PublicTradeDTO;
 import com.mawai.wiibsim.dto.UserProfileDTO;
 import com.mawai.wiibsim.service.PositionHistoryService;

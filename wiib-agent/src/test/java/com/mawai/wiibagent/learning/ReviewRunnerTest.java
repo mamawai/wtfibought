@@ -156,6 +156,20 @@ class ReviewRunnerTest {
         return p.getInstructions().stream().map(Message::getText).reduce("", String::concat);
     }
 
+    /**
+     * 预计进哪一篇统一复盘：平仓满 24 小时后的第一个日线边界；单笔复盘做得更晚就从它那一刻往后找；
+     * 找到的边界已经过了，就是现在之后的第一个
+     */
+    @Test
+    void dueBoundaryIsTheFirstDailyBoundaryAfterLagDebriefAndNow() {
+        long day = 86_400_000L;
+        long close = 10 * day + 3_600_000L;
+
+        assertThat(ReviewRunner.dueBoundary(close, close + 600_000L, close + 600_000L)).isEqualTo(12 * day);
+        assertThat(ReviewRunner.dueBoundary(close, 12 * day + 1, 12 * day + 1)).isEqualTo(13 * day);
+        assertThat(ReviewRunner.dueBoundary(close, close + 600_000L, 14 * day + 1)).isEqualTo(15 * day);
+    }
+
     @Test
     void successfulReviewAppliesOpsSettlesAndWritesMemory() {
         stubMaterial();

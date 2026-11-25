@@ -7,6 +7,8 @@ import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
+import com.mawai.wiibcommon.dto.PositionHistoryDTO;
+import com.mawai.wiibcommon.entity.UserLedger;
 import com.mawai.wiibcommon.util.Result;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -74,6 +76,19 @@ public interface SimTradeApi {
 
     @GetExchange("/{userId}/balance")
     Result<Map<String, Object>> balance(@PathVariable Long userId);
+
+    /** beforeId 传 null 即不带查询参数 = 最新一页。 */
+    @GetExchange("/{userId}/ledger")
+    Result<List<UserLedger>> ledger(@PathVariable Long userId, @RequestParam(required = false) Long beforeId,
+                                    @RequestParam int limit);
+
+    /** 已平仓位的历史，一行一笔完整仓位，带每一次成交；新平的在前 */
+    @GetExchange("/{userId}/position-history")
+    Result<Paged<PositionHistoryDTO>> positionHistory(@PathVariable Long userId, @RequestParam int pageNum,
+                                                      @RequestParam int pageSize);
+
+    /** sim 分页结果里用得上的那几项：这一页的行、总行数、每页几行、第几页、共几页 */
+    record Paged<T>(List<T> records, long total, long size, long current, long pages) {}
 
     @PostExchange("/ensure-account")
     Result<Map<String, Object>> ensureAccount(@RequestParam String username, @RequestParam BigDecimal initialBalance);

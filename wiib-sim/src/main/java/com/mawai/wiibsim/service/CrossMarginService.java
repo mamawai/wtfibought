@@ -1,6 +1,7 @@
 package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -52,8 +53,10 @@ public interface CrossMarginService {
      * 全仓资金结算（平仓盈亏/手续费/资金费）：直接加减余额，允许为负；
      * 扣穿且已无全仓仓位 = 穿仓落地 → 立即破产（清空两钱包，次日重置）。
      * 仍有仓位的负余额留给强平巡检——浮盈可能救回来，不在这里武断处决。
+     * <p>
+     * 这笔流水记成 type，关联 refType/refId（没有关联对象就传 null）；币种跟调用方那一段的走。
      */
-    void settle(Long userId, BigDecimal delta);
+    void settle(Long userId, BigDecimal delta, LedgerBizType type, String refType, Long refId);
 
     /**
      * 全仓仓位的预估强平价（展示用）。

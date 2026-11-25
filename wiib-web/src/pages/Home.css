@@ -93,11 +93,13 @@
   .p-home .nw h3{display:inline;font-size:16px;font-weight:600;line-height:1.45;letter-spacing:-.005em;overflow-wrap:anywhere}
   .p-home .nw a h3{background:linear-gradient(var(--color-line2),var(--color-line2)) 0 100%/0 1px no-repeat;transition:background-size var(--slow) var(--ease-control)}
   .p-home .nw p{margin-top:5px;max-width:76ch;font-size:14px;line-height:1.6;color:var(--color-muted-foreground);overflow-wrap:anywhere}
-  .p-home .tr{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:12px 0;border-top:1px solid var(--color-border);font-size:15px}
+  /* 成交列表三列各行共用：方向那一列最少 34px，标签更长（英文）就按这批里最宽的撑开，各行照样对齐 */
+  .p-home .feed.tl{display:grid;grid-template-columns:minmax(34px,max-content) minmax(0,1fr) auto;column-gap:10px;align-content:start}
+  .p-home .tr{display:grid;grid-column:1/-1;grid-template-columns:subgrid;align-items:baseline;padding:12px 0;border-top:1px solid var(--color-border);font-size:15px}
   .p-home .tr .sd{font-size:13px;font-weight:500;white-space:nowrap}
   .p-home .tr .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
   .p-home .tr .nm .tag{margin-left:6px;vertical-align:1px}
-  .p-home .tr .amt{white-space:nowrap;font-weight:500}
+  .p-home .tr .amt{justify-self:end;white-space:nowrap;font-weight:500}
   .p-home .tr .amt span{margin-left:12px;font-size:12px;font-weight:400;color:var(--color-muted-foreground)}
   .p-home .feed .sk + .sk{margin-top:14px}
 

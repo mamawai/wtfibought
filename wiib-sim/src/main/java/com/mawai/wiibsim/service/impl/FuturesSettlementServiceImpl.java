@@ -425,7 +425,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         // 全仓只结盈亏净额(可为负，穿仓由settle处理)；逐仓返还保证金±盈亏−手续费，closeFill 已封顶
         if (position.isCross()) {
-            crossMarginService.settle(order.getUserId(), fill.pnl().subtract(fill.commission()));
+            crossMarginService.settle(order.getUserId(), fill.pnl().subtract(fill.commission()),
+                    FUTURES_CLOSE_SETTLE, "POSITION", position.getId());
         } else {
             // 覆盖方法级默认 FUTURES_LIMIT_DEDUCT：这笔是平仓结算返还，不是开仓扣款
             LedgerCtx.mark(FUTURES_CLOSE_SETTLE, "FUTURES_ORDER", order.getId());
@@ -559,7 +560,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         if (pos.isCross()) {
             // 全仓：资金费直接对余额结算（可为负，没有"扣保证金"兜底——保证金只是占用数字）；应付方结算后账户级复核
-            crossMarginService.settle(pos.getUserId(), transfer.negate());
+            crossMarginService.settle(pos.getUserId(), transfer.negate(),
+                    transfer.signum() > 0 ? FUNDING_FEE_PAY : FUNDING_FEE_RECV, "POSITION", pos.getId());
             int added = positionMapper.atomicAddFundingFeeTotal(pos.getId(), transfer);
             if (added == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
             return new FundingFeeChargeResult(true, transfer.signum() > 0);

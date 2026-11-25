@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -134,7 +135,7 @@ class CrossUserIndexTest {
         when(positionMapper.exists(any())).thenReturn(false);
 
         TransactionSynchronizationManager.initSynchronization();
-        crossMargin.settle(UID, new BigDecimal("-100"));
+        crossMargin.settle(UID, new BigDecimal("-100"), LedgerBizType.FUTURES_CLOSE_SETTLE, "POSITION", 1L);
 
         verify(bankruptcyService).bankruptNow(UID);
     }
@@ -146,7 +147,7 @@ class CrossUserIndexTest {
         when(positionMapper.exists(any())).thenReturn(true);
 
         TransactionSynchronizationManager.initSynchronization();
-        crossMargin.settle(UID, new BigDecimal("-100"));
+        crossMargin.settle(UID, new BigDecimal("-100"), LedgerBizType.FUTURES_CLOSE_SETTLE, "POSITION", 1L);
 
         verify(bankruptcyService, never()).bankruptNow(any());
     }

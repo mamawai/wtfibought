@@ -221,6 +221,7 @@
     "FUNDING_FEE_RECV": "资金费收入",
     "FUNDING_FEE_FROM_MARGIN": "资金费扣保证金",
     "CROSS_SETTLE": "全仓结算",
+    "CROSS_LIQUIDATION": "全仓强平结算",
     "SPOT_BUY": "现货买入",
     "SPOT_BUY_LEVERAGE": "现货杠杆买入",
     "SPOT_LIMIT_FREEZE": "现货限价单冻结",

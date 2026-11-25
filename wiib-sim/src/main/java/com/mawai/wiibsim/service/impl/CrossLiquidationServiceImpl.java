@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
@@ -283,7 +284,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
         // 合并成一条：每仓一条会把信封刷满。closed 只统计 CAS 抢到的仓位，并发手动平仓的那些不算进来
         tradeNotificationService.crossLiquidation(userId, closed, settle);
         // 占用制下保证金没离开过余额，结算只记盈亏净额；全平后已无全仓仓位，扣穿由 settle 触发破产
-        crossMarginService.settle(userId, settle);
+        crossMarginService.settle(userId, settle, LedgerBizType.CROSS_LIQUIDATION, null, null);
         // 没扣穿但交易侧什么都不剩了（清算费正好扣到 0）也破产；爆仓提交了再判，判破产出错不能把爆仓一起回滚
         AfterCommit.run(() -> bankruptcyService.bankruptIfNothingLeft(userId));
         return true;

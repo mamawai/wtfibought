@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.LedgerTx;
@@ -209,7 +210,8 @@ class FuturesSettlementLockWaitTest {
         assertThat(charged).isTrue();
         InOrder inOrder = inOrder(lockRegistry, crossMarginService, positionMapper, posLock, crossLiquidationService);
         inOrder.verify(lockRegistry).tryLockAsSystem(POS_KEY);
-        inOrder.verify(crossMarginService).settle(eq(UID), argThat(d -> amountIs(d, "-1.00")));
+        inOrder.verify(crossMarginService).settle(eq(UID), argThat(d -> amountIs(d, "-1.00")),
+                eq(LedgerBizType.FUNDING_FEE_PAY), eq("POSITION"), eq(1L));
         inOrder.verify(positionMapper).atomicAddFundingFeeTotal(eq(1L), argThat(f -> amountIs(f, "1.00")));
         inOrder.verify(posLock).unlock();
         inOrder.verify(crossLiquidationService).checkUser(UID);

@@ -228,6 +228,7 @@
     "FUNDING_FEE_RECV": "Funding fee received",
     "FUNDING_FEE_FROM_MARGIN": "Funding from margin",
     "CROSS_SETTLE": "Cross settlement",
+    "CROSS_LIQUIDATION": "Cross liquidation",
     "SPOT_BUY": "Spot buy",
     "SPOT_BUY_LEVERAGE": "Spot leveraged buy",
     "SPOT_LIMIT_FREEZE": "Spot limit freeze",

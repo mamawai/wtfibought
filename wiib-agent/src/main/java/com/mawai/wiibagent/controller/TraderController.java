@@ -4,11 +4,13 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibcommon.dto.PositionHistoryDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
+import com.mawai.wiibcommon.entity.UserLedger;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -19,6 +21,7 @@ import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
+import com.mawai.wiibquant.external.sim.SimTradeApi;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.TradeRecordService;
@@ -510,6 +513,36 @@ public class TraderController {
             log.warn("[Trader] 已了结交易查询失败 traderId={} msg={}", id, e.getMessage());
             return Result.ok(List.of());
         }
+    }
+
+    /**
+     * 当前局子账户的资金流水，公开：子账户登不了站，账单只能从这里看。
+     * 查不动就报错，不回空表——空表是"翻到底了"的意思
+     */
+    @GetMapping("/{id}/ledger")
+    @Operation(summary = "资金账单（当前局子账户的资金流水；游标翻页，id 倒序，beforeId 不传取最新一页，"
+            + "返回空数组即到底；limit 默认 50、封顶 100）")
+    public Result<List<UserLedger>> ledger(@PathVariable long id,
+                                           @RequestParam(required = false) Long beforeId,
+                                           @RequestParam(defaultValue = "50") int limit) {
+        AiTrader t = traderService.byId(id);
+        if (t == null) {
+            return Result.fail(ErrorCode.SYSTEM_ERROR.getCode(), messages.get("trader.notFound"));
+        }
+        return Result.ok(simTradeClient.getLedger(t.getSimUserId(), beforeId, limit));
+    }
+
+    /** 当前局子账户已平仓位的历史，公开，和资金账单一样只能从这里看 */
+    @GetMapping("/{id}/position-history")
+    @Operation(summary = "合约持仓历史（当前局子账户已平的仓位，一行一笔完整仓位，带每一次成交；pageSize 默认 20、封顶 100）")
+    public Result<SimTradeApi.Paged<PositionHistoryDTO>> positionHistory(@PathVariable long id,
+                                                                         @RequestParam(defaultValue = "1") int pageNum,
+                                                                         @RequestParam(defaultValue = "20") int pageSize) {
+        AiTrader t = traderService.byId(id);
+        if (t == null) {
+            return Result.fail(ErrorCode.SYSTEM_ERROR.getCode(), messages.get("trader.notFound"));
+        }
+        return Result.ok(simTradeClient.getPositionHistory(t.getSimUserId(), pageNum, pageSize));
     }
 
     /** at=这一行落库的时刻(ms)，权益就是那一刻取的 */

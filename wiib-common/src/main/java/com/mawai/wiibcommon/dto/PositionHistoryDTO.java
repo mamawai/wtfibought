@@ -1,4 +1,4 @@
-package com.mawai.wiibsim.dto;
+package com.mawai.wiibcommon.dto;
 
 import lombok.Data;
 

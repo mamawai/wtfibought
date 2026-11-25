@@ -969,7 +969,7 @@ export interface AiTraderPlanView {
 export interface TradeDecisionRef {
   id: number;
   wakeTime: number;
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'DEBRIEF' | 'PRESET';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'EVENT' | 'WATCH' | 'DRAWDOWN' | 'DEBRIEF' | 'PRESET' | 'REVIEW';
   reasoning: string | null;
   reason: string | null;
 }
@@ -1002,6 +1002,10 @@ export interface TradeRecordView {
   debriefing: boolean;
   /** 还没复盘成功、最近一次失败的原因；没失败过为 null */
   debriefError: string | null;
+  /** 这笔进了的那篇统一复盘（时间线上的 REVIEW 行，只带 id 和时刻）；还没进为 null */
+  review: TradeDecisionRef | null;
+  /** 单笔复盘做完了、还没进统一复盘的，预计进哪一篇（那篇的时刻）；别的情况为 null */
+  reviewDueAt: number | null;
 }
 
 /** trader 详情：公开视图 + 实时持仓/挂单 + 本局生效中的交易计划 + 经验账本 */

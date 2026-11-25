@@ -45,7 +45,7 @@ export function LatestTradesCard({ trades, loading }: Props) {
       ) : trades.length === 0 ? (
         <div className="empty"><b>{t('trades.empty')}</b></div>
       ) : (
-        <div className="feed">
+        <div className="feed tl">
           {trades.map(item => {
             // 方向标签渲染期现算：本组件订阅了 useTranslation，切语言会重渲染，这里就跟着重查一遍词表
             const { label, tone } = orderSideView(item.orderSide);

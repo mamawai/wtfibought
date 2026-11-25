@@ -12,7 +12,6 @@ import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.TradeFilterDefaults;
-import com.mawai.wiibsim.dto.PositionHistoryDTO;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FundingRateService;
 import com.mawai.wiibsim.service.FuturesMarginService;

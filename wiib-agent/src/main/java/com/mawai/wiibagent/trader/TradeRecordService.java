@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.learning.DebriefRunner;
+import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibagent.learning.RunningDebriefs;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -60,13 +61,16 @@ public class TradeRecordService {
     /**
      * debrief 是这笔的单笔复盘（时间线上的 DEBRIEF 行，只带 id 和时刻），还没复盘成功就是 null。
      * debriefable：能点"立即复盘"（计划正好绑着这个仓位、没忽略、没复盘成功过、没在复盘、平仓那根 K 线已经收进来）；
-     * debriefing：正在复盘的就是这一笔；debriefError：还没复盘成功、最近一次失败的原因，没失败过为 null
+     * debriefing：正在复盘的就是这一笔；debriefError：还没复盘成功、最近一次失败的原因，没失败过为 null。
+     * review 是这笔进了的那篇统一复盘（只带 id 和时刻），还没进就是 null；
+     * reviewDueAt：单笔复盘做完了、还没进统一复盘的，预计进哪一篇（那篇的时刻），别的情况为 null
      */
     public record TradeRecord(long positionId, String symbol, String side, Integer leverage,
                               BigDecimal entryPrice, BigDecimal closedPrice, BigDecimal closedPnl,
                               long openedAt, long closedAt, String closeMannerKey,
                               AiTraderPlan plan, DecisionRef openDecision, DecisionRef closeDecision,
-                              DecisionRef debrief, boolean debriefable, boolean debriefing, String debriefError) {
+                              DecisionRef debrief, boolean debriefable, boolean debriefing, String debriefError,
+                              DecisionRef review, Long reviewDueAt) {
     }
 
     /** 这些仓位的单笔复盘：ok 是成功的那篇（有几篇取最新的），lastError 是没成功过的那几笔最近一次失败的原因 */
@@ -88,6 +92,7 @@ public class TradeRecordService {
         // 先读正在复盘哪笔，再查复盘行（复盘收尾是先落行、再清标记）
         Long debriefingPos = running.positionOf(t.getId());
         Debriefs debriefs = debriefs(t, closed);
+        Map<Long, DecisionRef> reviewById = reviews(planByPos.values());
         long now = System.currentTimeMillis();
 
         List<TradeRecord> out = new ArrayList<>(closed.size());
@@ -96,24 +101,43 @@ public class TradeRecordService {
             AiTraderDecision open = plan == null ? null : openByPlan.get(plan.getId());
             DecisionRef debrief = debriefs.ok().get(pos.getId());
             boolean debriefing = pos.getId().equals(debriefingPos);
-            // 计划要正好绑着这个仓位，按时间就近配上的不算
-            boolean debriefable = debrief == null && !debriefing && plan != null && pos.getId().equals(plan.getPositionId())
-                    && !Boolean.TRUE.equals(plan.getStale()) && DebriefRunner.manualReady(TradePairing.msOf(pos.getUpdatedAt()), now);
+            long closeMs = TradePairing.msOf(pos.getUpdatedAt());
+            // 能复盘的：计划正好绑着这个仓位（按时间就近配上的不算），主人也没标不算数
+            boolean reviewable = plan != null && pos.getId().equals(plan.getPositionId())
+                    && !Boolean.TRUE.equals(plan.getStale());
+            boolean debriefable = debrief == null && !debriefing && reviewable && DebriefRunner.manualReady(closeMs, now);
+            DecisionRef review = plan == null || plan.getReviewId() == null ? null : reviewById.get(plan.getReviewId());
+            Long reviewDueAt = debrief != null && reviewable && plan.getReviewId() == null
+                    ? ReviewRunner.dueBoundary(closeMs, debrief.wakeTime(), now) : null;
             // 下发语言无关的码，文案由前端查自己的词表：这张卡是给人看的界面元素，
             // 该跟界面语言走；服务端渲染成某一门语言存下来，切了语言就翻不回去了
             String mannerKey = TradePairing.closeMannerKey(pos);
             out.add(new TradeRecord(pos.getId(), pos.getSymbol(), pos.getSide(), pos.getLeverage(),
                     pos.getEntryPrice(), pos.getClosedPrice(), pos.getClosedPnl(),
-                    TradePairing.msOf(pos.getCreatedAt()), TradePairing.msOf(pos.getUpdatedAt()),
+                    TradePairing.msOf(pos.getCreatedAt()), closeMs,
                     mannerKey, plan,
                     open == null ? null
                             : new DecisionRef(open.getId(), open.getWakeTime(), open.getKind(), open.getReasoning(), null),
                     // 止损/止盈带走的依据就是计划里的原始止损/目标，不挂平仓决策
                     TradePairing.MANNER_MANUAL.equals(mannerKey)
                             ? closeByPos.get(pos.getId()) : null,
-                    debrief, debriefable, debriefing, debriefs.lastError().get(pos.getId())));
+                    debrief, debriefable, debriefing, debriefs.lastError().get(pos.getId()),
+                    review, reviewDueAt));
         }
         return out;
+    }
+
+    /** 这些计划进过的统一复盘，键是那篇的决策行 id；只带 id 和时刻 */
+    private Map<Long, DecisionRef> reviews(Collection<AiTraderPlan> plans) {
+        Set<Long> ids = plans.stream().map(AiTraderPlan::getReviewId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        return decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                        .select(AiTraderDecision::getId, AiTraderDecision::getWakeTime, AiTraderDecision::getKind)
+                        .in(AiTraderDecision::getId, ids))
+                .stream().collect(Collectors.toMap(AiTraderDecision::getId,
+                        d -> new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), null, null)));
     }
 
     /** 这些仓位的单笔复盘行，成功和失败的都取；成功的只带 id 和时刻，正文在时间线上看 */

@@ -40,6 +40,8 @@ public class SaTokenConfig extends BaseSaTokenConfig {
                 "/api/ai/trader/*",
                 "/api/ai/trader/*/decisions",
                 "/api/ai/trader/*/trades",
+                "/api/ai/trader/*/ledger",
+                "/api/ai/trader/*/position-history",
                 "/api/ai/trader/*/equity-curve",
                 "/api/ai/trader/*/token-usage"
         );

@@ -1,10 +1,14 @@
 package com.mawai.wiibquant.external.sim;
 
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
+import com.mawai.wiibcommon.entity.UserLedger;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.enums.LedgerBizType;
+import com.mawai.wiibcommon.enums.LedgerWallet;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibcommon.dto.PositionHistoryDTO;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -16,6 +20,7 @@ import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -95,6 +100,47 @@ class SimTradeClientTest {
 
         client.getAllPositions(42L);
         assertThat(lastUri.toString()).isEqualTo("/internal/futures/42/positions");
+    }
+
+    @Test
+    void 资金流水_beforeId传值带参数_传null省略_枚举和时间读得回() {
+        // bizTypeLabel 在实体上只有 getter，sim 照样会给，读回来不能因为它报错
+        responseJson = "{\"code\":0,\"msg\":\"成功\",\"data\":[{\"id\":9,\"userId\":42,\"wallet\":\"BALANCE\","
+                + "\"bizType\":\"FUNDING_FEE_PAY\",\"bizTypeLabel\":\"资金费支出\",\"delta\":-1.25,"
+                + "\"balanceAfter\":998.75,\"symbol\":\"BTCUSDT\",\"createdAt\":\"2026-07-27T10:00:00\"}]}";
+
+        List<UserLedger> rows = client.getLedger(42L, 900L, 50);
+        assertThat(lastUri.toString()).isEqualTo("/internal/futures/42/ledger?beforeId=900&limit=50");
+        assertThat(rows).singleElement().satisfies(r -> {
+            assertThat(r.getWallet()).isEqualTo(LedgerWallet.BALANCE);
+            assertThat(r.getBizType()).isEqualTo(LedgerBizType.FUNDING_FEE_PAY);
+            assertThat(r.getDelta()).isEqualByComparingTo("-1.25");
+            assertThat(r.getCreatedAt()).isEqualTo(LocalDateTime.of(2026, 7, 27, 10, 0));
+        });
+
+        client.getLedger(42L, null, 50);
+        assertThat(lastUri.toString()).isEqualTo("/internal/futures/42/ledger?limit=50");
+    }
+
+    @Test
+    void 持仓历史_分页参数_读回这一页和每笔的成交明细() {
+        // sim 给的是 MyBatis-Plus 的分页对象，多出来的那几项（orders、searchCount）不读也不能报错
+        responseJson = "{\"code\":0,\"msg\":\"成功\",\"data\":{\"records\":[{\"id\":7,\"symbol\":\"BTCUSDT\",\"side\":\"LONG\","
+                + "\"realizedPnl\":12.5,\"closedAt\":\"2026-07-27T10:00:00\","
+                + "\"fills\":[{\"orderId\":31,\"orderSide\":\"CLOSE_LONG\",\"status\":\"TAKE_PROFIT\",\"price\":110}]}],"
+                + "\"total\":41,\"size\":20,\"current\":2,\"pages\":3,\"orders\":[],\"searchCount\":true}}";
+
+        SimTradeApi.Paged<PositionHistoryDTO> page = client.getPositionHistory(42L, 2, 20);
+
+        assertThat(lastUri.toString()).isEqualTo("/internal/futures/42/position-history?pageNum=2&pageSize=20");
+        assertThat(page.total()).isEqualTo(41);
+        assertThat(page.current()).isEqualTo(2);
+        assertThat(page.pages()).isEqualTo(3);
+        assertThat(page.records()).singleElement().satisfies(r -> {
+            assertThat(r.getRealizedPnl()).isEqualByComparingTo("12.5");
+            assertThat(r.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 7, 27, 10, 0));
+            assertThat(r.getFills()).singleElement().satisfies(f -> assertThat(f.getStatus()).isEqualTo("TAKE_PROFIT"));
+        });
     }
 
     @Test

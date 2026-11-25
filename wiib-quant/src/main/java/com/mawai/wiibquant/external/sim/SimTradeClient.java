@@ -5,6 +5,8 @@ import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesOrderProtectionRequest;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibcommon.dto.PositionHistoryDTO;
+import com.mawai.wiibcommon.entity.UserLedger;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -107,6 +109,18 @@ public class SimTradeClient {
     /** 余额明细：balance、frozenBalance、available（全仓下单额度）、equity（合约账户权益）。 */
     public Map<String, Object> getBalanceDetail(Long userId) {
         return unwrap(api.balance(userId));
+    }
+
+    /**
+     * 子账户的资金流水，id 倒序游标翻页：beforeId 传 null 取最新一页，返回空表即到底；单页条数 sim 侧封顶 100。
+     */
+    public List<UserLedger> getLedger(Long userId, Long beforeId, int limit) {
+        return unwrap(api.ledger(userId, beforeId, limit));
+    }
+
+    /** 子账户已平仓位的历史，一行一笔完整仓位，带每一次成交；单页条数 sim 侧封顶 100。 */
+    public SimTradeApi.Paged<PositionHistoryDTO> getPositionHistory(Long userId, int pageNum, int pageSize) {
+        return unwrap(api.positionHistory(userId, pageNum, pageSize));
     }
 
     /** 合约账户权益，sim 按它的统一口径算好的（余额 + 冻结 + 各持仓估值）。 */

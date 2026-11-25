@@ -127,6 +127,15 @@
   .p-tw .tl-h{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 16px;border-bottom:1px solid var(--color-border)}
   .p-tw .tl-h .dstep{margin-bottom:8px}
   .p-tw .w-tl .chips{margin:16px 0 4px}
+  /* 页签里的一句说明（资金账单、单笔复盘分组） */
+  .p-tw .w-tl .tab-note{margin-top:14px;font-size:12.5px;line-height:1.6;color:var(--color-muted-foreground)}
+  /* 资金账单页签：筛选片和第一天的日期头往上靠一点（流水行见 components/LedgerRows.css） */
+  .p-tw .w-tl .tab-note + .chips{margin-top:10px}
+  .p-tw .w-tl .lgr .day:first-child{margin-top:16px}
+  /* 单笔复盘按统一复盘分的组：组头一行，写进哪一篇、几笔 */
+  .p-tw .bat{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:22px 0 2px;font-size:13px;font-weight:600}
+  .p-tw .bat small,.p-tw .bat .linkb{font-size:12.5px;font-weight:400}
+  .p-tw .bat small{color:var(--color-muted-foreground)}
   /* 一条决策：左边一根细线串起来，圆点的颜色跟着是什么叫醒它的 */
   .p-tw .dc{position:relative;padding:18px 0 20px 26px;border-radius:12px;scroll-margin-top:96px}
   .p-tw .dc::before{content:"";position:absolute;left:4px;top:0;bottom:0;width:1px;background:var(--color-border)}

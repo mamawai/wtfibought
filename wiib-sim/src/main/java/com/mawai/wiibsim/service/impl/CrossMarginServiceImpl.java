@@ -4,10 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.dto.CrossSnapshotRow;
-import com.mawai.wiibsim.ledger.Ledger;
+import com.mawai.wiibsim.ledger.LedgerCtx;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
@@ -28,7 +29,6 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-import static com.mawai.wiibcommon.enums.LedgerBizType.CROSS_SETTLE;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.calculatePnl;
 
 @Slf4j
@@ -157,13 +157,12 @@ public class CrossMarginServiceImpl implements CrossMarginService {
                 position.getEntryPrice(), backing, position.getQuantity());
     }
 
-    // 全仓的钱全从这一个口子结（平仓净额、资金费、SL/TP），所以类型标在方法上就够。
-    // symbol 拿不到：本方法只收 userId+delta，调用方 frame 上的 symbol 又被本方法自己的 frame 盖住了
-    // （currentSymbol 取栈顶）。全仓流水的币种要显示得改签名带进来，留给账单那一步定。
+    // 全仓的钱全从这一个口子结（平仓净额、资金费、SL/TP、强平），是哪一种由调用方说。
+    // 标注紧贴着动钱那一句打：金额为 0 不动钱，也就不打，不会留一个没人取的标注
     @Override
-    @Ledger(CROSS_SETTLE)
-    public void settle(Long userId, BigDecimal delta) {
+    public void settle(Long userId, BigDecimal delta, LedgerBizType type, String refType, Long refId) {
         if (delta.signum() != 0) {
+            LedgerCtx.mark(type, refType, refId);
             userMapper.atomicSettleBalance(userId, delta);
         }
         refreshUserIndex(userId);

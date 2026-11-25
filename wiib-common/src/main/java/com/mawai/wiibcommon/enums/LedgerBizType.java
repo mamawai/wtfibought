@@ -32,7 +32,10 @@ public enum LedgerBizType {
     FUNDING_FEE_PAY("资金费支出"),
     FUNDING_FEE_RECV("资金费收入"),
     FUNDING_FEE_FROM_MARGIN("资金费扣保证金"),
+    /** 老流水：早先全仓的平仓、资金费、强平都记成这一条，现在各记各的，不再写它 */
     CROSS_SETTLE("全仓结算"),
+    /** 全仓爆仓：各仓盈亏、手续费、清算费合成一条 */
+    CROSS_LIQUIDATION("全仓强平结算"),
 
     // ===== 现货 / B股 =====
     SPOT_BUY("现货买入"),

@@ -10,6 +10,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibagent.trader.wakeup.WakeIntervals;
 import com.mawai.wiibagent.trader.wakeup.WakeTrace;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
@@ -56,6 +57,16 @@ public class ReviewRunner {
     static final String REVIEW_INTERVAL_CODE = "1d";
     /** 行情、布防、撤单、权益的窗口右端比复盘时刻早多久：和单子等单笔复盘的时间一样，窗口才对得上这批单子 */
     static final long WINDOW_LAG_MS = DebriefRunner.WAIT_MS;
+
+    /**
+     * 一笔做完单笔复盘、还没进统一复盘的单子，预计进哪一篇（那篇的日线边界）：
+     * 平仓满 {@link #WINDOW_LAG_MS}、单笔复盘也开跑之后的第一个边界；那个边界已经过了（那篇没跑成，或没收它）就是下一个
+     */
+    public static long dueBoundary(long closeMs, long debriefMs, long nowMs) {
+        long day = WakeIntervals.MS.get(REVIEW_INTERVAL_CODE);
+        long earliest = Math.max(Math.max(closeMs + WINDOW_LAG_MS, debriefMs), nowMs);
+        return Math.ceilDiv(earliest, day) * day;
+    }
 
     private final ReviewMaterialAssembler assembler;
     private final TraderModelFactory modelFactory;

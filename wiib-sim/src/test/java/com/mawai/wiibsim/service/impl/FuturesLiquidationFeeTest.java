@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -53,6 +54,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -293,7 +295,7 @@ class FuturesLiquidationFeeTest {
 
     private BigDecimal settled() {
         ArgumentCaptor<BigDecimal> settle = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(crossMarginService).settle(eq(7L), settle.capture());
+        verify(crossMarginService).settle(eq(7L), settle.capture(), eq(LedgerBizType.CROSS_LIQUIDATION), isNull(), isNull());
         return settle.getValue();
     }
 
