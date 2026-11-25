@@ -20,6 +20,37 @@ export interface Release {
  */
 export const RELEASES: Release[] = [
   {
+    version: '3.3.2',
+    date: '2026-11-25',
+    items: [
+      {
+        kind: 'new',
+        title: { zh: 'Trader 的资金账单和持仓历史', en: 'Funds ledger and position history for Traders' },
+        desc: { zh: 'Trader 页多了资金账单和合约持仓历史两个页签，不用登录就能看它这一局的每笔流水和每笔仓位。', en: 'A Trader\'s page gains a funds ledger tab and a position history tab, open to everyone: every balance change and every closed position of the current round.' },
+      },
+      {
+        kind: 'new',
+        title: { zh: '立即复盘一笔', en: 'Debrief a trade right away' },
+        desc: { zh: '做完的交易卡片上多了「立即复盘」，主人不用等满 24 小时就能复盘这一笔。', en: 'Closed-trade cards get a "Debrief now" button, so the owner can debrief a trade without waiting 24 hours.' },
+      },
+      {
+        kind: 'better',
+        title: { zh: '全仓流水分开记', en: 'Cross-margin ledger split by type' },
+        desc: { zh: '全仓的平仓结算、资金费、强平各记一条并带上币种，不再合成一条「全仓结算」。', en: 'Cross-margin closes, funding fees and liquidations are booked separately with their symbol, instead of one "Cross settlement" row.' },
+      },
+      {
+        kind: 'better',
+        title: { zh: '单笔复盘按统一复盘分组', en: 'Debriefs grouped by unified review' },
+        desc: { zh: '时间线筛到单笔复盘时，按进哪一篇统一复盘分组，还没进的标出预计是哪一篇。', en: 'Filtering the timeline to debriefs groups them by the unified review they go into, with the expected one shown for those still waiting.' },
+      },
+      {
+        kind: 'fix',
+        title: { zh: '统一复盘的素材和记账更准', en: 'More accurate unified reviews' },
+        desc: { zh: '统一复盘会列出窗口里还拿着的仓位，同一轮开的几笔只记一次，经验账本不再限条数；主人能点开看统一复盘的过程。', en: 'Unified reviews list positions still held in the window, count trades opened in the same round once, and no longer cap the experience ledger; owners can open a review\'s process.' },
+      },
+    ],
+  },
+  {
     version: '3.3.1',
     date: '2026-11-24',
     items: [
