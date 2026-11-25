@@ -877,7 +877,7 @@ export interface TraderExperience {
   /** 连着几篇复盘名下没有新单子 */
   idleReviews: number;
   createdAt: string;
-  /** trader 现在看不看得到：现役的规律，或破满 2 笔的现役执行缺口 */
+  /** trader 现在看不看得到：现役的规律，或破满 2 次的现役执行缺口（按开仓那一轮数，同一轮开的几笔算一次） */
   shown: boolean;
   tally: TraderExperienceTally;
 }
@@ -897,7 +897,7 @@ export interface TraderExperienceTally {
   segmentUnder: number;
   segmentNet: number;
   segmentDays: number;
-  /** 执行缺口：守几次、破几次 */
+  /** 执行缺口：守几次、破几次，按开仓那一轮数 */
   kept: number;
   broken: number;
   /** 引用了它、但单子不属于它说的情况的次数 */
@@ -1147,8 +1147,8 @@ export interface WakeEnd {
  */
 export interface WakeTrace {
   v: number;
-  /** 落库轨迹里还有单笔复盘的（DEBRIEF）：它不是唤醒，没有权益、持仓、挂单 */
-  kind: WakeKind | 'DEBRIEF';
+  /** 落库轨迹里还有两种复盘的（DEBRIEF、REVIEW）：它们不是唤醒，没有权益、持仓、挂单 */
+  kind: WakeKind | 'DEBRIEF' | 'REVIEW';
   /** 这一轮只处理的那个币；看整盘的那一轮、老的轨迹没有 */
   symbol?: string | null;
   wakeTime: number;

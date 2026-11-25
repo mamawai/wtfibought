@@ -10,6 +10,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
+import com.mawai.wiibagent.trader.wakeup.WakeTrace;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderExperience;
@@ -33,7 +34,8 @@ import java.util.concurrent.TimeoutException;
  * → 一次模型调用写跨单子的分析 + 经验更新表（新增、发现、删除）
  * → 落账（{@link ExperienceLedger}：各笔单笔复盘的归类行和这篇补的合并后按仓位编号记到经验名下，连同本篇的新增、发现、删除）
  * → 给本批单子盖上这篇复盘的编号 → 代码结账（转正、降级、闲置退役）→ 账本渲染写回 ai_trader.memory。
- * REVIEW 决策行公开上时间线：正文 + 更新表 + 代码记账段；memory_after 存账本渲染快照。
+ * REVIEW 决策行公开上时间线：正文 + 更新表 + 代码记账段；memory_after 存账本渲染快照；
+ * 系统提示、用户消息和模型输出落 trace_json，只有主人看得到。
  * <p>
  * 收做完单笔复盘、没进过统一复盘、平仓不晚于窗口右端的单子；行情、布防、撤单、权益的窗口整体晚 24 小时
  * （见 {@link #WINDOW_LAG_MS}）。归类来自单笔复盘；某笔做单笔复盘之后账本才新增的条目，由这篇给那一笔补归类，
@@ -96,6 +98,8 @@ public class ReviewRunner {
         d.setIntervalCode(REVIEW_INTERVAL_CODE);
         d.setKind(AiTraderDecision.KIND_REVIEW);
         d.setToolCalls(0);
+        // 复盘不走现场流，轨迹自己拿着
+        WakeTrace trace = new WakeTrace(trader.getId(), AiTraderDecision.KIND_REVIEW, null, boundaryMs, timeoutSeconds, null, 0, 0);
         try {
             long fromMs = windowFrom(assembler.lastReview(trader.getId(), trader.getRoundNo()));
             long toMs = boundaryMs - WINDOW_LAG_MS;
@@ -106,12 +110,11 @@ public class ReviewRunner {
             UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
             ReviewMaterialAssembler.ReviewMaterial material = assembler.assemble(trader, fromMs, toMs, lang);
             String output = call(model, prompts.get(lang, "reviewer.system"),
-                    userPrompt(trader, material, fromMs, toMs, boundaryMs, lang), d, deadline);
+                    userPrompt(trader, material, fromMs, toMs, boundaryMs, lang), d, trace, deadline);
             if (output == null || output.isBlank()) {
                 d.setStatus(AiTraderDecision.STATUS_ERROR);
                 d.setError(prompts.get(lang, "reviewer.error.emptyOutput"));
-                d.setLatencyMs((int) (System.currentTimeMillis() - start));
-                decisionMapper.insert(d);
+                insert(d, trace, start);
                 log.warn("[Review] 模型输出为空 traderId={} boundary={}", trader.getId(), boundaryMs);
                 return;
             }
@@ -121,18 +124,17 @@ public class ReviewRunner {
             List<ExperienceLedger.Op> written = parsed.ops().stream()
                     .filter(op -> !(op instanceof ExperienceLedger.Classify)).toList();
             d.setReasoning(output.strip());
-            d.setLatencyMs((int) (System.currentTimeMillis() - start));
             if (written.isEmpty() && gapLines.isEmpty() && !parsed.noUpdates()) {
                 // 一行都认不出、也没写「本期无更新」：记成 ERROR，正文照存，账本不动；本批单子没盖编号，下次复盘还在
                 d.setStatus(AiTraderDecision.STATUS_ERROR);
                 d.setError(prompts.get(lang, "reviewer.error.noOps"));
-                decisionMapper.insert(d);
+                insert(d, trace, start);
                 log.warn("[Review] 经验更新解析为空，账本不动 traderId={}", trader.getId());
                 return;
             }
             d.setStatus(AiTraderDecision.STATUS_OK);
             // 先落行拿 id
-            decisionMapper.insert(d);
+            insert(d, trace, start);
             // 归类在前（各笔单笔复盘的，加这篇补的），本篇的新增、发现、删除在后
             List<ExperienceLedger.Op> ops = new ArrayList<>(material.classifies(gapLines));
             ops.addAll(written);
@@ -145,8 +147,8 @@ public class ReviewRunner {
                     trader.getId(), material.planIds().size(), applied.applied(), applied.dropped(), changes.size());
             writeMemory(trader, d, lang);
             // 展示用的追加段放最后，出错不耽误前面的账本渲染
-            if (!changes.isEmpty() || !applied.overCap().isEmpty()) {
-                appendNotes(d, changes, applied.overCap(), lang);
+            if (!changes.isEmpty()) {
+                appendSettled(d, changes, lang);
             }
         } catch (Exception e) {
             Throwable t = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
@@ -161,25 +163,25 @@ public class ReviewRunner {
             }
             d.setStatus(AiTraderDecision.STATUS_ERROR);
             d.setError(msg);
-            d.setLatencyMs((int) (System.currentTimeMillis() - start));
-            decisionMapper.insert(d);
+            insert(d, trace, start);
             // 不计连败不暂停：复盘失败没有资金风险，明天素材还在
             log.warn("[Review] 复盘失败 traderId={} boundary={} msg={}", trader.getId(), boundaryMs, msg, t);
         }
     }
 
-    /** 复盘正文末尾追加代码写的两段，一行一条：转正、降级、退役的结账结果；名额满了没记进账本的新增 */
-    private void appendNotes(AiTraderDecision d, List<ExperienceLedger.Change> changes, List<ExperienceLedger.Add> overCap,
-                             AgentLang lang) {
+    /** 落 REVIEW 行，带上耗时和过程轨迹 */
+    private void insert(AiTraderDecision d, WakeTrace trace, long start) {
+        d.setLatencyMs((int) (System.currentTimeMillis() - start));
+        trace.end(d.getStatus(), d.getError(), null, d.getLatencyMs(), d.getModelCalls(), d.getTotalTokens());
+        d.setTraceJson(trace.toJson());
+        decisionMapper.insert(d);
+    }
+
+    /** 复盘正文末尾追加代码写的一段，一行一条：转正、降级、退役的结账结果 */
+    private void appendSettled(AiTraderDecision d, List<ExperienceLedger.Change> changes, AgentLang lang) {
         StringBuilder sb = new StringBuilder(d.getReasoning());
-        if (!changes.isEmpty()) {
-            sb.append("\n\n").append(prompts.get(lang, "reviewer.label.settledAppendix"));
-            changes.forEach(c -> sb.append("\n- ").append(changeLine(c, lang)));
-        }
-        if (!overCap.isEmpty()) {
-            sb.append("\n\n").append(prompts.get(lang, "reviewer.label.overCapAppendix"));
-            overCap.forEach(a -> sb.append("\n- ").append(a.text()));
-        }
+        sb.append("\n\n").append(prompts.get(lang, "reviewer.label.settledAppendix"));
+        changes.forEach(c -> sb.append("\n- ").append(changeLine(c, lang)));
         d.setReasoning(sb.toString());
         decisionMapper.update(null, new LambdaUpdateWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getId, d.getId())
@@ -210,13 +212,17 @@ public class ReviewRunner {
                 .set(AiTraderDecision::getMemoryAfter, rendered));
     }
 
-    /** 虚拟线程承载超时，等到截止时刻为止；用量落 finally——超时作废的调用 token 也真烧了 */
+    /** 虚拟线程承载超时，等到截止时刻为止；用量落 finally——超时作废的调用 token 也真烧了。提示词和输出记进 trace */
     private String call(UsageTrackingChatModel model, String system, String user, AiTraderDecision d,
-                        long deadline) throws Exception {
+                        WakeTrace trace, long deadline) throws Exception {
         LlmClient client = LlmClient.builder().model(model).systemPrompt(system).build();
+        trace.prompt(system, user);
         FutureTask<String> task = new FutureTask<>(() -> {
+            trace.callStart();
             ChatResponse resp = client.execute(List.of(new UserMessage(user)));
-            return resp.getResult() == null ? "" : resp.getResult().getOutput().getText();
+            String text = resp.getResult() == null ? "" : resp.getResult().getOutput().getText();
+            trace.callEnd(text, List.of());
+            return text;
         });
         Thread.startVirtualThread(task);
         try {

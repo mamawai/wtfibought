@@ -12,6 +12,7 @@ import com.mawai.wiibagent.mapper.AiTraderExperienceTradeMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
@@ -92,7 +93,8 @@ class ReviewLoopTest {
             new ReviewMaterialAssembler(decisionMapper, planMapper, simTradeClient, prompts,
                     new CaseFileBuilder(historyStore), new CaseFileRenderer(prompts), ledger,
                     new PlayStatsAssembler(simTradeClient, planMapper, prompts, new CaseFileBuilder(historyStore)),
-                    mock(TraderWatchStore.class), new DecisionText(prompts), new ExperienceOpParser(prompts)),
+                    mock(TraderWatchStore.class), new DecisionText(prompts), new ExperienceOpParser(prompts),
+                    mock(TradeRecordService.class)),
             modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), planStore);
 
     {
@@ -261,7 +263,7 @@ class ReviewLoopTest {
         assertThat(all).contains("证据 ETH 09:32\n  本批单笔复盘归到它这里的单子：名下 [42] BTCUSDT LONG BREAKOUT ");
         assertThat(all).contains("最大浮盈 100900").contains("+0.90R")                            // 路径
                 .contains("最大逆向 98850（-1.15R）")
-                .contains("出场后只看得到 30分钟：4h / 30分钟 内最有利 — / 99400，到过原目标 0/1 档");
+                .contains("出场后只看得到 30分钟：4h / 30分钟 内最有利 — / 99400（比出场价多走 — / +500），到过原目标 0/1 档");
         assertThat(all).contains("1h ADX 31.2 ｜ 1h 布林带宽 2.8").contains("止损 3.1 个 ATR");   // 入场上下文
         assertThat(all).contains("论点 突破前高100200").contains("失效 1h收盘跌回99500下方");       // 计划
         assertThat(all).contains("【本期行情】").contains("- BTCUSDT 100000 → 99300");             // 行情

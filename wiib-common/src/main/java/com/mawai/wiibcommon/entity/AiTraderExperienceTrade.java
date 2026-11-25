@@ -46,6 +46,10 @@ public class AiTraderExperienceTrade {
     /** 平仓的新加坡日期 */
     private LocalDate closedDay;
 
+    /** 开这笔仓的那一轮实际跑的时段（ms），守、破按它分轮；认不出是哪一轮开的、老行为空 */
+    private Long openRoundFrom;
+    private Long openRoundTo;
+
     /** 记下时条目所在的段 */
     private Integer segmentNo;
 

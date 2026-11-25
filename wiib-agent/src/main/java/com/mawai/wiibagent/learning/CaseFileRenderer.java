@@ -61,7 +61,7 @@ public class CaseFileRenderer {
                 Map.entry("tHalf", p.minToHalfR() == null ? none : String.valueOf(p.minToHalfR())),
                 Map.entry("t1", p.minTo1R() == null ? none : String.valueOf(p.minTo1R())),
                 Map.entry("firstBack", p.firstBackAt() == null ? none : HM_FMT.format(Instant.ofEpochMilli(p.firstBackAt()))),
-                Map.entry("after", afterExit(p, plan, lang))))).append('\n');
+                Map.entry("after", afterExit(p, c.pos(), plan, lang))))).append('\n');
         if (c.replay() != null) {
             sb.append(replayLine(c.replay(), p.afterMs(), lang)).append('\n');
         }
@@ -102,8 +102,11 @@ public class CaseFileRenderer {
                 : prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", reached, "total", targets.size()));
     }
 
-    /** 路径行出场后那一段：满 24 小时、只看得到一段、出场后没有 K 线，三种写法 */
-    private String afterExit(CaseFileBuilder.Path p, AiTraderPlan plan, AgentLang lang) {
+    /**
+     * 路径行出场后那一段：满 24 小时、只看得到一段、出场后没有 K 线，三种写法。
+     * 最有利价后面带它比出场价往有利方向多走的价差，负数是平仓那一根之后的 K 线里再没到过出场价
+     */
+    private String afterExit(CaseFileBuilder.Path p, FuturesPositionDTO pos, AiTraderPlan plan, AgentLang lang) {
         if (p.afterMs() == 0) {
             return prompts.get(lang, "reviewer.label.caseAfterNone");
         }
@@ -112,8 +115,19 @@ public class CaseFileRenderer {
         return prompts.get(lang, key, Map.of(
                 "best4", or(p.bestAfter4h(), none),
                 "best", or(p.bestAfter(), none),
+                "gap4", beyondExit(p.bestAfter4h(), pos, none),
+                "gap", beyondExit(p.bestAfter(), pos, none),
                 "targets", targetsAfter(TargetRung.of(plan), p.targetsAfter(), lang),
                 "span", humanize(prompts, p.afterMs(), lang)));
+    }
+
+    /** 出场后最有利价比出场价往有利方向多走了多少，带正负号；没有最有利价给 none */
+    private static String beyondExit(BigDecimal best, FuturesPositionDTO pos, String none) {
+        if (best == null) {
+            return none;
+        }
+        BigDecimal gap = "LONG".equals(pos.getSide()) ? best.subtract(pos.getClosedPrice()) : pos.getClosedPrice().subtract(best);
+        return signed(gap.stripTrailingZeros());
     }
 
     /**

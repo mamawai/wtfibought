@@ -62,10 +62,14 @@ class ExperienceLedgerTest {
         }
     }
 
-    /** 本期两笔：42 赚、43 亏 */
+    /** 某一轮开跑的时刻 */
+    private static final long ROUND = 1795442400000L;
+    private static final long MIN = 60_000L;
+
+    /** 本期两笔：42 赚，开它的那一轮跑了 14 分钟；43 亏，认不出是哪一轮开的 */
     private static final Map<Long, ExperienceLedger.PeriodTrade> TRADES = Map.of(
-            42L, new ExperienceLedger.PeriodTrade(new BigDecimal("12.50"), LocalDate.of(2026, 11, 10)),
-            43L, new ExperienceLedger.PeriodTrade(new BigDecimal("-3.00"), LocalDate.of(2026, 11, 11)));
+            42L, new ExperienceLedger.PeriodTrade(new BigDecimal("12.50"), LocalDate.of(2026, 11, 10), ROUND, ROUND + 14 * MIN),
+            43L, new ExperienceLedger.PeriodTrade(new BigDecimal("-3.00"), LocalDate.of(2026, 11, 11), null, null));
 
     private final AiTraderExperienceMapper expMapper = mock(AiTraderExperienceMapper.class);
     private final AiTraderExperienceTradeMapper tradeMapper = mock(AiTraderExperienceTradeMapper.class);
@@ -75,7 +79,7 @@ class ExperienceLedgerTest {
 
     // ==================== 归类 ====================
 
-    /** 归类逐笔记下：挂在这篇复盘上，净盈亏和平仓日取本期单子，段号取条目当前的段；引用不符也记一行 */
+    /** 归类逐笔记下：挂在这篇复盘上，净盈亏、平仓日和开仓那一轮取本期单子，段号取条目当前的段；引用不符也记一行 */
     @Test
     void classifyRecordsEachTrade() {
         AiTraderExperience rule = exp(5L, KIND_RULE, DIR_OPPORTUNITY, "BREAKOUT");
@@ -97,6 +101,8 @@ class ExperienceLedgerTest {
         assertThat(first.getMark()).isEqualTo(MARK_UNDER);
         assertThat(first.getNet()).isEqualByComparingTo("12.50");
         assertThat(first.getClosedDay()).isEqualTo(LocalDate.of(2026, 11, 10));
+        assertThat(first.getOpenRoundFrom()).isEqualTo(ROUND);
+        assertThat(first.getOpenRoundTo()).isEqualTo(ROUND + 14 * MIN);
         assertThat(first.getSegmentNo()).isEqualTo(2);
         assertThat(rows.getAllValues()).extracting(AiTraderExperienceTrade::getMark)
                 .containsExactly(MARK_UNDER, MARK_MISCITED, MARK_MISCITED);
@@ -141,8 +147,9 @@ class ExperienceLedgerTest {
 
     // ==================== 新增 / 发现 / 删除 ====================
 
+    /** 新增只看合不合法，条数没有上限：同一单子类型已有 3 条、限制型已有 2 条，照样加得进去 */
     @Test
-    void addRespectsCapsAndValidation() {
+    void addValidatesButHasNoCap() {
         List<AiTraderExperience> actives = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
             actives.add(exp(10L + i, KIND_HYPOTHESIS, DIR_EXECUTION, "PULLBACK"));
@@ -152,9 +159,9 @@ class ExperienceLedgerTest {
         when(expMapper.selectList(any())).thenReturn(actives);
 
         ExperienceLedger.Applied r = ledger.apply(7L, 1, 100L, List.of(
-                // 同类已满 3 条
+                // 同类已有 3 条
                 add("PULLBACK", AiTraderExperience.SLOT_ENTRY, DIR_EXECUTION, "x", "e"),
-                // 限制型已满 2 条
+                // 限制型已有 2 条
                 add("BREAKOUT", AiTraderExperience.SLOT_RISK, DIR_RESTRICTION, "x", "e"),
                 // playType 不合法
                 add("MOON", AiTraderExperience.SLOT_ENTRY, DIR_OPPORTUNITY, "x", "e"),
@@ -169,20 +176,20 @@ class ExperienceLedgerTest {
                 add("breakout", AiTraderExperience.SLOT_ENTRY, DIR_OPPORTUNITY, "回踩前高不破再挂多", "ETH 09:32")),
                 AgentLang.ZH, TRADES);
 
-        assertThat(r.applied()).isEqualTo(2);
-        assertThat(r.dropped()).isEqualTo(6);
-        // 名额满了丢的那两条单独带出来，不合法的四条不在里面
-        assertThat(r.overCap()).extracting(ExperienceLedger.Add::playType).containsExactly("PULLBACK", "BREAKOUT");
+        assertThat(r.applied()).isEqualTo(4);
+        assertThat(r.dropped()).isEqualTo(4);
         ArgumentCaptor<AiTraderExperience> cap = ArgumentCaptor.forClass(AiTraderExperience.class);
-        verify(expMapper, times(2)).insert(cap.capture());
-        AiTraderExperience gap = cap.getAllValues().get(0);
+        verify(expMapper, times(4)).insert(cap.capture());
+        assertThat(cap.getAllValues()).extracting(AiTraderExperience::getPlayType, AiTraderExperience::getDirection)
+                .startsWith(tuple("PULLBACK", DIR_EXECUTION), tuple("BREAKOUT", DIR_RESTRICTION));
+        AiTraderExperience gap = cap.getAllValues().get(2);
         assertThat(gap.getKind()).isEqualTo(KIND_GAP);
         assertThat(gap.getText()).hasSize(80);
         assertThat(gap.getCreatedReviewId()).isEqualTo(100L);
         assertThat(gap.getStatus()).isEqualTo(STATUS_ACTIVE);
         assertThat(gap.getSegmentNo()).isZero();
         assertThat(gap.getIdleReviews()).isZero();
-        AiTraderExperience hyp = cap.getAllValues().get(1);
+        AiTraderExperience hyp = cap.getAllValues().get(3);
         assertThat(hyp.getKind()).isEqualTo(KIND_HYPOTHESIS);
         assertThat(hyp.getPlayType()).isEqualTo("BREAKOUT");
     }
@@ -228,7 +235,7 @@ class ExperienceLedgerTest {
                 .containsExactly(tuple(20L, MARK_UNDER, 0, 100L), tuple(21L, MARK_BROKEN, 0, 100L));
     }
 
-    /** 发现：正文与证据按语言上限截断，不占现役上限 */
+    /** 发现：正文与证据按语言上限截断 */
     @Test
     void findingIsCutToLanguageLimits() {
         when(expMapper.selectList(any())).thenReturn(new ArrayList<>());
@@ -269,24 +276,6 @@ class ExperienceLedgerTest {
         assertThat(rule.getStatus()).isEqualTo(STATUS_ACTIVE);
         assertThat(pinned.getStatus()).isEqualTo(STATUS_ACTIVE);
         assertThat(updateSets()).anyMatch(s -> s.contains("status=") && s.contains("retire_reason="));
-    }
-
-    /** 新增排到最后落账：同一篇里写在它后面的删除，也先把名额腾出来 */
-    @Test
-    void deleteInSameReviewFreesQuotaForAnAddWrittenBeforeIt() {
-        AiTraderExperience rule = exp(20L, KIND_RULE, DIR_RESTRICTION, "PULLBACK");
-        AiTraderExperience hyp = exp(21L, KIND_HYPOTHESIS, DIR_RESTRICTION, null);
-        when(expMapper.selectById(21L)).thenReturn(hyp);
-        when(expMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(rule, hyp)));
-
-        ExperienceLedger.Applied r = ledger.apply(7L, 1, 100L, List.of(
-                add("BREAKOUT", AiTraderExperience.SLOT_ENTRY, DIR_RESTRICTION, "破位后不市价追", "HYPE 4 笔净 -783"),
-                new ExperienceLedger.Delete(21L, "给新的一条腾名额")), AgentLang.ZH, TRADES);
-
-        assertThat(r.applied()).isEqualTo(2);
-        assertThat(r.overCap()).isEmpty();
-        assertThat(hyp.getStatus()).isEqualTo(STATUS_RETIRED);
-        verify(expMapper).insert(any(AiTraderExperience.class));
     }
 
     // ==================== 结账 ====================
@@ -470,7 +459,7 @@ class ExperienceLedgerTest {
 
     // ==================== 账 ====================
 
-    /** 一条的账：名下算笔数、赚亏（正好 0 两边都不算）、合计、平仓日，当前段另算一份；守、破、引用不符只数笔数 */
+    /** 一条的账：名下算笔数、赚亏（正好 0 两边都不算）、合计、平仓日，当前段另算一份；引用不符数笔数；守、破没记开仓轮的老行各算一次 */
     @Test
     void tallyCountsUnderMoneyDaysSegmentAndOtherMarks() {
         ExperienceLedger.Tally t = ExperienceLedger.tally(1, List.of(
@@ -484,6 +473,30 @@ class ExperienceLedgerTest {
 
         assertThat(t).isEqualTo(new ExperienceLedger.Tally(3, 1, 1, new BigDecimal("6.00"), 2,
                 2, new BigDecimal("-4.00"), 2, 1, 2, 1));
+    }
+
+    /**
+     * 守、破按开仓那一轮数，不按单子数。同一轮开的两笔都破算破一次；几个币各跑各的轮、时段有交集的算同一轮，
+     * 哪怕开跑时刻跨在两根 5m 上；一轮里一笔破一笔守，这一轮算破；前一轮跑完之后才开跑的是另一轮；
+     * 认不出是哪一轮开的各算一次
+     */
+    @Test
+    void gapTallyCountsOpeningRoundsNotTrades() {
+        ExperienceLedger.Tally t = ExperienceLedger.tally(0, List.of(
+                // 同一轮开的两笔，都破
+                opened(row(1L, 41L, MARK_BROKEN, "-1.00", 10, 0), ROUND, ROUND + 14 * MIN),
+                opened(row(1L, 42L, MARK_BROKEN, "-2.00", 10, 0), ROUND, ROUND + 14 * MIN),
+                // 一小时后：两个币各跑各的轮，22:59:58 和 23:00:03 开跑，同时在跑，一笔破一笔守
+                opened(row(1L, 43L, MARK_BROKEN, "-1.00", 11, 0), ROUND + 60 * MIN - 2_000, ROUND + 65 * MIN),
+                opened(row(1L, 44L, MARK_KEPT, "1.00", 11, 0), ROUND + 60 * MIN + 3_000, ROUND + 66 * MIN),
+                // 上面那两轮跑完之后才开跑的一轮，守
+                opened(row(1L, 45L, MARK_KEPT, "1.00", 12, 0), ROUND + 67 * MIN, ROUND + 70 * MIN),
+                // 认不出是哪一轮开的两笔，各算一次
+                row(1L, 46L, MARK_BROKEN, "-1.00", 12, 0),
+                row(1L, 47L, MARK_KEPT, "1.00", 12, 0)));
+
+        assertThat(t.broken()).isEqualTo(3);
+        assertThat(t.kept()).isEqualTo(2);
     }
 
     /** 主人标了不算数的单子在账里不算 */
@@ -511,8 +524,8 @@ class ExperienceLedgerTest {
     // ==================== 渲染 ====================
 
     /**
-     * 规律按方向写照做或违反，引用不符大于 0 才带；执行缺口破满 2 笔才出现，写碰到几次、做到几次；
-     * 假设、发现、只破过 1 笔的执行缺口不出现；数字都是累计（跨段）
+     * 规律按方向写照做或违反，引用不符大于 0 才带；执行缺口破满 2 次才出现，写碰到几次、做到几次；
+     * 假设、发现、只破过 1 次的执行缺口不出现；数字都是累计（跨段）
      */
     @Test
     void renderShowsRulesAndGapsBrokenTwiceWithCumulativeTallies() {
@@ -549,14 +562,18 @@ class ExperienceLedgerTest {
         assertThat(ledger.isRendered("【已验证纪律】\n1. 旧记忆")).isFalse();
     }
 
-    /** 一条都看不到（只有假设、破了 1 笔的执行缺口、发现）：整段为 null */
+    /** 一条都看不到（只有假设、破了 1 次的执行缺口、同一轮开的两笔都破的执行缺口、发现）：整段为 null */
     @Test
     void renderIsNullWhenNothingIsShown() {
         when(expMapper.selectList(any())).thenReturn(List.of(
                 exp(1L, KIND_HYPOTHESIS, DIR_OPPORTUNITY, "BREAKOUT"),
                 exp(2L, KIND_GAP, DIR_EXECUTION, null),
-                exp(3L, KIND_FINDING, DIR_EXECUTION, null)));
-        when(tradeMapper.selectList(any())).thenReturn(List.of(row(2L, 21L, MARK_BROKEN, "-1.00", 10, 0)));
+                exp(3L, KIND_FINDING, DIR_EXECUTION, null),
+                exp(4L, KIND_GAP, DIR_EXECUTION, null)));
+        when(tradeMapper.selectList(any())).thenReturn(List.of(
+                row(2L, 21L, MARK_BROKEN, "-1.00", 10, 0),
+                opened(row(4L, 41L, MARK_BROKEN, "-1.00", 10, 0), ROUND, ROUND + 14 * MIN),
+                opened(row(4L, 42L, MARK_BROKEN, "-2.00", 10, 0), ROUND, ROUND + 14 * MIN)));
 
         assertThat(ledger.render(7L, 1, AgentLang.EN)).isNull();
     }
@@ -704,6 +721,13 @@ class ExperienceLedgerTest {
         r.setNet(new BigDecimal(net));
         r.setClosedDay(LocalDate.of(2026, 11, day));
         r.setSegmentNo(segment);
+        return r;
+    }
+
+    /** 记上开这笔仓的那一轮实际跑的时段 */
+    private static AiTraderExperienceTrade opened(AiTraderExperienceTrade r, long from, long to) {
+        r.setOpenRoundFrom(from);
+        r.setOpenRoundTo(to);
         return r;
     }
 

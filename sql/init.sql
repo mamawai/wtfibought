@@ -909,7 +909,7 @@ COMMENT ON TABLE ai_trader_experience IS 'AI Trader经验账本：复盘写入�
 COMMENT ON COLUMN ai_trader_experience.play_type IS '所属单子类型（TradeGuard.PLAY_TYPES），NULL=通用';
 COMMENT ON COLUMN ai_trader_experience.kind IS 'GAP=执行缺口（自己写下要做、或主人指令里写了数字的硬线，碰到时没做到） HYPOTHESIS=假设 RULE=规律（名下单子的账够了由代码转正） FINDING=发现（指令本身在花钱，只给主人看不注入）';
 COMMENT ON COLUMN ai_trader_experience.slot IS '格子：ENTRY入场条件/RISK风险限制/EXEC执行缺口，新增只收这三种，转正只看前两种；FAIL_DEF失败判定/FAIL_HANDLE失败处理/PROFIT_HANDLE盈利处理只在旧数据里';
-COMMENT ON COLUMN ai_trader_experience.direction IS 'OPPORTUNITY机会型(某条件下该做)/RESTRICTION限制型(某条件下不做)/EXECUTION执行型(怎么做)；限制型全账户≤2条，能否作观望理由看ai_trader.learned_restriction_hold';
+COMMENT ON COLUMN ai_trader_experience.direction IS 'OPPORTUNITY机会型(某条件下该做)/RESTRICTION限制型(某条件下不做)/EXECUTION执行型(怎么做)；限制型能否作观望理由看ai_trader.learned_restriction_hold';
 COMMENT ON COLUMN ai_trader_experience.status IS 'ACTIVE现役（注入trader） RETIRED退役（不注入，复盘可见退役名单，主人可复活）';
 COMMENT ON COLUMN ai_trader_experience.segment_no IS '当前段，从0起：转正、降级各加一，转正降级只看当前段的名下单子';
 COMMENT ON COLUMN ai_trader_experience.idle_reviews IS '连续几篇复盘没有新单子记进名下/守/破，满10篇代码退役；本期没有已了结单子的复盘不数；钉住的、已转正的限制型不加一，有新单子照样清零';
@@ -929,6 +929,8 @@ CREATE TABLE IF NOT EXISTS ai_trader_experience_trade (
     mark            VARCHAR(12) NOT NULL,
     net             NUMERIC(18,2) NOT NULL,
     closed_day      DATE NOT NULL,
+    open_round_from BIGINT,
+    open_round_to   BIGINT,
     segment_no      INT NOT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -937,6 +939,8 @@ COMMENT ON TABLE ai_trader_experience_trade IS '经验名下的单子：复盘�
 COMMENT ON COLUMN ai_trader_experience_trade.mark IS 'UNDER名下（假设/规律：机会型、执行型=碰到它说的情况并照做，限制型=碰到它说的情况还是做了） KEPT守 BROKEN破（执行缺口） MISCITED引用不符（开仓引用了它但情况对不上，只记次数不记钱）';
 COMMENT ON COLUMN ai_trader_experience_trade.net IS '这笔的净盈亏USDT：复盘案例行那个数（sim closed_pnl，扣了手续费和资金费，与战绩块同口径）';
 COMMENT ON COLUMN ai_trader_experience_trade.closed_day IS '平仓的新加坡日期，转正要求至少3个不同日子';
+COMMENT ON COLUMN ai_trader_experience_trade.open_round_from IS '开这笔仓的那一轮实际开跑的时刻(ms)；执行缺口的守、破按开仓那一轮数，同一轮或同时在跑的几轮开的几笔算一次；认不出是哪一轮开的、老行为空，各算一次';
+COMMENT ON COLUMN ai_trader_experience_trade.open_round_to IS '开这笔仓的那一轮跑完的时刻(ms)，和open_round_from一起是那一轮的时段';
 COMMENT ON COLUMN ai_trader_experience_trade.segment_no IS '记下时条目所在的段：转正、降级各起一段，转正降级只看当前段';
 
 -- ============================================

@@ -147,8 +147,8 @@ export function DecisionCard({ d, mine, highlight, trade }: {
         ? (
           <>
             {d.reasoning && <div className="rvb"><Markdown content={d.reasoning} /></div>}
-            {/* 单笔复盘带工具，落了轨迹的主人可以看它查了什么 */}
-            {isDebrief && mine && d.hasTrace && (
+            {/* 落了轨迹的主人可以看过程：单笔复盘查了什么，统一复盘收到了什么素材 */}
+            {mine && d.hasTrace && (
               <button type="button" className="linkb" aria-expanded={traceOpen} onClick={toggleTrace}>{t('live.process')}</button>
             )}
           </>

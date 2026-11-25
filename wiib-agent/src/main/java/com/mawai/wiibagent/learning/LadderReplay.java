@@ -60,7 +60,8 @@ final class LadderReplay {
         }
         // 首档成交后 24 小时内的顺向、逆向和拿满的位置，以加权均价为参照。
         // 24 小时从首档成交所在那根的开盘算；K 线还没走到那一刻的，顺向逆向算到最后一根，没有拿满的位置
-        long end = walks.getFirst().fillBar() + DIRECTION_MS;
+        long fillBar = walks.getFirst().fillBar();
+        long end = fillBar + DIRECTION_MS;
         BigDecimal favourable = BigDecimal.ZERO;
         BigDecimal adverse = BigDecimal.ZERO;
         BigDecimal hold = null;
@@ -68,7 +69,9 @@ final class LadderReplay {
             if (bar.openTime() < firstFill || bar.openTime() >= end) {
                 continue;
             }
-            favourable = favourable.max(isLong ? bar.high().subtract(entry) : entry.subtract(bar.low()));
+            // 限价首档成交的那一根里分不清先后：顺向只认收盘价（市价首档从下一根才算，碰不到这里）
+            BigDecimal best = bar.openTime() == fillBar ? bar.close() : isLong ? bar.high() : bar.low();
+            favourable = favourable.max(isLong ? best.subtract(entry) : entry.subtract(best));
             adverse = adverse.max(isLong ? entry.subtract(bar.low()) : bar.high().subtract(entry));
             // K 线覆盖到 24 小时才有拿满的位置
             if (bar.openTime() + BAR_MS >= end) {

@@ -63,7 +63,9 @@ public class CaseFileBuilder {
 
     /**
      * 路径指标。浮盈/逆向按方向取 K 线高低；mfeR / maeR 是它们相当于几 R（R = 入场价到计划原始止损的距离），没计划止损就没有。
-     * minToHalfR / minTo1R 是开仓后多少分钟第一次走到 +0.5R / +1R；firstBackAt 是入场根之后第一根收盘穿回入场价的时刻。
+     * 成交那一根、平仓那一根里分不清先后，浮盈只认一定在持仓期间出现过的价（见 {@link #seen}）；
+     * 一直没到过入场价有利一侧的没有浮盈，mfe 三项为 null。
+     * minToHalfR / minTo1R 是开仓后多少分钟第一次走到 +0.5R / +1R；firstBackAt 是入场根之后第一根收盘穿回入场价的时刻，平仓那一根看出场价。
      * afterMs 是出场后的 K 线覆盖了多久（平仓那根的下一根开盘到最后一根收盘），盖满 24 小时记 24 小时，出场后一根都没有是 0。
      * bestAfter4h 是出场后 4 小时内的最有利价，覆盖不到 4 小时为 null；bestAfter 是覆盖到的这一段里的最有利价。
      * targetsAfter 是这一段里到过计划里的几档止盈，没设止盈或出场后没有 K 线为 null。
@@ -410,6 +412,7 @@ public class CaseFileBuilder {
         boolean isLong = "LONG".equals(pos.getSide());
         BigDecimal entry = pos.getEntryPrice();
         BigDecimal stopDist = dist(entry, plan == null ? null : plan.getStopLossPrice());
+        long closeMs = TradePairing.msOf(pos.getUpdatedAt());
 
         List<KlineBar> inTrade = new ArrayList<>();
         // 有利 / 逆向都记成离入场价的差值，价位最后按方向反推
@@ -422,19 +425,20 @@ public class CaseFileBuilder {
         BigDecimal best4h = null;
         BigDecimal bestAfter = null;
         for (KlineBar b : bars) {
-            BigDecimal favExc = isLong ? b.high().subtract(entry) : entry.subtract(b.low());
             if (b.openTime() <= closeBar) {
                 inTrade.add(b);
+                Seen fav = seen(b, pos, isLong, openBar, closeBar, closeMs);
+                BigDecimal favExc = isLong ? fav.price().subtract(entry) : entry.subtract(fav.price());
                 BigDecimal advExc = isLong ? entry.subtract(b.low()) : b.high().subtract(entry);
                 if (mfeExc == null || favExc.compareTo(mfeExc) > 0) {
                     mfeExc = favExc;
-                    mfeAt = b.openTime();
+                    mfeAt = fav.at();
                 }
                 if (maeExc == null || advExc.compareTo(maeExc) > 0) {
                     maeExc = advExc;
                 }
                 if (stopDist != null) {
-                    long minutes = Math.max(0, (b.openTime() - openMs) / 60_000);
+                    long minutes = Math.max(0, (fav.at() - openMs) / 60_000);
                     if (minToHalfR == null && favExc.compareTo(stopDist.multiply(new BigDecimal("0.5"))) >= 0) {
                         minToHalfR = minutes;
                     }
@@ -442,8 +446,10 @@ public class CaseFileBuilder {
                         minTo1R = minutes;
                     }
                 }
+                // 平仓那一根的收盘在平仓之后，看出场价
+                BigDecimal settled = b.openTime() == closeBar ? pos.getClosedPrice() : b.close();
                 if (firstBackAt == null && b.openTime() > openBar
-                        && (isLong ? b.close().compareTo(entry) < 0 : b.close().compareTo(entry) > 0)) {
+                        && (isLong ? settled.compareTo(entry) < 0 : settled.compareTo(entry) > 0)) {
                     firstBackAt = b.openTime();
                 }
             } else if (b.openTime() <= closeBar + AFTER_LONG_MS) {
@@ -453,6 +459,11 @@ public class CaseFileBuilder {
                 }
                 bestAfter = better(bestAfter, fav, isLong);
             }
+        }
+        // 一直没到过入场价的有利一侧：没有浮盈
+        if (mfeExc != null && mfeExc.signum() < 0) {
+            mfeExc = null;
+            mfeAt = null;
         }
         // 出场后数据覆盖到哪：最后一根 5m 的收盘时刻
         long coveredTo = bars.getLast().openTime() + BAR_MS;
@@ -466,6 +477,29 @@ public class CaseFileBuilder {
                 mae, frac(maeExc == null ? null : maeExc.abs(), stopDist),
                 minToHalfR, minTo1R, firstBackAt, hourlyBars(inTrade),
                 has4h ? best4h : null, bestAfter, targetsAfter, afterMs);
+    }
+
+    /** 一个价和它出现的时刻 */
+    private record Seen(BigDecimal price, long at) {
+    }
+
+    /**
+     * 持仓期间这一根里一定出现过的最有利价。成交那一根、平仓那一根里分不清先后，只认确定在持仓期间的价：
+     * 成交那一根是收盘价（时刻记这根收盘）；平仓那一根是开盘价和出场价里有利的那个；开平在同一根的只有出场价；
+     * 其余是整根的极值，时刻记这根开盘
+     */
+    private static Seen seen(KlineBar b, FuturesPositionDTO pos, boolean isLong, long openBar, long closeBar, long closeMs) {
+        boolean first = b.openTime() == openBar;
+        boolean last = b.openTime() == closeBar;
+        if (last) {
+            BigDecimal exit = pos.getClosedPrice();
+            boolean exitBetter = first || (isLong ? exit.compareTo(b.open()) >= 0 : exit.compareTo(b.open()) <= 0);
+            return exitBetter ? new Seen(exit, closeMs) : new Seen(b.open(), b.openTime());
+        }
+        if (first) {
+            return new Seen(b.close(), b.openTime() + BAR_MS);
+        }
+        return new Seen(isLong ? b.high() : b.low(), b.openTime());
     }
 
     private static BigDecimal better(BigDecimal cur, BigDecimal candidate, boolean isLong) {

@@ -25,6 +25,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -33,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static com.mawai.wiibcommon.entity.AiTraderExperienceTrade.MARK_UNDER;
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -48,14 +50,14 @@ import static org.mockito.Mockito.when;
 
 /**
  * ReviewRunner 回路：解析落账 / 代码结账 / 账本渲染写回 memory / 只写「本期无更新」算成功 / 一行解析不出账本不动 /
- * 无素材跳过 / 失败只留 ERROR 行不计连败 / 结账结果和没记进账本的新增追加在正文末尾。
+ * 无素材跳过 / 失败只留 ERROR 行不计连败 / 结账结果追加在正文末尾 / 提示词和输出落 trace_json。
  */
 class ReviewRunnerTest {
 
     private static final long BOUNDARY = 1785110400000L + 86_400_000L;
     /** 本期一笔单子：仓位 42 */
     private static final Map<Long, ExperienceLedger.PeriodTrade> TRADES = Map.of(
-            42L, new ExperienceLedger.PeriodTrade(new BigDecimal("-300.00"), LocalDate.of(2026, 7, 27)));
+            42L, new ExperienceLedger.PeriodTrade(new BigDecimal("-300.00"), LocalDate.of(2026, 7, 27), null, null));
 
     @BeforeAll
     static void initTableInfoCache() {
@@ -89,7 +91,7 @@ class ReviewRunnerTest {
             return 1;
         });
         when(ledger.apply(anyLong(), anyInt(), any(), any(), any(), any()))
-                .thenReturn(new ExperienceLedger.Applied(2, 0, List.of()));
+                .thenReturn(new ExperienceLedger.Applied(2, 0));
         when(ledger.writeMemory(any(), any())).thenReturn("【经验账本】\n#1 规律·执行型 ｜ 止损不小于 1 个 1h ATR");
     }
 
@@ -175,6 +177,14 @@ class ReviewRunnerTest {
         assertThat(d.getError()).isNull();
         assertThat(d.getModelCalls()).isEqualTo(1);
         assertThat(d.getPromptTokens()).isEqualTo(1000L);
+        // 过程轨迹落在这一行：系统提示、用户消息、模型输出
+        JsonNode trace = MAPPER.readTree(d.getTraceJson());
+        assertThat(trace.path("kind").asString()).isEqualTo(AiTraderDecision.KIND_REVIEW);
+        assertThat(trace.path("prompt").path("system").asString()).isEqualTo(prompts.get(AgentLang.ZH, "reviewer.system"));
+        assertThat(trace.path("prompt").path("instruction").asString()).contains("【本批单子】").contains("【盯盘布防】");
+        assertThat(trace.path("calls").size()).isEqualTo(1);
+        assertThat(trace.path("calls").get(0).path("text").asString()).isEqualTo(OUTPUT);
+        assertThat(trace.path("end").path("status").asString()).isEqualTo(AiTraderDecision.STATUS_OK);
 
         // 落账的是：单笔复盘合并出来的归类在前，本篇的新增在后；输出里那行 #9 归类不认
         @SuppressWarnings("unchecked")
@@ -226,15 +236,12 @@ class ReviewRunnerTest {
                 new ExperienceLedger.Classify(9L, List.of(new ExperienceLedger.Mark(MARK_UNDER, 42L))));
     }
 
-    /** 转正、降级、退役和名额满了没记进账本的新增，都追加在复盘正文末尾，一行一条，结账的在前 */
+    /** 转正、降级、退役追加在复盘正文末尾，一行一条 */
     @Test
-    void settledChangesAndOverCapAddsAreListedAtTheEndOfTheReviewText() {
+    void settledChangesAreListedAtTheEndOfTheReviewText() {
         stubMaterial();
         ChatModel model = modelReturning(OUTPUT);
         when(modelFactory.modelFor(any())).thenReturn(model);
-        when(ledger.apply(anyLong(), anyInt(), any(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(1, 1,
-                List.of(new ExperienceLedger.Add("PULLBACK", AiTraderExperience.SLOT_ENTRY, AiTraderExperience.DIR_OPPORTUNITY,
-                        "回踩 1h EMA20 不破 → 挂限价多", "ETH 09:32、SOL 23:33", List.of(), null))));
         ExperienceLedger.Tally tally = new ExperienceLedger.Tally(6, 4, 2, new BigDecimal("40.00"), 4,
                 5, new BigDecimal("31.00"), 3, 0, 0, 0);
         when(ledger.settle(anyLong(), anyInt(), anyLong(), anyBoolean(), any())).thenReturn(List.of(
@@ -254,10 +261,7 @@ class ReviewRunnerTest {
                 .endsWith("""
                         【代码记账】下面这些是代码按名下单子的账做的：
                         - #5 转为规律（当前段名下 5 笔，3 个平仓日，合计 +31.00）：破位后挂限价等反抽
-                        - #6 退役（连续 10 篇复盘名下没有新单子）：量比大于 2 才追
-
-                        【没记进账本】下面几条新增因为账本名额已满，没有记进账本：
-                        - 回踩 1h EMA20 不破 → 挂限价多"""));
+                        - #6 退役（连续 10 篇复盘名下没有新单子）：量比大于 2 才追"""));
     }
 
     @Test
@@ -422,6 +426,10 @@ class ReviewRunnerTest {
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
         assertThat(dec.getValue().getError()).contains("超时");
+        // 超时的那行也留着当时的提示词，没有输出
+        JsonNode trace = MAPPER.readTree(dec.getValue().getTraceJson());
+        assertThat(trace.path("prompt").path("instruction").asString()).contains("【本批单子】");
+        assertThat(trace.path("calls").size()).isZero();
         verify(ledger, never()).writeMemory(any(), any());
     }
 

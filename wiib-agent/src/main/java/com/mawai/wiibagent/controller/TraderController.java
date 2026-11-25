@@ -264,7 +264,7 @@ public class TraderController {
 
     /**
      * 主人页账本一条：条目本身 + 代码按名下单子算的账（主人标了不算数的单子不算）。
-     * shown＝trader 现在看得到它：现役的规律，或破满 2 笔的现役执行缺口
+     * shown＝trader 现在看得到它：现役的规律，或破满 2 次的现役执行缺口（按开仓那一轮数，同一轮开的几笔算一次）
      */
     public record ExperienceView(long id, int roundNo, String playType, String kind, String slot, String direction,
                                  String text, String evidence, String status, boolean pinned, String retireReason,

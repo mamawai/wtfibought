@@ -238,7 +238,7 @@ trader:
     ledgerRowViolated: "#{{id}} {{kind}}{{dir}} ｜ {{text}} ｜ 违反 {{n}} 笔，赚 {{wins}} 亏 {{losses}}，合计 {{net}} USDT{{miscited}}"
     # 引用时情况不符的次数大于 0 才跟在上面两行后面
     ledgerMiscited: " ｜ 另有 {{m}} 次引用时情况不符"
-    # 执行缺口一行（破满 2 笔才出现）：碰到＝守＋破，做到＝守
+    # 执行缺口一行（破满 2 次才出现）：碰到＝守＋破，做到＝守；次数按开仓那一轮数，同一轮开的几笔算一次
     ledgerRowGap: "#{{id}} {{kind}} ｜ {{text}} ｜ 碰到 {{met}} 次，做到 {{kept}} 次"
     ledgerKind:
       gap: 执行缺口

@@ -6,6 +6,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
+import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.PlanEntry;
 import com.mawai.wiibagent.trader.trade.TradeActions;
@@ -35,6 +36,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -56,6 +58,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 本批单子：有成功的单笔复盘、还没进过统一复盘、主人没忽略、平仓不晚于窗口右端的单子。
  * 行情、盯盘布防、撤掉的限价档、战绩表的权益看窗口 (fromMs, toMs]，窗口由 {@link ReviewRunner} 定，右端在 24 小时之前。
  * 提前做了单笔复盘的单子，等到窗口盖住它平仓的那一篇才收。
+ * 窗口里持有过、但不在本批的仓位（还拿着的、窗口之后才平的、平了还没做完单笔复盘的）在本批单子块末尾各列一行，不给盈亏。
  * 各笔单笔复盘的归类行随素材交出去，和这篇给"单笔复盘时还没有的条目"补的归类一起，合并成每条经验一行落账。
  * <p>
  * 段标签全在 {@link PromptCatalog} 的 {@code reviewer.label.*}；路径指标在 {@link CaseFileBuilder}，
@@ -88,6 +91,8 @@ public class ReviewMaterialAssembler {
     private final TraderWatchStore watchStore;
     private final DecisionText decisionText;
     private final ExperienceOpParser parser;
+    /** 只为认每笔单子是哪一轮开的 */
+    private final TradeRecordService tradeRecords;
 
     /**
      * 六块素材文本，加落账要用的：本批单子（仓位编号 → 净盈亏和平仓日，新增行里的仓位编号只认这些）、
@@ -162,6 +167,8 @@ public class ReviewMaterialAssembler {
     }
 
     public ReviewMaterial assemble(AiTrader trader, long fromMs, long toMs, AgentLang lang) {
+        // 先取还拿着的，再取已平的：两次之间平掉的仓位两边都有，按已平的算
+        List<FuturesPositionDTO> held = simTradeClient.getAllPositions(trader.getSimUserId());
         List<FuturesPositionDTO> fetched = simTradeClient.getClosedPositions(trader.getSimUserId(), CLOSED_FETCH_LIMIT);
         List<AiTraderPlan> plans = plans(trader);
         Map<Long, AiTraderPlan> planByPosition = unreviewed(plans);
@@ -187,14 +194,16 @@ public class ReviewMaterialAssembler {
             }
         }
         String stats = playStats.assembleWithReplay(trader, lang);
+        Set<Long> inBatch = cases.stream().map(c -> c.pos().getId()).collect(Collectors.toSet());
         return new ReviewMaterial(
                 statsBlock(trader, fromMs, toMs, cases, lang),
                 stats == null ? "" : stats,
-                casesBlock(cases, debriefs, gaps, cancelledLimits(trader, plans, fetched, fromMs, toMs), lang),
+                casesBlock(cases, debriefs, gaps, cancelledLimits(trader, plans, fetched, fromMs, toMs),
+                        heldOutside(plans, fetched, held, inBatch, fromMs, toMs), lang),
                 marketBlock(trader, fromMs, toMs, lang),
                 watchBlock(trader, plans, fromMs, toMs, lang),
                 ledgerBlock(trader, active, ExperienceLedger.mergeDebriefs(lines, active), cases, lang),
-                periodTrades(cases),
+                periodTrades(trader, cases),
                 lines, gaps, active,
                 cases.stream().map(c -> c.plan().getId()).toList());
     }
@@ -245,13 +254,22 @@ public class ReviewMaterialAssembler {
         return out;
     }
 
-    /** 本批单子按仓位编号：净盈亏取事实表那个数，平仓日是新加坡日期；没有净盈亏的记不了账，不收 */
-    private static Map<Long, ExperienceLedger.PeriodTrade> periodTrades(List<CaseFileBuilder.TradeCase> cases) {
+    /**
+     * 本批单子按仓位编号：净盈亏取事实表那个数，平仓日是新加坡日期，再带上开这笔仓的那一轮实际跑的时段。
+     * 开仓那一轮由 {@link TradeRecordService#openDecisions} 认，续立、补立的计划认不出是哪一轮开的，时段为空。
+     * 没有净盈亏的记不了账，不收
+     */
+    private Map<Long, ExperienceLedger.PeriodTrade> periodTrades(AiTrader trader, List<CaseFileBuilder.TradeCase> cases) {
+        Map<Long, AiTraderDecision> openByPlan = tradeRecords.openDecisions(trader,
+                cases.stream().map(CaseFileBuilder.TradeCase::plan).toList());
         Map<Long, ExperienceLedger.PeriodTrade> out = new HashMap<>();
         for (CaseFileBuilder.TradeCase c : cases) {
             if (c.net() != null) {
+                AiTraderDecision open = openByPlan.get(c.plan().getId());
+                DebriefMaterialAssembler.Span round = open == null ? null : DebriefMaterialAssembler.Span.of(open);
                 out.put(c.pos().getId(), new ExperienceLedger.PeriodTrade(c.net(),
-                        Instant.ofEpochMilli(TradePairing.msOf(c.pos().getUpdatedAt())).atZone(BeijingTime.ZONE).toLocalDate()));
+                        Instant.ofEpochMilli(TradePairing.msOf(c.pos().getUpdatedAt())).atZone(BeijingTime.ZONE).toLocalDate(),
+                        round == null ? null : round.from(), round == null ? null : round.to()));
             }
         }
         return out;
@@ -327,10 +345,11 @@ public class ReviewMaterialAssembler {
 
     /**
      * 按单子类型分组，每笔是事实表加它的单笔复盘正文（标着平仓后多久做的），复盘之后才新增的条目列在正文下面；
-     * 末尾是本批重放汇总和窗口里没成交就撤掉的限价档
+     * 末尾是本批重放汇总、窗口里没成交就撤掉的限价档、窗口里持有过但不在本批的仓位
      */
     private String casesBlock(List<CaseFileBuilder.TradeCase> cases, Map<Long, AiTraderDecision> debriefs,
-                              Map<Long, Set<Long>> gaps, List<CaseFileBuilder.CancelledLimit> cancelled, AgentLang lang) {
+                              Map<Long, Set<Long>> gaps, List<CaseFileBuilder.CancelledLimit> cancelled,
+                              List<HeldOutside> held, AgentLang lang) {
         StringBuilder sb = new StringBuilder(prompts.get(lang, "reviewer.label.casesHeader",
                 Map.of("guide", caseRenderer.guide(lang)))).append('\n');
         if (cases.isEmpty()) {
@@ -373,7 +392,71 @@ public class ReviewMaterialAssembler {
                         "after", cancelledAfter(c, lang)))).append('\n');
             }
         }
+        sb.append(prompts.get(lang, "reviewer.label.heldHeader")).append('\n');
+        if (held.isEmpty()) {
+            sb.append(prompts.get(lang, "reviewer.label.heldNone")).append('\n');
+        }
+        for (HeldOutside h : held) {
+            sb.append(prompts.get(lang, "reviewer.label.heldRow", Map.of(
+                    "id", h.pos().getId(),
+                    "symbol", h.pos().getSymbol(), "side", h.pos().getSide(),
+                    "play", h.plan().getPlayType() == null ? prompts.get(lang, "reviewer.label.caseGeneral") : h.plan().getPlayType(),
+                    "opened", BeijingTime.shortFormat(TradePairing.msOf(h.pos().getCreatedAt())),
+                    "entry", entryPrice(h.plan(), h.pos(), lang),
+                    "state", prompts.get(lang, h.closedInWindow() ? "reviewer.label.heldClosed" : "reviewer.label.heldOpen"))))
+                    .append('\n');
+        }
         return sb.toString();
+    }
+
+    /** 窗口里持有过、不在本批的一个仓位；closedInWindow 是窗口结束前它已经平了 */
+    private record HeldOutside(FuturesPositionDTO pos, AiTraderPlan plan, boolean closedInWindow) {
+    }
+
+    /**
+     * 窗口里持有过、不在本批的仓位：开仓不晚于窗口右端，并且窗口结束时还拿着、或者平仓晚于窗口左端。
+     * 窗口左端和行情块一样最多回看 {@link #MARKET_LOOKBACK_MS}。
+     * 只认本局计划行绑着的，主人标了不算数的不列；按开仓先后排
+     *
+     * @param closed sim 的已平仓位
+     * @param open   sim 现在还拿着的仓位，比 closed 先取；两次之间平掉的两边都有，按已平的算
+     */
+    private static List<HeldOutside> heldOutside(List<AiTraderPlan> plans, List<FuturesPositionDTO> closed,
+                                                 List<FuturesPositionDTO> open, Set<Long> inBatch, long fromMs, long toMs) {
+        Map<Long, AiTraderPlan> planByPosition = new HashMap<>();
+        for (AiTraderPlan p : plans) {
+            if (p.getPositionId() != null && !Boolean.TRUE.equals(p.getStale())) {
+                planByPosition.putIfAbsent(p.getPositionId(), p);
+            }
+        }
+        long since = Math.max(fromMs, toMs - MARKET_LOOKBACK_MS);
+        Set<Long> closedIds = new HashSet<>();
+        List<HeldOutside> out = new ArrayList<>();
+        for (FuturesPositionDTO p : closed) {
+            closedIds.add(p.getId());
+            long closeMs = TradePairing.msOf(p.getUpdatedAt());
+            if (!inBatch.contains(p.getId()) && planByPosition.containsKey(p.getId())
+                    && TradePairing.msOf(p.getCreatedAt()) <= toMs && closeMs > since) {
+                out.add(new HeldOutside(p, planByPosition.get(p.getId()), closeMs <= toMs));
+            }
+        }
+        for (FuturesPositionDTO p : open) {
+            if (!closedIds.contains(p.getId()) && planByPosition.containsKey(p.getId())
+                    && TradePairing.msOf(p.getCreatedAt()) <= toMs) {
+                out.add(new HeldOutside(p, planByPosition.get(p.getId()), false));
+            }
+        }
+        out.sort(Comparator.comparing(h -> h.pos().getCreatedAt()));
+        return out;
+    }
+
+    /** 这一行的价：首批里最早成交那一档的成交价；首批没有成交档的（续立、补立的计划，没有逐档记录的旧计划）给仓位均价 */
+    private String entryPrice(AiTraderPlan plan, FuturesPositionDTO pos, AgentLang lang) {
+        return PlanEntry.read(plan).stream()
+                .filter(e -> !e.isAdd() && "FILLED".equals(e.getStatus()))
+                .min(Comparator.comparing(PlanEntry::getClosedAt))
+                .map(e -> prompts.get(lang, "reviewer.label.heldFirstFill", Map.of("price", plain(e.getFilledPrice()))))
+                .orElseGet(() -> prompts.get(lang, "reviewer.label.heldAverage", Map.of("price", plain(pos.getEntryPrice()))));
     }
 
     /**
@@ -548,7 +631,7 @@ public class ReviewMaterialAssembler {
     }
 
     /**
-     * 得知命中的那轮：时刻、唤醒类型、那轮对该币的交易动作、条件归属那个币的结论段。
+     * 得知命中的那轮：时刻、唤醒类型、那轮对该币的交易动作（带做成的时刻）、条件归属那个币的结论段（带那一轮写完的时刻）。
      * 开场白里告诉它的，woke_at 就是那一轮的 wake_time；进行中插话告诉它的，woke_at 是插进去那一刻，找那时在跑的那一轮，换一句写法
      */
     private String followUp(AiTrader t, AiTraderWatch w, Coins coins, AgentLang lang) {
@@ -583,12 +666,15 @@ public class ReviewMaterialAssembler {
                 "toldAt", BeijingTime.shortFormat(w.getWokeAt()),
                 "kind", d == null ? none : d.getKind(),
                 "actions", d == null ? none : tradeActions(d, w.getForSymbol(), midRound ? w.getWokeAt() : null, coins, lang),
+                // 结论是那一轮最后写的，落库时刻就是写完的时刻
+                "written", d == null ? "" : prompts.get(lang, "reviewer.label.watchWritten",
+                        Map.of("time", BeijingTime.shortFormat(TradePairing.msOf(d.getCreatedAt())))),
                 "section", d == null ? none : symbolSection(d.getReasoning(), w.getForSymbol(), none)));
     }
 
     /**
-     * 那轮对这个币的交易动作：工具名列表；被护栏拒的、sim 报错的、结果未知的各带标，没标的才是做成了。
-     * 认不出动的是哪个币的照列
+     * 那轮对这个币的交易动作：工具名列表，前面是这条动作记下的时刻（老行没记就不写）；
+     * 被护栏拒的、sim 报错的、结果未知的各带标，没标的才是做成了。认不出动的是哪个币的照列
      *
      * @param since 插话告诉它的时刻：只列这之后做的；老行的动作没记时刻，照列。开场白里告诉的给 null
      */
@@ -599,6 +685,8 @@ public class ReviewMaterialAssembler {
                 if (since != null && action.path("at").asLong(Long.MAX_VALUE) < since) {
                     continue;
                 }
+                // 反手拆成两条腿，腿上没有时刻，用外层这条的
+                String at = action.has("at") ? BeijingTime.shortFormat(action.path("at").asLong()) + " " : "";
                 for (JsonNode a : TradeActions.legs(action)) {
                     String tool = a.path("tool").asString(null);
                     String coin = coins.of(a, d);
@@ -611,7 +699,7 @@ public class ReviewMaterialAssembler {
                             : TradeActions.NOT_ATTEMPTED.equals(status) ? "watchNotAttempted"
                             : TradeActions.LIQUIDATED.equals(status) ? "watchLiquidated"
                             : TradeActions.UNKNOWN.equals(status) ? "watchUnknown" : null;
-                    out.add(key == null ? tool : prompts.get(lang, "reviewer.label." + key, Map.of("tool", tool)));
+                    out.add(at + (key == null ? tool : prompts.get(lang, "reviewer.label." + key, Map.of("tool", tool))));
                 }
             }
         }
@@ -635,7 +723,6 @@ public class ReviewMaterialAssembler {
                 .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
         StringBuilder sb = new StringBuilder(prompts.get(lang, "reviewer.label.ledgerHeader",
                 Map.of("n", entries.size()))).append('\n');
-        sb.append(quotaLine(active, lang)).append('\n');
         if (entries.isEmpty()) {
             sb.append(prompts.get(lang, "reviewer.label.ledgerEmpty")).append('\n');
         }
@@ -696,22 +783,6 @@ public class ReviewMaterialAssembler {
         return prompts.get(lang, "reviewer.label.ledgerSorted", Map.of("marks", byMark.entrySet().stream()
                 .map(e -> prompts.get(lang, "reviewer.op." + e.getKey().toLowerCase(Locale.ROOT)) + " " + String.join(sep, e.getValue()))
                 .collect(Collectors.joining(prompts.get(lang, "reviewer.label.ledgerSortedSep")))));
-    }
-
-    /** 账本名额占了多少：现役总数、哪些单子类型满了、限制型几条（带编号）；数由账本出 */
-    private String quotaLine(List<AiTraderExperience> active, AgentLang lang) {
-        String sep = prompts.get(lang, "reviewer.label.listSep");
-        ExperienceLedger.Quota q = ExperienceLedger.quota(active);
-        String fullPlays = q.perPlay().entrySet().stream().filter(e -> e.getValue() >= ExperienceLedger.MAX_PER_PLAY)
-                .map(e -> e.getKey().isEmpty() ? prompts.get(lang, "reviewer.op.general") : e.getKey())
-                .collect(Collectors.joining(sep));
-        String restrictions = q.restrictions().stream().map(id -> "#" + id).collect(Collectors.joining(sep));
-        return prompts.get(lang, "reviewer.label.ledgerQuota", Map.of(
-                "n", q.active(), "max", ExperienceLedger.MAX_ACTIVE,
-                "perPlay", ExperienceLedger.MAX_PER_PLAY,
-                "fullPlays", fullPlays.isEmpty() ? "" : prompts.get(lang, "reviewer.label.ledgerQuotaFull", Map.of("plays", fullPlays)),
-                "r", q.restrictions().size(), "rMax", ExperienceLedger.MAX_RESTRICTION,
-                "rIds", restrictions.isEmpty() ? "" : prompts.get(lang, "reviewer.label.ledgerQuotaIds", Map.of("ids", restrictions))));
     }
 
     /** 账本行里代码记的账：执行缺口是守几次破几次；其余是名下累计和当前段，引用不符大于 0 才带 */

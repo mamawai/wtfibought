@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -54,15 +55,12 @@ import static com.mawai.wiibcommon.entity.AiTraderExperienceTrade.MARK_UNDER;
 @RequiredArgsConstructor
 public class ExperienceLedger {
 
-    static final int MAX_ACTIVE = 10;
-    static final int MAX_PER_PLAY = 3;
-    static final int MAX_RESTRICTION = 2;
     static final int MAX_FINDINGS = 5;
     static final int PROMOTE_TRADES = 5;
     static final int PROMOTE_DAYS = 3;
     static final int DEMOTE_TRADES = 5;
     static final int IDLE_RETIRE = 10;
-    /** 执行缺口破满几笔才给 trader 看 */
+    /** 执行缺口破满几次才给 trader 看；次数按开仓那一轮数（见 {@link #gapRounds}） */
     static final int GAP_SHOWN_BROKEN = 2;
     /** 新增收的三种格子 */
     static final Set<String> ADD_SLOTS = Set.of(
@@ -79,8 +77,11 @@ public class ExperienceLedger {
     private final TraderPlanStore planStore;
     private final PromptCatalog prompts;
 
-    /** 本期一笔单子：净盈亏（案例行那个数）和平仓的新加坡日期，按仓位编号作键 */
-    public record PeriodTrade(BigDecimal net, LocalDate closedDay) {
+    /**
+     * 本期一笔单子，按仓位编号作键：净盈亏（案例行那个数）、平仓的新加坡日期、开这笔仓的那一轮实际跑的时段（ms）。
+     * 认不出是哪一轮开的，时段两头都为空
+     */
+    public record PeriodTrade(BigDecimal net, LocalDate closedDay, Long openRoundFrom, Long openRoundTo) {
     }
 
     /** 一笔单子归到经验名下的哪个标记（AiTraderExperienceTrade.MARK_*） */
@@ -108,13 +109,13 @@ public class ExperienceLedger {
     public record Delete(long id, String reason) implements Op {
     }
 
-    /** overCap：合法、但名额满了没记进账本的新增（已计在 dropped 里） */
-    public record Applied(int applied, int dropped, List<Add> overCap) {
+    /** 一篇复盘的操作生效了几条、丢了几条 */
+    public record Applied(int applied, int dropped) {
     }
 
     /**
      * 一条经验名下单子的账。under 系列只算「名下」：笔数、赚几笔、亏几笔、合计、覆盖几个平仓日；
-     * segment 系列是当前段的；kept / broken / miscited 是守、破、引用不符的笔数
+     * segment 系列是当前段的；kept / broken 是守、破的次数，按开仓那一轮数；miscited 是引用不符的笔数
      */
     public record Tally(int under, int wins, int losses, BigDecimal net, int days,
                         int segmentUnder, BigDecimal segmentNet, int segmentDays,
@@ -177,19 +178,46 @@ public class ExperienceLedger {
         return out;
     }
 
-    /** 一条的账：名下行算笔数、赚亏、合计、平仓日，当前段的另算一份；守、破、引用不符只数笔数 */
+    /** 一条的账：名下行算笔数、赚亏、合计、平仓日，当前段的另算一份；守、破按开仓那一轮数，引用不符数笔数 */
     static Tally tally(int segment, List<AiTraderExperienceTrade> rows) {
         List<AiTraderExperienceTrade> under = rows.stream().filter(r -> MARK_UNDER.equals(r.getMark())).toList();
         List<AiTraderExperienceTrade> current = under.stream().filter(r -> r.getSegmentNo() == segment).toList();
+        List<Boolean> rounds = gapRounds(rows);
+        int broken = (int) rounds.stream().filter(b -> b).count();
         return new Tally(under.size(),
                 (int) under.stream().filter(r -> r.getNet().signum() > 0).count(),
                 (int) under.stream().filter(r -> r.getNet().signum() < 0).count(),
                 sum(under), days(under),
                 current.size(), sum(current), days(current),
-                count(rows, MARK_KEPT), count(rows, MARK_BROKEN), count(rows, MARK_MISCITED));
+                rounds.size() - broken, broken, count(rows, MARK_MISCITED));
     }
 
-    /** trader 看得到的条目：规律，和破满 {@value #GAP_SHOWN_BROKEN} 笔的执行缺口 */
+    /**
+     * 守、破的单子按开仓那一轮分开，每一轮给出算不算破：同一轮开的几笔算一次，其中有一笔破就算破。
+     * 几个币各跑各的轮时，同时在跑的（时段有交集或首尾相接）算同一轮；认不出是哪一轮开的单子各算一次。
+     * 持仓途中才破的也按开仓那一轮并
+     */
+    private static List<Boolean> gapRounds(List<AiTraderExperienceTrade> rows) {
+        List<AiTraderExperienceTrade> marked = rows.stream()
+                .filter(r -> MARK_KEPT.equals(r.getMark()) || MARK_BROKEN.equals(r.getMark())).toList();
+        List<Boolean> rounds = new ArrayList<>();
+        marked.stream().filter(r -> r.getOpenRoundFrom() == null).forEach(r -> rounds.add(MARK_BROKEN.equals(r.getMark())));
+        // 其余按开跑的先后排：开跑时上一组还没跑完的，并进上一组
+        long groupTo = Long.MIN_VALUE;
+        for (AiTraderExperienceTrade r : marked.stream().filter(x -> x.getOpenRoundFrom() != null)
+                .sorted(Comparator.comparingLong(AiTraderExperienceTrade::getOpenRoundFrom)).toList()) {
+            boolean broken = MARK_BROKEN.equals(r.getMark());
+            if (r.getOpenRoundFrom() <= groupTo) {
+                rounds.set(rounds.size() - 1, rounds.getLast() || broken);
+            } else {
+                rounds.add(broken);
+            }
+            groupTo = Math.max(groupTo, r.getOpenRoundTo());
+        }
+        return rounds;
+    }
+
+    /** trader 看得到的条目：规律，和破满 {@value #GAP_SHOWN_BROKEN} 次的执行缺口 */
     public static boolean shown(AiTraderExperience e, Tally t) {
         return AiTraderExperience.KIND_RULE.equals(e.getKind())
                 || AiTraderExperience.KIND_GAP.equals(e.getKind()) && t.broken() >= GAP_SHOWN_BROKEN;
@@ -199,24 +227,22 @@ public class ExperienceLedger {
 
     /**
      * 逐行独立生效；不合法的行丢弃记日志，不中断。reviewId 是这篇统一复盘的决策行编号。
-     * 同一条经验一篇只认第一行归类。新增排到最后落账，同一篇里的删除先腾出名额。
+     * 同一条经验一篇只认第一行归类。
      * trades：本期单子，归类和新增里的仓位编号只认这些
      */
     public Applied apply(long traderId, int roundNo, Long reviewId, List<Op> ops, AgentLang lang,
                          Map<Long, PeriodTrade> trades) {
+        // 只为数现役的发现有几条：发现有上限
         List<AiTraderExperience> actives = active(traderId, roundNo);
         Set<Long> judged = new HashSet<>();
-        List<Add> overCap = new ArrayList<>();
         int applied = 0;
         int dropped = 0;
-        List<Op> ordered = new ArrayList<>(ops.stream().filter(op -> !(op instanceof Add)).toList());
-        ordered.addAll(ops.stream().filter(Add.class::isInstance).toList());
-        for (Op op : ordered) {
+        for (Op op : ops) {
             boolean ok = switch (op) {
                 case Classify c -> judged.add(c.id()) && classify(traderId, roundNo, reviewId, c, trades);
-                case Add a -> add(traderId, roundNo, reviewId, a, actives, lang, overCap, trades);
+                case Add a -> add(traderId, roundNo, reviewId, a, lang, trades);
                 case Finding f -> finding(traderId, roundNo, reviewId, f, actives, lang);
-                case Delete d -> delete(traderId, roundNo, reviewId, d, actives);
+                case Delete d -> delete(traderId, roundNo, reviewId, d);
             };
             if (ok) {
                 applied++;
@@ -225,7 +251,7 @@ public class ExperienceLedger {
                 log.info("[Ledger] 丢弃操作 traderId={} op={}", traderId, op);
             }
         }
-        return new Applied(applied, dropped, overCap);
+        return new Applied(applied, dropped);
     }
 
     /** 现役条目的归类：标记对得上种类、编号都在本期，才逐笔记下 */
@@ -295,6 +321,8 @@ public class ExperienceLedger {
             row.setMark(m.mark());
             row.setNet(t.net());
             row.setClosedDay(t.closedDay());
+            row.setOpenRoundFrom(t.openRoundFrom());
+            row.setOpenRoundTo(t.openRoundTo());
             row.setSegmentNo(e.getSegmentNo());
             tradeMapper.insertIgnore(row);
         }
@@ -306,18 +334,10 @@ public class ExperienceLedger {
                 && (blank(a.playType()) || TradeGuard.PLAY_TYPES.contains(a.playType().trim().toUpperCase(Locale.ROOT)));
     }
 
-    /**
-     * 新增一条，连同它末尾列的本期单子（执行缺口带守、破，假设带名下）；合法但名额满了的记进 overCap。
-     * 来源是本局的条目才记
-     */
-    private boolean add(long traderId, int roundNo, Long reviewId, Add a, List<AiTraderExperience> actives, AgentLang lang,
-                        List<Add> overCap, Map<Long, PeriodTrade> trades) {
+    /** 新增一条，连同它末尾列的本期单子（执行缺口带守、破，假设带名下）；条数没有上限。来源是本局的条目才记 */
+    private boolean add(long traderId, int roundNo, Long reviewId, Add a, AgentLang lang, Map<Long, PeriodTrade> trades) {
         boolean gap = AiTraderExperience.SLOT_EXEC.equals(a.slot());
         if (!valid(a) || !fits(gap ? Set.of(MARK_KEPT, MARK_BROKEN) : Set.of(MARK_UNDER), a.marks(), trades)) {
-            return false;
-        }
-        if (full(a, actives)) {
-            overCap.add(a);
             return false;
         }
         AiTraderExperience e = entry(traderId, roundNo, reviewId, a, lang);
@@ -326,32 +346,8 @@ public class ExperienceLedger {
             e.setSourceId(source.getId());
         }
         expMapper.insert(e);
-        actives.add(e);
         record(e, reviewId, a.marks(), trades);
         return true;
-    }
-
-    /** 这条新增要占的名额满没满：现役总数、同一单子类型、限制型 */
-    private static boolean full(Add a, List<AiTraderExperience> actives) {
-        Quota q = quota(actives);
-        String play = blank(a.playType()) ? "" : a.playType().trim().toUpperCase(Locale.ROOT);
-        return q.active() >= MAX_ACTIVE
-                || q.perPlay().getOrDefault(play, 0L) >= MAX_PER_PLAY
-                || (AiTraderExperience.DIR_RESTRICTION.equals(a.direction()) && q.restrictions().size() >= MAX_RESTRICTION);
-    }
-
-    /** 账本名额占了多少：现役几条、各单子类型几条（通用的键是空串）、限制型是哪几条的编号。发现不占名额 */
-    public record Quota(int active, Map<String, Long> perPlay, List<Long> restrictions) {
-    }
-
-    public static Quota quota(List<AiTraderExperience> actives) {
-        List<AiTraderExperience> counted = actives.stream()
-                .filter(e -> !AiTraderExperience.KIND_FINDING.equals(e.getKind())).toList();
-        return new Quota(counted.size(),
-                counted.stream().collect(Collectors.groupingBy(e -> Objects.toString(e.getPlayType(), ""),
-                        LinkedHashMap::new, Collectors.counting())),
-                counted.stream().filter(e -> AiTraderExperience.DIR_RESTRICTION.equals(e.getDirection()))
-                        .map(AiTraderExperience::getId).toList());
     }
 
     private boolean finding(long traderId, int roundNo, Long reviewId, Finding f, List<AiTraderExperience> actives, AgentLang lang) {
@@ -371,7 +367,7 @@ public class ExperienceLedger {
     }
 
     /** 删除：只对没钉住的现役假设和执行缺口生效，效果是退役并记理由 */
-    private boolean delete(long traderId, int roundNo, Long reviewId, Delete d, List<AiTraderExperience> actives) {
+    private boolean delete(long traderId, int roundNo, Long reviewId, Delete d) {
         AiTraderExperience e = owned(traderId, d.id());
         if (e == null || !Objects.equals(e.getRoundNo(), roundNo) || blank(d.reason())
                 || !AiTraderExperience.STATUS_ACTIVE.equals(e.getStatus())
@@ -380,7 +376,6 @@ public class ExperienceLedger {
             return false;
         }
         retire(e, reviewId, d.reason());
-        actives.removeIf(x -> Objects.equals(x.getId(), e.getId()));
         return true;
     }
 
@@ -508,7 +503,7 @@ public class ExperienceLedger {
         return sb.toString();
     }
 
-    /** 一行：规律按方向写照做或违反，引用不符大于 0 才带；执行缺口写碰到几次、做到几次。数字都是累计 */
+    /** 一行：规律按方向写照做或违反，引用不符大于 0 才带；执行缺口写碰到几次、做到几次（按开仓那一轮数）。数字都是累计 */
     private String row(AiTraderExperience e, Tally t, AgentLang lang) {
         String kind = prompts.get(lang, "trader.label.ledgerKind." + e.getKind().toLowerCase(Locale.ROOT));
         if (AiTraderExperience.KIND_GAP.equals(e.getKind())) {

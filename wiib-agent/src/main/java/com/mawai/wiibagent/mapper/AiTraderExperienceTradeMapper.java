@@ -10,8 +10,10 @@ public interface AiTraderExperienceTradeMapper extends BaseMapper<AiTraderExperi
 
     /** 同一条经验同一笔单子只记一次：撞上唯一键不插，返回 0 */
     @Insert("""
-            INSERT INTO ai_trader_experience_trade (experience_id, position_id, review_id, mark, net, closed_day, segment_no)
-            VALUES (#{experienceId}, #{positionId}, #{reviewId}, #{mark}, #{net}, #{closedDay}, #{segmentNo})
+            INSERT INTO ai_trader_experience_trade (experience_id, position_id, review_id, mark, net, closed_day,
+                                                    open_round_from, open_round_to, segment_no)
+            VALUES (#{experienceId}, #{positionId}, #{reviewId}, #{mark}, #{net}, #{closedDay},
+                    #{openRoundFrom}, #{openRoundTo}, #{segmentNo})
             ON CONFLICT (experience_id, position_id) DO NOTHING
             """)
     int insertIgnore(AiTraderExperienceTrade row);

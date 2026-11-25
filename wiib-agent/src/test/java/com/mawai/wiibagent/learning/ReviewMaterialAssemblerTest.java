@@ -8,6 +8,7 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
+import com.mawai.wiibagent.trader.TradeRecordService;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.toolkit.BeijingTime;
@@ -85,11 +86,12 @@ class ReviewMaterialAssemblerTest {
     private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
 
     private final CaseFileBuilder caseFiles = new CaseFileBuilder(historyStore);
+    private final TradeRecordService tradeRecords = mock(TradeRecordService.class);
 
     private final ReviewMaterialAssembler assembler = new ReviewMaterialAssembler(
             decisionMapper, planMapper, simTradeClient, prompts, caseFiles, new CaseFileRenderer(prompts), ledger,
             new PlayStatsAssembler(simTradeClient, planMapper, prompts, caseFiles), watchStore, new DecisionText(prompts),
-            new ExperienceOpParser(prompts));
+            new ExperienceOpParser(prompts), tradeRecords);
 
     /** 一笔单子的单笔复盘行：正文两行，加归类段；开跑时刻晚于这里各测试的平仓 */
     private static AiTraderDecision debrief(long positionId, String classifyLines) {
@@ -337,10 +339,12 @@ class ReviewMaterialAssemblerTest {
         assertThat(cases).contains("- [42] BTCUSDT LONG " + TIME.format(Instant.ofEpochMilli(openMs)) + " → "
                 + TIME.format(Instant.ofEpochMilli(closeMs))
                 + "（持有 5小时）｜ 入场 100000 止损 95500 目标 110000(100%) 出场 95000，止损带走 ｜ 净 -50，资金费 —");
-        // R = 4500：最大浮盈 2500 是 +0.56R、最大逆向 5000 是 -1.11R；第一根就到了 +0.5R，+1R 没到过
+        // R = 4500：最大浮盈 2500 是 +0.56R、最大逆向 5000 是 -1.11R；第一根就到了 +0.5R，+1R 没到过。
+        // 出场 95000：出场后最有利价比它多走了 2000、4000
         assertThat(cases).contains("  价格路径（以最终均价为参照）：最大浮盈 102500（" + HM.format(Instant.ofEpochMilli(openMs + M5))
                 + "，+0.56R）｜ 最大逆向 95000（-1.11R）｜ 到 +0.5R / +1R 用时 5 / — 分 ｜ 首次收回入场价 "
-                + HM.format(Instant.ofEpochMilli(FROM + 2 * H)) + " ｜ 出场后 4h / 24h 最有利 97000 / 99000，到过原目标 0/1 档");
+                + HM.format(Instant.ofEpochMilli(FROM + 2 * H))
+                + " ｜ 出场后 4h / 24h 最有利 97000 / 99000（比出场价多走 +2000 / +4000），到过原目标 0/1 档");
         // R = 4500：净 -50 ÷（0.01 × 4500）；24h 内最高 102500、最低 95000、第 20 小时那根收 98000；止损原样在 95000 那根被打，放宽后都没碰到
         assertThat(cases).contains("  重放：实际 -1.11R ｜ 首档成交后 24h 内最大顺向 +0.56R、最大逆向 -1.11R，不设止损拿满 24h -0.44R"
                 + " ｜ 止损原样 止损（-1.02R）、1.5 倍 未决、2 倍 未决、3 倍 未决");
@@ -375,7 +379,8 @@ class ReviewMaterialAssemblerTest {
         String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
 
         assertThat(cases).contains("RANGE（1 笔，1 胜，净 +10）");
-        assertThat(cases).contains("出场后只看得到 5分钟：4h / 5分钟 内最有利 — / 97900，到过原目标 1/1 档");
+        // 空单出场 99000，之后最低 97900：多走了 1100
+        assertThat(cases).contains("出场后只看得到 5分钟：4h / 5分钟 内最有利 — / 97900（比出场价多走 — / +1100），到过原目标 1/1 档");
         // 重放从开仓那根的下一根数到最后一根，只有 65 分钟：顺向 2100 是 2.10R，拿满 24 小时的位置没有；各档都了结了，不写走到哪
         assertThat(cases).contains("首档成交后 65分钟 内最大顺向 +2.10R").contains("不设止损拿满 24h 未满 24h")
                 .doesNotContain("各档只走到");
@@ -527,11 +532,98 @@ class ReviewMaterialAssemblerTest {
         assertThat(m.casesBlock()).contains("路径：第 20 笔的路径").doesNotContain("路径：第 21 笔的路径");
     }
 
+    /**
+     * 窗口里持有过、不在本批的仓位在块末尾各列一行，不给盈亏：窗口之后才平的、现在还拿着的（上个窗口开的也算）、
+     * 窗口里平了还没做单笔复盘的；有首批成交档的写首档成交价（不是加仓后的均价），没有的写均价。
+     * 窗口之前就平了的、窗口之后才开的、主人标了不算数的不列；两次查 sim 之间平掉、两边都有的只列一次。
+     * 窗口左端最多回看 48 小时
+     */
+    @Test
+    void positionsHeldInTheWindowOutsideTheBatchAreListedAfterTheCases() {
+        FuturesPositionDTO inBatch = closedPos("LONG", "100000", "100010", "10", FROM + 3 * H, FROM + 4 * H);
+        inBatch.setId(1L);
+        FuturesPositionDTO closedLater = closedPos("SHORT", "60191", "60488", "853", FROM + 5 * H, TO + 3 * H);
+        closedLater.setId(2L);
+        FuturesPositionDTO notDebriefed = closedPos("LONG", "100000", "99997", "-3", FROM + 6 * H, FROM + 7 * H);
+        notDebriefed.setId(3L);
+        FuturesPositionDTO closedBefore = closedPos("LONG", "100000", "99111", "-9", FROM - 5 * H, FROM - 4 * H);
+        closedBefore.setId(4L);
+        FuturesPositionDTO openedAfter = closedPos("LONG", "100000", "99222", "-8", TO + H, TO + 2 * H);
+        openedAfter.setId(5L);
+        FuturesPositionDTO ignored = closedPos("LONG", "100000", "99333", "-7", FROM + 2 * H, TO + H);
+        ignored.setId(6L);
+        FuturesPositionDTO longAgo = closedPos("LONG", "100000", "99444", "-6", FROM - 31 * H, FROM - 30 * H);
+        longAgo.setId(9L);
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt()))
+                .thenReturn(List.of(inBatch, closedLater, notDebriefed, closedBefore, openedAfter, ignored, longAgo));
+        FuturesPositionDTO stillHeld = new FuturesPositionDTO();
+        stillHeld.setId(7L);
+        stillHeld.setSymbol("BTCUSDT");
+        stillHeld.setSide("SHORT");
+        stillHeld.setEntryPrice(new BigDecimal("61800"));
+        stillHeld.setCreatedAt(at(FROM - 2 * H));
+        FuturesPositionDTO heldButNew = new FuturesPositionDTO();
+        heldButNew.setId(8L);
+        heldButNew.setSymbol("BTCUSDT");
+        heldButNew.setSide("LONG");
+        heldButNew.setEntryPrice(new BigDecimal("62000"));
+        heldButNew.setCreatedAt(at(TO + H));
+        // 2 号在取当前持仓时还开着，取已平仓位时已经平了：两边都有
+        FuturesPositionDTO closedMeanwhile = new FuturesPositionDTO();
+        closedMeanwhile.setId(2L);
+        closedMeanwhile.setSymbol("BTCUSDT");
+        closedMeanwhile.setSide("SHORT");
+        closedMeanwhile.setEntryPrice(new BigDecimal("60191"));
+        closedMeanwhile.setCreatedAt(at(FROM + 5 * H));
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(stillHeld, heldButNew, closedMeanwhile));
+        // 2 号加过仓：首档 61831.8，加仓后均价 60191
+        AiTraderPlan withAdd = boundPlan(2L, "TREND_FOLLOW", FROM + 5 * H);
+        PlanEntry first = new PlanEntry();
+        first.setQuantity(new BigDecimal("0.62"));
+        first.setStop(new BigDecimal("62500"));
+        first.setPlacedAt(FROM + 5 * H);
+        first.setClosedAt(FROM + 5 * H);
+        first.setStatus("FILLED");
+        first.setFilledPrice(new BigDecimal("61831.8"));
+        PlanEntry add = new PlanEntry();
+        add.setQuantity(new BigDecimal("0.88"));
+        add.setStop(new BigDecimal("62500"));
+        add.setPlacedAt(FROM + 6 * H);
+        add.setClosedAt(FROM + 6 * H);
+        add.setAdd(true);
+        add.setStatus("FILLED");
+        add.setFilledPrice(new BigDecimal("59000"));
+        PlanEntry.save(withAdd, List.of(first, add));
+        AiTraderPlan stale = boundPlan(6L, "REVERSAL", FROM + 2 * H);
+        stale.setStale(true);
+        when(planMapper.selectList(any())).thenReturn(List.of(
+                boundPlan(1L, "PULLBACK", FROM + 3 * H), withAdd, boundPlan(3L, "PULLBACK", FROM + 6 * H),
+                boundPlan(4L, "PULLBACK", FROM - 5 * H), boundPlan(5L, "PULLBACK", TO + H), stale,
+                boundPlan(7L, "RANGE", FROM - 2 * H), boundPlan(8L, "RANGE", TO + H),
+                boundPlan(9L, "PULLBACK", FROM - 31 * H)));
+        stubDecisionLists(List.of(debrief(1L, "")), List.of());
+
+        String cases = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).casesBlock();
+
+        assertThat(cases).endsWith("窗口里持有过、不在本批的仓位（盈亏和细节留给它们自己那一篇复盘）：\n"
+                + "- [7] BTCUSDT SHORT RANGE ｜ " + TIME.format(Instant.ofEpochMilli(FROM - 2 * H)) + " 开仓，均价 61800 ｜ 窗口结束时还拿着\n"
+                + "- [2] BTCUSDT SHORT TREND_FOLLOW ｜ " + TIME.format(Instant.ofEpochMilli(FROM + 5 * H)) + " 开仓，首档成交价 61831.8 ｜ 窗口结束时还拿着\n"
+                + "- [3] BTCUSDT LONG PULLBACK ｜ " + TIME.format(Instant.ofEpochMilli(FROM + 6 * H)) + " 开仓，均价 100000 ｜ 窗口里已平仓，还没进本批\n");
+        // 2 号的出场价不给
+        assertThat(cases).doesNotContain("60488");
+
+        // 本局首篇复盘窗口从头算：窗口右端往前 48 小时之内平的 4 号列出来，更早平的 9 号不列
+        String fromRoundStart = assembler.assemble(trader(), 0, TO, AgentLang.ZH).casesBlock();
+        assertThat(fromRoundStart).contains("- [4] BTCUSDT LONG PULLBACK").doesNotContain("- [9] ");
+    }
+
     @Test
     void noBatchTradesSaysSo() {
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
-        assertThat(m.casesBlock()).startsWith("【本批单子】").contains("本批没有单子");
+        // 窗口里没有不在本批的仓位，也要写明没有
+        assertThat(m.casesBlock()).startsWith("【本批单子】").contains("本批没有单子")
+                .endsWith("窗口里持有过、不在本批的仓位（盈亏和细节留给它们自己那一篇复盘）：\n（没有）\n");
         assertThat(m.statsBlock()).contains("本批没有单子");
         assertThat(m.trades()).isEmpty();
         assertThat(m.classifies(Map.of())).isEmpty();
@@ -723,28 +815,10 @@ class ReviewMaterialAssemblerTest {
         assertThat(block).doesNotContain("【已记录的发现】").doesNotContain("【退役名单】");
     }
 
-    /** 块头下面的名额行：现役几条、哪个单子类型满了、限制型几条（带编号） */
-    @Test
-    void ledgerBlockShowsQuotaUsage() {
-        when(ledger.active(7L, 1)).thenReturn(List.of(
-                exp(62L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
-                        AiTraderExperience.DIR_RESTRICTION, "PULLBACK", "破位不挂内侧限价"),
-                exp(81L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.SLOT_RISK,
-                        AiTraderExperience.DIR_RESTRICTION, null, "止损不窄于 0.75 ATR"),
-                exp(75L, AiTraderExperience.KIND_RULE, AiTraderExperience.SLOT_ENTRY,
-                        AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "保留原主阻力限价单"),
-                exp(76L, AiTraderExperience.KIND_HYPOTHESIS, AiTraderExperience.SLOT_ENTRY,
-                        AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "回踩到位再挂")));
-
-        String block = assembler.assemble(trader(), FROM, TO, AgentLang.ZH).ledgerBlock();
-
-        assertThat(block).contains("\n名额：现役 4/10 条；同一单子类型最多 3 条（已满：PULLBACK）；限制型 2/2 条（#62、#81）。"
-                + "满了的那一类再写新增不会记进账本\n");
-    }
-
     /**
      * 各笔单笔复盘的归类行合并成每条经验一行：账本块里列在那条下面（按标记分开），同一份随素材交出去落账。
-     * 写了别的仓位编号的行、标记和条目种类对不上的行不算。本批单子按仓位编号带出净盈亏和平仓日
+     * 写了别的仓位编号的行、标记和条目种类对不上的行不算。本批单子按仓位编号带出净盈亏、平仓日，
+     * 和开这笔仓的那一轮实际跑的时段；认不出是哪一轮开的，时段为空
      */
     @Test
     void ledgerRowListsTradesTheDebriefsSortedUnderItAndTheMergedRowsGoOut() {
@@ -769,6 +843,12 @@ class ReviewMaterialAssemblerTest {
                         AiTraderExperience.DIR_OPPORTUNITY, "PULLBACK", "保留原主阻力限价单"),
                 exp(61L, AiTraderExperience.KIND_GAP, AiTraderExperience.SLOT_EXEC,
                         AiTraderExperience.DIR_EXECUTION, null, "止损不小于缓冲")));
+        // 42 号认得出是哪一轮开的：那一轮跑了 7 分钟，落库在开仓边界后 8 分钟；43 号认不出
+        AiTraderDecision openRound = new AiTraderDecision();
+        openRound.setWakeTime(opened);
+        openRound.setLatencyMs(7 * 60_000);
+        openRound.setCreatedAt(at(opened + 8 * 60_000L));
+        when(tradeRecords.openDecisions(any(), any())).thenReturn(Map.of(142L, openRound));
 
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
@@ -784,7 +864,9 @@ class ReviewMaterialAssemblerTest {
                 new ExperienceLedger.Classify(61L, List.of(new ExperienceLedger.Mark(AiTraderExperienceTrade.MARK_BROKEN, 42L))));
         assertThat(m.trades()).containsOnlyKeys(42L, 43L);
         assertThat(m.trades().get(42L)).isEqualTo(new ExperienceLedger.PeriodTrade(new BigDecimal("-293.29"),
-                LocalDate.of(2026, 7, 27)));
+                LocalDate.of(2026, 7, 27), opened + 60_000L, opened + 8 * 60_000L));
+        assertThat(m.trades().get(43L).openRoundFrom()).isNull();
+        assertThat(m.trades().get(43L).openRoundTo()).isNull();
     }
 
     /** 没有平仓盈亏的单子记不了账：它的归类不并进去，同一条经验名下别的单子照记 */
@@ -926,7 +1008,10 @@ class ReviewMaterialAssemblerTest {
 
     // ==================== 盯盘布防 ====================
 
-    /** 期间布的条件、命中，以及得知命中那轮的交易动作与该币结论段都进块；整期没布过的币点名 */
+    /**
+     * 期间布的条件、命中，以及得知命中那轮的交易动作与该币结论段都进块；整期没布过的币点名。
+     * 动作记了时刻的前面带时刻，没记的不带；结论后面带那一轮写完的时刻
+     */
     @Test
     void watchBlockListsHitsAndFollowUp() {
         AiTrader t = trader();
@@ -941,7 +1026,10 @@ class ReviewMaterialAssemblerTest {
         when(watchStore.armed(7L, 1)).thenReturn(List.of(armed));
         AiTraderDecision woke = new AiTraderDecision();
         woke.setKind(AiTraderDecision.KIND_WATCH);
-        woke.setActionsJson("[{\"tool\":\"indicators\"},{\"tool\":\"open_position\",\"status\":\"ok\"},{\"tool\":\"set_watch\",\"rejected\":\"太多\"},"
+        long openedAt = FROM + 3 * H + 2 * 60_000L;
+        long writtenAt = FROM + 3 * H + M5;
+        woke.setCreatedAt(at(writtenAt));
+        woke.setActionsJson("[{\"tool\":\"indicators\"},{\"tool\":\"open_position\",\"status\":\"ok\",\"at\":" + openedAt + "},{\"tool\":\"set_watch\",\"rejected\":\"太多\"},"
                 + "{\"tool\":\"close_position\",\"status\":\"error\",\"error\":\"x\"}]");
         woke.setReasoning("先看结构…\n" + prompts.get(AgentLang.ZH, "trader.mark.conclusion")
                 + "\n总评：顺势\n[BTCUSDT]\n判断：1h 收盘站上 63000，突破确认\n动作：开多 0.01\n等待：无\n[ETHUSDT]\n判断：跟随\n动作：HOLD\n等待：无");
@@ -955,7 +1043,9 @@ class ReviewMaterialAssemblerTest {
                 .contains("- " + TIME.format(Instant.ofEpochMilli(FROM + 3 * H))
                         + " 命中：BTCUSDT 1h 收盘 63120 站上 63000 ｜ 布时备注：突破确认 ｜ 得知于 "
                         + TIME.format(Instant.ofEpochMilli(FROM + 3 * H + 1))
-                        + "（WATCH）｜ 那轮对该币的交易动作：open_position, set_watch（被拒）, close_position（失败） ｜ 那轮该币结论：判断：1h 收盘站上 63000，突破确认 动作：开多 0.01 等待：无");
+                        + "（WATCH）｜ 那轮对该币的交易动作：" + TIME.format(Instant.ofEpochMilli(openedAt))
+                        + " open_position, set_watch（被拒）, close_position（失败） ｜ 那轮该币结论（"
+                        + TIME.format(Instant.ofEpochMilli(writtenAt)) + " 写完）：判断：1h 收盘站上 63000，突破确认 动作：开多 0.01 等待：无");
     }
 
     @Test
@@ -968,6 +1058,7 @@ class ReviewMaterialAssemblerTest {
         when(watchStore.inWindow(7L, 1, FROM, TO)).thenReturn(List.of(hit));
         AiTraderDecision woke = new AiTraderDecision();
         woke.setKind(AiTraderDecision.KIND_WATCH);
+        woke.setCreatedAt(at(FROM + 3 * H + M5));
         for (String openStatus : List.of("error", "unknown", "not_attempted")) {
             woke.setActionsJson("""
                     [{"tool":"reverse_position","status":"partial","result":{
@@ -1011,6 +1102,8 @@ class ReviewMaterialAssemblerTest {
         AiTraderDecision woke = new AiTraderDecision();
         woke.setWakeTime(FROM + 2 * H);
         woke.setKind(AiTraderDecision.KIND_TRADE);
+        long writtenAt = toldAt + 2 * 60_000L;
+        woke.setCreatedAt(at(writtenAt));
         woke.setActionsJson("[{\"tool\":\"set_stop_loss\",\"args\":{\"positionId\":5},\"status\":\"ok\",\"at\":" + (toldAt - 60_000L) + "},"
                 + "{\"tool\":\"close_position\",\"args\":{\"positionId\":5},\"status\":\"ok\",\"at\":" + (toldAt + 60_000L) + "},"
                 + "{\"tool\":\"open_position\",\"args\":{\"symbol\":\"BTCUSDT\",\"side\":\"LONG\"},\"status\":\"ok\",\"at\":" + (toldAt + 90_000L) + "}]");
@@ -1025,8 +1118,9 @@ class ReviewMaterialAssemblerTest {
                 .contains("- 期间布防 1 条（SOLUSDT）；命中 1 条；复盘时仍在盯 0 条；整期没有盯盘条件的币：BTCUSDT")
                 .contains("命中：BTCUSDT 1h 收盘 63120 站上 63000（为 SOLUSDT 布的）")
                 .contains("命中时 " + TIME.format(Instant.ofEpochMilli(FROM + 2 * H)) + " 开始的那一轮（TRADE）正在跑，"
-                        + TIME.format(Instant.ofEpochMilli(toldAt)) + " 中途告诉了它 ｜ 那轮在这之后对该币的交易动作：close_position ｜")
-                .contains("那轮该币结论：判断：跟着 BTC 突破 动作：HOLD 等待：无")
+                        + TIME.format(Instant.ofEpochMilli(toldAt)) + " 中途告诉了它 ｜ 那轮在这之后对该币的交易动作："
+                        + TIME.format(Instant.ofEpochMilli(toldAt + 60_000L)) + " close_position ｜")
+                .contains("那轮该币结论（" + TIME.format(Instant.ofEpochMilli(writtenAt)) + " 写完）：判断：跟着 BTC 突破 动作：HOLD 等待：无")
                 .doesNotContain("得知于");
     }
 

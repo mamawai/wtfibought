@@ -119,7 +119,7 @@ class ReviewContractRealRunTest {
                         Map.entry("mfe", "101900"), Map.entry("mfeAt", "11:05"), Map.entry("mfeR", "+1.90R"), Map.entry("mae", "99650"), Map.entry("maeR", "-0.35R"),
                         Map.entry("tHalf", "20"), Map.entry("t1", "55"), Map.entry("firstBack", none),
                         Map.entry("after", prompts.get(lang, "reviewer.label.caseAfterFull", Map.of("best4", "103100", "best", "103800",
-                                "targets", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 1, "total", 1))))))) + "\n"
+                                "gap4", "+1700", "gap", "+2400", "targets", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 1, "total", 1))))))) + "\n"
                 + caseRenderer.replayLine(winner, CaseFileBuilder.AFTER_LONG_MS, lang) + "\n"
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100600 101300 101400")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩企稳 + 量比 1.6", "invalidation", "1h 收盘跌破 99000", "revisions", none)) + "\n"
@@ -139,7 +139,7 @@ class ReviewContractRealRunTest {
                         Map.entry("mfe", "101600"), Map.entry("mfeAt", "16:20"), Map.entry("mfeR", "+0.60R"), Map.entry("mae", "99950"), Map.entry("maeR", "-1.05R"),
                         Map.entry("tHalf", "15"), Map.entry("t1", none), Map.entry("firstBack", "16:45"),
                         Map.entry("after", prompts.get(lang, "reviewer.label.caseAfterFull", Map.of("best4", "100900", "best", "100900",
-                                "targets", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 0, "total", 1))))))) + "\n"
+                                "gap4", "+950", "gap", "+950", "targets", prompts.get(lang, "reviewer.label.caseTargetsAfter", Map.of("hit", 0, "total", 1))))))) + "\n"
                 + caseRenderer.replayLine(loser, CaseFileBuilder.AFTER_LONG_MS, lang) + "\n"
                 + prompts.get(lang, "reviewer.label.caseHourly", Map.of("closes", "100800 99950")) + "\n"
                 + prompts.get(lang, "reviewer.label.casePlan", Map.of("signals", "1h EMA20 回踩 + 量比 1.1", "invalidation", "1h 收盘跌破 100000", "revisions", none)) + "\n"
@@ -156,9 +156,6 @@ class ReviewContractRealRunTest {
                 + prompts.get(lang, "reviewer.label.marketRow", Map.of("symbol", "BTCUSDT", "open", "99800", "close", "100300",
                         "low", "99500", "lowAt", "10-09 03:00", "high", "103800", "highAt", "10-09 14:00", "range", "4.32")) + "\n";
         String ledger = prompts.get(lang, "reviewer.label.ledgerHeader", Map.of("n", 1)) + "\n"
-                + prompts.get(lang, "reviewer.label.ledgerQuota", Map.of("n", 1, "max", ExperienceLedger.MAX_ACTIVE,
-                        "perPlay", ExperienceLedger.MAX_PER_PLAY, "fullPlays", "",
-                        "r", 0, "rMax", ExperienceLedger.MAX_RESTRICTION, "rIds", "")) + "\n"
                 + prompts.get(lang, "reviewer.label.ledgerRow", Map.ofEntries(
                         Map.entry("id", 1), Map.entry("kind", prompts.get(lang, "trader.label.ledgerKind.hypothesis")),
                         Map.entry("slot", prompts.get(lang, "reviewer.op.slot.entry")), Map.entry("dir", prompts.get(lang, "reviewer.op.dir.opportunity")),
@@ -170,8 +167,8 @@ class ReviewContractRealRunTest {
                         + prompts.get(lang, "reviewer.label.ledgerTrade", Map.of("id", 2238, "symbol", "BTCUSDT", "side", "LONG",
                                 "play", "PULLBACK", "opened", "10-09 09:00", "net", "+280")))) + "\n";
         return new ReviewMaterialAssembler.ReviewMaterial(stats, "", cases, market, "", ledger, Map.of(
-                2238L, new ExperienceLedger.PeriodTrade(new BigDecimal("280.00"), LocalDate.of(2026, 10, 9)),
-                2241L, new ExperienceLedger.PeriodTrade(new BigDecimal("-400.00"), LocalDate.of(2026, 10, 9))),
+                2238L, new ExperienceLedger.PeriodTrade(new BigDecimal("280.00"), LocalDate.of(2026, 10, 9), null, null),
+                2241L, new ExperienceLedger.PeriodTrade(new BigDecimal("-400.00"), LocalDate.of(2026, 10, 9), null, null)),
                 Map.of(), Map.of(), List.of(), List.of());
     }
 

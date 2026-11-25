@@ -139,7 +139,9 @@ class CaseFileBuilderTest {
 
         CaseFileBuilder.Path p = builder.build(position("LONG", "100", "100.5", T0, T0 + 6 * 60_000L), plan("95", "110", null)).path();
 
-        assertThat(p.mfePrice()).isEqualByComparingTo("101");
+        // 持仓期间只有成交那一根：浮盈只认它的收盘 100.5，不认最高 101；时刻记这根收盘
+        assertThat(p.mfePrice()).isEqualByComparingTo("100.5");
+        assertThat(p.mfeAt()).isEqualTo(T0 + M5);
         assertThat(p.bestAfter4h()).isNull();
         assertThat(p.bestAfter()).isEqualByComparingTo("103");
         assertThat(p.targetsAfter()).isZero();
@@ -155,11 +157,88 @@ class CaseFileBuilderTest {
 
         CaseFileBuilder.Path p = builder.build(position("LONG", "100", "102.5", T0, T0 + 6 * 60_000L), plan("95", "110", null)).path();
 
-        assertThat(p.mfePrice()).isEqualByComparingTo("103");
+        // 平仓那一根最高 103 分不清在平仓前还是后，只认出场价 102.5
+        assertThat(p.mfePrice()).isEqualByComparingTo("102.5");
         assertThat(p.afterMs()).isZero();
         assertThat(p.bestAfter4h()).isNull();
         assertThat(p.bestAfter()).isNull();
         assertThat(p.targetsAfter()).isNull();
+    }
+
+    /**
+     * 限价多单在一根 5m 中途成交：那一根先在 899.38、回落到 874 成交、收 876.82。成交前的高点不算浮盈：
+     * 路径行的最大浮盈和重放行的最大顺向在成交那一根只认收盘价，下一根的 887.38 才算；逆向照旧认整根
+     */
+    @Test
+    void favourableSideOfTheFillBarCountsOnlyItsClose() {
+        long filledAt = T0 + 4 * 60_000L;
+        AiTraderPlan plan = ladder(entry("874", "28", "831", "938", "FILLED", filledAt, "9.79"));
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{899.37, 899.38, 870.19, 876.82}),
+                bar(T0 + M5, new double[]{876.86, 887.38, 869.51, 875.63}),
+                bar(T0 + 2 * M5, new double[]{875.63, 876, 849, 850})));
+
+        CaseFileBuilder.TradeCase c = builder.build(position("LONG", "874", "850.22", filledAt, T0 + 12 * 60_000L), plan);
+
+        // R = 874 − 831 = 43：浮盈 13.38 是 0.31R，逆向 25 是 0.58R
+        assertThat(c.path().mfePrice()).isEqualByComparingTo("887.38");
+        assertThat(c.path().mfeAt()).isEqualTo(T0 + M5);
+        assertThat(c.path().mfeR()).isEqualByComparingTo("0.31");
+        assertThat(c.path().minToHalfR()).isNull();
+        assertThat(c.path().maePrice()).isEqualByComparingTo("849");
+        assertThat(c.replay().favR()).isEqualByComparingTo("0.31");
+        assertThat(c.replay().advR()).isEqualByComparingTo("-0.58");
+    }
+
+    /**
+     * 成交那一根的收盘价就是最大浮盈：时刻记这根收盘（不早于成交），到 +0.5R 的用时从成交数到这根收盘。
+     * 平仓那一根只认开盘价和出场价，最高价分不清在平仓前还是后；收回入场价也看出场价，不看那一根的收盘
+     */
+    @Test
+    void fillBarAndCloseBarCountOnlyWhatWasSeenWhileHolding() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{101, 101.5, 99.8, 101.2}),
+                bar(T0 + M5, new double[]{101.1, 104, 99.5, 99.6})));
+
+        // 多单 100 入场、止损 98（R=2）：T0+4 分成交，T0+8 分在 100.4 平仓
+        CaseFileBuilder.Path p = builder.build(position("LONG", "100", "100.4", T0 + 4 * 60_000L, T0 + 8 * 60_000L),
+                plan("98", "110", null)).path();
+
+        // 成交那根收 101.2（+0.6R），平仓那根开 101.1、出场 100.4，最高 104 不算
+        assertThat(p.mfePrice()).isEqualByComparingTo("101.2");
+        assertThat(p.mfeAt()).isEqualTo(T0 + M5);
+        assertThat(p.minToHalfR()).isEqualTo(1);
+        assertThat(p.minTo1R()).isNull();
+        // 平仓那根收在 99.6，但出场价 100.4 还在入场价上方：没有收回入场价
+        assertThat(p.firstBackAt()).isNull();
+    }
+
+    /** 开仓和平仓在同一根 5m 里：浮盈只认出场价，这一根后来收到多高都不算 */
+    @Test
+    void tradeOpenedAndClosedInOneBarCountsOnlyItsExitPrice() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 101.8, 99.7, 101.5})));
+
+        CaseFileBuilder.Path p = builder.build(position("LONG", "100", "100.3", T0 + 60_000L, T0 + 3 * 60_000L),
+                plan("98", "110", null)).path();
+
+        assertThat(p.mfePrice()).isEqualByComparingTo("100.3");
+        assertThat(p.mfeAt()).isEqualTo(T0 + 3 * 60_000L);
+    }
+
+    /** 成交之后一直在入场价的不利一侧：没有浮盈，最大浮盈三项都空 */
+    @Test
+    void tradeThatNeverWentInFavourHasNoMaxFavourable() {
+        when(store.load(anyString(), anyString(), anyLong(), anyLong())).thenReturn(List.of(
+                bar(T0, new double[]{100, 100.5, 99, 100.6}),
+                bar(T0 + M5, new double[]{100.6, 101.5, 100.2, 101})));
+
+        CaseFileBuilder.Path p = builder.build(position("SHORT", "100", "101", T0 + 60_000L, T0 + 6 * 60_000L), plan("102", "96", null)).path();
+
+        assertThat(p.mfePrice()).isNull();
+        assertThat(p.mfeAt()).isNull();
+        assertThat(p.mfeR()).isNull();
+        assertThat(p.maePrice()).isEqualByComparingTo("101.5");
     }
 
     @Test
@@ -490,7 +569,8 @@ class CaseFileBuilderTest {
                 bar(T0 + 2 * M5, new double[]{102, 103, 100, 100}), bar(T0 + 3 * M5, new double[]{106, 107, 105, 106})));
         var result = builder.build(position("SHORT", "106", "106", T0 + 3 * M5, T0 + 4 * M5), plan);
         assertThat(result.replay().untouched().r()).isEqualByComparingTo("0.11");
-        assertThat(result.path().mfePrice()).isEqualByComparingTo("105");
+        // 路径只从实际成交那一根（收在 106）算起，之前几根的低点不算
+        assertThat(result.path().mfePrice()).isEqualByComparingTo("106");
         verify(store).load(eq("BTCUSDT"), eq("5m"), eq(T0), anyLong());
     }
 

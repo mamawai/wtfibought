@@ -132,13 +132,14 @@ export function WakeTraceView({ trace, running = false }: { trace: WakeTrace; ru
   const [promptOpen, setPromptOpen] = useState(false);
   const last = trace.calls.length;
   const stages = trace.stages ?? [];
+  // 两种复盘不是唤醒，没有权益和持仓这两格
+  const wake = trace.kind !== 'DEBRIEF' && trace.kind !== 'REVIEW';
   return (
     <>
       <div className="tr-h">
         <span>{fmtDateTime(trace.startedAt, true)}</span>
         <span className="inline-flex items-center gap-1"><Timer className="ic" />{trace.budgetSeconds}s</span>
-        {/* 单笔复盘不是唤醒，没有权益和持仓这两格 */}
-        {trace.kind !== 'DEBRIEF' && (
+        {wake && (
           <>
             <span>{t('term.equity')} <b>{fmtNum(trace.equity)}</b></span>
             <span>{t('wb.hold.positionsN', { count: trace.positions })} · {t('wb.hold.ordersN', { count: trace.pendingOrders })}</span>
@@ -179,7 +180,7 @@ export function WakeTraceView({ trace, running = false }: { trace: WakeTrace; ru
           {/* token null＝上游没回 usage，显示「—」不显示 0 */}
           <span>{trace.end.totalTokens == null ? '—' : fmtTokens(trace.end.totalTokens)} tok</span>
           <span>{(trace.end.latencyMs / 1000).toFixed(1)}s</span>
-          {trace.kind !== 'DEBRIEF' && <span>{t('term.equity')} <b>{fmtNum(trace.end.equity)}</b></span>}
+          {wake && <span>{t('term.equity')} <b>{fmtNum(trace.end.equity)}</b></span>}
           {trace.end.error && <p className="dn">{trace.end.error}</p>}
         </div>
       )}

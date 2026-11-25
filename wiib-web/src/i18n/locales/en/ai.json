@@ -375,7 +375,7 @@
       "under": "Which trades go under a lesson: for \"says go\" and \"discipline\", the ones that met the situation and followed it, and a positive total is on its side; for \"says don't open\", the ones that ignored it and opened anyway, and a negative total is on its side. When it cites a lesson on a trade that does not fit the situation, only the count is kept, not the money.",
       "auto": "Code promotes, demotes and switches off by the books: an unproven \"when to enter\" or \"risk control\" lesson with 5 trades under it, from at least 3 different days, with the total on its side becomes a \"rule\"; after that, if 5 new trades add up the other way, it drops back to \"unproven\"; 10 reviews in a row with no new trade under it, and it is switched off, except a promoted \"says don't open\" rule, since nobody breaking it means it is working. Each promotion or demotion starts a new stretch and only the current stretch is judged; the followed / violated line in the list is cumulative, and lessons that were promoted or demoted also show the current stretch.",
       "manage": "How a position is handled along the way (when to admit it is wrong, how to take profit) stays out of the ledger; a handling plan it wrote down and then did not follow counts as \"missed\".",
-      "gap": "Something it wrote down to do in a plan, a watch note or a Waiting line, or a hard line with a number in your instructions (say, lose at most 2% of equity per trade). Code only counts how often it came up and how often it was done, regardless of profit; once missed twice, it is reminded on every wake.",
+      "gap": "Something it wrote down to do in a plan, a watch note or a Waiting line, or a hard line with a number in your instructions (say, lose at most 2% of equity per trade). Code only counts how often it came up and how often it was done, regardless of profit, and trades opened in the same round count once; once missed twice, it is reminded on every wake.",
       "finding": "The review found your instructions themselves may be costing it money; only you see this.",
       "todoTitle": "What you do (usually nothing)",
       "todo": {
@@ -385,8 +385,8 @@
         "promoted": "Check it fits your thinking. If not, switch it off and say why — the review sees that and won't bring it back. Switched off by mistake? Restore it from \"Switched off\".",
         "pinTitle": "One lesson is spot on",
         "pin": "Pin it: code won't demote or switch it off, and the review can't delete it; the books are still kept.",
-        "fullTitle": "The ledger is full",
-        "full": "At most 10 lessons in use (3 per play type, 2 that say don't open) and 5 notes for you; new ones can't get in when full, so switch off stale ones.",
+        "fullTitle": "Your notes are full",
+        "full": "At most 5 notes for you; new ones can't get in when full, so delete the ones you've dealt with. Lessons in use have no cap.",
         "deleteTitle": "Want it gone for good",
         "delete": "Delete removes it along with the record of trades under it, and the review may propose it again; switching off is usually enough."
       },

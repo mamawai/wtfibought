@@ -337,7 +337,7 @@ trader:
     ledgerRowViolated: "#{{id}} {{kind}}{{dir}} | {{text}} | violated in {{n}} trades: {{wins}} won, {{losses}} lost, net {{net}} USDT{{miscited}}"
     # Follows the two rows above only when the count is above 0
     ledgerMiscited: " | cited {{m}} more times where the situation did not match"
-    # An execution gap's row (shown once broken twice): came up = kept + broken, done = kept
+    # An execution gap's row (shown once broken twice): came up = kept + broken, done = kept; counted per opening round, trades opened in the same round count once
     ledgerRowGap: "#{{id}} {{kind}} | {{text}} | came up {{met}} times, done {{kept}} times"
     ledgerKind:
       gap: execution gap
