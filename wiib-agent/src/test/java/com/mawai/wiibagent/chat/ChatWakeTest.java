@@ -221,7 +221,7 @@ class ChatWakeTest {
         ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
         when(agentFactory.leavesFor(any(), any()))
                 .thenReturn(new ChatAgentFactory.Leaves("x", model, null, null, AgentLang.ZH, 256_000));
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(10);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService, registry,
                 mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class), mock(WorkbenchRunRegistry.class),

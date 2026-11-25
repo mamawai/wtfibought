@@ -6,6 +6,7 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.junit.jupiter.api.Test;
@@ -125,6 +126,7 @@ class TradeEventListenerTest {
         AiTrader t = trader();
         when(traderMapper.selectList(any())).thenReturn(List.of(t));
         byte[] channel = TradeEvent.CHANNEL.getBytes(StandardCharsets.UTF_8);
+        listener.open(Start.COLD);
 
         listener.onMessage(new DefaultMessage(channel, "not json".getBytes(StandardCharsets.UTF_8)), null);
         listener.onMessage(new DefaultMessage(channel, MAPPER.writeValueAsBytes(event())), null);

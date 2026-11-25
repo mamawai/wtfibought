@@ -2,6 +2,7 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
 import com.mawai.wiibagent.llm.ReactLoop;
@@ -19,7 +20,6 @@ import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.enums.AgentLang;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
@@ -34,9 +34,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -46,7 +43,6 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 一轮的会话：挂工具、建循环、限时跑完，过程逐帧推给现场。
  * 无论成败，动作轨迹和用量都记到决策行上：超时作废的那一轮，已执行的开平仓和烧掉的 token 都是真的。
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 class WakeSession {
@@ -59,6 +55,8 @@ class WakeSession {
     private final CrossAssetToolkit crossAssetToolkit;
     private final LocalizedToolCallbacks localizedTools;
     private final PromptCatalog prompts;
+    /** 限时跑会话：到点或关停叫停都走同一条收尾路 */
+    private final BoundedRuns runs;
 
     /** 超时打断会话后最多等它收尾多久，盖过 sim 一次下单连重试（最坏约 22 秒）；测试里调短 */
     Duration stopWait = Duration.ofSeconds(30);
@@ -68,7 +66,8 @@ class WakeSession {
     }
 
     /**
-     * 跑一轮会话。超时抛 TimeoutException，本轮作废（已发出的订单不回滚——sim 是事实源）。
+     * 跑一轮会话。超时抛 TimeoutException，关停叫停抛它的子类 {@link BoundedRuns.CutException}，
+     * 本轮作废（已发出的订单不回滚——sim 是事实源）。
      *
      * @param model     带用量统计的模型，每轮新建
      * @param webSearch 这一轮挂不挂联网搜索
@@ -100,16 +99,14 @@ class WakeSession {
                 .stages(exhausted -> flow.next(exhausted, tradeTools::accountSnapshot))
                 .build();
         run.prompt(systemPrompt, instruction);
-        // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
-        CompletableFuture<Void> cancel = new CompletableFuture<>();
 
         // 模型已经答过几次
         AtomicInteger replies = new AtomicInteger();
 
-        // 虚拟线程 + FutureTask 承载超时
-        FutureTask<Outcome> task = new FutureTask<>(() -> {
+        // 停止信号交给循环：到点或叫停时完成它，在途模型流不再往下烧
+        BoundedRuns.Work<Outcome> session = stop -> {
             run.callStart();
-            ReactLoop.Result result = loop.run(List.of(new UserMessage(instruction)), null, cancel, new ReactLoop.Listener() {
+            ReactLoop.Result result = loop.run(List.of(new UserMessage(instruction)), null, stop, new ReactLoop.Listener() {
                 @Override
                 public void chunk(ChatResponse frame) {
                     String chunk = frame.getResults().getFirst().getOutput().getText();
@@ -149,18 +146,11 @@ class WakeSession {
                 }
             });
             return new Outcome(finalReasoning(prompts, lang, result.messages(), flow.finalStageOnly()), result.modelCalls());
-        });
-        Thread sessionThread = Thread.startVirtualThread(task);
+        };
         try {
-            return task.get(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+            // 返回或抛出之前已经等会话线程停下（最多 stopWait）：超时那一刻正在跑的交易调用，这时已把自己的结果记完
+            return runs.run("wake traderId=" + decision.getTraderId(), session, deadline, stopWait);
         } finally {
-            cancel.complete(null);
-            task.cancel(true);
-            // 等会话线程停下来再收：超时那一刻正在跑的交易调用，这时才把自己的结果记完；最多等 stopWait
-            if (!sessionThread.join(stopWait)) {
-                log.warn("[Trader] 会话线程 {}s 内没停下，不再等，动作轨迹按已记下的收 traderId={}",
-                        stopWait.toSeconds(), decision.getTraderId());
-            }
             // 无论成败，动作轨迹都要留：超时/异常时已执行的开平仓是真实发生的
             List<ObjectNode> actions = mergeActions(trace.calls(), tradeTools.actions());
             decision.setActionsJson(MAPPER.writeValueAsString(actions));

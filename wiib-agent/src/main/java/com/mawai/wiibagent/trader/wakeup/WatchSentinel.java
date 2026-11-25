@@ -3,13 +3,16 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibagent.trader.trade.WatchesChanged;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
+import com.mawai.wiibcommon.handover.DeliveryGate;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -30,11 +33,13 @@ import java.util.Map;
  * 带动作的条件（预案）命中后先交给 {@link PresetExecutor} 执行，它说要叫醒才叫。
  * 命中：库里 ARMED → FIRED（CAS，并发 tick 只有一个赢），赢了才从名单摘掉。
  * 名单在内存里按币放着，条件一变（{@link WatchesChanged}）整份重载。
+ * 进活的口：开口是载入名单、订阅价格，关口是退订、等正在比对的 tick 比完。
  */
 @Slf4j
 @Component
+@Order(30)
 @RequiredArgsConstructor
-public class WatchSentinel implements MessageListener {
+public class WatchSentinel implements MessageListener, Intake {
 
     private final RedisMessageListenerContainer listenerContainer;
     private final TraderWatchStore watchStore;
@@ -44,13 +49,24 @@ public class WatchSentinel implements MessageListener {
 
     /** 币 → 在盯的条件。整份替换，读到的是快照 */
     private volatile Map<String, List<AiTraderWatch>> armed = Map.of();
+    /** 价格回调的闸 */
+    private final DeliveryGate gate = new DeliveryGate();
 
-    @PostConstruct
-    public void init() {
+    /** 开口：载入在盯名单，订阅价格 */
+    @Override
+    public void open(Start how) {
         reload();
+        gate.open();
         listenerContainer.addMessageListener(this, new ChannelTopic(MarketStreamChannels.PRICE));
         log.info("[Watch] 订阅 {}，在盯 {} 条", MarketStreamChannels.PRICE,
                 armed.values().stream().mapToInt(List::size).sum());
+    }
+
+    /** 关口：退订价格，等正在比对的那几个 tick 比完 */
+    @Override
+    public void close() {
+        listenerContainer.removeMessageListener(this);
+        gate.close();
     }
 
     /** 条件变了整份重载；replace 在事务里，提交后再读 */
@@ -69,15 +85,17 @@ public class WatchSentinel implements MessageListener {
 
     @Override
     public void onMessage(@NonNull Message message, byte[] pattern) {
-        try {
-            MarkPriceTick tick = MarkPriceTick.parse(message);
-            if (tick != null) {
-                onPriceTick(tick.symbol(), tick.price(), System.currentTimeMillis());
+        gate.pass(() -> {
+            try {
+                MarkPriceTick tick = MarkPriceTick.parse(message);
+                if (tick != null) {
+                    onPriceTick(tick.symbol(), tick.price(), System.currentTimeMillis());
+                }
+            } catch (Exception e) {
+                // 单条解析失败只丢本 tick，下一 tick 补上
+                log.debug("[Watch] tick解析失败: {}", e.toString());
             }
-        } catch (Exception e) {
-            // 单条解析失败只丢本 tick，下一 tick 补上
-            log.debug("[Watch] tick解析失败: {}", e.toString());
-        }
+        });
     }
 
     /** 触及与到时刻：每个 tick 比一遍该币的名单，命中的广播出去 */

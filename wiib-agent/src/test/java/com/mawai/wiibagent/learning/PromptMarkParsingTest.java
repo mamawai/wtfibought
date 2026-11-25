@@ -249,7 +249,7 @@ class PromptMarkParsingTest {
         ReviewMaterialAssembler.ReviewMaterial material = new ReviewMaterialAssembler.ReviewMaterial(
                 "stats", "plays", "cases", "market", "watches", "ledger", Map.of(), Map.of(), Map.of(), List.of(), List.of());
         ReviewRunner review = new ReviewRunner(mock(ReviewMaterialAssembler.class), null, null,
-                prompts, mock(UserLangResolver.class), mock(ExperienceLedger.class), parser, null);
+                prompts, mock(UserLangResolver.class), mock(ExperienceLedger.class), parser, null, null);
 
         for (AgentLang lang : AgentLang.values()) {
             assertThat(review.userPrompt(t, material, 0, 86_400_000L, 2 * 86_400_000L, lang).stripTrailing())

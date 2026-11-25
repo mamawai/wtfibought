@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -22,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -34,6 +36,27 @@ class VolatilitySentinelTest {
     @BeforeAll
     static void initTableInfoCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTrader.class);
+    }
+
+    /** 报警的口开着：进程启动时由编排开口 */
+    private static VolatilitySentinel alerting(VolatilitySentinel sentinel) {
+        sentinel.open(Start.COLD);
+        return sentinel;
+    }
+
+    /** 报警的口关着（服务关停中）：照常采样攒窗口，只是不报警 */
+    @Test
+    void 报警的口关着只采样不报警() {
+        AiTraderMapper mapper = mock(AiTraderMapper.class);
+        VolatilitySentinel sentinel = new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper,
+                mock(SimTradeClient.class), mock(ApplicationEventPublisher.class));
+        sentinel.offload = Runnable::run;
+
+        long t0 = 1_700_000_000_000L;
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("100"), t0);
+        sentinel.onPriceTick("BTCUSDT", new BigDecimal("102"), t0 + 2_000);
+
+        verify(mapper, never()).selectList(any());
     }
 
     @Test
@@ -134,7 +157,7 @@ class VolatilitySentinelTest {
         AiTraderMapper mapper = mock(AiTraderMapper.class);
         SimTradeClient sim = mock(SimTradeClient.class);
         ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
-        VolatilitySentinel sentinel = new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim, events);
+        VolatilitySentinel sentinel = alerting(new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim, events));
         sentinel.offload = Runnable::run;
         AiTrader plain = alertTrader(7L, "1.0");   // 阈值 0.6%
         AiTrader picky = alertTrader(8L, "1.5");   // 阈值 0.9%
@@ -167,7 +190,7 @@ class VolatilitySentinelTest {
         AiTraderMapper mapper = mock(AiTraderMapper.class);
         SimTradeClient sim = mock(SimTradeClient.class);
         ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
-        VolatilitySentinel sentinel = new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim, events);
+        VolatilitySentinel sentinel = alerting(new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper, sim, events));
         sentinel.offload = Runnable::run;
         AiTrader plain = alertTrader(7L, "1.0");
         when(mapper.selectList(any())).thenReturn(List.of(plain));
@@ -194,8 +217,8 @@ class VolatilitySentinelTest {
     @Test
     void heavyWorkRunsOffTheTickThread() {
         AiTraderMapper mapper = mock(AiTraderMapper.class);
-        VolatilitySentinel sentinel = new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper,
-                mock(SimTradeClient.class), mock(ApplicationEventPublisher.class));
+        VolatilitySentinel sentinel = alerting(new VolatilitySentinel(mock(RedisMessageListenerContainer.class), mapper,
+                mock(SimTradeClient.class), mock(ApplicationEventPublisher.class)));
         List<Thread> queriedOn = new CopyOnWriteArrayList<>();
         when(mapper.selectList(any())).thenAnswer(inv -> {
             queriedOn.add(Thread.currentThread());

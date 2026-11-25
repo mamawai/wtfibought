@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.locks.Lock;
 import java.util.stream.IntStream;
 
@@ -66,6 +67,8 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     private final BookFillPricer fillPricer;
     private final LimitOrderIndex limitIndex;
     private final ClosedPositionCleanup closedPositionCleanup;
+    /** 精查和爆仓交给它，关停时等它清零 */
+    private final Executor executor;
 
     @Override
     public void onPriceTick(String symbol, BigDecimal markPrice) {
@@ -75,7 +78,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
             long userId = Long.parseLong(uid);
             // 带内免检，无带/带作废/出带才精查，（推导见 CrossBandRegistry）。
             if (!bandRegistry.shouldCheck(userId, symbol, price)) continue;
-            Thread.startVirtualThread(() -> checkUser(userId, symbol, markPrice, now));
+            executor.execute(() -> checkUser(userId, symbol, markPrice, now));
         }
     }
 
@@ -93,7 +96,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
             // 插针藏在区间两端：低端抓多头重的账户、高端抓空头重的（equity 对单 symbol 价格线性，端点即最坏）
             for (BigDecimal pin : List.of(range[0], range[1])) {
                 if (!bandRegistry.shouldCheck(userId, symbol, pin.doubleValue())) continue;
-                Thread.startVirtualThread(() -> checkUser(userId, symbol, pin, pinAt));
+                executor.execute(() -> checkUser(userId, symbol, pin, pinAt));
             }
         }
     }

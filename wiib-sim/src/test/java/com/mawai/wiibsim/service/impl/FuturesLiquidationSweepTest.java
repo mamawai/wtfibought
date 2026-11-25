@@ -36,7 +36,7 @@ class FuturesLiquidationSweepTest {
     private FuturesLiquidationServiceImpl service() {
         return new FuturesLiquidationServiceImpl(mock(FuturesRiskService.class), cacheService, traderSymbols,
                 mock(FuturesPositionMapper.class), mock(FuturesPositionIndexService.class),
-                mock(CrossLiquidationService.class), new FuturesPrices(cacheService));
+                mock(CrossLiquidationService.class), new FuturesPrices(cacheService), Thread::startVirtualThread);
     }
 
     private void symbols(String... symbols) {

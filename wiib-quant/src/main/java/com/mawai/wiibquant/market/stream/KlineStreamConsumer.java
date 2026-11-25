@@ -1,14 +1,14 @@
 package com.mawai.wiibquant.market.stream;
 
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.context.event.ContextClosedEvent;
-import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -34,12 +34,17 @@ import java.util.Map;
  * 驱动三个监听者：策略信号（StrategyRuntime）、交易员唤醒（TraderScheduler）、叙事对账（VerificationTask）。
  * 这是本进程跨进程获取实时收盘的<b>唯一</b>入口——拆成独立进程后，本消费者随服务启动即自动从 Redis 取数，
  * 监听者一行不用改。</p>
+ *
+ * <p>进活的口：开口是开始读，关口是停读并等读循环退出。</p>
  */
 @Slf4j
 @Component
-public class KlineStreamConsumer {
+@Order(20)
+public class KlineStreamConsumer implements Intake {
 
     private static final String GROUP = "quant";
+    /** 关口时最多等读循环退出多久：盖过一次轮询（2 秒），再给监听者处理最后那批留点时间 */
+    private static final long LOOP_EXIT_WAIT_MS = 5_000;
 
     private final StringRedisTemplate redisTemplate;
     private final RedisConnectionFactory connectionFactory;
@@ -49,11 +54,8 @@ public class KlineStreamConsumer {
 
     private StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
     private Subscription subscription;
-    // 停机标志：cancel() 不会打断正阻塞的 XREADGROUP，连接工厂随后关闭必然掐死最后一次读，
-    // 该"Connection closed"是预期时序而非故障，errorHandler 据此降噪。
-    // 注意必须在 ContextClosedEvent 时就置位——Lettuce 连接工厂在 lifecycle stop 阶段关连接，
-    // 早于 @PreDestroy 销毁阶段，只靠 @PreDestroy 置位赶不上最后一拍轮询报错。
-    private volatile boolean shuttingDown;
+    // 关口标志：关口之后轮询再报错（连接已关之类）是预期时序而非故障，errorHandler 据此降噪
+    private volatile boolean closed;
 
     public KlineStreamConsumer(StringRedisTemplate redisTemplate,
                                RedisConnectionFactory connectionFactory,
@@ -63,8 +65,8 @@ public class KlineStreamConsumer {
         this.eventPublisher = eventPublisher;
     }
 
-    @PostConstruct
-    public void start() {
+    @Override
+    public void open(Start how) {
         ensureGroup();
         StreamMessageListenerContainerOptions<String, MapRecord<String, String, String>> options =
                 StreamMessageListenerContainerOptions.builder()
@@ -125,10 +127,10 @@ public class KlineStreamConsumer {
         }
     }
 
-    /** 轮询异常：停机期的连接中断是预期时序，降 debug；运行期记 ERROR，歇 1 秒再接着轮询。 */
+    /** 轮询异常：关口之后的连接中断是预期时序，降 debug；运行期记 ERROR，歇 1 秒再接着轮询。 */
     private void handlePollError(Throwable e) {
-        if (shuttingDown) {
-            log.debug("[KlineStream] 停机期轮询中断（预期）: {}", e.toString());
+        if (closed) {
+            log.debug("[KlineStream] 关口后轮询中断（预期）: {}", e.toString());
             return;
         }
         log.error("[KlineStream] Stream 轮询异常", e);
@@ -140,21 +142,30 @@ public class KlineStreamConsumer {
         }
     }
 
-    /** ContextClosedEvent 先于 lifecycle stop（Lettuce 关连接）与销毁阶段发布——在这里提前撤订阅。 */
-    @EventListener(ContextClosedEvent.class)
-    public void onContextClosed() {
-        stop();
-    }
-
+    /**
+     * 关口：停读并等读循环退出。cancel 不打断正在阻塞的那次读，它读到的照样交给 onMessage，
+     * 交完循环才退出、订阅才变成不活跃，所以等到不活跃，最后进来的那根收盘就已经发出去了。
+     * 销毁时也会调一次，重复调没关系
+     */
+    @Override
     @PreDestroy
-    public void stop() {
-        if (shuttingDown) return;   // onContextClosed 已处理，销毁阶段幂等跳过
-        shuttingDown = true;
+    public void close() {
+        if (subscription == null) {
+            return;
+        }
+        closed = true;
         try {
-            if (subscription != null) subscription.cancel();
-            if (container != null) container.stop();
-        } catch (Exception e) {
-            log.debug("[KlineStream] 关闭异常: {}", e.toString());
+            subscription.cancel();
+            long deadline = System.currentTimeMillis() + LOOP_EXIT_WAIT_MS;
+            while (subscription.isActive() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            if (subscription.isActive()) {
+                log.warn("[KlineStream] {}ms 内读循环没退出，不再等", LOOP_EXIT_WAIT_MS);
+            }
+            container.stop();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }

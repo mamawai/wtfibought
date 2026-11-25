@@ -19,6 +19,7 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.InFlight;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibquant.external.sim.SimOrderRetry;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
@@ -44,11 +45,12 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 结果记三处：条件行（action_ok / action_result）、那个仓位的计划修订史、时间线上一行 PRESET。
  * 不看 trader 是不是在运行、在不在唤醒时段：预案和止损止盈单一样是挂出去的承诺。
  * 执行放在虚拟线程上，不占行情线程和 K 线事件线程；同一个 trader 这时要醒，先等它的预案做完（{@link #awaitIdle}）。
+ * 在执行的预案是一份手上的活（presets），秒级，关停时等它做完。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PresetExecutor {
+public class PresetExecutor implements InFlight {
 
     private final SimTradeClient simTradeClient;
     private final AiTraderMapper traderMapper;
@@ -94,6 +96,17 @@ public class PresetExecutor {
             }
         });
         return done;
+    }
+
+    @Override
+    public String name() {
+        return "presets";
+    }
+
+    /** 还没做完的预案数 */
+    @Override
+    public int count() {
+        return running.values().stream().mapToInt(Set::size).sum();
     }
 
     /** 等这个 trader 手上的预案都做完：唤醒开头调，读到的账户和命中记录才是做完之后的 */

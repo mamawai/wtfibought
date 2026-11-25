@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -89,7 +90,7 @@ class DebriefRunnerTest {
             new NewsToolkit(mock(NewsCache.class), new NewsFlashLocalizer(mock(NewsEventMapper.class))),
             new LocalizedToolCallbacks(prompts),
             modelFactory, decisionMapper, planMapper, simTradeClient, prompts, langResolver, new ExperienceOpParser(prompts),
-            running, planStore);
+            running, planStore, new BoundedRuns());
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
@@ -458,5 +459,22 @@ class DebriefRunnerTest {
         when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos(1L, closeMs)));
 
         assertThat(runner.next(trader(), NOW).position().getId()).isEqualTo(1L);
+    }
+
+    /** 被服务更新打断的不算失败：刚打断完马上接着做，哪门语言的文案都认；普通失败还是要等 1 小时 */
+    @Test
+    void interruptedDebriefIsNotCountedAsAFailure() {
+        long closeMs = NOW - 26 * H;
+        AiTraderDecision cut = attempt(1L, AiTraderDecision.STATUS_ERROR, NOW - 10 * 60_000L);
+        cut.setError(prompts.get(AgentLang.EN, "debrief.error.interrupted"));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan(1L)));
+        when(decisionMapper.selectList(any())).thenReturn(List.of(cut));
+        when(simTradeClient.getClosedPositions(eq(99L), anyInt())).thenReturn(List.of(pos(1L, closeMs)));
+
+        assertThat(runner.next(trader(), NOW).position().getId()).isEqualTo(1L);
+
+        when(decisionMapper.selectList(any())).thenReturn(
+                List.of(attempt(1L, AiTraderDecision.STATUS_ERROR, NOW - 10 * 60_000L)));
+        assertThat(runner.next(trader(), NOW)).isNull();
     }
 }

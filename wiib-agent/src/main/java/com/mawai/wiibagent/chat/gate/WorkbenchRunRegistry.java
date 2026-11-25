@@ -2,6 +2,7 @@ package com.mawai.wiibagent.chat.gate;
 
 import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.llm.ContextUsage;
+import com.mawai.wiibcommon.handover.InFlight;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ArrayNode;
@@ -26,9 +27,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *   <li>中断：/cancel 完成那轮的信号，轮在下一个检查点收尾</li>
  * </ul>
  * 进程内存级即可：单实例部署，重启即无运行中会话，无需持久化。
+ * 在跑的轮是一份手上的活（chat-turns）：提前收尾就是给每一轮发停止信号，和用户点停止同一条路，半截答案照常落库。
  */
 @Component
-public class WorkbenchRunRegistry {
+public class WorkbenchRunRegistry implements InFlight {
 
     /**
      * 事件出口：返回 true=真推出去了。用 BiPredicate 为了把"推没推出去"答给调用方。
@@ -65,6 +67,21 @@ public class WorkbenchRunRegistry {
         }
         run.cancel().complete(null);
         return true;
+    }
+
+    @Override
+    public String name() {
+        return "chat-turns";
+    }
+
+    @Override
+    public int count() {
+        return runs.size();
+    }
+
+    @Override
+    public void cut() {
+        runs.values().forEach(run -> run.cancel().complete(null));
     }
 
     /** 这一轮被叫停时跑 action（已经叫停了就马上跑）；没轮在跑什么都不做 */

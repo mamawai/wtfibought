@@ -4,10 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.wakeup.WakeIntervals;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.InFlight;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -25,11 +29,15 @@ import java.util.function.LongSupplier;
  * 复盘位：每个交易员一个，单笔复盘、统一复盘、点播复盘、交易卡上的立即复盘共用，一次只跑一个。它和唤醒位是两回事，复盘不挡唤醒。
  * 到期的单笔复盘抢不到就等下一根 5m；08:00 的统一复盘抢不到就等占着的那一篇跑完；点播复盘和立即复盘抢不到当场回绝。
  * 重置和删除要同时拿到唤醒位和这里的复盘位。
+ * <p>
+ * 进活的口是"起新复盘"：关着时 {@link #tryOccupy} 一律抢不到（点播复盘、立即复盘也从这里占位），
+ * 统一复盘等到位子也不跑。占着的复盘位是一份手上的活（reviews）。
  */
 @Slf4j
 @Component
+@Order(50)
 @RequiredArgsConstructor
-public class ReviewScheduler {
+public class ReviewScheduler implements Intake, InFlight {
 
     /** 收盘超过这么久（一根 5m）的 K 线事件算旧事件，不扫 */
     static final long STALE_EVENT_MS = 300_000L;
@@ -44,9 +52,32 @@ public class ReviewScheduler {
     private final Map<Long, Semaphore> slots = new ConcurrentHashMap<>();
     /** 最近处理过的 5m 边界：每个币的收盘各发一次事件，一根只处理一次 */
     private final AtomicLong lastBoundary = new AtomicLong(-1);
+    /** 起新复盘的口 */
+    private volatile boolean open;
 
     /** 墙钟注入点 */
     LongSupplier nowMs = System::currentTimeMillis;
+
+    @Override
+    public void open(Start how) {
+        open = true;
+    }
+
+    @Override
+    public void close() {
+        open = false;
+    }
+
+    @Override
+    public String name() {
+        return "reviews";
+    }
+
+    /** 占着的复盘位数 */
+    @Override
+    public int count() {
+        return (int) slots.values().stream().filter(s -> s.availablePermits() == 0).count();
+    }
 
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
@@ -100,7 +131,8 @@ public class ReviewScheduler {
     private void unifiedReview(long traderId, long boundary) {
         slot(traderId).acquireUninterruptibly();
         try {
-            AiTrader trader = eligible(traderId);
+            // 等位子的时候起新复盘的口关上了，就不跑
+            AiTrader trader = open ? eligible(traderId) : null;
             if (trader != null) {
                 reviewRunner.review(trader, boundary);
             }
@@ -123,14 +155,22 @@ public class ReviewScheduler {
         return slots.computeIfAbsent(traderId, _ -> new Semaphore(1));
     }
 
-    /** 这个交易员是不是正在复盘。只查不占 */
+    /** 这个交易员现在起不了复盘：正在复盘，或者起新复盘的口关着。只查不占 */
     public boolean isBusy(long traderId) {
-        return slot(traderId).availablePermits() == 0;
+        return !open || slot(traderId).availablePermits() == 0;
     }
 
-    /** 抢复盘位（点播复盘、立即复盘、重置、删除）；抢到必须在 finally 里 {@link #release} */
+    /** 抢复盘位（到期的单笔复盘、点播复盘、立即复盘、重置、删除）；口关着一律抢不到。抢到必须在 finally 里 {@link #release} */
     public boolean tryOccupy(long traderId) {
-        return slot(traderId).tryAcquire();
+        if (!slot(traderId).tryAcquire()) {
+            return false;
+        }
+        // 占上了再看口：关口那边先关口再数占着的，两边总有一边看得到对方
+        if (!open) {
+            release(traderId);
+            return false;
+        }
+        return true;
     }
 
     public void release(long traderId) {

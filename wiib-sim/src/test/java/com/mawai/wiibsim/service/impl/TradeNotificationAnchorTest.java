@@ -105,7 +105,7 @@ class TradeNotificationAnchorTest {
         crossLiquidation = new CrossLiquidationServiceImpl(crossMarginService, positionMapper, orderMapper,
                 tradingConfig, prices, mock(FairLockRegistry.class),
                 tradeNotification, new CrossBandRegistry(), riskService, tx, filterRegistry, userMapper, bankruptcy,
-                NoBookFillPricer.create(), limitIndex, cleanup);
+                NoBookFillPricer.create(), limitIndex, cleanup, Thread::startVirtualThread);
     }
 
     private static FuturesPosition isolatedLong() {

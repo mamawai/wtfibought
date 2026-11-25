@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.learning.ExperienceLedger;
@@ -50,7 +51,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 这里只管一轮的生命周期：算预算、判爆仓、落决策行、记成败；备料在 {@link WakeBriefing}，
  * 走法和每段开场白在 {@link WakeFlows}，挂工具跑循环在 {@link WakeSession}。
  * 整盘轮（例行、手动、不归某一个币的触发）管全部可交易币，单币轮只处理把它叫醒的那个币。
- * 失败语义：连续 5 次失败自动 PAUSED（key 无效是永久错误，不等连败当场停）；权益跌破初始 1% 判 LIQUIDATED 终局。
+ * 失败语义：连续 5 次失败自动 PAUSED（key 无效是永久错误，不等连败当场停；服务关停提前收尾的不计）；权益跌破初始 1% 判 LIQUIDATED 终局。
  */
 @Slf4j
 @Component
@@ -217,8 +218,12 @@ public class TraderWakeupRunner {
             unreported.clear(trader.getId(), prepared.reportedEvents());
         } catch (Exception e) {
             boolean keyInvalid = false;
+            // 服务关停叫停的这一轮：不计连败
+            boolean cut = e instanceof BoundedRuns.CutException;
             String msg;
-            if (e instanceof TimeoutException) {
+            if (cut) {
+                msg = prompts.get(lang, "trader.error.wakeInterrupted");
+            } else if (e instanceof TimeoutException) {
                 msg = prompts.get(lang, "trader.error.wakeTimeout", Map.of("seconds", budgetSeconds));
             } else if (e instanceof SimTradeClient.SimBizException) {
                 msg = SimTradeClient.describe(e, messages, lang);
@@ -226,7 +231,11 @@ public class TraderWakeupRunner {
                 keyInvalid = LlmErrorMessages.unauthorized(e);
                 msg = LlmErrorMessages.classify(e, prompts, lang);
             }
-            log.warn("[Trader] 唤醒失败 traderId={} wakeTime={} msg={}", trader.getId(), wakeTime, msg, e);
+            if (cut) {
+                log.info("[Trader] 服务关停，这一轮提前收尾 traderId={} wakeTime={}", trader.getId(), wakeTime);
+            } else {
+                log.warn("[Trader] 唤醒失败 traderId={} wakeTime={} msg={}", trader.getId(), wakeTime, msg, e);
+            }
             if (decision.getId() != null) {
                 return;
             }
@@ -245,7 +254,9 @@ public class TraderWakeupRunner {
             if (run != null) {
                 run.end(decision.getId());
             }
-            recordFailure(trader, msg, lang, keyInvalid);
+            if (!cut) {
+                recordFailure(trader, msg, lang, keyInvalid);
+            }
         }
     }
 

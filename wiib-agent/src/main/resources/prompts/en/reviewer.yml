@@ -255,5 +255,6 @@ reviewer:
   # Persisted text: goes into ai_trader_decision.error and is on public display in the arena timeline
   error:
     timeout: Review timed out ({{seconds}}s)
+    interrupted: Service update - this review was cut short
     emptyOutput: The model returned nothing
     noOps: No ledger-update row could be parsed, the ledger was not updated

@@ -2,6 +2,8 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -10,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -46,11 +49,13 @@ import java.util.concurrent.Executor;
  * SELECT symbol, percentile_cont(0.5) WITHIN GROUP (ORDER BY c) 平日,
  *        percentile_cont(0.95) WITHIN GROUP (ORDER BY c) 波动日 FROM daily GROUP BY symbol;
  * </pre>
+ * 进活的口是"报警"：关着时照常采样攒窗口，只是不报警；订阅不随口开关。
  */
 @Slf4j
 @Component
+@Order(40)
 @RequiredArgsConstructor
-public class VolatilitySentinel implements MessageListener {
+public class VolatilitySentinel implements MessageListener, Intake {
 
     /** 每币基准阈值%（即平台下限，用户只能经灵敏度系数调高）；行尾是校准窗口里平日 / 波动日每天超线几根 */
     static final Map<String, BigDecimal> BASE_THRESHOLD_PCT = Map.of(
@@ -85,11 +90,23 @@ public class VolatilitySentinel implements MessageListener {
     private final Map<String, Long> lastSampleAt = new ConcurrentHashMap<>();
     /** 每币进行中的一段行情；振幅回落到基准线八成以下就摘掉 */
     private final Map<String, Incident> incidents = new ConcurrentHashMap<>();
+    /** 报警的口 */
+    private volatile boolean alerting;
 
     @PostConstruct
     public void init() {
         listenerContainer.addMessageListener(this, new ChannelTopic(MarketStreamChannels.PRICE));
         log.info("[Sentinel] 订阅 {} 启动(type=markprice) 基准={}", MarketStreamChannels.PRICE, BASE_THRESHOLD_PCT);
+    }
+
+    @Override
+    public void open(Start how) {
+        alerting = true;
+    }
+
+    @Override
+    public void close() {
+        alerting = false;
     }
 
     @Override
@@ -124,7 +141,7 @@ public class VolatilitySentinel implements MessageListener {
             incidents.remove(symbol);
             return;
         }
-        if (amp.compareTo(base) < 0) {
+        if (amp.compareTo(base) < 0 || !alerting) {
             return;
         }
         String direction = window.direction();

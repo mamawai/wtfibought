@@ -2,6 +2,7 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderWatch;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibagent.toolkit.BeijingTime;
@@ -55,8 +56,11 @@ class TraderSchedulerTest {
         return sched(new EconCalendarGate(mock(EconCalendarMapper.class), mock(EconCalendarCollector.class)));
     }
 
+    /** 起新轮的口开着：进程启动时由编排开口 */
     private TraderScheduler sched(EconCalendarGate gate) {
-        return new TraderScheduler(traderMapper, runner, new MessageCatalog(), gate, watchSentinel, watchStore);
+        TraderScheduler s = new TraderScheduler(traderMapper, runner, new MessageCatalog(), gate, watchSentinel, watchStore);
+        s.open(Start.COLD);
+        return s;
     }
 
     /** 交易 BTC 和 ETH 的 1h 档 trader */

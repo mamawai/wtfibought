@@ -128,6 +128,7 @@ debrief:
   # 落库文案：写进 ai_trader_decision.error，公开展示在竞技场时间线上
   error:
     timeout: 单笔复盘超时({{seconds}}s)
+    interrupted: 服务更新，这笔单笔复盘提前收尾
     emptyOutput: 模型输出为空
     noClassify: 输出里没有【归类】段，这笔没有归类
     noClassifyRows: 【归类】段里一行都认不出，这笔没有归类

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.trader.TraderModelFactory;
@@ -74,7 +75,7 @@ class ReviewRunnerTest {
     private final TraderPlanStore planStore = mock(TraderPlanStore.class);
 
     private final ReviewRunner runner = new ReviewRunner(assembler, modelFactory,
-            decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), planStore);
+            decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), planStore, new BoundedRuns());
 
     /** 单笔复盘写的归类：42 号在 #1 名下 */
     private static final List<ExperienceLedger.Classify> CLASSIFIES = List.of(

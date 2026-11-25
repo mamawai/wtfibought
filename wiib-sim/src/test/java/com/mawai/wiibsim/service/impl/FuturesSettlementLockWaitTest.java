@@ -100,7 +100,8 @@ class FuturesSettlementLockWaitTest {
                 crossLiquidationService, lockRegistry,
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
                 mock(TradeEventPublisher.class), limitIndex,
-                new ClosedPositionCleanup(positionIndexService, orderMapper, userMapper, limitIndex));
+                new ClosedPositionCleanup(positionIndexService, orderMapper, userMapper, limitIndex),
+                Thread::startVirtualThread);
     }
 
     private static FuturesPosition isolatedLong(long id) {

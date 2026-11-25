@@ -23,6 +23,7 @@ import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.handover.InFlight;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,11 +56,12 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * </pre>
  * 对话连同 agent 系统提示词、工具与端点身份的指纹一起存：每轮开跑前比一下，变了就把起跑历史里的原始内容按文本重建——
  * Anthropic 的思考块和这段前缀绑死，照旧回放强制校验的组织会 400；Responses 的加密推理和组织绑死，换了 key 回放会被拒。
+ * 在跑的轮是一份手上的活（prompt-gen），提前收尾就是叫停，说过的照常落库。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PromptGenService {
+public class PromptGenService implements InFlight {
 
     /** 单轮模型调用保险丝：正常一轮 2~4 次 */
     static final int RUN_CALL_LIMIT = 12;
@@ -132,6 +134,21 @@ public class PromptGenService {
     /** 这段对话为哪个 trader 写；没记、或那个 trader 已经删了，都按还没有 trader 处理 */
     private AiTrader trader(PromptGenSession session) {
         return session.getTraderId() == null ? null : traderService.owned(session.getUserId(), session.getTraderId());
+    }
+
+    @Override
+    public String name() {
+        return "prompt-gen";
+    }
+
+    @Override
+    public int count() {
+        return running.size();
+    }
+
+    @Override
+    public void cut() {
+        running.values().forEach(c -> c.complete(null));
     }
 
     /** 叫停这个用户在跑的那一轮；没在跑返回 false */

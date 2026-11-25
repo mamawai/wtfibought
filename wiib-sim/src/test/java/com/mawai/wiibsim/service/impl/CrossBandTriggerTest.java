@@ -96,7 +96,8 @@ class CrossBandTriggerTest {
                 mock(FuturesRiskService.class), new TransactionTemplate(mock(PlatformTransactionManager.class)),
                 new TradeFilterRegistry(mock(BinanceRestClient.class)), userMapper,
                 mock(BankruptcyService.class), NoBookFillPricer.create(), limitIndex,
-                new ClosedPositionCleanup(mock(FuturesPositionIndexService.class), orderMapper, userMapper, limitIndex));
+                new ClosedPositionCleanup(mock(FuturesPositionIndexService.class), orderMapper, userMapper, limitIndex),
+                Thread::startVirtualThread);
     }
 
     /** LONG 20@100、20x、占用100 */

@@ -6,13 +6,16 @@ import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.DeliveryGate;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.TradeEvent;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -28,12 +31,13 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 持仓事件监听：sim 发来的 {@link TradeEvent}（止损 / 止盈 / 强平 / 全仓爆仓 / 限价单开出新仓），
  * 事件里的 sim 用户是哪个 RUNNING trader 的子账户，就广播一条 {@link TriggerFired}；不是 trader 的用户直接忽略。
  * 止盈触发不叫醒，不广播：平掉一部分、仓位还在的记一行，下一轮开场白报；整仓平完的由唤醒开头的对账报结局。
- * 准入（时段 / 交给哪一轮）全在调度器，这里只认人。
+ * 准入（时段 / 交给哪一轮）全在调度器，这里只认人。进活的口：开口是订阅，关口是退订、等正在回调的那几条交出去。
  */
 @Slf4j
 @Component
+@Order(30)
 @RequiredArgsConstructor
-public class TradeEventListener implements MessageListener {
+public class TradeEventListener implements MessageListener, Intake {
 
     private final RedisMessageListenerContainer listenerContainer;
     private final AiTraderMapper traderMapper;
@@ -44,15 +48,28 @@ public class TradeEventListener implements MessageListener {
     private final UnreportedEvents unreported;
     private final UserLangResolver userLangResolver;
     private final PromptCatalog prompts;
+    /** 持仓事件回调的闸 */
+    private final DeliveryGate gate = new DeliveryGate();
 
-    @PostConstruct
-    public void init() {
+    @Override
+    public void open(Start how) {
+        gate.open();
         listenerContainer.addMessageListener(this, new ChannelTopic(TradeEvent.CHANNEL));
         log.info("[TradeEvent] 订阅 {}", TradeEvent.CHANNEL);
     }
 
     @Override
+    public void close() {
+        listenerContainer.removeMessageListener(this);
+        gate.close();
+    }
+
+    @Override
     public void onMessage(@NonNull Message message, byte[] pattern) {
+        gate.pass(() -> handle(message));
+    }
+
+    private void handle(Message message) {
         TradeEvent event;
         try {
             event = MAPPER.readValue(message.getBody(), TradeEvent.class);

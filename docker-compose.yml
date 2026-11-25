@@ -36,6 +36,8 @@ services:
     <<: *svc-base
     build: { context: ./wiib-feed, dockerfile: Dockerfile }
     container_name: wiib-feed
+    # docker stop 的宽限：feed 关连接秒级
+    stop_grace_period: 20s
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
@@ -50,6 +52,8 @@ services:
     <<: *svc-base
     build: { context: ./wiib-sim, dockerfile: Dockerfile }
     container_name: wiib-sim
+    # 等后台活最多 10s + Web 容器优雅关停最多 30s（SockJS 降级成 xhr-streaming 的长请求会等满）+ 销毁余量
+    stop_grace_period: 60s
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -66,6 +70,8 @@ services:
     <<: *svc-base
     build: { context: ./wiib-agent, dockerfile: Dockerfile }
     container_name: wiib-agent
+    # 等手上的活最多 60s + 提前收尾后再等 35s + Web 容器优雅关停最多 30s + 销毁余量
+    stop_grace_period: 150s
     ports:
       # 宿主 8082 已被占用，宿主侧映射 18082（nginx 反代 agent 路径用它；容器间仍走 wiib-agent:8082 可自行调整）
       - "127.0.0.1:18082:8082"

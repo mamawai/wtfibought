@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibagent.learning.DebriefRunner;
@@ -90,6 +91,11 @@ class TraderActionServiceTest {
 
     private final TraderActionService service = new TraderActionService(
             traderService, scheduler, reviewScheduler, reviewRunner, debriefRunner, traderMapper, decisionMapper, new MessageCatalog());
+
+    {
+        // 进程启动时由编排开口
+        reviewScheduler.open(Start.COLD);
+    }
 
     // ---------- 夹具 ----------
 

@@ -3,6 +3,8 @@ package com.mawai.wiibagent.chat;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.Start;
+import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
@@ -41,6 +43,13 @@ public final class ChatTestEndpoints {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         return model;
+    }
+
+    /** 开着口的对话闸：进程启动时由编排开口 */
+    public static ChatConcurrencyGate openGate(int limit) {
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(limit);
+        gate.open(Start.COLD);
+        return gate;
     }
 
     /** 恒中文的语言解析器：默认路径都按中文断言，验切语言的用例自己另造 */

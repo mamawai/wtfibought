@@ -2,7 +2,11 @@ package com.mawai.wiibagent.chat.gate;
 
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.handover.InFlight;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -19,27 +23,58 @@ import java.util.concurrent.Semaphore;
  * <p>
  * 限流保的是行情配额：它按出口 IP 算且对话与策略执行轨共用一个 REST 客户端，打爆了两边一起瘫。
  * 每用户 1 轮防"一个人开十个标签页把别人全挡在外面"。
+ * <p>
+ * 进活的口是"接新对话"：关着时新的一轮直接拒，回"服务正在更新"。
+ * 占着的名额是一份手上的活（chat-slots），从占到到还。
  */
 @Component
-public class ChatConcurrencyGate {
+@Order(70)
+public class ChatConcurrencyGate implements Intake, InFlight {
 
-    /** 拒因。调用方要据此给两个不同的错误码：是"你已有一轮在跑"还是"人满了"，对用户是两回事 */
-    public enum Acquire { OK, USER_BUSY, GLOBAL_FULL }
+    /** 拒因。调用方要据此给不同的错误码：你已有一轮在跑、人满了、服务正在更新，对用户是三回事 */
+    public enum Acquire { OK, USER_BUSY, GLOBAL_FULL, CLOSED }
 
     /** 这个用户的那一轮是谁在跑：工作台对话还是提示词生成 */
     public enum Owner { WORKBENCH, PROMPT_GEN }
 
     private final Semaphore slots;
     private final Map<Long, Owner> activeUsers = new ConcurrentHashMap<>();
+    /** 接新对话的口 */
+    private volatile boolean open;
 
     public ChatConcurrencyGate(@Value("${agent.workbench.max-concurrent-chats:10}") int globalLimit) {
         this.slots = new Semaphore(globalLimit);
+    }
+
+    @Override
+    public void open(Start how) {
+        open = true;
+    }
+
+    @Override
+    public void close() {
+        open = false;
+    }
+
+    @Override
+    public String name() {
+        return "chat-slots";
+    }
+
+    @Override
+    public int count() {
+        return activeUsers.size();
     }
 
     public Acquire tryAcquire(long userId, Owner owner) {
         // 先占用户位自己的再占全局的
         if (activeUsers.putIfAbsent(userId, owner) != null) {
             return Acquire.USER_BUSY;
+        }
+        // 占上了再看口：关口那边先关口再数占着的，两边总有一边看得到对方
+        if (!open) {
+            activeUsers.remove(userId);
+            return Acquire.CLOSED;
         }
         if (!slots.tryAcquire()) {
             activeUsers.remove(userId);
@@ -54,6 +89,9 @@ public class ChatConcurrencyGate {
      */
     public void acquireOrThrow(long userId, Owner owner) {
         Acquire acquired = tryAcquire(userId, owner);
+        if (acquired == Acquire.CLOSED) {
+            throw new BizException(ErrorCode.CHAT_SERVICE_UPDATING);
+        }
         if (acquired == Acquire.GLOBAL_FULL) {
             throw new BizException(ErrorCode.CHAT_CAPACITY_FULL);
         }

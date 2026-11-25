@@ -634,6 +634,7 @@ trader:
   error:
     lateTrigger: Triggered too late (the candle signal arrived late) - less than {{seconds}}s to the next boundary, this round is skipped
     wakeTimeout: Wake-up timed out ({{seconds}}s)
+    wakeInterrupted: Service update - this round was cut short
     callLimit: Hit the per-round model-call limit ({{limit}}), cut short
     liquidatedReasoning: Account equity has fallen below the liquidation floor; this round is over. You can reset and start a new round on the config page.
     liquidatedReason: "Liquidated: equity below 1% of the initial balance"

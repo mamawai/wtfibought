@@ -37,6 +37,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.concurrent.Executor;
 import java.util.concurrent.locks.Lock;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.*;
@@ -66,6 +67,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final TradeEventPublisher eventPublisher;
     private final LimitOrderIndex limitIndex;
     private final ClosedPositionCleanup closedPositionCleanup;
+    /** 补处理孤儿单交给它，关停时等它清零 */
+    private final Executor executor;
 
     record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
@@ -475,7 +478,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (triggeredOrders.isEmpty()) return;
 
         for (FuturesOrder order : triggeredOrders) {
-            Thread.startVirtualThread(() -> {
+            executor.execute(() -> {
                 try {
                     processTriggeredOrder(order);
                 } catch (Exception e) {

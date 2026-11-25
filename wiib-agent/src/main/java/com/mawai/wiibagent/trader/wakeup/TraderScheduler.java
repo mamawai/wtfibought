@@ -3,6 +3,9 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.InFlight;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
@@ -11,6 +14,7 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -38,11 +42,15 @@ import java.util.function.Consumer;
  * 边界撞上 High 级数据公布时刻，例行触发先过 {@link EconCalendarGate}（最多等 30s 拿实际值）再发。
  * <p>
  * 复盘不归这里管：单笔复盘和统一复盘有自己的调度和位子（{@code ReviewScheduler}），不占唤醒位，日线边界和别的边界一样只发例行唤醒。
+ * <p>
+ * 进活的口是"起新轮"：关着时不起新轮，到来的触发和例行就丢了（持仓事件和盯盘命中库里有，下一轮开场白照样报）。
+ * 在跑的轮是一份手上的活（wake-rounds）。
  */
 @Slf4j
 @Component
+@Order(60)
 @RequiredArgsConstructor
-public class TraderScheduler {
+public class TraderScheduler implements Intake, InFlight {
 
     /** 收盘超过这么久（一根 5m）的 K 线事件算旧事件 */
     static final long STALE_EVENT_MS = 300_000L;
@@ -73,12 +81,41 @@ public class TraderScheduler {
     private final Map<Long, Desk> desks = new ConcurrentHashMap<>();
     /** 每 trader 最近已触发的边界时刻：多个 watch 币在同一刻收盘会各发一次事件，靠它去重 */
     private final Map<Long, Long> firedBoundary = new ConcurrentHashMap<>();
+    /** 起新轮的口 */
+    private volatile boolean open;
 
     /** 墙钟注入点：手动唤醒的预算预检、休眠时段判断要可测 */
     java.util.function.LongSupplier nowMs = System::currentTimeMillis;
 
     private Desk desk(long traderId) {
         return desks.computeIfAbsent(traderId, _ -> new Desk());
+    }
+
+    @Override
+    public void open(Start how) {
+        open = true;
+    }
+
+    @Override
+    public void close() {
+        open = false;
+    }
+
+    @Override
+    public String name() {
+        return "wake-rounds";
+    }
+
+    /** 在跑的轮数 */
+    @Override
+    public int count() {
+        int n = 0;
+        for (Desk desk : desks.values()) {
+            synchronized (desk) {
+                n += desk.rounds.size();
+            }
+        }
+        return n;
     }
 
     /** 主触发：任意 watch 币的 5m 收盘都是一次时钟滴答。 */
@@ -217,9 +254,14 @@ public class TraderScheduler {
 
     /**
      * 登记一轮并起虚拟线程跑；跑完摘掉登记，没被读到的触发和例行另行处理。调用方已经锁着 desk。
-     * 漏了摘登记这个范围就再也起不了轮，所以只写这一处
+     * 漏了摘登记这个范围就再也起不了轮，所以只写这一处。起新轮的口关着就不起，返回 false
      */
-    private void start(Desk desk, AiTrader trader, WakeScope scope, Consumer<WakeRound> work) {
+    private boolean start(Desk desk, AiTrader trader, WakeScope scope, Consumer<WakeRound> work) {
+        if (!open) {
+            log.info("[TraderSched] 起新轮的口关着，不起 traderId={} 范围={}", trader.getId(),
+                    scope.single() ? scope.symbol() : "整盘");
+            return false;
+        }
         String key = scope.single() ? scope.symbol() : BOOK;
         WakeRound round = new WakeRound(scope, () -> singleSymbols(desk), nowMs.getAsLong());
         desk.rounds.put(key, round);
@@ -242,6 +284,7 @@ public class TraderScheduler {
                 unread.triggers().forEach(t -> dispatch(trader.getId(), t));
             }
         });
+        return true;
     }
 
     /**
@@ -288,7 +331,7 @@ public class TraderScheduler {
         }
         Desk desk = desk(trader.getId());
         synchronized (desk) {
-            return desk.occupied || desk.rounds.containsKey(BOOK) ? messages.get(lang, "trader.wake.busy") : null;
+            return !open || desk.occupied || desk.rounds.containsKey(BOOK) ? messages.get(lang, "trader.wake.busy") : null;
         }
     }
 
@@ -365,11 +408,11 @@ public class TraderScheduler {
         long boundary = WakeIntervals.align(nowMs.getAsLong(), intervalMs);
         Desk desk = desk(trader.getId());
         synchronized (desk) {
-            // 预检只是"看一眼"不占位；预检到现在之间可能有别的整盘轮先起来了
-            if (desk.occupied || desk.rounds.containsKey(BOOK)) {
+            // 预检只是"看一眼"不占位；预检到现在之间可能有别的整盘轮先起来了，起新轮的口也可能刚关上
+            if (desk.occupied || desk.rounds.containsKey(BOOK)
+                    || !start(desk, trader, WakeScope.book(trader), round -> runner.wakeManual(trader, boundary, round))) {
                 return messages.get("trader.wake.busy");
             }
-            start(desk, trader, WakeScope.book(trader), round -> runner.wakeManual(trader, boundary, round));
         }
         log.info("[TraderSched] 手动唤醒 traderId={} boundary={}", trader.getId(), boundary);
         return null;

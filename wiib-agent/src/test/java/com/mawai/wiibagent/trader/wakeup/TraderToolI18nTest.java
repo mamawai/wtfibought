@@ -28,6 +28,7 @@ import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.trade.AccountGate;
 import com.mawai.wiibagent.trader.trade.EntryContext;
@@ -82,7 +83,7 @@ class TraderToolI18nTest {
             new WhaleToolkit(mock(WhaleQueryService.class)),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             new CrossAssetToolkit(mock(CrossAssetService.class)),
-            new LocalizedToolCallbacks(prompts), prompts);
+            new LocalizedToolCallbacks(prompts), prompts, new BoundedRuns());
 
     /** 只做反射扫描的壳：工具方法一个都不会被调起来，依赖给 null 即可 */
     private final TradeTools tradeTools = new TradeTools(

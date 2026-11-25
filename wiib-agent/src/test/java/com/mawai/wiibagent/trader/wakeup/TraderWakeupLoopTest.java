@@ -13,6 +13,10 @@ import com.mawai.wiibagent.trader.trade.TraderWatchStore;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.Handover;
+import com.mawai.wiibcommon.handover.HandoverPolicy;
+import com.mawai.wiibcommon.handover.InFlight;
+import com.mawai.wiibcommon.handover.Intake;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.TradeEvent;
@@ -31,6 +35,7 @@ import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.ResponsesChatModel;
 import com.mawai.wiibagent.llm.SseChatModel;
@@ -102,6 +107,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
@@ -178,12 +184,14 @@ class TraderWakeupLoopTest {
     private final AccountGates gates = new AccountGates();
     private final WakeBriefing briefing = new WakeBriefing(simTradeClient, planStore, watchStore, gates, unreported,
             wakeObservation, promptAssembler, mock(EconCalendarAssembler.class));
+    /** 关停提前收尾那几条用例要叫停它 */
+    private final BoundedRuns runs = new BoundedRuns();
     private final WakeSession session = new WakeSession(
             new IndicatorToolkit(new KlineFetcher(binanceRestClient, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
             mock(DerivativesToolkit.class), mock(WhaleToolkit.class),
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
-            mock(CrossAssetToolkit.class), new LocalizedToolCallbacks(prompts), prompts);
+            mock(CrossAssetToolkit.class), new LocalizedToolCallbacks(prompts), prompts, runs);
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             modelFactory, promptAssembler, simTradeClient, binanceRestClient,
@@ -2044,6 +2052,91 @@ class TraderWakeupLoopTest {
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
+    }
+
+    /** 模型第一次调平仓，第二次卡住不回（直到被叫停）；第二次开始调时 secondCall 落下 */
+    private ChatModel modelClosingThenHanging(CountDownLatch secondCall) {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger calls = new AtomicInteger();
+        when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
+            if (calls.incrementAndGet() == 1) {
+                return frameOf(AssistantMessage.builder().content("").toolCalls(List.of(new AssistantMessage.ToolCall(
+                        "c1", "function", "close_position", "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}")))
+                        .build());
+            }
+            secondCall.countDown();
+            return Flux.never();
+        });
+        return model;
+    }
+
+    /** 服务关停时没跑完的一轮被叫停：落一行 ERROR，文案是"服务更新"，已经做了的平仓在动作轨迹里，连败数不动 */
+    @Test
+    void 关停叫停的一轮落ERROR_带已执行的动作_不计连败() throws Exception {
+        stubHealthyAccount();
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("2000", "0")));
+        when(simTradeClient.closePosition(eq(99L), any())).thenReturn(filledReceipt());
+        CountDownLatch secondCall = new CountDownLatch(1);
+        ChatModel model = modelClosingThenHanging(secondCall);
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTrader trader = trader();
+        trader.setConsecutiveFailures(4); // 要是记了连败，这次就是第 5 败、当场暂停
+
+        Thread wake = Thread.startVirtualThread(() -> runner.doWake(trader, round(trader, null), 1785171600000L, 600,
+                TraderWakeupRunner.baseDecision(trader, 1785171600000L), List.of(), AgentLang.ZH));
+        assertThat(secondCall.await(5, TimeUnit.SECONDS)).isTrue();
+
+        runs.cut();
+
+        assertThat(wake.join(Duration.ofSeconds(10))).isTrue();
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
+        assertThat(dec.getValue().getError()).isEqualTo(prompts.get(AgentLang.ZH, "trader.error.wakeInterrupted"));
+        JsonNode action = MAPPER.readTree(dec.getValue().getActionsJson()).get(0);
+        assertThat(action.path("tool").asString()).isEqualTo("close_position");
+        assertThat(action.path("status").asString()).isEqualTo("ok");
+        verify(traderMapper, never()).update(any(), argThat(w -> w != null
+                && ((LambdaUpdateWrapper<AiTrader>) w).getSqlSet().contains("consecutive_failures")));
+    }
+
+    /** 服务关停时等手上的活：这一轮在等待时间内自己跑完，不叫停，照常落 OK */
+    @Test
+    void 关停等得到_这一轮跑完照常落库() throws Exception {
+        stubHealthyAccount();
+        CountDownLatch firstCall = new CountDownLatch(1);
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger calls = new AtomicInteger();
+        when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
+            if (calls.incrementAndGet() == 1) {
+                firstCall.countDown();
+                return frameOf(AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("c1", "function", "get_account", "{}"))).build());
+            }
+            Thread.sleep(300);
+            return frameOf(new AssistantMessage("持仓符合计划，本轮 HOLD。"));
+        });
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        AiTrader trader = trader();
+        org.springframework.beans.factory.support.DefaultListableBeanFactory beans =
+                new org.springframework.beans.factory.support.DefaultListableBeanFactory();
+        beans.registerSingleton("runs", runs);
+        Handover handover = new Handover(beans.getBeanProvider(Intake.class), beans.getBeanProvider(InFlight.class),
+                new HandoverPolicy(Duration.ofSeconds(5), Duration.ofSeconds(5)));
+
+        Thread wake = Thread.startVirtualThread(() -> runner.doWake(trader, round(trader, null), 1785171600000L, 600,
+                TraderWakeupRunner.baseDecision(trader, 1785171600000L), List.of(), AgentLang.ZH));
+        assertThat(firstCall.await(5, TimeUnit.SECONDS)).isTrue();
+
+        handover.stop();
+
+        assertThat(wake.join(Duration.ofSeconds(10))).isTrue();
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        assertThat(dec.getValue().getReasoning()).contains("本轮 HOLD");
     }
 
     /** 一调就报错的模型 */

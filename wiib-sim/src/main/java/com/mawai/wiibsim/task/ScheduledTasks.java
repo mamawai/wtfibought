@@ -19,11 +19,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.util.concurrent.Executor;
 
 /**
  * 定时任务（老 GBM 股市/期权已退，仅留 crypto/futures/margin/破产/排行）。
  * <p>随老股市一并移除：10s 级行情推送、限价单触发/执行、T+1 结算、期权到期结算。
  * <p>排行榜原绑股票盘口时段，老股退后改固定每 10 分钟常驻刷新（配合 crypto/futures 24/7）。
+ * <p>任务体都交给后台执行器跑，调度线程上没有长活。
  */
 @Slf4j
 @Component
@@ -43,11 +45,13 @@ public class ScheduledTasks {
     private final TradeStreamConsumer tradeStreamConsumer;
     private final FuturesPositionIndexService futuresPositionIndexService;
     private final TradeFilterRegistry tradeFilterRegistry;
+    /** 会改账的后台活交给它，关停时等它清零 */
+    private final Executor executor;
 
     /** 交易员集合：每分钟按库里的仓位和登记重算，变了才写 Redis，feed 按它订行情 */
     @Scheduled(fixedRate = 60 * 1000)
     public void refreshTraderSymbols() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 traderSymbolService.refresh();
             } catch (Exception e) {
@@ -59,7 +63,7 @@ public class ScheduledTasks {
     /** 交易过滤器：每天 UTC 00:30 按官方 exchangeInfo 刷一次 */
     @Scheduled(cron = "0 30 0 * * *", zone = "UTC")
     public void refreshTradeFilters() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 tradeFilterRegistry.refreshFromBinance();
             } catch (Exception e) {
@@ -71,25 +75,25 @@ public class ScheduledTasks {
     /** 全仓健康兜底轮询：价格tick是主触发，这里兜住行情静默/进程重启的空窗（交易员的币不发价格频道、没有 tick，全靠这里） */
     @Scheduled(fixedRate = 30 * 1000)
     public void sweepCrossAccounts() {
-        Thread.startVirtualThread(crossLiquidationService::sweepAll);
+        executor.execute(crossLiquidationService::sweepAll);
     }
 
     /** 逐仓强平兜底轮询。与上面全仓那条同频 */
     @Scheduled(fixedRate = 30 * 1000)
     public void sweepFuturesLiquidation() {
-        Thread.startVirtualThread(futuresLiquidationService::sweepAll);
+        executor.execute(futuresLiquidationService::sweepAll);
     }
 
     /** 限价单、止损、止盈兜底轮询：按缓存的最新成交价再判一遍，主触发是读成交 Stream */
     @Scheduled(fixedRate = 30 * 1000)
     public void sweepTradeTriggers() {
-        Thread.startVirtualThread(tradeStreamConsumer::sweep);
+        executor.execute(tradeStreamConsumer::sweep);
     }
 
     /** futures孤儿TRIGGERED补扫：触发了没成交掉的限价单（等锁超时、进程重启） */
     @Scheduled(fixedRate = 30 * 1000)
     public void sweepFuturesTriggeredOrders() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 futuresSettlementService.executeTriggeredOrders();
             } catch (Exception e) {
@@ -101,7 +105,7 @@ public class ScheduledTasks {
     /** 每天09:00恢复破产用户（幂等） */
     @Scheduled(cron = "0 0 9 * * *")
     public void resetBankruptUsers() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 bankruptcyService.resetBankruptUsers(LocalDate.now());
             } catch (Exception e) {
@@ -113,7 +117,7 @@ public class ScheduledTasks {
     /** 每天17:00计息并执行爆仓检查 */
     @Scheduled(cron = "0 0 17 * * *")
     public void accrueInterestAndCheckBankruptcy() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 log.info("每天17:00计息并执行爆仓检查");
                 LocalDate today = LocalDate.now();
@@ -128,7 +132,7 @@ public class ScheduledTasks {
     /** crypto每小时：孤儿TRIGGERED执行 + 限价单索引对账 */
     @Scheduled(cron = "0 0 * * * *")
     public void cryptoHourlyMaintenance() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 cryptoOrderService.executeTriggeredOrders();
                 cryptoOrderService.reconcileLimitOrderIndex();
@@ -141,7 +145,7 @@ public class ScheduledTasks {
     /** 资金费：每分钟看一遍有仓位的币，到了各自的结算时刻按 Binance 这一期的实际结算费率收 */
     @Scheduled(fixedRate = 60 * 1000)
     public void settleFundingFees() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 fundingRateService.settleDue();
             } catch (Exception e) {
@@ -153,7 +157,7 @@ public class ScheduledTasks {
     /** futures每小时：限价单索引、仓位强平/止损/止盈索引对账 */
     @Scheduled(cron = "0 0 * * * *")
     public void futuresHourlyMaintenance() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 futuresSettlementService.reconcileLimitOrderIndex();
                 futuresPositionIndexService.reconcilePositionIndex();
@@ -169,7 +173,7 @@ public class ScheduledTasks {
      */
     @Scheduled(cron = "30 */5 * * * *")
     public void sweepStuckPredictionRounds() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 predictionService.sweepStuckRounds();
             } catch (Exception e) {
@@ -181,7 +185,7 @@ public class ScheduledTasks {
     /** 排行榜刷新：固定每10分钟（原绑股票盘口时段，老股退后改常驻 24/7） */
     @Scheduled(fixedRate = 10 * 60 * 1000)
     public void refreshRanking() {
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 rankingService.refreshRanking();
             } catch (Exception e) {

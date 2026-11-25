@@ -155,7 +155,8 @@ class LimitOrderIndexOrderingTest {
                 mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
                 mock(FairLockRegistry.class),
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-                mock(TradeEventPublisher.class), new LimitOrderIndex(cacheService), mock(ClosedPositionCleanup.class));
+                mock(TradeEventPublisher.class), new LimitOrderIndex(cacheService), mock(ClosedPositionCleanup.class),
+                Thread::startVirtualThread);
     }
 
     /** 事务里挂限价索引：提交之后才真的挂上 */

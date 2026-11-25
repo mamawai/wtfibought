@@ -2,8 +2,12 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import tools.jackson.databind.node.ObjectNode;
@@ -23,9 +27,13 @@ import java.util.function.Supplier;
  * trader 唤醒现场的发布订阅：订阅者管理、扇出、心跳。
  * 按 traderId 订阅，只有主人连得进来（准入在 controller 判）；一次唤醒一个 {@link Run} 句柄，runner 只碰它。
  * 单实例部署，进程内 Map 即可。
+ * <p>
+ * 进活的口是"实时页订阅"：关口时把所有订阅连接完成掉，之后来的先接下再马上完成（不回业务错误），前端退避后重连。
  */
+@Slf4j
 @Component
-public class TraderLiveHub {
+@Order(10)
+public class TraderLiveHub implements Intake {
 
     /** 帧出口：返回 false=通道已死，hub 摘掉它 */
     public interface Sink {
@@ -43,6 +51,8 @@ public class TraderLiveHub {
     private final Map<Long, Set<Sink>> traderSubscribers = new ConcurrentHashMap<>();
     /** 所有 SSE 通道，心跳用 */
     private final Set<SseChannel> channels = ConcurrentHashMap.newKeySet();
+    /** 订阅的口。和登记通道在同一把锁（this）里改：要么登记在前、关口时一并完成，要么看到关着当场完成 */
+    private boolean open;
     /** 心跳专用：只发注释帧，单线程够所有订阅者用；虚拟线程不支持定时调度故用平台线程 */
     private final ScheduledExecutorService heartbeatScheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -59,6 +69,27 @@ public class TraderLiveHub {
     @PreDestroy
     public void stop() {
         heartbeatScheduler.shutdownNow();
+    }
+
+    @Override
+    public synchronized void open(Start how) {
+        open = true;
+    }
+
+    /** 关口：把还活着的订阅连接逐个完成掉，哪个完成时报错就跳过它接着完成下一个 */
+    @Override
+    public synchronized void close() {
+        open = false;
+        for (SseChannel channel : channels) {
+            if (channel.isClosed()) {
+                continue;
+            }
+            try {
+                channel.complete();
+            } catch (Exception e) {
+                log.debug("[TraderLive] 关口完成订阅连接失败: {}", e.toString());
+            }
+        }
     }
 
     private void heartbeat() {
@@ -178,12 +209,18 @@ public class TraderLiveHub {
 
     // ========== 订阅侧 ==========
 
-    /** 现场流：登记后立刻回放在跑的每一轮；空闲时什么都不发，只有心跳 */
+    /** 现场流：登记后立刻回放在跑的每一轮；空闲时什么都不发，只有心跳。口关着就当场完成 */
     public SseEmitter subscribeTrader(long traderId) {
         SseEmitter emitter = new SseEmitter(SUBSCRIBE_TIMEOUT_MS);
         SseChannel channel = new SseChannel(emitter);
         Sink sink = sinkOf(channel);
-        attach(emitter, channel, () -> subscribers(traderId).remove(sink));
+        synchronized (this) {
+            if (!open) {
+                emitter.complete();
+                return emitter;
+            }
+            attach(emitter, channel, () -> subscribers(traderId).remove(sink));
+        }
         subscribeTrader(traderId, sink);
         return emitter;
     }

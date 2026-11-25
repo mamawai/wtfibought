@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
@@ -34,15 +35,14 @@ import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
@@ -85,6 +85,8 @@ public class DebriefRunner {
     private final ExperienceOpParser parser;
     private final RunningDebriefs running;
     private final TraderPlanStore planStore;
+    /** 限时跑会话：到点或关停叫停 */
+    private final BoundedRuns runs;
 
     /** 总时长注入点：测试把它调短 */
     int timeoutSeconds = TIMEOUT_SECONDS;
@@ -115,14 +117,16 @@ public class DebriefRunner {
         if (planByPos.isEmpty()) {
             return null;
         }
-        // 复盘成功过的先去掉，剩下有候选才去问 sim；重试次数和间隔要拿平仓时刻算到期，问过 sim 再判
+        // 复盘成功过的先去掉，剩下有候选才去问 sim；重试次数和间隔要拿平仓时刻算到期，问过 sim 再判。
+        // 被服务更新打断的不算尝试
         Map<Long, List<AiTraderDecision>> attempts = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
-                        .select(AiTraderDecision::getPositionId, AiTraderDecision::getStatus, AiTraderDecision::getWakeTime)
+                        .select(AiTraderDecision::getPositionId, AiTraderDecision::getStatus, AiTraderDecision::getWakeTime,
+                                AiTraderDecision::getError)
                         .eq(AiTraderDecision::getTraderId, trader.getId())
                         .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
                         .eq(AiTraderDecision::getKind, AiTraderDecision.KIND_DEBRIEF)
                         .in(AiTraderDecision::getPositionId, planByPos.keySet()))
-                .stream().collect(Collectors.groupingBy(AiTraderDecision::getPositionId));
+                .stream().filter(d -> !interrupted(d)).collect(Collectors.groupingBy(AiTraderDecision::getPositionId));
         planByPos.keySet().removeIf(id -> attempts.getOrDefault(id, List.of()).stream()
                 .anyMatch(d -> AiTraderDecision.STATUS_OK.equals(d.getStatus())));
         if (planByPos.isEmpty()) {
@@ -138,6 +142,12 @@ public class DebriefRunner {
                 .min(Comparator.comparing(FuturesPositionDTO::getUpdatedAt))
                 .map(p -> new Due(p, planByPos.get(p.getId())))
                 .orElse(null);
+    }
+
+    /** 这一行是被服务更新打断的：error 是哪门语言的"被打断"文案都认 */
+    private boolean interrupted(AiTraderDecision d) {
+        return Arrays.stream(AgentLang.values())
+                .anyMatch(lang -> prompts.get(lang, "debrief.error.interrupted").equals(d.getError()));
     }
 
     /**
@@ -284,10 +294,15 @@ public class DebriefRunner {
             Throwable t = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
             // ERROR 行公开上时间线：只存归类文案，原文进日志
             d.setStatus(AiTraderDecision.STATUS_ERROR);
-            d.setError(t instanceof TimeoutException
+            d.setError(t instanceof BoundedRuns.CutException ? prompts.get(lang, "debrief.error.interrupted")
+                    : t instanceof TimeoutException
                     ? prompts.get(lang, "debrief.error.timeout", Map.of("seconds", timeoutSeconds))
                     : LlmErrorMessages.classify(t, prompts, lang));
-            log.warn("[Debrief] 单笔复盘失败 traderId={} positionId={} msg={}", trader.getId(), pos.getId(), d.getError(), t);
+            if (t instanceof BoundedRuns.CutException) {
+                log.info("[Debrief] 服务关停，单笔复盘提前收尾 traderId={} positionId={}", trader.getId(), pos.getId());
+            } else {
+                log.warn("[Debrief] 单笔复盘失败 traderId={} positionId={} msg={}", trader.getId(), pos.getId(), d.getError(), t);
+            }
         }
         d.setLatencyMs((int) (System.currentTimeMillis() - start));
         trace.end(d.getStatus(), d.getError(), null, d.getLatencyMs(), d.getModelCalls(), d.getTotalTokens());
@@ -314,10 +329,10 @@ public class DebriefRunner {
                 .trace(calls)
                 .build();
         trace.prompt(system, user);
-        CompletableFuture<Void> cancel = new CompletableFuture<>();
-        FutureTask<ReactLoop.Result> task = new FutureTask<>(() -> {
+        // 停止信号交给循环：到点或叫停时完成它，在途模型流不再往下烧
+        BoundedRuns.Work<ReactLoop.Result> session = stop -> {
             trace.callStart();
-            return loop.run(List.of(new UserMessage(user)), null, cancel, new ReactLoop.Listener() {
+            return loop.run(List.of(new UserMessage(user)), null, stop, new ReactLoop.Listener() {
                 @Override
                 public void message(Message m) {
                     if (m instanceof AssistantMessage assistant) {
@@ -335,10 +350,11 @@ public class DebriefRunner {
                     }
                 }
             });
-        });
-        Thread.startVirtualThread(task);
+        };
         try {
-            ReactLoop.Result result = task.get(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+            // 叫停之后不等线程停下
+            ReactLoop.Result result = runs.run("debrief traderId=" + trader.getId() + " positionId=" + d.getPositionId(),
+                    session, deadline, Duration.ZERO);
             String output = null;
             for (Message m : result.messages()) {
                 if (m instanceof AssistantMessage assistant && assistant.getText() != null && !assistant.getText().isBlank()) {
@@ -347,8 +363,6 @@ public class DebriefRunner {
             }
             return output;
         } finally {
-            cancel.complete(null);
-            task.cancel(true);
             d.setActionsJson(MAPPER.writeValueAsString(calls.calls()));
             d.setToolCalls(calls.calls().size());
             UsageTrackingChatModel.UsageSnapshot usage = model.snapshot();

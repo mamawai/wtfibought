@@ -123,7 +123,7 @@ class ChatRegenerateTest {
         when(agentFactory.leavesFor(any(), any()))
                 .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", model, null, null, AgentLang.ZH, 256_000));
 
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
         ApprovalRegistry approvals = new ApprovalRegistry();
         ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, history, runRegistry,
@@ -315,7 +315,7 @@ class ChatRegenerateTest {
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService,
                 approvals, mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, new ChatTurnRewinder(history, contextStore, ChatTestEndpoints.PROMPTS),
-                runRegistry, childRuns, ChatTestEndpoints.prefs(), new ChatConcurrencyGate(10), new MessageCatalog(),
+                runRegistry, childRuns, ChatTestEndpoints.prefs(), ChatTestEndpoints.openGate(10), new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), executor);
         ChatWorkbenchController.RegenerateRequest request = new ChatWorkbenchController.RegenerateRequest();
         request.setSessionId(SESSION);

@@ -1,11 +1,11 @@
 package com.mawai.wiibsim.service;
 
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.PredictionStreamChannels;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.ContextClosedEvent;
-import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -29,10 +29,13 @@ import java.util.Map;
  * <p>feed 的 PolymarketWsClient 侦测回合轮换/开收盘价就绪后发事件，本消费者触发 sim 的
  * {@link PredictionService} 账本操作（建/锁/结算回合、回填开盘价）。回合顺序敏感
  * (lock 旧→create 新→settle 旧)，Stream 天然 FIFO 保序；方法本身幂等/CAS，autoAck 偶发重投无害。</p>
+ *
+ * <p>进活的口：开口是开始读，关口是停读。</p>
  */
 @Slf4j
 @Component
-public class PredictionRoundConsumer {
+@Order(30)
+public class PredictionRoundConsumer implements Intake {
 
     private final StringRedisTemplate redisTemplate;
     private final RedisConnectionFactory connectionFactory;
@@ -42,11 +45,9 @@ public class PredictionRoundConsumer {
 
     private StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
     private Subscription subscription;
-    // 停机标志：cancel() 不会打断正阻塞的 XREADGROUP，连接工厂随后关闭必然掐死最后一次读，
-    // 该"Connection closed"是预期时序而非故障，errorHandler 据此降噪。
-    // 注意必须在 ContextClosedEvent 时就置位——Lettuce 连接工厂在 lifecycle stop 阶段关连接，
-    // 早于 @PreDestroy 销毁阶段，只靠 @PreDestroy 置位赶不上最后一拍轮询报错。
-    private volatile boolean shuttingDown;
+    // 关口标志：cancel() 不会打断正阻塞的 XREADGROUP，连接工厂随后关闭必然掐死最后一次读，
+    // 该"Connection closed"是预期时序而非故障，errorHandler 据此降噪
+    private volatile boolean closed;
 
     public PredictionRoundConsumer(StringRedisTemplate redisTemplate,
                                    RedisConnectionFactory connectionFactory,
@@ -56,8 +57,8 @@ public class PredictionRoundConsumer {
         this.predictionService = predictionService;
     }
 
-    @PostConstruct
-    public void start() {
+    @Override
+    public void open(Start how) {
         ensureGroup();
         StreamMessageListenerContainerOptions<String, MapRecord<String, String, String>> options =
                 StreamMessageListenerContainerOptions.builder()
@@ -117,10 +118,10 @@ public class PredictionRoundConsumer {
         }
     }
 
-    /** 轮询异常：停机期的连接中断是预期时序，降 debug；运行期记 ERROR，歇 1 秒再接着轮询。 */
+    /** 轮询异常：关口之后的连接中断是预期时序，降 debug；运行期记 ERROR，歇 1 秒再接着轮询。 */
     private void handlePollError(Throwable e) {
-        if (shuttingDown) {
-            log.debug("[PredictionRound] 停机期轮询中断（预期）: {}", e.toString());
+        if (closed) {
+            log.debug("[PredictionRound] 关口后轮询中断（预期）: {}", e.toString());
             return;
         }
         log.error("[PredictionRound] Stream 轮询异常", e);
@@ -132,16 +133,11 @@ public class PredictionRoundConsumer {
         }
     }
 
-    /** ContextClosedEvent 先于 lifecycle stop（Lettuce 关连接）与销毁阶段发布——在这里提前撤订阅。 */
-    @EventListener(ContextClosedEvent.class)
-    public void onContextClosed() {
-        stop();
-    }
-
+    /** 关口：停读。销毁时也会调一次，重复调没关系 */
+    @Override
     @PreDestroy
-    public void stop() {
-        if (shuttingDown) return;   // onContextClosed 已处理，销毁阶段幂等跳过
-        shuttingDown = true;
+    public void close() {
+        closed = true;
         try {
             if (subscription != null) subscription.cancel();
             if (container != null) container.stop();

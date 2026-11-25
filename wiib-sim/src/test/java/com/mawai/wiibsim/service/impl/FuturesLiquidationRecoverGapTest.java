@@ -50,7 +50,7 @@ class FuturesLiquidationRecoverGapTest {
     private final FuturesPositionMapper positionMapper = mock(FuturesPositionMapper.class);
     private final FuturesLiquidationServiceImpl service = new FuturesLiquidationServiceImpl(riskService, cacheService,
             mock(TraderSymbolService.class), positionMapper, mock(FuturesPositionIndexService.class),
-            mock(CrossLiquidationService.class), new FuturesPrices(cacheService));
+            mock(CrossLiquidationService.class), new FuturesPrices(cacheService), Thread::startVirtualThread);
 
     private static KlineBar bar(long openTime, long closeTime, String high, String low) {
         return new KlineBar(openTime, closeTime, new BigDecimal(low), new BigDecimal(high),

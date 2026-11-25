@@ -2,6 +2,8 @@ package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.handover.Start;
+import com.mawai.wiibcommon.handover.TrackedExecutor;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +21,7 @@ import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.math.BigDecimal;
 import java.util.ArrayDeque;
@@ -27,6 +30,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,8 +56,9 @@ class TradeStreamConsumerTest {
     private final FuturesLiquidationService liquidation = mock(FuturesLiquidationService.class);
     private final CryptoOrderService crypto = mock(CryptoOrderService.class);
     private final TraderSymbolService traderSymbols = mock(TraderSymbolService.class);
+    private final TrackedExecutor executor = new TrackedExecutor("background");
     private final TradeStreamConsumer consumer = new TradeStreamConsumer(redis, props, rest, cache,
-            settlement, liquidation, crypto, traderSymbols);
+            settlement, liquidation, crypto, traderSymbols, executor);
 
     @BeforeEach
     void setUp() {
@@ -66,7 +72,7 @@ class TradeStreamConsumerTest {
 
     @AfterEach
     void stopReading() {
-        consumer.stop();
+        consumer.close();
     }
 
     private static MapRecord<String, Object, Object> trade(String id, String price, long rt) {
@@ -93,6 +99,19 @@ class TradeStreamConsumerTest {
         long last = System.currentTimeMillis() - 60_000L;
 
         consumer.start(last);
+
+        verify(ops, timeout(2000)).createGroup(KEY, ReadOffset.from(last + "-0"), "sim");
+    }
+
+    @Test
+    void 开口按sim上次活着的时刻接着读() {
+        long last = System.currentTimeMillis() - 60_000L;
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.get("sim:match:last-tick-ms")).thenReturn(String.valueOf(last));
+
+        consumer.open(Start.COLD);
 
         verify(ops, timeout(2000)).createGroup(KEY, ReadOffset.from(last + "-0"), "sim");
     }
@@ -146,6 +165,41 @@ class TradeStreamConsumerTest {
         // 消费线程还在循环读、往 offsets 里加：取快照再断言，COW 的 subList 边加边遍历会 ConcurrentModification
         assertThat(offsets.stream().limit(3).toList()).containsExactly(ReadOffset.from("0"), ReadOffset.from("1-0"),
                 ReadOffset.lastConsumed());
+    }
+
+    /** 关口只等读线程退出；已经交出去的那批由后台执行器数着，ACK 完才清零 */
+    @Test
+    void 关口等读线程退出_在途那批ACK完后台活才清零() throws Exception {
+        long now = System.currentTimeMillis();
+        // 重放没 ACK 的：空；之后读到一笔
+        Deque<List<MapRecord<String, Object, Object>>> replies = new ArrayDeque<>(List.of(
+                List.of(), List.of(trade("1-0", "100", now))));
+        when(ops.read(any(Consumer.class), any(StreamReadOptions.class), any(StreamOffset[].class))).thenAnswer(inv -> {
+            List<MapRecord<String, Object, Object>> r = replies.poll();
+            return r == null ? List.of() : r;
+        });
+        CountDownLatch inBatch = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(settlement.limitHits(anyString(), anyList())).thenAnswer(inv -> {
+            inBatch.countDown();
+            release.await();
+            return List.of();
+        });
+
+        consumer.start(0L);
+        assertThat(inBatch.await(2, TimeUnit.SECONDS)).isTrue();
+
+        consumer.close();
+        assertThat(executor.count()).isEqualTo(1);
+        verify(ops, never()).acknowledge(eq(KEY), eq("sim"), any(RecordId[].class));
+
+        release.countDown();
+        long deadline = System.currentTimeMillis() + 2_000;
+        while (executor.count() > 0 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(executor.count()).isZero();
+        verify(ops).acknowledge(KEY, "sim", RecordId.of("1-0"));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.mawai.wiibagent.learning;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
@@ -22,12 +23,11 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -76,6 +76,8 @@ public class ReviewRunner {
     private final ExperienceLedger ledger;
     private final ExperienceOpParser parser;
     private final TraderPlanStore planStore;
+    /** 限时跑模型调用：到点或关停叫停 */
+    private final BoundedRuns runs;
 
     /** 时限注入点：测试把它调短 */
     int timeoutSeconds = REVIEW_TIMEOUT_SECONDS;
@@ -164,7 +166,8 @@ public class ReviewRunner {
         } catch (Exception e) {
             Throwable t = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
             // ERROR 行公开上时间线：只存归类文案（上游原文可能带网关 URL/key），原文进日志
-            String msg = t instanceof TimeoutException
+            String msg = t instanceof BoundedRuns.CutException ? prompts.get(lang, "reviewer.error.interrupted")
+                    : t instanceof TimeoutException
                     ? prompts.get(lang, "reviewer.error.timeout", Map.of("seconds", timeoutSeconds))
                     : LlmErrorMessages.classify(t, prompts, lang);
             if (d.getId() != null) {
@@ -176,7 +179,11 @@ public class ReviewRunner {
             d.setError(msg);
             insert(d, trace, start);
             // 不计连败不暂停：复盘失败没有资金风险，明天素材还在
-            log.warn("[Review] 复盘失败 traderId={} boundary={} msg={}", trader.getId(), boundaryMs, msg, t);
+            if (t instanceof BoundedRuns.CutException) {
+                log.info("[Review] 服务关停，复盘提前收尾 traderId={} boundary={}", trader.getId(), boundaryMs);
+            } else {
+                log.warn("[Review] 复盘失败 traderId={} boundary={} msg={}", trader.getId(), boundaryMs, msg, t);
+            }
         }
     }
 
@@ -223,23 +230,21 @@ public class ReviewRunner {
                 .set(AiTraderDecision::getMemoryAfter, rendered));
     }
 
-    /** 虚拟线程承载超时，等到截止时刻为止；用量落 finally——超时作废的调用 token 也真烧了。提示词和输出记进 trace */
+    /** 限时跑到截止时刻为止；用量落 finally——超时作废的调用 token 也真烧了。提示词和输出记进 trace */
     private String call(UsageTrackingChatModel model, String system, String user, AiTraderDecision d,
                         WakeTrace trace, long deadline) throws Exception {
         LlmClient client = LlmClient.builder().model(model).systemPrompt(system).build();
         trace.prompt(system, user);
-        FutureTask<String> task = new FutureTask<>(() -> {
-            trace.callStart();
-            ChatResponse resp = client.execute(List.of(new UserMessage(user)));
-            String text = resp.getResult() == null ? "" : resp.getResult().getOutput().getText();
-            trace.callEnd(text, List.of());
-            return text;
-        });
-        Thread.startVirtualThread(task);
         try {
-            return task.get(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+            // 一次模型调用，叫停靠打断线程，不等它停下
+            return runs.run("review traderId=" + d.getTraderId(), stop -> {
+                trace.callStart();
+                ChatResponse resp = client.execute(List.of(new UserMessage(user)));
+                String text = resp.getResult() == null ? "" : resp.getResult().getOutput().getText();
+                trace.callEnd(text, List.of());
+                return text;
+            }, deadline, Duration.ZERO);
         } finally {
-            task.cancel(true);
             UsageTrackingChatModel.UsageSnapshot usage = model.snapshot();
             d.setModelCalls(usage.modelCalls());
             d.setPromptTokens(usage.promptTokens());

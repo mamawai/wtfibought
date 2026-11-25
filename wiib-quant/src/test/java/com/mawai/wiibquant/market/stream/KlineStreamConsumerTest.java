@@ -15,9 +15,19 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
 
 class KlineStreamConsumerTest {
+
+    /** 没开过口就被关（启动中途失败时销毁阶段会调到）：什么都不做，不报错 */
+    @Test
+    void closeBeforeOpenDoesNothing() {
+        KlineStreamConsumer consumer = new KlineStreamConsumer(
+                mock(StringRedisTemplate.class), mock(RedisConnectionFactory.class), mock(ApplicationEventPublisher.class));
+
+        assertThatCode(consumer::close).doesNotThrowAnyException();
+    }
 
     @Test
     void republishesEventFromStreamRecord() {

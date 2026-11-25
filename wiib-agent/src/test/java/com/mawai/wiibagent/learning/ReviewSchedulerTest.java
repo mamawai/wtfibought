@@ -6,6 +6,7 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -48,6 +49,11 @@ class ReviewSchedulerTest {
     private final ReviewRunner reviewRunner = mock(ReviewRunner.class);
     private final ReviewScheduler scheduler = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner);
     private final DebriefRunner.Due due = new DebriefRunner.Due(new FuturesPositionDTO(), new AiTraderPlan());
+
+    {
+        // 进程启动时由编排开口
+        scheduler.open(Start.COLD);
+    }
 
     private AiTrader running() {
         AiTrader t = new AiTrader();
@@ -160,6 +166,16 @@ class ReviewSchedulerTest {
         verify(traderMapper, timeout(2_000)).selectById(7L);
         verify(reviewRunner, after(300).never()).review(any(), anyLong());
         assertThat(scheduler.isBusy(7L)).isFalse();
+    }
+
+    /** 起新复盘的口关着（服务关停中）：复盘位抢不到，面板预检也报忙，和点下去的结果对得上；不留下占着的位 */
+    @Test
+    void closedIntakeRefusesTheSlotAndReportsBusy() {
+        scheduler.close();
+
+        assertThat(scheduler.tryOccupy(7L)).isFalse();
+        assertThat(scheduler.isBusy(7L)).isTrue();
+        assertThat(scheduler.count()).isZero();
     }
 
     /** 复盘位被占着：单笔复盘这一根就算了；统一复盘等着，位子一放就跑 */

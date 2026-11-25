@@ -10,6 +10,7 @@ import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.handover.Start;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
@@ -36,7 +37,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * 复盘 AI 教练一次流式调用的事件面：token 逐帧 → done 全文；模型抛错 → error 一帧且不带 key；
- * 通道已关（用户切走）→ 不再拉取后续帧、不发 done；一帧不出时断开 → 掐断调用、名额归还。
+ * 通道已关（用户切走）→ 不再拉取后续帧、不发 done；一帧不出时断开 → 掐断调用、名额归还；
+ * 关停提前收尾 → 发"已中断"不发 done；口关着 → 新请求直接拒。
  */
 class ReplayCoachServiceTest {
 
@@ -67,6 +69,18 @@ class ReplayCoachServiceTest {
         PromptCatalog prompts = new PromptCatalog();
         return new ReplayCoachService(mock(LlmEndpointService.class), mock(ChatModelFactory.class),
                 new ReplayCoachPrompts(prompts), prompts, mock(UserLangResolver.class));
+    }
+
+    /** 准入走得通的教练：用户有默认端点，深模型就是给的这个 */
+    private static ReplayCoachService startable(ChatModel model) {
+        LlmEndpointService endpoints = mock(LlmEndpointService.class);
+        when(endpoints.defaultOf(USER)).thenReturn(new UserLlmEndpoint());
+        ChatModelFactory models = mock(ChatModelFactory.class);
+        when(models.modelsFor(any())).thenReturn(new ChatModelFactory.Models(model, model));
+        UserLangResolver langs = mock(UserLangResolver.class);
+        when(langs.of(USER)).thenReturn(AgentLang.ZH);
+        PromptCatalog prompts = new PromptCatalog();
+        return new ReplayCoachService(endpoints, models, new ReplayCoachPrompts(prompts), prompts, langs);
     }
 
     @Test
@@ -111,20 +125,44 @@ class ReplayCoachServiceTest {
         assertThat(pulled.get()).isLessThan(1000);
     }
 
+    /** 关停提前收尾掐断的：已流出的半截不当完整回答发 done，改发一帧"服务更新，已中断" */
+    @Test
+    void 提前收尾掐断时发中断而不是done() {
+        ReplayCoachService service = service();
+        CompletableFuture<Void> cancel = new CompletableFuture<>();
+        ChatModel model = mock(ChatModel.class);
+        when(model.stream(any(Prompt.class))).thenReturn(Flux.just(frame("结构：")).concatWith(Flux.defer(() -> {
+            service.cut();
+            cancel.complete(null);    // cut 完成的就是在跑那次的这个信号
+            return Flux.never();
+        })));
+        RecordingEmitter emitter = new RecordingEmitter();
+
+        service.run(new SseChannel(emitter), cancel, model, hintReq(), AgentLang.ZH);
+
+        assertThat(emitter.raw).hasSize(2);
+        assertThat(emitter.raw.get(0)).isEqualTo("{\"text\":\"结构：\"}");
+        assertThat(emitter.raw.get(1)).contains(new PromptCatalog().get(AgentLang.ZH, "coach.error.interrupted"));
+    }
+
+    /** 接新请求的口关着（服务关停中）：直接拒，回"服务正在更新"，不占在跑名额 */
+    @Test
+    void 口关着新请求直接拒() {
+        ReplayCoachService service = startable(mock(ChatModel.class));
+
+        assertThatThrownBy(() -> service.start(USER, hintReq()))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.CHAT_SERVICE_UPDATING.getCode());
+        assertThat(service.count()).isZero();
+    }
+
     /** 深模型想着、一帧不出时用户切走：断开回调掐断在途调用，run 返回、名额归还，同一用户能再点 */
     @Test
     void 一帧不出时断开则掐断调用并归还名额() throws Exception {
         ChatModel model = mock(ChatModel.class);
         when(model.stream(any(Prompt.class))).thenReturn(Flux.never()).thenReturn(Flux.just(frame("答")));
-        LlmEndpointService endpoints = mock(LlmEndpointService.class);
-        when(endpoints.defaultOf(USER)).thenReturn(new UserLlmEndpoint());
-        ChatModelFactory models = mock(ChatModelFactory.class);
-        when(models.modelsFor(any())).thenReturn(new ChatModelFactory.Models(model, model));
-        UserLangResolver langs = mock(UserLangResolver.class);
-        when(langs.of(USER)).thenReturn(AgentLang.ZH);
-        PromptCatalog prompts = new PromptCatalog();
-        ReplayCoachService service = new ReplayCoachService(endpoints, models, new ReplayCoachPrompts(prompts),
-                prompts, langs);
+        ReplayCoachService service = startable(model);
+        service.open(Start.COLD);
         // 单测里没有 MVC 替 emitter 触发断开回调：emitter 换成 mock，从它身上取回调来调
         try (MockedConstruction<SseEmitter> emitters = mockConstruction(SseEmitter.class)) {
             service.start(USER, hintReq());
