@@ -45,7 +45,7 @@ function getClient(): Client {
       const token = currentToken();
       c.connectHeaders = token ? { token } : {};
     },
-    reconnectDelay: 5000,
+    reconnectDelay: 1000,
     onConnect: () => {
       connected = true;
       notifyConn(true);

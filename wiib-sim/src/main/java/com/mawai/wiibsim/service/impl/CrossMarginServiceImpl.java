@@ -16,7 +16,9 @@ import com.mawai.wiibsim.service.CrossBandRegistry;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesPrices;
-import jakarta.annotation.PostConstruct;
+import com.mawai.wiibcommon.handover.RoleChanged;
+import com.mawai.wiibcommon.handover.Start;
+import org.springframework.context.event.EventListener;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -53,8 +55,12 @@ public class CrossMarginServiceImpl implements CrossMarginService {
     /** userId → 索引刷新锁，只增不删 */
     private final ConcurrentHashMap<Long, Object> indexLocks = new ConcurrentHashMap<>();
 
-    @PostConstruct
-    void init() {
+    /** 冷启动上任时重建索引；交接上任不做，旧实例一直维护着 */
+    @EventListener
+    public void rebuildOnColdStart(RoleChanged changed) {
+        if (changed.how() != Start.COLD) {
+            return;
+        }
         // 重建索引：Redis 里的旧成员 ∪ DB 实际持有人，逐个按 DB 实况刷新（多退少补，自愈脏数据）
         Set<String> stale = redis.opsForSet().members(CROSS_USERS_KEY);
         Set<Long> userIds = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()

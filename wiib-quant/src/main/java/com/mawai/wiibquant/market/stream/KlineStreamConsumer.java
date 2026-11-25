@@ -14,6 +14,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -37,7 +38,7 @@ public class KlineStreamConsumer extends RedisStreamReader {
                                RedisConnectionFactory connectionFactory,
                                ApplicationEventPublisher eventPublisher) {
         super(redisTemplate, connectionFactory, MarketStreamChannels.KLINE_CLOSED_STREAM, "quant", ReadOffset.latest(),
-                "quant", "KlineStream");
+                "quant", Duration.ofSeconds(2), "KlineStream");
         this.eventPublisher = eventPublisher;
     }
 

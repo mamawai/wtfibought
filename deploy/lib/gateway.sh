@@ -26,6 +26,18 @@ gateway_point() {
   log "网关：$svc → 槽位 $slot"
 }
 
+# 经网关问这个服务的 /internal/handoff/status，直到回包里的槽位是 $2（reload 生效了），最多等 $3 秒
+gateway_wait_slot() {
+  local svc=$1 slot=$2 deadline=$((SECONDS + $3)) port status
+  port=$(service_port "$svc")
+  until status=$(T=$(env_value INTERNAL_API_TOKEN) docker exec -e T "$GATEWAY" \
+    sh -c "wget -qO- -T 2 --header \"X-Internal-Token: \$T\" http://127.0.0.1:$port/internal/handoff/status" 2>/dev/null) \
+    && [[ $(json_field slot "$status") == "$slot" ]]; do
+    ((SECONDS < deadline)) || return 1
+    sleep 0.2
+  done
+}
+
 # 网关的配置用这个版本的（active/ 下没有的才补默认的）；网关没在跑就起起来，在跑而配置变了就 reload，
 # 新配置没通过 nginx -t 就放回原来的
 gateway_install() {

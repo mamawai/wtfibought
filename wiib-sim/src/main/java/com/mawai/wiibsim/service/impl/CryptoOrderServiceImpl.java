@@ -33,7 +33,9 @@ import com.mawai.wiibsim.service.PriceTick;
 import com.mawai.wiibsim.service.TradeHit;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.RedisLockUtil;
-import jakarta.annotation.PostConstruct;
+import com.mawai.wiibcommon.handover.RoleChanged;
+import com.mawai.wiibcommon.handover.Start;
+import org.springframework.context.event.EventListener;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -75,9 +77,12 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     /** 市价买入、限价单只认 feed 这么久内收到过盘口快照的币 */
     private static final long BOOK_MAX_AGE_MS = 30_000L;
 
-    @PostConstruct
-    void initLimitOrderZSets() {
-        rebuildLimitOrderZSets();
+    /** 冷启动上任时重建限价单索引；交接上任不做，旧实例一直维护着 */
+    @EventListener
+    public void rebuildOnColdStart(RoleChanged changed) {
+        if (changed.how() == Start.COLD) {
+            rebuildLimitOrderZSets();
+        }
     }
 
     // ==================== 获取实时价格 ====================

@@ -27,7 +27,7 @@ import java.time.Duration;
 @Slf4j
 public abstract class RedisStreamReader implements Intake {
 
-    /** 关口时最多等读循环退出多久：盖过一次轮询（2 秒），再给处理最后那批留点时间 */
+    /** 关口时最多等读循环退出多久：盖过一次轮询，再给处理最后那批留点时间 */
     private static final long LOOP_EXIT_WAIT_MS = 5_000;
 
     private final StringRedisTemplate redisTemplate;
@@ -37,6 +37,8 @@ public abstract class RedisStreamReader implements Intake {
     /** 第一次建组时从哪读：latest 是只读之后的，0 是从头读 */
     private final ReadOffset groupStart;
     private final String consumerName;
+    /** 一次阻塞读最多等多久，也是关口时最多等它返回多久 */
+    private final Duration pollTimeout;
     /** 日志前缀 */
     private final String tag;
 
@@ -46,13 +48,15 @@ public abstract class RedisStreamReader implements Intake {
     private volatile boolean closed;
 
     protected RedisStreamReader(StringRedisTemplate redisTemplate, RedisConnectionFactory connectionFactory,
-                                String stream, String group, ReadOffset groupStart, String consumerPrefix, String tag) {
+                                String stream, String group, ReadOffset groupStart, String consumerPrefix,
+                                Duration pollTimeout, String tag) {
         this.redisTemplate = redisTemplate;
         this.connectionFactory = connectionFactory;
         this.stream = stream;
         this.group = group;
         this.groupStart = groupStart;
         this.consumerName = consumerPrefix + "-" + Long.toHexString(System.nanoTime());
+        this.pollTimeout = pollTimeout;
         this.tag = tag;
     }
 
@@ -65,7 +69,7 @@ public abstract class RedisStreamReader implements Intake {
         ensureGroup();
         StreamMessageListenerContainerOptions<String, MapRecord<String, String, String>> options =
                 StreamMessageListenerContainerOptions.builder()
-                        .pollTimeout(Duration.ofSeconds(2))
+                        .pollTimeout(pollTimeout)
                         .errorHandler(this::handlePollError)
                         .build();
         container = StreamMessageListenerContainer.create(connectionFactory, options);

@@ -17,6 +17,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.longThat;
 import static org.mockito.Mockito.after;
@@ -111,6 +112,28 @@ class MatchPriceRecoverTest {
         consumer().open(Start.COLD);
 
         verify(restClient, after(300).never()).markBars1m(any(), anyLong(), anyLong());
+    }
+
+    /** 交接上任：旧实例关口时刚把 last-tick 记成现在，空窗一两秒，不补漏 */
+    @Test
+    void 开口空窗不到10秒不补漏() {
+        when(valueOps.get(LAST_TICK_KEY)).thenReturn(String.valueOf(System.currentTimeMillis() - 1_500L));
+
+        consumer().open(Start.HANDOVER);
+
+        verify(restClient, after(300).never()).markBars1m(any(), anyLong(), anyLong());
+    }
+
+    /** 关口时把 last-tick 记成现在，接手的实例据此算空窗 */
+    @Test
+    void 关口时记下last_tick() {
+        MatchPriceConsumer consumer = consumer();
+        consumer.open(Start.COLD);
+
+        consumer.close();
+
+        long before = System.currentTimeMillis() - 5_000L;
+        verify(valueOps).set(eq(LAST_TICK_KEY), argThat((String v) -> Long.parseLong(v) >= before));
     }
 
     @Test

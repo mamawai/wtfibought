@@ -29,7 +29,9 @@ import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.TradeHit;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
-import jakarta.annotation.PostConstruct;
+import com.mawai.wiibcommon.handover.RoleChanged;
+import com.mawai.wiibcommon.handover.Start;
+import org.springframework.context.event.EventListener;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -72,10 +74,13 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
     record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
-    @PostConstruct
-    void init() {
-        // 启动重建与每小时对账是同一件事：按 DB 的 PENDING 单把索引补回去（ZADD 同 member 覆盖 score）
-        reconcileLimitOrderIndex();
+    /** 冷启动上任时重建索引；交接上任不做，旧实例一直维护着 */
+    @EventListener
+    public void rebuildOnColdStart(RoleChanged changed) {
+        // 重建与每小时对账是同一件事：按 DB 的 PENDING 单把索引补回去（ZADD 同 member 覆盖 score）
+        if (changed.how() == Start.COLD) {
+            reconcileLimitOrderIndex();
+        }
     }
 
     // ==================== 限价单触发 ====================

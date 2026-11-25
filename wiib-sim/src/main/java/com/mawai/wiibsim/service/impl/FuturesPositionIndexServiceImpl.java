@@ -10,7 +10,9 @@ import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
-import jakarta.annotation.PostConstruct;
+import com.mawai.wiibcommon.handover.RoleChanged;
+import com.mawai.wiibcommon.handover.Start;
+import org.springframework.context.event.EventListener;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -42,9 +44,12 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
     private final FuturesLeverageBracketRegistry bracketRegistry;
 
 
-    @PostConstruct
-    void init() {
-        reconcilePositionIndex();
+    /** 冷启动上任时重建仓位索引；交接上任不做，旧实例一直维护着 */
+    @EventListener
+    public void rebuildOnColdStart(RoleChanged changed) {
+        if (changed.how() == Start.COLD) {
+            reconcilePositionIndex();
+        }
     }
 
     @Override

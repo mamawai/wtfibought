@@ -18,6 +18,7 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.function.LongSupplier;
@@ -56,7 +57,8 @@ public class TradeEventListener extends RedisStreamReader {
                               AiTraderMapper traderMapper, ApplicationEventPublisher events,
                               SimTradeClient simTradeClient, UnreportedEvents unreported,
                               UserLangResolver userLangResolver, PromptCatalog prompts) {
-        super(redisTemplate, connectionFactory, TradeEvent.STREAM, "agent", ReadOffset.from("0"), "agent", "TradeEvent");
+        super(redisTemplate, connectionFactory, TradeEvent.STREAM, "agent", ReadOffset.from("0"), "agent",
+                Duration.ofSeconds(2), "TradeEvent");
         this.traderMapper = traderMapper;
         this.events = events;
         this.simTradeClient = simTradeClient;

@@ -103,12 +103,23 @@ public class Handover {
         }
     }
 
-    /** 让位：逐个关口 → 身份改成收尾 → 导出各格要带走的状态 → 启动保险 → 返回交接单 */
+    /**
+     * 让位：逐个关口 →（策略要求的话）等手上的活清零，等不到就重新开口、让位失败 → 身份改成收尾 → 导出各格要带走的状态
+     * → 启动保险 → 返回交接单
+     */
     public synchronized Note yieldRole() {
         if (role != Role.ACTIVE) {
             throw new IllegalStateException("只有在任的能让位，现在是 " + role);
         }
         intakes.orderedStream().forEach(Handover::closeQuietly);
+        if (!policy.yieldWait().isZero()) {
+            List<InFlight> all = works.orderedStream().toList();
+            if (!awaitDrained(all, policy.yieldWait())) {
+                Map<String, Integer> left = busy(all);
+                intakes.orderedStream().toList().reversed().forEach(Handover::reopenQuietly);
+                throw new IllegalStateException("让位等了 " + policy.yieldWait().toMillis() + "ms 手上还有 " + left + "，已重新开口");
+            }
+        }
         role = Role.DRAINING;
         Note note = new Note(policy.protocol(), System.currentTimeMillis(), exportAll());
         armInsurance();
@@ -260,6 +271,15 @@ public class Handover {
             intake.close();
         } catch (Exception e) {
             log.error("[Handover] 关口失败 {}", intake.getClass().getSimpleName(), e);
+        }
+    }
+
+    /** 让位没成、重新开一个口；开失败只记日志，接着开后面的 */
+    private static void reopenQuietly(Intake intake) {
+        try {
+            intake.open(Start.HANDOVER);
+        } catch (Exception e) {
+            log.error("[Handover] 重新开口失败 {}", intake.getClass().getSimpleName(), e);
         }
     }
 

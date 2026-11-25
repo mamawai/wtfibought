@@ -10,6 +10,7 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -31,8 +32,9 @@ public class PredictionRoundConsumer extends RedisStreamReader {
     public PredictionRoundConsumer(StringRedisTemplate redisTemplate,
                                    RedisConnectionFactory connectionFactory,
                                    PredictionService predictionService) {
+        // 轮询 500 毫秒
         super(redisTemplate, connectionFactory, PredictionStreamChannels.ROUND_STREAM, PredictionStreamChannels.GROUP,
-                ReadOffset.latest(), "sim", "PredictionRound");
+                ReadOffset.latest(), "sim", Duration.ofMillis(500), "PredictionRound");
         this.predictionService = predictionService;
     }
 

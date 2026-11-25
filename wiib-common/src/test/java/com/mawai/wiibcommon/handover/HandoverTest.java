@@ -155,9 +155,9 @@ class HandoverTest {
         assertThat(EVENTS).containsExactly("close upstream", "close downstream");
     }
 
-    /** 关停等 shutdown，提前收尾后再等 cut，没有让位保险 */
+    /** 关停等 shutdown，提前收尾后再等 cut，让位不等清零，没有让位保险 */
     private static HandoverPolicy policy(Duration shutdown, Duration cut) {
-        return new HandoverPolicy("test", 1, shutdown, cut, Duration.ZERO);
+        return new HandoverPolicy("test", 1, shutdown, cut, Duration.ZERO, Duration.ZERO);
     }
 
     /** 不经 Spring 生命周期，直接调编排；上任事件也记一笔 */
@@ -358,6 +358,49 @@ class HandoverTest {
         assertThatThrownBy(() -> active.takeover(new Handover.Note(1, 0, Map.of()))).isInstanceOf(IllegalStateException.class);
     }
 
+    /** 策略要求让位前等清零（sim）：清零了才收尾；等不到就重新开口、让位失败，还是在任 */
+    @Test
+    void 让位前等清零_等不到重新开口() {
+        HandoverPolicy waits = new HandoverPolicy("test", 1, Duration.ofSeconds(5), Duration.ZERO, Duration.ofMillis(200),
+                Duration.ZERO);
+        Work work = new Work(true);
+        Handover handover = started(work, List.of(new Gate("g", 0)), waits);
+        work.n.set(1);
+
+        assertThatThrownBy(handover::yieldRole).isInstanceOf(IllegalStateException.class).hasMessageContaining("work=1");
+        assertThat(EVENTS).containsExactly("close g", "open g");
+        assertThat(handover.status().role()).isEqualTo(Role.ACTIVE);
+
+        work.n.set(0);
+        handover.yieldRole();
+        assertThat(handover.status().role()).isEqualTo(Role.DRAINING);
+    }
+
+    /** 让位没成、重新开口时有一个口开不了：别的口照样开 */
+    @Test
+    void 重新开口时一个口开失败_别的照开() {
+        HandoverPolicy waits = new HandoverPolicy("test", 1, Duration.ofSeconds(5), Duration.ZERO, Duration.ofMillis(100),
+                Duration.ZERO);
+        Intake broken = new Intake() {
+            @Override
+            public void open(Start how) {
+                if (how == Start.HANDOVER) {
+                    throw new IllegalStateException("Redis 连不上");
+                }
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        Work work = new Work(true);
+        Handover handover = started(work, List.of(new Gate("a", 0), new Gate("b", 10), broken), waits);
+        work.n.set(1);
+
+        assertThatThrownBy(handover::yieldRole).isInstanceOf(IllegalStateException.class).hasMessageContaining("work=1");
+        assertThat(EVENTS).containsExactly("close a", "close b", "open b", "open a");
+    }
+
     /** 恢复：收尾回到在任，Redis 记回自己，重新开口 */
     @Test
     void 恢复在任() {
@@ -377,7 +420,8 @@ class HandoverTest {
     /** 让位后的保险：到点 Redis 里还不是对端，就自己恢复在任；是对端了就不动 */
     @Test
     void 让位后的保险() throws Exception {
-        HandoverPolicy insured = new HandoverPolicy("test", 1, Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ofMillis(200));
+        HandoverPolicy insured = new HandoverPolicy("test", 1, Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ZERO,
+                Duration.ofMillis(200));
         Handover nobodyTookOver = handover(new Work(true), List.of(new Gate("g", 0)), List.of(), insured,
                 redisSays("a"), peerOf("b"), "a");
         nobodyTookOver.start();
