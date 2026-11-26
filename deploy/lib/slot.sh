@@ -73,6 +73,22 @@ wait_drained() {
   done
 }
 
+# 等三个服务上一次交接留下的旧实例（不在任的那个槽位上还在跑的）都清空，每个最多等 35 分钟（agent 收尾的上限）。
+# 等完还有手上的活没做完的，返回非 0
+wait_old_instances_drained() {
+  local s active other status
+  for s in feed sim agent; do
+    active=$(active_slot_get "$s")
+    [[ -n $active ]] || continue
+    other=$(other_slot "$active")
+    slot_running "$s" "$other" || continue
+    log "$s 槽位 $other 上还有上一次的实例，等它清空"
+    wait_drained "$s" "wiib-$s-$other" 2100
+    status=$(handoff_status "$s" "$other" || true)
+    [[ $(json_field role "$status") != DRAINING || $(json_field drained "$status") == true ]] || return 1
+  done
+}
+
 # 哪些服务有 /internal/handoff 接口：三个都有
 has_handoff() {
   [[ $1 == feed || $1 == sim || $1 == agent ]]

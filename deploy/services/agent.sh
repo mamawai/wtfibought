@@ -22,13 +22,13 @@ service_handover() {
     && [[ $(json_field role "$(handoff_status agent "$new" || true)") != ACTIVE ]]; then
     log "删掉 wiib-agent-$new"
     slot_stop agent "$new"
-    PENDING_SLOT=
+    unset 'PENDING[agent]'
     handoff_resume agent "$old"
     die "wiib-agent-$new 接手失败，已删新容器、旧实例恢复在任"
   fi
   handoff_step 接手
   # 新实例在任了，之后再失败也不删它
-  PENDING_SLOT=
+  unset 'PENDING[agent]'
   gateway_point agent "$new"
   handoff_step 网关
   handoff_post agent "$old" release-streams 10 </dev/null >/dev/null \

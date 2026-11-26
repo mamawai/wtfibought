@@ -56,7 +56,12 @@ public class PeerProbe {
                 fails = 0;
             } catch (Exception e) {
                 fails++;
-                log.warn("[PeerProbe] 第 {} 次没探到对端 msg={}", fails, e.toString());
+                // 探到过对端在收尾、现在探不到了才值得警告；冷启动时本来就没有对端
+                if (peerDraining) {
+                    log.warn("[PeerProbe] 第 {} 次没探到对端 msg={}", fails, e.toString());
+                } else {
+                    log.debug("[PeerProbe] 第 {} 次没探到对端 msg={}", fails, e.toString());
+                }
             }
             try {
                 Thread.sleep(everyMs);

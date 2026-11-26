@@ -26,11 +26,11 @@ service_handover() {
   if ! handoff_post sim "$new" takeover 4 <<<"$note" >/dev/null; then
     log "删掉 wiib-sim-$new"
     slot_stop sim "$new"
-    PENDING_SLOT=
+    unset 'PENDING[sim]'
     handoff_resume sim "$old"
     gateway_point sim "$old"
     die "wiib-sim-$new 接手失败，已删新容器、旧实例恢复在任"
   fi
   handoff_step 接手
-  PENDING_SLOT=
+  unset 'PENDING[sim]'
 }

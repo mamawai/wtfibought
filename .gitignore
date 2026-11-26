@@ -60,3 +60,6 @@ export-md
 
 # 可视化头脑风暴临时会话
 .superpowers/
+
+### 本机的部署演练环境和用例，只留本地，不入库 ###
+deploy/rehearsal/

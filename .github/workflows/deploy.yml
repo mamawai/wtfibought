@@ -1,7 +1,7 @@
 # push 到 master（只改文档、前端这些不跑）：构建、跑单测、打包；部署停在 production 环境的审批上，点了才发。
 # 仓库变量 AUTO_DEPLOY 里列了的服务（比如 agent,sim）不用审批，见 deploy-auto。
-# 手动触发可以点名服务、选模式。按 feed → sim → agent 逐个发，默认交接，还没有交接的服务服务器上自己改走冷切；
-# 提交信息带 [cold] 的那个服务走冷切。步骤见 deploy/ci/ship.sh
+# 手动触发可以点名服务、选模式。几个服务一起发：新实例先都起好，同一个切换时刻里按 feed → sim → agent 依次切。
+# 默认交接，还没有交接的服务服务器上自己改走冷切；提交信息带 [cold] 的那个服务走冷切。步骤见 deploy/ci/ship.sh
 name: deploy
 
 on:
@@ -54,6 +54,10 @@ jobs:
             echo "com.mawai.wiibcommon.handover.Role 只能在 handover 包里引用"
             exit 1
           fi
+      - name: 旧代码会受影响的迁移要写了确认才能发
+        run: |
+          source deploy/lib/migrate.sh
+          for f in sql/migrations/*.sql; do migration_guard "$f"; done
       - name: 构建、跑单测
         run: mvn -B -pl wiib-feed,wiib-sim,wiib-agent -am package -DskipTests=false
       - name: 收拢产物
