@@ -132,10 +132,10 @@ public abstract class RedisStreamReader implements Intake {
             if (subscription.isActive()) {
                 log.warn("[{}] {}ms 内读循环没退出，不再等", tag, LOOP_EXIT_WAIT_MS);
             }
-            container.stop();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
+            container.stop();
             subscription = null;
         }
     }

@@ -14,14 +14,18 @@ import java.time.Duration;
 
 /**
  * 调对端实例：地址按槽位推（自己是 a，对端就是 http://wiib-<服务>-b:<端口>），直连不过网关，
- * 带 X-Internal-Token，连接超时 1 秒。没分槽位时没有对端，{@link #available} 是 false
+ * 带 X-Internal-Token，连接超时 1 秒，读超时 5 秒。没分槽位时没有对端，{@link #available} 是 false
  */
 public class PeerClient {
 
-    /** 读超时：对端执行预案要过 sim 下单重试，最坏二十来秒 */
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(40);
+    /** 一般调用的读超时 */
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
+    /** 要等对端做完事的调用的读超时：对端执行预案要过 sim 下单重试，最坏二十来秒 */
+    private static final Duration SLOW_READ_TIMEOUT = Duration.ofSeconds(30);
 
     private final RestClient http;
+    /** 读超时长的那个，{@link #postSlow} 用 */
+    private final RestClient slowHttp;
     /** 转浏览器请求用，不带内部 token */
     private final RestClient relayHttp;
     private final String peerSlot;
@@ -30,15 +34,20 @@ public class PeerClient {
     public PeerClient(String service, String slot, int port, String token) {
         this.peerSlot = slot.isEmpty() ? null : (slot.equals("a") ? "b" : "a");
         this.baseUrl = peerSlot == null ? "http://localhost" : "http://wiib-" + service + "-" + peerSlot + ":" + port;
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build());
+        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
         factory.setReadTimeout(READ_TIMEOUT);
+        JdkClientHttpRequestFactory slowFactory = new JdkClientHttpRequestFactory(client);
+        slowFactory.setReadTimeout(SLOW_READ_TIMEOUT);
         this.relayHttp = RestClient.builder()
                 .requestFactory(factory)
                 .baseUrl(baseUrl)
                 .build();
         this.http = relayHttp.mutate()
                 .defaultHeader("X-Internal-Token", token)
+                .build();
+        this.slowHttp = http.mutate()
+                .requestFactory(slowFactory)
                 .build();
     }
 
@@ -63,6 +72,11 @@ public class PeerClient {
 
     public <T> T post(String path, Object body, Class<T> type) {
         return http.post().uri(path).contentType(MediaType.APPLICATION_JSON).body(body).retrieve().body(type);
+    }
+
+    /** 对端要做完一件事才回的调用，读超时 30 秒 */
+    public <T> T postSlow(String path, Object body, Class<T> type) {
+        return slowHttp.post().uri(path).contentType(MediaType.APPLICATION_JSON).body(body).retrieve().body(type);
     }
 
     /** 发过去，不要回包 */

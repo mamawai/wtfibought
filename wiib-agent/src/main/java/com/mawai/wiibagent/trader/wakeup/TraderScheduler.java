@@ -267,7 +267,8 @@ public class TraderScheduler implements Intake, InFlight, Carried {
             }
             case TAKEN -> log.info("[TraderSched] 触发插进在跑的轮 traderId={} {}", traderId, trigger);
             case CLOSED -> handBack(traderId, new Arrival.Trigger(trigger), false);
-            case HELD_BY_OLD -> toOld(traderId, new Arrival.Trigger(trigger));
+            // 分发可能在收盘事件线程上，调对端不占它
+            case HELD_BY_OLD -> Thread.startVirtualThread(() -> toOld(traderId, new Arrival.Trigger(trigger)));
             default -> {
                 // PARKED：占着的时候停着，放手后分发；SKIPPED：别的轮已经告诉过模型
             }

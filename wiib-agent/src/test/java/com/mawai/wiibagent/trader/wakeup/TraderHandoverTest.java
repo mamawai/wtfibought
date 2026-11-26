@@ -168,6 +168,18 @@ class TraderHandoverTest {
         return null;
     }
 
+    /** 等转过去的触发插进这一轮（触发也是在虚拟线程上转的），取走它们 */
+    private static List<WakeTrigger> triggersArrivedAt(WakeRound round) throws InterruptedException {
+        for (int i = 0; i < 200; i++) {
+            List<WakeTrigger> triggers = round.take().triggers();
+            if (!triggers.isEmpty()) {
+                return triggers;
+            }
+            Thread.sleep(10);
+        }
+        return List.of();
+    }
+
     /** 旧实例关口后才收到的整点收盘（被日历闸压着的那种）：到点发例行，口关着交还新实例 */
     private void hourClosesOnOldAfterClose() {
         old.scheduler.nowMs = () -> H1_BOUNDARY;
@@ -219,14 +231,14 @@ class TraderHandoverTest {
 
     /** A3：持有期间来的触发插进旧实例在跑的那一轮 */
     @Test
-    void triggerDuringHoldJoinsOldRound() {
+    void triggerDuringHoldJoinsOldRound() throws InterruptedException {
         ArgumentCaptor<WakeRound> round = ArgumentCaptor.forClass(WakeRound.class);
         CountDownLatch hold = bookRoundOnOld(round);
         handover();
 
         neu.scheduler.dispatch(7L, alert("BTCUSDT"));
 
-        assertThat(round.getValue().take().triggers()).containsExactly(alert("BTCUSDT"));
+        assertThat(triggersArrivedAt(round.getValue())).containsExactly(alert("BTCUSDT"));
         hold.countDown();
         verify(neu.runner, after(300).never()).wakeTriggered(any(), any(), any());
     }

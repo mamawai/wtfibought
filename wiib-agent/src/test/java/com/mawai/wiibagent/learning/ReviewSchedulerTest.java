@@ -235,6 +235,54 @@ class ReviewSchedulerTest {
         assertThat(neu.tryOccupy(7L)).isTrue();
     }
 
+    /** 旧实例：7 号的复盘位被占着，日线边界的统一复盘排在后面等；等它排上了再返回 */
+    private ReviewScheduler oldWithUnifiedReviewQueued(AiTrader t) throws InterruptedException {
+        inDb(t);
+        ReviewScheduler old = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, mock(TraderPeer.class));
+        old.open(Start.COLD);
+        assertThat(old.tryOccupy(7L)).isTrue();
+        old.nowMs = () -> DAY_BOUNDARY;
+        old.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        long deadline = System.currentTimeMillis() + 2_000;
+        while (!old.export().path("queued").has("7") && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        return old;
+    }
+
+    /** 交接时统一复盘正排着队：旧实例放位后轮到它也不跑，带给新实例，新实例等旧实例放了位再跑这一篇 */
+    @Test
+    void queuedUnifiedReviewMovesToTheNewInstance() throws InterruptedException {
+        AiTrader t = running();
+        ReviewScheduler old = oldWithUnifiedReviewQueued(t);
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+
+        old.close();
+        neu.accept(old.export());
+        neu.open(Start.HANDOVER);
+        old.release(7L);
+
+        verify(reviewRunner, after(300).never()).review(any(), anyLong());
+        neu.releasedByOld(7L);
+        verify(reviewRunner, timeout(2_000)).review(t, DAY_BOUNDARY);
+        verify(reviewRunner, after(300).times(1)).review(any(), anyLong());
+    }
+
+    /** 让位后又恢复在任：口关着时轮到没跑的那篇统一复盘，开口后补上，只跑一遍 */
+    @Test
+    void queuedUnifiedReviewRunsAfterResume() throws InterruptedException {
+        AiTrader t = running();
+        ReviewScheduler old = oldWithUnifiedReviewQueued(t);
+
+        old.close();
+        old.release(7L);
+        verify(reviewRunner, after(300).never()).review(any(), anyLong());
+        old.open(Start.HANDOVER);
+
+        verify(reviewRunner, timeout(2_000)).review(t, DAY_BOUNDARY);
+        verify(reviewRunner, after(300).times(1)).review(any(), anyLong());
+    }
+
     /** 旧实例没了：替它占着的复盘位全部放掉 */
     @Test
     void deadOldReleasesAllHeldReviewSlots() {

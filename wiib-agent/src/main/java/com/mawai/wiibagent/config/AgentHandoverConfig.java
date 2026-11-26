@@ -32,7 +32,7 @@ public class AgentHandoverConfig {
     @Bean
     public HandoverPolicy handoverPolicy() {
         return new HandoverPolicy("agent", 1, Duration.ofSeconds(60), Duration.ofSeconds(35), Duration.ZERO,
-                Duration.ofSeconds(15));
+                Duration.ofSeconds(15), true);
     }
 
     /** 标了 @Clustered 的事件（盯盘条件变了）转给另一个实例 */

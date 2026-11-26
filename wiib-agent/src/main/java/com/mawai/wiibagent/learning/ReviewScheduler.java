@@ -39,8 +39,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <p>
  * 进活的口是"起新复盘"：关着时 {@link #tryOccupy} 一律抢不到（点播复盘、立即复盘也从这里占位），
  * 统一复盘等到位子也不跑。占着的复盘位是一份手上的活（reviews）。
- * 交接时带走的是"review-slots"：旧实例让位时占着的复盘位和处理到哪根。新实例接手时替旧实例把这些位占上，
- * 旧实例放掉一个就通知新实例，新实例跟着放
+ * 交接时带走的是"review-slots"：旧实例让位时占着的复盘位、处理到哪根、排着队还没轮到的统一复盘。
+ * 新实例接手时替旧实例把这些位占上，旧实例放掉一个就通知新实例，新实例跟着放；排着队的那几篇由新实例接着排
  */
 @Slf4j
 @Component
@@ -68,21 +68,32 @@ public class ReviewScheduler implements Intake, InFlight, Carried {
     private final Set<Long> heldAtClose = ConcurrentHashMap.newKeySet();
     /** 新实例：替旧实例占着的复盘位 */
     private final Set<Long> heldForOld = ConcurrentHashMap.newKeySet();
+    /**
+     * 排着队等复盘位的统一复盘：交易员 → 这一篇的边界。轮到时口开着就摘掉、开跑；口关着就不跑、留在这里，
+     * 开口时（恢复在任，或者带给了接手的实例）重新排。开关口和"轮到时看口"都锁它
+     */
+    private final Map<Long, Long> queuedUnified = new ConcurrentHashMap<>();
 
     /** 墙钟注入点 */
     LongSupplier nowMs = System::currentTimeMillis;
 
-    /** 开口：不再替对端记占着的位 */
+    /** 开口：不再替对端记占着的位；口关着时没跑成的统一复盘重新排上 */
     @Override
     public void open(Start how) {
-        open = true;
+        synchronized (queuedUnified) {
+            open = true;
+        }
         heldAtClose.clear();
+        Map.copyOf(queuedUnified).forEach((id, boundary) ->
+                Thread.startVirtualThread(() -> runQueuedUnified(id, boundary)));
     }
 
     /** 关口：此刻自己占着的复盘位记下来，放掉时通知对端 */
     @Override
     public void close() {
-        open = false;
+        synchronized (queuedUnified) {
+            open = false;
+        }
         slots.forEach((id, s) -> {
             if (s.availablePermits() == 0 && !heldForOld.contains(id)) {
                 heldAtClose.add(id);
@@ -111,16 +122,18 @@ public class ReviewScheduler implements Intake, InFlight, Carried {
         return "review-slots";
     }
 
-    /** 还占着的复盘位，和处理到哪根 */
+    /** 还占着的复盘位、处理到哪根、排着队没跑成的统一复盘 */
     @Override
     public JsonNode export() {
         ObjectNode out = MAPPER.createObjectNode();
         heldAtClose.forEach(out.putArray("held")::add);
         out.put("lastBoundary", lastBoundary.get());
+        ObjectNode queued = out.putObject("queued");
+        queuedUnified.forEach((id, boundary) -> queued.put(String.valueOf(id), boundary));
         return out;
     }
 
-    /** 替旧实例把它占着的复盘位占上；处理到哪根取大的 */
+    /** 替旧实例把它占着的复盘位占上；处理到哪根取大的；它排着队的统一复盘记下来，开口时接着排 */
     @Override
     public void accept(JsonNode state) {
         lastBoundary.accumulateAndGet(state.path("lastBoundary").asLong(-1), Math::max);
@@ -130,7 +143,8 @@ public class ReviewScheduler implements Intake, InFlight, Carried {
                 heldForOld.add(id);
             }
         });
-        log.info("[ReviewSched] 收下交接单：替旧实例占着复盘位 {}", heldForOld);
+        state.path("queued").properties().forEach(e -> queuedUnified.put(Long.parseLong(e.getKey()), e.getValue().asLong()));
+        log.info("[ReviewSched] 收下交接单：替旧实例占着复盘位 {}，排着队的统一复盘 {}", heldForOld, queuedUnified.keySet());
     }
 
     /** 新实例：旧实例放掉了这个复盘位，替它占着的跟着放 */
@@ -198,12 +212,23 @@ public class ReviewScheduler implements Intake, InFlight, Carried {
         }
     }
 
-    /** 日线边界的统一复盘：复盘位被占着就等它放出来 */
+    /** 日线边界的统一复盘：记进排队名单，等复盘位 */
     private void unifiedReview(long traderId, long boundary) {
+        queuedUnified.put(traderId, boundary);
+        runQueuedUnified(traderId, boundary);
+    }
+
+    /** 排队名单里的一篇统一复盘：复盘位被占着就等它放出来，轮到时从名单里摘掉再跑；同一篇有两个线程在等，只有摘到的那个跑 */
+    private void runQueuedUnified(long traderId, long boundary) {
         slot(traderId).acquireUninterruptibly();
         try {
-            // 等位子的时候起新复盘的口关上了，就不跑
-            AiTrader trader = open ? eligible(traderId) : null;
+            // 等位子的时候起新复盘的口关上了，就不跑，留在排队名单里
+            synchronized (queuedUnified) {
+                if (!open || !queuedUnified.remove(traderId, boundary)) {
+                    return;
+                }
+            }
+            AiTrader trader = eligible(traderId);
             if (trader != null) {
                 reviewRunner.review(trader, boundary);
             }

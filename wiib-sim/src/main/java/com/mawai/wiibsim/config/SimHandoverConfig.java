@@ -21,7 +21,7 @@ public class SimHandoverConfig {
 
     @Bean
     public HandoverPolicy handoverPolicy() {
-        return new HandoverPolicy("sim", 1, Duration.ofSeconds(10), Duration.ZERO, Duration.ofSeconds(3), Duration.ofSeconds(8));
+        return new HandoverPolicy("sim", 1, Duration.ofSeconds(10), Duration.ZERO, Duration.ofSeconds(3), Duration.ofSeconds(8), true);
     }
 
     /** 会改账的后台活都交给它，关停时等它清零。按 Executor 类型注入拿到的是它 */

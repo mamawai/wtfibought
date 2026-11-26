@@ -1,10 +1,15 @@
 # 交接接口 /internal/handoff/*：在槽位容器里用 busybox wget 打它自己的 localhost，token 走环境变量不上命令行
 
-# GET /status，输出 JSON；调不通返回非 0
+# GET /status，输出 JSON；调不通返回非 0。handoff_status <服务> <槽位>
 handoff_status() {
+  handoff_status_in "$1" "wiib-$1-$2"
+}
+
+# 同上，容器用名字或 ID 指：handoff_status_in <服务> <容器名或 ID>
+handoff_status_in() {
   local port
   port=$(service_port "$1")
-  T=$(env_value INTERNAL_API_TOKEN) docker exec -e T "wiib-$1-$2" \
+  T=$(env_value INTERNAL_API_TOKEN) docker exec -e T "$2" \
     sh -c "wget -qO- -T 10 --header \"X-Internal-Token: \$T\" http://127.0.0.1:$port/internal/handoff/status" 2>/dev/null
 }
 

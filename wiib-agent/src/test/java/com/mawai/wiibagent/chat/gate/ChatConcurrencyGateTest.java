@@ -47,6 +47,24 @@ class ChatConcurrencyGateTest {
         assertThat(gate.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
     }
 
+    /** 进程被杀掉没还的用户位：这个槽位下一个进程启动时清掉，另一个槽位占着的不动 */
+    @Test
+    void 启动时清掉本槽位上一个进程留下的用户位() {
+        StringRedisTemplate redis = ChatTestEndpoints.userSlotRedis();
+        ChatConcurrencyGate killed = new ChatConcurrencyGate(redis, "a", 10);
+        ChatConcurrencyGate other = new ChatConcurrencyGate(redis, "b", 10);
+        killed.open(Start.COLD);
+        other.open(Start.COLD);
+        killed.tryAcquire(1L, WORKBENCH);
+        other.tryAcquire(2L, PROMPT_GEN);
+
+        ChatConcurrencyGate restarted = new ChatConcurrencyGate(redis, "a", 10);
+        restarted.clearLeftovers();
+
+        assertThat(restarted.isBusy(1L)).isFalse();
+        assertThat(restarted.isBusy(2L)).isTrue();
+    }
+
     /** 交接期间两个实例共用 Redis 里的用户位：一边占着，另一边这个用户也算占线、发不了；谁占着决定拒绝码 */
     @Test
     void 另一个实例占着也算占线() {

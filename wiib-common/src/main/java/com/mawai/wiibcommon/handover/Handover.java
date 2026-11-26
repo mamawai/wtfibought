@@ -14,7 +14,7 @@ import java.util.Map;
 
 /**
  * 编排：只认口（{@link Intake}）、手上的活（{@link InFlight}）、带走的状态（{@link Carried}），不认识具体组件。
- * 五条路：启动（定身份，在任就开口）、让位（关口 → 收尾 → 导出交接单 → 启动保险）、接手（收下交接单 → 记 Redis → 在任 → 开口）、
+ * 五条路：启动（定身份，在任就开口）、让位（关口 → 收尾 → 启动保险 → 导出交接单）、接手（收下交接单 → 记 Redis → 在任 → 开口）、
  * 恢复（在任 → 开口）、关停（关口 → 等手上的活 → 还没完的提前收尾 → 再等一会儿）。
  * 身份只在这几条路上变，合法的转换只有：启动 → 待命或在任；待命 → 在任；在任 → 收尾；收尾 → 在任
  */
@@ -38,6 +38,8 @@ public class Handover {
     private volatile Role role;
     /** 让位保险的代号：恢复或再次让位时加一，到点的保险对不上就作废 */
     private long insuranceGen;
+    /** 让位保险没做成隔多久再来，单测里调短 */
+    long insuranceRetryMs = 1_000;
 
     public Handover(ObjectProvider<Intake> intakes, ObjectProvider<InFlight> works, ObjectProvider<Carried> carried,
                     HandoverPolicy policy, ActiveSlot activeSlot, PeerClient peer, ApplicationEventPublisher events,
@@ -104,8 +106,8 @@ public class Handover {
     }
 
     /**
-     * 让位：逐个关口 →（策略要求的话）等手上的活清零，等不到就重新开口、让位失败 → 身份改成收尾 → 导出各格要带走的状态
-     * → 启动保险 → 返回交接单
+     * 让位：逐个关口 →（策略要求的话）等手上的活清零，等不到就重新开口、让位失败 → 身份改成收尾 → 启动保险
+     * → 导出各格要带走的状态 → 返回交接单
      */
     public synchronized Note yieldRole() {
         if (role != Role.ACTIVE) {
@@ -121,14 +123,17 @@ public class Handover {
             }
         }
         role = Role.DRAINING;
-        Note note = new Note(policy.protocol(), System.currentTimeMillis(), exportAll());
         armInsurance();
+        Note note = new Note(policy.protocol(), System.currentTimeMillis(), exportAll());
         log.info("[Handover] 让位：口已全部关上，收尾，手上还有 {}，交接单 {}", busy(works.orderedStream().toList()),
                 note.carried());
         return note;
     }
 
-    /** 接手：各格收下交接单 → Redis 记成自己 → 在任，发 RoleChanged → 开口。已经在任的直接回成功 */
+    /**
+     * 接手：各格收下交接单 → Redis 记成自己 → 在任，发 RoleChanged → 开口。已经在任的直接回成功。
+     * 口没开全就不算接手：已经开的关回去，退回待命，Redis 记回对端，异常抛给调用方
+     */
     public synchronized void takeover(Note note) {
         if (role == Role.ACTIVE) {
             return;
@@ -142,12 +147,23 @@ public class Handover {
         acceptAll(toObjectNode(note.carried() == null ? Map.of() : note.carried()));
         activeSlot.set(slot);
         role = Role.ACTIVE;
-        events.publishEvent(new RoleChanged(Role.STANDBY, Role.ACTIVE, Start.HANDOVER));
-        openAll(Start.HANDOVER);
+        try {
+            events.publishEvent(new RoleChanged(Role.STANDBY, Role.ACTIVE, Start.HANDOVER));
+            openAll(Start.HANDOVER);
+        } catch (RuntimeException e) {
+            log.error("[Handover] 接手时口没开全，退回待命", e);
+            intakes.orderedStream().forEach(Handover::closeQuietly);
+            role = Role.STANDBY;
+            activeSlot.set(peer.peerSlot());
+            throw e;
+        }
         log.info("[Handover] 接手：槽位 {} 在任", slot);
     }
 
-    /** 恢复：收尾 → 在任，Redis 记回自己，开口。让位后接手失败时脚本调，或保险到点。已经在任的直接回成功 */
+    /**
+     * 恢复：收尾 → 在任，Redis 记回自己，逐个开口（一个开失败不挡后面的）。让位后接手失败时脚本调，或保险到点。
+     * 已经在任的直接回成功；让位后不能恢复的服务（见 {@link HandoverPolicy#resumable}）拒掉
+     */
     public synchronized void resume() {
         if (role == Role.ACTIVE) {
             return;
@@ -155,17 +171,20 @@ public class Handover {
         if (role != Role.DRAINING) {
             throw new IllegalStateException("只有收尾中的能恢复，现在是 " + role);
         }
-        insuranceGen++;
+        if (!policy.resumable()) {
+            throw new IllegalStateException(policy.service() + " 让位后不能恢复在任，要它回来就重启容器");
+        }
         if (!slot.isEmpty()) {
             activeSlot.set(slot);
         }
+        insuranceGen++;
         role = Role.ACTIVE;
         events.publishEvent(new RoleChanged(Role.DRAINING, Role.ACTIVE, Start.HANDOVER));
-        openAll(Start.HANDOVER);
+        intakes.orderedStream().toList().reversed().forEach(Handover::reopenQuietly);
         log.info("[Handover] 恢复在任{}", slot.isEmpty() ? "" : "：槽位 " + slot);
     }
 
-    /** 让位后的保险：到点还在收尾、Redis 里的在任槽位也不是对端，就自己恢复在任 */
+    /** 让位后的保险：到点还在收尾、Redis 里的在任槽位也不是对端，就自己恢复在任；读 Redis 或恢复出错就隔一会儿再来 */
     private void armInsurance() {
         Duration wait = policy.insurance();
         if (wait.isZero() || slot.isEmpty()) {
@@ -175,17 +194,30 @@ public class Handover {
         Thread.ofVirtual().name("handover-insurance").start(() -> {
             try {
                 Thread.sleep(wait);
-            } catch (InterruptedException e) {
-                return;
-            }
-            synchronized (this) {
-                if (gen != insuranceGen || role != Role.DRAINING || peer.peerSlot().equals(activeSlot.current())) {
-                    return;
+                while (!settleInsurance(gen, wait)) {
+                    Thread.sleep(insuranceRetryMs);
                 }
+            } catch (InterruptedException e) {
+                // 不用再管
+            }
+        });
+    }
+
+    /** 保险到点看一眼。不用再管了返回 true：这份保险作废了、已经不在收尾、对端接手了、或者自己恢复成了；出错返回 false */
+    private synchronized boolean settleInsurance(long gen, Duration wait) {
+        if (gen != insuranceGen || role != Role.DRAINING) {
+            return true;
+        }
+        try {
+            if (!peer.peerSlot().equals(activeSlot.current())) {
                 log.error("[Handover] 让位后 {}s 没等到对端接手，自己恢复在任", wait.toSeconds());
                 resume();
             }
-        });
+            return true;
+        } catch (RuntimeException e) {
+            log.error("[Handover] 让位保险没做成，{}ms 后再来 msg={}", insuranceRetryMs, e.toString());
+            return false;
+        }
     }
 
     private void openAll(Start how) {
@@ -274,7 +306,7 @@ public class Handover {
         }
     }
 
-    /** 让位没成、重新开一个口；开失败只记日志，接着开后面的 */
+    /** 重新开一个口（让位没成、恢复在任）；开失败只记日志，接着开后面的 */
     private static void reopenQuietly(Intake intake) {
         try {
             intake.open(Start.HANDOVER);

@@ -41,7 +41,7 @@ public class HttpTraderPeer implements TraderPeer {
     public PresetReply preset(long traderId, long watchId, BigDecimal price, long at) {
         ObjectNode body = MAPPER.createObjectNode().put("traderId", traderId).put("watchId", watchId)
                 .put("price", price).put("at", at);
-        JsonNode reply = client.post("/internal/handoff/preset", body, JsonNode.class);
+        JsonNode reply = client.postSlow("/internal/handoff/preset", body, JsonNode.class);
         return new PresetReply(reply.path("held").asBoolean(), reply.path("wake").asBoolean());
     }
 

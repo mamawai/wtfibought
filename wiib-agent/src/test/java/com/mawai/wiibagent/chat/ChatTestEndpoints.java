@@ -20,11 +20,14 @@ import com.mawai.wiibagent.trader.TraderChatService;
 import com.mawai.wiibagent.trader.TraderService;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 
 import java.time.Duration;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -73,6 +76,13 @@ public final class ChatTestEndpoints {
         when(redis.hasKey(anyString())).thenAnswer(i -> store.containsKey(i.<String>getArgument(0)));
         when(redis.execute(any(RedisScript.class), anyList(), any()))
                 .thenAnswer(i -> store.remove(i.<List<String>>getArgument(1).getFirst(), i.getArgument(2)) ? 1L : 0L);
+        when(redis.scan(any(ScanOptions.class))).thenAnswer(_ -> {
+            Iterator<String> keys = List.copyOf(store.keySet()).iterator();
+            Cursor<String> cursor = mock(Cursor.class);
+            when(cursor.hasNext()).thenAnswer(_ -> keys.hasNext());
+            when(cursor.next()).thenAnswer(_ -> keys.next());
+            return cursor;
+        });
         return redis;
     }
 

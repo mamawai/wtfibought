@@ -8,6 +8,7 @@
 #   各服务的 Dockerfile 改动不单独触发；common 改了不带 feed，范围里有提交写了 [deploy feed] 才带
 #   目标提交写了 [skip deploy] 就都不发；没部署过、或部署的哈希不在历史里，当作全变了
 # 模式是 handover 或 cold（手动触发时选的，push 来的是 handover）；这个服务的部署范围里有提交写了 [cold]，它走 cold
+# 部署范围是已部署的和目标之间隔着的提交，往前发、往回滚都算
 set -euo pipefail
 
 target=$1
@@ -21,7 +22,7 @@ order=(feed sim agent)
 messages() {
   local from=${deployed[$1]}
   if [[ -n $from ]] && git cat-file -e "$from^{commit}" 2>/dev/null; then
-    git log --format=%B "$from..$target"
+    git log --format=%B "$from...$target"
   else
     git log -1 --format=%B "$target"
   fi
@@ -70,7 +71,7 @@ for s in "${order[@]}"; do
   esac
   if grep -qE "$pattern" <<<"$changed"; then
     emit "$s"
-  elif [[ $s == feed ]] && grep -qF '[deploy feed]' <<<"$(git log --format=%B "$from..$target")"; then
+  elif [[ $s == feed ]] && grep -qF '[deploy feed]' <<<"$(messages feed)"; then
     emit "$s"
   fi
 done

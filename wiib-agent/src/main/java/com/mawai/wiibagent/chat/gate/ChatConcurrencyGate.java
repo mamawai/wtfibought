@@ -5,9 +5,12 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.handover.InFlight;
 import com.mawai.wiibcommon.handover.Intake;
 import com.mawai.wiibcommon.handover.Start;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -32,6 +35,7 @@ import java.util.concurrent.Semaphore;
  * <p>
  * 用户位记在 Redis（agent:chat:busy:&lt;userId&gt;，值是"谁在跑:槽位"）：交接期间新旧两个实例都看得到，
  * 不会同一个人两边各跑一轮、互相覆盖会话上下文。全局名额留在进程内，两个实例各算各的。
+ * 进程被杀掉没来得及还的用户位，这个槽位下一个进程启动时清掉（{@link #clearLeftovers}）。
  * <p>
  * 进活的口是"接新对话"：关着时新的一轮直接拒，回"服务正在更新"。
  * 占着的名额是一份手上的活（chat-slots），从占到到还。
@@ -47,7 +51,7 @@ public class ChatConcurrencyGate implements Intake, InFlight {
     /** 这个用户的那一轮是谁在跑：工作台对话还是提示词生成 */
     public enum Owner { WORKBENCH, PROMPT_GEN }
 
-    /** Redis 里用户位的过期，进程崩溃时的保险，盖过一轮最长的时间 */
+    /** Redis 里用户位的过期，盖过一轮最长的时间；占着它的进程没了、这个槽位也没再起来时靠它放掉 */
     static final Duration USER_SLOT_TTL = Duration.ofHours(1);
 
     private static final String KEY_PREFIX = "agent:chat:busy:";
@@ -70,6 +74,25 @@ public class ChatConcurrencyGate implements Intake, InFlight {
         this.redis = redis;
         this.slot = slot;
         this.slots = new Semaphore(globalLimit);
+    }
+
+    /**
+     * 进程启动时清掉这个槽位上一个进程留下的用户位：一个槽位同时只有一个进程，
+     * 这时 Redis 里值以本槽位结尾的都是上一个进程占的
+     */
+    @PostConstruct
+    void clearLeftovers() {
+        String suffix = ":" + slot;
+        try (Cursor<String> keys = redis.scan(ScanOptions.scanOptions().match(KEY_PREFIX + "*").count(500).build())) {
+            while (keys.hasNext()) {
+                String key = keys.next();
+                String value = redis.opsForValue().get(key);
+                if (value != null && value.endsWith(suffix)) {
+                    redis.execute(DELETE_IF_SAME, List.of(key), value);
+                    log.info("[ChatGate] 清掉上一个进程留下的用户位 {}", key);
+                }
+            }
+        }
     }
 
     @Override

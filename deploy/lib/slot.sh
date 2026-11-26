@@ -13,15 +13,20 @@ slot_running() {
   [[ $(docker inspect -f '{{.State.Running}}' "wiib-$1-$2" 2>/dev/null) == true ]]
 }
 
-# 停掉并删掉一个槽位容器（没有就算了）；docker stop 按容器自己的 stop_grace_period 等它关停。
+# 停掉并删掉一个容器（名字或 ID，没有就算了）；docker stop 按容器自己的 stop_grace_period 等它关停。
 # 后台清旧实例和下一次部署可能同时停同一个，所以停完只看它还在不在
+container_stop() {
+  docker container inspect "$1" >/dev/null 2>&1 || return 0
+  docker stop "$1" >/dev/null 2>&1 || true
+  docker rm "$1" >/dev/null 2>&1 || true
+  ! docker container inspect "$1" >/dev/null 2>&1 || die "容器 $1 停不掉"
+}
+
+# 停掉并删掉一个槽位容器
 slot_stop() {
-  local c=wiib-$1-$2
   slot_exists "$1" "$2" || return 0
-  log "停 $c"
-  docker stop "$c" >/dev/null 2>&1 || true
-  docker rm "$c" >/dev/null 2>&1 || true
-  ! slot_exists "$1" "$2" || die "$c 停不掉"
+  log "停 wiib-$1-$2"
+  container_stop "wiib-$1-$2"
 }
 
 # 用某个标签的镜像起一个槽位容器
@@ -47,21 +52,21 @@ slot_wait_role() {
   done
 }
 
-# 等槽位上收尾中的实例清空（/status 的 drained），最多等 $3 秒；容器没在跑、或者回的身份不是收尾就不等，
-# 一时调不通（卡顿）接着等
-slot_wait_drained() {
-  local svc=$1 slot=$2 timeout=$3 deadline status
+# 等一个容器里收尾中的实例清空（/status 的 drained）：wait_drained <服务> <容器名或 ID> <最多等几秒>。
+# 容器没在跑、或者回的身份不是收尾就不等，一时调不通（卡顿）接着等
+wait_drained() {
+  local svc=$1 c=$2 timeout=$3 deadline status
   deadline=$((SECONDS + timeout))
-  while slot_running "$svc" "$slot"; do
-    if status=$(handoff_status "$svc" "$slot"); then
+  while [[ $(docker container inspect -f '{{.State.Running}}' "$c" 2>/dev/null) == true ]]; do
+    if status=$(handoff_status_in "$svc" "$c"); then
       [[ $(json_field role "$status") == DRAINING ]] || return 0
       if [[ $(json_field drained "$status") == true ]]; then
-        log "wiib-$svc-$slot 清空了"
+        log "$svc 收尾中的实例清空了"
         return 0
       fi
     fi
     if ((SECONDS >= deadline)); then
-      log "等 wiib-$svc-$slot 清空到了 ${timeout}s 上限，直接停，没完的活走关停收尾"
+      log "等 $svc 收尾中的实例清空到了 ${timeout}s 上限，直接停，没完的活走关停收尾"
       return 0
     fi
     sleep 5

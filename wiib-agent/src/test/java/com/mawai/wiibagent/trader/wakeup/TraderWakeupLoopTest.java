@@ -2126,7 +2126,7 @@ class TraderWakeupLoopTest {
         beans.registerSingleton("runs", runs);
         Handover handover = new Handover(beans.getBeanProvider(Intake.class), beans.getBeanProvider(InFlight.class),
                 beans.getBeanProvider(Carried.class),
-                new HandoverPolicy("agent", 1, Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ZERO, Duration.ZERO), null, null,
+                new HandoverPolicy("agent", 1, Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ZERO, Duration.ZERO, true), null, null,
                 _ -> {
                 }, "", "");
 

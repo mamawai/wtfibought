@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一次性迁到槽位：停掉并删掉旧的 wiib-feed / wiib-sim / wiib-agent 三个容器，
+# 一次性迁到槽位：先把网关的镜像拉好，再停掉并删掉旧的 wiib-feed / wiib-sim / wiib-agent 三个容器，
 # 起网关（三个服务都指槽位 a），用旧容器正在跑的镜像起三个服务的 a 槽位，Redis 记成 a。期间约一分钟不可用。
 # 中途失败可以再跑一次：旧容器已经删了的，用上次记下的 legacy 镜像。之后 CI 的部署就从 a 切到 b。
 # 用法：这个版本的 bundle 解到 releases/<哈希>/ 后，bash <项目目录>/releases/<哈希>/deploy/migrate-slots.sh
@@ -34,6 +34,10 @@ for s in feed sim agent; do
 done
 
 cp "$REL/docker-compose.yml" "$ROOT/docker-compose.yml"
+# 网关的镜像本机没有就先拉好，旧容器这时还在跑
+gateway_image=$(cd "$ROOT" && docker compose config --images "$GATEWAY")
+docker image inspect "$gateway_image" >/dev/null 2>&1 || docker pull "$gateway_image" \
+  || die "网关镜像 $gateway_image 拉不下来，旧容器没动"
 mkdir -p "$GATEWAY_DIR/active"
 cp "$REL/deploy/gateway/nginx.conf" "$GATEWAY_DIR/nginx.conf"
 for s in feed sim agent; do

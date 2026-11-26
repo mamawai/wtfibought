@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 部署一个服务：deploy.sh <feed|sim|agent> <提交哈希> --handover|--cold [--now]
 # 对齐网关：deploy.sh doctor（systemd timer 每分钟跑一次）
-# 等旧实例清空再停掉：deploy.sh drain <服务> <槽位>（交接切完后部署自己用 systemd-run 起，不拿部署锁）
+# 等旧实例清空再停掉：deploy.sh drain <服务> <槽位> <容器 ID>（交接切完后部署自己用 systemd-run 起，不拿部署锁）
 # 由 ci-entry.sh 用 systemd-run 起，在 releases/<哈希>/deploy/ 下跑，脚本和要发的代码是同一个版本。
 # 交接（文档 4.5）：拿部署锁 → 读在任槽位、把网关对齐到它 → 新槽位上还有上一次的旧实例在收尾就等它清空、停掉 → 跑迁移
 #   → 打镜像 → 看可用内存 → 起新槽位、等它待命 → 比交接协议版本 → 等切换时刻（x4:20、x9:20，--now 不等）→ 确认 Redis 写得进
@@ -37,26 +37,33 @@ REDIS_MASTER_NAME=${REDIS_MASTER_NAME:-mymaster}
 mkdir -p "$ROOT/deploy"
 exec 9>"$ROOT/deploy/deploy.lock"
 
-# 对齐网关：没有部署在跑时，每个服务的网关指的槽位要和 Redis 里的在任槽位一样，不一样按 Redis 改网关
+# 对齐网关：没有部署在跑时，每个服务的网关指的槽位要和 Redis 里的在任槽位一样，不一样按 Redis 改网关。
+# Redis 记的那个槽位自己说在任才改；它不是在任（或调不通）就只报出来，不动网关
 if [[ ${1:-} == doctor ]]; then
   flock -n 9 || exit 0
   for s in feed sim agent; do
     active=$(active_slot_get "$s")
     [[ -n $active && $(gateway_slot "$s") != "$active" ]] || continue
+    if [[ $(json_field role "$(handoff_status "$s" "$active" || true)") != ACTIVE ]]; then
+      log "网关的 $s 指着 $(gateway_slot "$s")，Redis 里在任的是 $active，但 wiib-$s-$active 不是在任（或调不通），不改网关，手工看一下"
+      continue
+    fi
     log "网关的 $s 指着 $(gateway_slot "$s")，Redis 里在任的是 $active，改过来"
     gateway_point "$s" "$active"
   done
   exit 0
 fi
 
-# 后台等交接下来的旧实例清空再停掉（文档 6.10）
+# 后台等交接下来的旧实例清空再停掉（文档 6.10）。只认交接那一刻的容器 ID：这个槽位后来换了容器（下一次部署起的）也不碰
 if [[ ${1:-} == drain ]]; then
   svc=$2
   slot=$3
+  cid=$4
   exec >>"$REL/$svc.log" 2>&1
   source "$REL/deploy/services/$svc.sh"
-  slot_wait_drained "$svc" "$slot" "$DRAIN_TIMEOUT"
-  slot_stop "$svc" "$slot"
+  wait_drained "$svc" "$cid" "$DRAIN_TIMEOUT"
+  log "停旧实例 wiib-$svc-$slot（容器 ${cid:0:12}）"
+  container_stop "$cid"
   handoff_record "$svc 旧实例 $slot 清空、停掉，用时 ${SECONDS}s"
   exit 0
 fi
@@ -116,7 +123,7 @@ if [[ $mode == --handover ]]; then
     [[ $(json_field role "$(handoff_status "$svc" "$target" || true)") != ACTIVE ]] \
       || die "wiib-$svc-$target 自称在任，和 Redis 记的 $active 对不上，手工看一下"
     log "槽位 $target 上还有上一次的实例，等它清空（最多 ${DRAIN_TIMEOUT}s）"
-    slot_wait_drained "$svc" "$target" "$DRAIN_TIMEOUT"
+    wait_drained "$svc" "wiib-$svc-$target" "$DRAIN_TIMEOUT"
     slot_stop "$svc" "$target"
   fi
 fi
@@ -159,6 +166,8 @@ else
     || die "交接协议版本不一样（在任的 $old_protocol，新的 $new_protocol），这次只能冷切：手动触发选 cold，或者提交信息带 [cold]"
   [[ -n $now ]] || wait_switch_time
   redis_writable || die "Redis 写不进去（可能在主从切换），这次不切"
+  # 旧实例的容器 ID，交接完后台清它时用
+  old_cid=$(docker container inspect -f '{{.Id}}' "wiib-$svc-$active")
   HANDOFF_STEPS=
   service_handover "$active" "$target"
   [[ $(json_field role "$(handoff_status "$svc" "$target" || true)") == ACTIVE ]] || die "交接后 wiib-$svc-$target 不是在任"
@@ -179,7 +188,7 @@ ln -sfn "$REL/deploy" "$ROOT/deploy/scripts"
 # 交接下来的旧实例：后台等它清空再停，不占部署锁，CI 接着发下一个服务
 if [[ $mode == --handover ]]; then
   systemd-run --unit="wiib-drain-$svc-$active" --collect --quiet --setenv=HOME="${HOME:-/root}" \
-    /bin/bash "$REL/deploy/deploy.sh" drain "$svc" "$active" \
+    /bin/bash "$REL/deploy/deploy.sh" drain "$svc" "$active" "$old_cid" \
     || log "起后台清旧实例的任务失败，wiib-$svc-$active 留给下一次部署第一步去等、去停"
 fi
 

@@ -118,7 +118,10 @@ public class PresetExecutor implements InFlight {
         return gates.of(w.getTraderId()).exclusive(() -> execute(w, price, at));
     }
 
-    /** 新实例：转给持有它的旧实例执行；旧实例已不持有就本地做，调不通按"结果未知，要叫醒" */
+    /**
+     * 新实例：转给持有它的旧实例执行；旧实例已不持有就本地做，调不通按"结果未知，要叫醒"。
+     * 旧实例做完把结果记在库里，这里读回来写到 w 上，和本地执行一样
+     */
     private boolean forward(AiTraderWatch w, BigDecimal price, long at) {
         TraderPeer.PresetReply reply;
         try {
@@ -127,7 +130,15 @@ public class PresetExecutor implements InFlight {
             log.warn("[Preset] 转给旧实例失败，当结果未知 traderId={} watchId={} msg={}", w.getTraderId(), w.getId(), e.toString());
             return true;
         }
-        return reply.held() ? reply.wake() : executeHere(w, price, at);
+        if (!reply.held()) {
+            return executeHere(w, price, at);
+        }
+        AiTraderWatch done = watchStore.byId(w.getId());
+        if (done != null) {
+            w.setActionOk(done.getActionOk());
+            w.setActionResult(done.getActionResult());
+        }
+        return reply.wake();
     }
 
     /**

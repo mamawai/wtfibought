@@ -2,6 +2,7 @@ package com.mawai.wiibcommon.handover;
 
 import jakarta.annotation.PostConstruct;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -25,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -155,9 +157,22 @@ class HandoverTest {
         assertThat(EVENTS).containsExactly("close upstream", "close downstream");
     }
 
-    /** 关停等 shutdown，提前收尾后再等 cut，让位不等清零，没有让位保险 */
+    /** 关停等 shutdown，提前收尾后再等 cut，让位不等清零，没有让位保险，让位后能恢复 */
     private static HandoverPolicy policy(Duration shutdown, Duration cut) {
-        return new HandoverPolicy("test", 1, shutdown, cut, Duration.ZERO, Duration.ZERO);
+        return new HandoverPolicy("test", 1, shutdown, cut, Duration.ZERO, Duration.ZERO, true);
+    }
+
+    /** 开口时抛错的口：冷启动照常开，交接上任、恢复时开不了 */
+    private static Gate brokenOnHandover(String name, int order) {
+        return new Gate(name, order) {
+            @Override
+            public void open(Start how) {
+                if (how == Start.HANDOVER) {
+                    throw new IllegalArgumentException("Redis 连不上");
+                }
+                super.open(how);
+            }
+        };
     }
 
     /** 不经 Spring 生命周期，直接调编排；上任事件也记一笔 */
@@ -338,6 +353,24 @@ class HandoverTest {
         assertThat(fresh.status().role()).isEqualTo(Role.ACTIVE);
     }
 
+    /** 接手时有一个口开不了：已经开的关回去，退回待命，Redis 记回对端，异常抛出去 */
+    @Test
+    void 接手时口没开全_退回待命() {
+        ActiveSlot redis = redisSays("a");
+        Handover fresh = handover(new Work(true), List.of(brokenOnHandover("broken", 0), new Gate("g", 10)), List.of(),
+                POLICY, redis, peerOf("a"), "b");
+        fresh.start();
+        EVENTS.clear();
+
+        assertThatThrownBy(() -> fresh.takeover(new Handover.Note(1, 0, Map.of()))).hasMessageContaining("Redis 连不上");
+
+        assertThat(EVENTS).containsExactly("roleChanged ACTIVE", "open g", "close broken", "close g");
+        assertThat(fresh.status().role()).isEqualTo(Role.STANDBY);
+        InOrder order = inOrder(redis);
+        order.verify(redis).set("b");
+        order.verify(redis).set("a");
+    }
+
     /** 合法转换只有启动 → 待命/在任、待命 → 在任、在任 → 收尾、收尾 → 在任；接手和恢复对在任的重复调用是无害的 */
     @Test
     void 非法转换被拒_重复接手和恢复无害() {
@@ -362,7 +395,7 @@ class HandoverTest {
     @Test
     void 让位前等清零_等不到重新开口() {
         HandoverPolicy waits = new HandoverPolicy("test", 1, Duration.ofSeconds(5), Duration.ZERO, Duration.ofMillis(200),
-                Duration.ZERO);
+                Duration.ZERO, true);
         Work work = new Work(true);
         Handover handover = started(work, List.of(new Gate("g", 0)), waits);
         work.n.set(1);
@@ -380,32 +413,21 @@ class HandoverTest {
     @Test
     void 重新开口时一个口开失败_别的照开() {
         HandoverPolicy waits = new HandoverPolicy("test", 1, Duration.ofSeconds(5), Duration.ZERO, Duration.ofMillis(100),
-                Duration.ZERO);
-        Intake broken = new Intake() {
-            @Override
-            public void open(Start how) {
-                if (how == Start.HANDOVER) {
-                    throw new IllegalStateException("Redis 连不上");
-                }
-            }
-
-            @Override
-            public void close() {
-            }
-        };
+                Duration.ZERO, true);
         Work work = new Work(true);
-        Handover handover = started(work, List.of(new Gate("a", 0), new Gate("b", 10), broken), waits);
+        Handover handover = started(work, List.of(new Gate("a", 0), new Gate("b", 10), brokenOnHandover("broken", 20)), waits);
         work.n.set(1);
 
         assertThatThrownBy(handover::yieldRole).isInstanceOf(IllegalStateException.class).hasMessageContaining("work=1");
-        assertThat(EVENTS).containsExactly("close a", "close b", "open b", "open a");
+        assertThat(EVENTS).containsExactly("close a", "close b", "close broken", "open b", "open a");
     }
 
-    /** 恢复：收尾回到在任，Redis 记回自己，重新开口 */
+    /** 恢复：收尾回到在任，Redis 记回自己，重新开口；有一个口开不了，别的口照样开 */
     @Test
     void 恢复在任() {
         ActiveSlot redis = redisSays("a");
-        Handover handover = handover(new Work(true), List.of(new Gate("g", 0)), List.of(), POLICY, redis, peerOf("b"), "a");
+        Handover handover = handover(new Work(true), List.of(new Gate("g", 0), brokenOnHandover("broken", 10)), List.of(),
+                POLICY, redis, peerOf("b"), "a");
         handover.start();
         handover.yieldRole();
         EVENTS.clear();
@@ -417,11 +439,22 @@ class HandoverTest {
         verify(redis).set("a");
     }
 
-    /** 让位后的保险：到点 Redis 里还不是对端，就自己恢复在任；是对端了就不动 */
+    /** 让位后不能恢复的服务（feed）：收尾中调恢复被拒，还是收尾 */
+    @Test
+    void 让位后不能恢复的服务_恢复被拒() {
+        HandoverPolicy oneWay = new HandoverPolicy("test", 1, Duration.ZERO, Duration.ZERO, Duration.ZERO, Duration.ZERO, false);
+        Handover handover = started(new Work(true), List.of(), oneWay);
+        handover.yieldRole();
+
+        assertThatThrownBy(handover::resume).isInstanceOf(IllegalStateException.class).hasMessageContaining("不能恢复");
+        assertThat(handover.status().role()).isEqualTo(Role.DRAINING);
+    }
+
+    /** 让位后的保险：到点 Redis 里还不是对端，就自己恢复在任；是对端了就不动；到点读 Redis 出错，隔一会儿再来 */
     @Test
     void 让位后的保险() throws Exception {
         HandoverPolicy insured = new HandoverPolicy("test", 1, Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ZERO,
-                Duration.ofMillis(200));
+                Duration.ofMillis(200), true);
         Handover nobodyTookOver = handover(new Work(true), List.of(new Gate("g", 0)), List.of(), insured,
                 redisSays("a"), peerOf("b"), "a");
         nobodyTookOver.start();
@@ -431,11 +464,18 @@ class HandoverTest {
         peerTookOver.start();
         peerTookOver.yieldRole();
         when(redis.current()).thenReturn("b");
+        ActiveSlot flaky = redisSays("a");
+        Handover redisDownOnce = handover(new Work(true), List.of(), List.of(), insured, flaky, peerOf("b"), "a");
+        redisDownOnce.insuranceRetryMs = 100;
+        redisDownOnce.start();
+        redisDownOnce.yieldRole();
+        when(flaky.current()).thenThrow(new IllegalArgumentException("Redis 连不上")).thenReturn("a");
 
         Thread.sleep(600);
 
         assertThat(nobodyTookOver.status().role()).isEqualTo(Role.ACTIVE);
         assertThat(peerTookOver.status().role()).isEqualTo(Role.DRAINING);
+        assertThat(redisDownOnce.status().role()).isEqualTo(Role.ACTIVE);
     }
 
     /** 接手后崩溃被拉起：Redis 记的是自己，对端还在收尾，就把对端 /status 里导出的收一遍 */

@@ -301,15 +301,22 @@ class PresetExecutorTest {
         assertThat(busyAtIdle.join()).isFalse();
     }
 
-    /** 新实例上被旧实例持有的 trader：预案转给旧实例，用它回的"要不要叫醒"，本地不做 */
+    /** 新实例上被旧实例持有的 trader：预案转给旧实例，用它回的"要不要叫醒"，本地不做；旧实例记在库里的结果读回到这条条件上 */
     @Test
     void heldByOldIsForwarded() {
         desks.markHeldByOld(List.of(7L));
         when(peer.preset(7L, 31L, new BigDecimal("1899"), AT)).thenReturn(new TraderPeer.PresetReply(true, false));
+        AiTraderWatch doneByOld = watch(CANCEL);
+        doneByOld.setActionOk(true);
+        doneByOld.setActionResult("BTCUSDT OPEN_LONG 挂单 600 已撤");
+        when(watchStore.byId(31L)).thenReturn(doneByOld);
+        AiTraderWatch w = watch(CANCEL);
 
-        assertThat(executor.submit(watch(CANCEL), new BigDecimal("1899"), AT).join()).isFalse();
+        assertThat(executor.submit(w, new BigDecimal("1899"), AT).join()).isFalse();
 
         verify(sim, never()).cancelOrder(anyLong(), anyLong());
+        assertThat(w.getActionOk()).isTrue();
+        assertThat(w.getActionResult()).isEqualTo("BTCUSDT OPEN_LONG 挂单 600 已撤");
     }
 
     /** 旧实例回"已不持有"就本地做；调不通当结果未知，叫醒 */
