@@ -154,8 +154,21 @@ class NewsEventCollectorTest {
     }
 
     @Test
-    void 功能位未配置时中文照存只是不译() {
-        when(runtimeManager.current()).thenThrow(new IllegalStateException("AI未配置"));
+    void 翻译模型取不到时中文照存只是不译() {
+        when(runtimeManager.current()).thenThrow(new RuntimeException("数据库连不上"));
+        when(newsCache.getFlashes()).thenReturn(List.of(flash(1, "新闻")));
+        when(mapper.selectExistingSourceIds(anyList())).thenReturn(List.of());
+        when(mapper.selectUntranslated(anyInt())).thenReturn(List.of(pending(1)));
+
+        collector().collect();
+
+        verify(mapper).insertIgnore(eq(1L), anyString(), anyString(), anyString(), anyLong());
+        verify(translator, never()).translate(any(), anyList());
+    }
+
+    @Test
+    void 快讯翻译没选LLM时中文照存只是不译() {
+        when(runtimeManager.current()).thenReturn(new AiAgentRuntime(List.of()));
         when(newsCache.getFlashes()).thenReturn(List.of(flash(1, "新闻")));
         when(mapper.selectExistingSourceIds(anyList())).thenReturn(List.of());
         when(mapper.selectUntranslated(anyInt())).thenReturn(List.of(pending(1)));

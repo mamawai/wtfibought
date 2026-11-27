@@ -46,9 +46,8 @@ agent:
     protocolUnsupported: The protocol must be openai, responses, anthropic or gemini
     configNotFound: No such config
     configInUse: This LLM config is referenced by a feature slot and cannot be deleted
-    savedButRefreshFailed: Saved, but the AI runtime failed to reload (see the server log) - it is still running the previous model
-    deletedButRefreshFailed: Deleted, but the AI runtime failed to reload (see the server log) - it is still running the previous model
-    assignedButRefreshFailed: Assignment saved, but the AI runtime failed to reload (see the server log) - it is still running the previous model
+    savedButTranslatorBroken: Saved, but the news translation model could not be built (see the server log) - until it is fixed, news is stored in Chinese only
+    assignedButTranslatorBroken: Assignment saved, but the news translation model could not be built (see the server log) - until it is fixed, news is stored in Chinese only
     paramsIncomplete: "Incomplete parameters: {{what}}"
     llmConfigNotFound: "No such LLM config (id={{id}})"
     llmConfigNoModel: "The LLM config '{{name}}' has no model name - fill it in under Configure LLM first"

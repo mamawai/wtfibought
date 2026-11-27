@@ -267,10 +267,11 @@ public class TraderWakeupRunner {
                               List<WakeTrigger> taken, long deadline, AiTraderDecision decision, AgentLang lang,
                               TraderLiveHub.Run run) throws Exception {
         WakeFlows.Brief brief = prepared.brief();
+        // 模型和本轮是否联网按同一次查到的端点定；联网决定工具列表和走法
+        TraderModelFactory.RoundModel picked = modelFactory.roundModel(trader);
         // 用量统计装饰器 每轮新建
-        UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
-        // 本轮是否联网，决定工具列表和走法
-        boolean webSearch = modelFactory.webSearchEnabled(trader);
+        UsageTrackingChatModel model = new UsageTrackingChatModel(picked.model());
+        boolean webSearch = picked.webSearch();
         // system 提示词：平台模板 + 经验账本 + 自定义指令 + 固定收尾格式 + 输出语言
         String prompt = promptAssembler.assemble(trader, lang);
         // 这一轮怎么走在这里定一次，开场白、后面几段、能不能开仓、正文取哪几段都问它

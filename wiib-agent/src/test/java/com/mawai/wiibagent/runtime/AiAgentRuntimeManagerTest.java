@@ -7,22 +7,24 @@ import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ChatModel;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 快讯翻译主备位：主位必配、缺了自动种子；备用可空、不种子，配了就排在主位后面。
+ * 快讯翻译主备位：每次取都现查库，配置没变复用模型、变了重建；「快讯翻译」没选 LLM 就不翻译；
+ * 备用可空，选了就排在主位后面。
  */
 class AiAgentRuntimeManagerTest {
 
@@ -54,43 +56,70 @@ class AiAgentRuntimeManagerTest {
                 .thenAnswer(inv -> mock(ChatModel.class));
     }
 
-    @Test
-    void 只配主位时翻译串只有主位() {
-        builderReturnsMocks();
-        when(configMapper.selectAllConfigs()).thenReturn(List.of(config(1, "grok")));
-        when(assignmentMapper.selectAll()).thenReturn(List.of(assign(AiFunctions.NEWS_TRANSLATION, 1)));
+    /** 「快讯翻译」选了 configId 那条，库里有这些配置 */
+    private void primaryIs(long configId, AiRuntimeConfig... configs) {
+        when(assignmentMapper.selectByFunction(AiFunctions.NEWS_TRANSLATION))
+                .thenReturn(assign(AiFunctions.NEWS_TRANSLATION, configId));
+        for (AiRuntimeConfig c : configs) {
+            when(configMapper.selectById(c.getId())).thenReturn(c);
+        }
+    }
 
-        assertThat(manager.refresh()).isTrue();
+    @Test
+    void 只选主位时翻译串只有主位() {
+        builderReturnsMocks();
+        primaryIs(1, config(1, "grok"));
 
         assertThat(manager.current().newsTranslation())
                 .extracting(AiAgentRuntime.NamedModel::name).containsExactly("grok");
     }
 
     @Test
-    void 配了备用排在主位后面() {
+    void 选了备用排在主位后面() {
         builderReturnsMocks();
-        when(configMapper.selectAllConfigs()).thenReturn(List.of(config(1, "grok"), config(2, "deepseek")));
-        when(assignmentMapper.selectAll()).thenReturn(List.of(
-                assign(AiFunctions.NEWS_TRANSLATION_FALLBACK, 2), assign(AiFunctions.NEWS_TRANSLATION, 1)));
-
-        assertThat(manager.refresh()).isTrue();
+        primaryIs(1, config(1, "grok"), config(2, "deepseek"));
+        when(assignmentMapper.selectByFunction(AiFunctions.NEWS_TRANSLATION_FALLBACK))
+                .thenReturn(assign(AiFunctions.NEWS_TRANSLATION_FALLBACK, 2));
 
         assertThat(manager.current().newsTranslation())
                 .extracting(AiAgentRuntime.NamedModel::name).containsExactly("grok", "deepseek");
     }
 
     @Test
-    void 种子只补主位不补备用() {
+    void 配置没变复用同一个模型_改了就重建() {
         builderReturnsMocks();
-        when(configMapper.selectAllConfigs()).thenReturn(List.of(config(1, "grok")));
-        // 第一次是种子前查，第二次是建模时查
-        when(assignmentMapper.selectAll()).thenReturn(List.of(), List.of(assign(AiFunctions.NEWS_TRANSLATION, 1)));
+        primaryIs(1, config(1, "grok"));
+        ChatModel first = manager.current().newsTranslation().getFirst().chatModel();
+        assertThat(manager.current().newsTranslation().getFirst().chatModel()).isSameAs(first);
 
-        manager.refresh();
+        AiRuntimeConfig newKey = config(1, "grok");
+        newKey.setApiKey("sk-new");
+        when(configMapper.selectById(1L)).thenReturn(newKey);
 
-        ArgumentCaptor<AiModelAssignment> seeded = ArgumentCaptor.forClass(AiModelAssignment.class);
-        verify(assignmentMapper, times(1)).insert(seeded.capture());
-        assertThat(seeded.getValue().getFunctionName()).isEqualTo(AiFunctions.NEWS_TRANSLATION);
+        assertThat(manager.current().newsTranslation().getFirst().chatModel()).isNotSameAs(first);
+        verify(modelBuilder, times(2)).build(any(), anyString(), anyString(), anyString(), any(), anyBoolean());
+    }
+
+    @Test
+    void 快讯翻译没选LLM时不翻译_备用选了也不用_管理页校验算通过() {
+        when(assignmentMapper.selectByFunction(AiFunctions.NEWS_TRANSLATION_FALLBACK))
+                .thenReturn(assign(AiFunctions.NEWS_TRANSLATION_FALLBACK, 2));
+
+        assertThat(manager.current().newsTranslation()).isEmpty();
+        assertThat(manager.check()).isTrue();
+        verify(modelBuilder, never()).build(any(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void 备用位选的配置缺模型名时取不到_管理页校验报失败() {
+        builderReturnsMocks();
+        primaryIs(1, config(1, "grok"), config(2, " "));
+        when(assignmentMapper.selectByFunction(AiFunctions.NEWS_TRANSLATION_FALLBACK))
+                .thenReturn(assign(AiFunctions.NEWS_TRANSLATION_FALLBACK, 2));
+
+        assertThatThrownBy(manager::current).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("缺模型名");
+        assertThat(manager.check()).isFalse();
     }
 
     @Test
@@ -106,21 +135,5 @@ class AiAgentRuntimeManagerTest {
     void 只有备用位可空() {
         assertThat(AiAgentRuntimeManager.isOptionalFunction(AiFunctions.NEWS_TRANSLATION_FALLBACK)).isTrue();
         assertThat(AiAgentRuntimeManager.isOptionalFunction(AiFunctions.NEWS_TRANSLATION)).isFalse();
-    }
-
-    @Test
-    void 备用位配的配置缺模型名时刷新失败沿用旧运行时() {
-        builderReturnsMocks();
-        when(configMapper.selectAllConfigs()).thenReturn(List.of(config(1, "grok")));
-        when(assignmentMapper.selectAll()).thenReturn(List.of(assign(AiFunctions.NEWS_TRANSLATION, 1)));
-        manager.refresh();
-
-        when(configMapper.selectAllConfigs()).thenReturn(List.of(config(1, "grok"), config(2, " ")));
-        when(assignmentMapper.selectAll()).thenReturn(List.of(
-                assign(AiFunctions.NEWS_TRANSLATION, 1), assign(AiFunctions.NEWS_TRANSLATION_FALLBACK, 2)));
-
-        assertThat(manager.refresh()).isFalse();
-        assertThat(manager.current().newsTranslation())
-                .extracting(AiAgentRuntime.NamedModel::name).containsExactly("grok");
     }
 }

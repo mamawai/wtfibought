@@ -123,9 +123,9 @@ public class AiAgentAdminController {
             configMapper.updateById(config);
         }
 
-        // 管理端配置修改频率很低，直接全量刷新最稳，确保主图和fallback图缓存都失效
-        if (!aiAgentRuntimeManager.refresh()) {
-            return Result.fail(messages.get("agent.admin.savedButRefreshFailed"));
+        // 快讯翻译每次现查库，这里只校验一遍组装得起来
+        if (!aiAgentRuntimeManager.check()) {
+            return Result.fail(messages.get("agent.admin.savedButTranslatorBroken"));
         }
         return Result.ok(KeyView.of(config));
     }
@@ -184,9 +184,6 @@ public class AiAgentAdminController {
             return Result.fail(messages.get("agent.admin.configInUse"));
         }
         configMapper.deleteById(id);
-        if (!aiAgentRuntimeManager.refresh()) {
-            return Result.fail(messages.get("agent.admin.deletedButRefreshFailed"));
-        }
         return Result.ok(null);
     }
 
@@ -201,7 +198,7 @@ public class AiAgentAdminController {
     }
 
     @PostMapping("/assignments")
-    @Operation(summary = "更换功能位LLM（只改指针，模型名随所选配置）并刷新运行时")
+    @Operation(summary = "更换功能位LLM（只改指针，模型名随所选配置）")
     public Result<Void> saveAssignments(@RequestBody List<AssignmentRequest> assignments) {
         for (AssignmentRequest req : assignments) {
             if (req.getFunctionName() == null) {
@@ -243,8 +240,8 @@ public class AiAgentAdminController {
                 assignmentMapper.insert(a);
             }
         }
-        if (!aiAgentRuntimeManager.refresh()) {
-            return Result.fail(messages.get("agent.admin.assignedButRefreshFailed"));
+        if (!aiAgentRuntimeManager.check()) {
+            return Result.fail(messages.get("agent.admin.assignedButTranslatorBroken"));
         }
         return Result.ok(null);
     }

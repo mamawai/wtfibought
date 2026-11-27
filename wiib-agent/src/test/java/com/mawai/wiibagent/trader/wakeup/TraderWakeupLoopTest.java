@@ -341,9 +341,13 @@ class TraderWakeupLoopTest {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         AtomicInteger calls = new AtomicInteger();
         when(model.stream(any(Prompt.class))).thenAnswer(inv -> frameOf(reply.apply(calls.incrementAndGet())));
-        when(modelFactory.modelFor(any())).thenReturn(model);
-        when(modelFactory.webSearchEnabled(any())).thenReturn(true);
+        when(modelFactory.roundModel(any())).thenReturn(new TraderModelFactory.RoundModel(model, true));
         return model;
+    }
+
+    /** 这一轮拿到的模型，不联网 */
+    private void modelIs(ChatModel model) {
+        when(modelFactory.roundModel(any())).thenReturn(new TraderModelFactory.RoundModel(model, false));
     }
 
     @ParameterizedTest
@@ -611,7 +615,7 @@ class TraderWakeupLoopTest {
                  "stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                  "invalidationCondition":"1h收盘跌回前高98000下方"}""");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         FuturesOrderResponse resp = filledReceipt();
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
         // 真库 insert 回填自增 id，run_end 帧要带它
@@ -701,7 +705,7 @@ class TraderWakeupLoopTest {
                         """), new AssistantMessage.ToolCall("c2", "function", "get_account", "{}"))).build();
         when(model.stream(any(Prompt.class))).thenReturn(frameOf(calls),
                 frameOf(new AssistantMessage("[本轮结论]\n[BTCUSDT]\n参考账本 #3，反手做空。")));
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -733,7 +737,7 @@ class TraderWakeupLoopTest {
         when(model.stream(any(Prompt.class))).thenReturn(
                 frameOf(openCall),
                 frameOf(new AssistantMessage("放量突破。[本轮结论]\n判断：账本 #3 的入场条件成立，#7 的限制没触发，#3 再提一次\n动作：开多\n等待：无")));
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
         wake(trader(), 1785171600000L);
@@ -756,7 +760,7 @@ class TraderWakeupLoopTest {
         when(model.stream(any(Prompt.class))).thenReturn(
                 frameOf(check),
                 frameOf(new AssistantMessage("[本轮结论]\n判断：账本 #12345678901234567890 说的\n动作：HOLD\n等待：无")));
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -775,7 +779,7 @@ class TraderWakeupLoopTest {
         when(model.stream(any(Prompt.class))).thenReturn(
                 frameOf(check),
                 frameOf(new AssistantMessage("先看 #9 不相关。[本轮结论]\n判断：账本 #2 说回踩没确认不追\n动作：HOLD\n等待：回踩 99000")));
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -806,7 +810,7 @@ class TraderWakeupLoopTest {
         stale.setPositionId(42L);
         when(planMapper.selectList(any())).thenReturn(List.of(stale));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader twoCoins = trader();
         twoCoins.setSymbols("BTCUSDT,ETHUSDT");
 
@@ -845,7 +849,7 @@ class TraderWakeupLoopTest {
     void callCapAnnotatedOnDecision() {
         stubHealthyAccount();
         ChatModel model = modelLoopingToolCalls(i -> "再查一次(" + i + ")");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -870,7 +874,7 @@ class TraderWakeupLoopTest {
         stubHealthyAccount();
         // 首轮留下正文，其后全是空正文的纯 tool_call
         ChatModel model = modelLoopingToolCalls(i -> i == 1 ? "账户没问题，倾向继续持有等突破确认。" : "");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -885,7 +889,7 @@ class TraderWakeupLoopTest {
     void callCapWithoutAnyTextGivesExplanationNotBlank() {
         stubHealthyAccount();
         ChatModel model = modelLoopingToolCalls(i -> "");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -901,7 +905,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("2000", "0")));
         ChatModel model = modelCallingThenSummary("close_position",
                 "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -916,7 +920,7 @@ class TraderWakeupLoopTest {
                 {"symbol":"BTCUSDT","side":"LONG","entries":[{"quantity":0.01}],"leverage":50,
                  "stopLossPrice":95000,"takeProfits":[],
                  "playType":"BREAKOUT","signalsUsed":"x","invalidationCondition":"跌回箱体"}""");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -931,7 +935,7 @@ class TraderWakeupLoopTest {
     @Test
     void keyInvalidPausesOnFirstFailure() {
         stubHealthyAccount();
-        when(modelFactory.modelFor(any())).thenThrow(
+        when(modelFactory.roundModel(any())).thenThrow(
                 new SseChatModel.UpstreamRejected(401, "Responses API HTTP 401: invalid key"));
 
         wake(trader(), 1785171600000L);
@@ -947,7 +951,7 @@ class TraderWakeupLoopTest {
     @Test
     void modelFailureRecordsErrorAndPausesAfterFifthConsecutive() {
         stubHealthyAccount();
-        when(modelFactory.modelFor(any())).thenThrow(new IllegalStateException("上游401"));
+        when(modelFactory.roundModel(any())).thenThrow(new IllegalStateException("上游401"));
         AiTrader t = trader();
         t.setConsecutiveFailures(4); // 本次是第5败
 
@@ -969,7 +973,7 @@ class TraderWakeupLoopTest {
 
         wake(trader(), 1785171600000L);
 
-        verify(modelFactory, never()).modelFor(any());
+        verify(modelFactory, never()).roundModel(any());
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getReasoning()).contains("爆仓终局");
@@ -997,7 +1001,7 @@ class TraderWakeupLoopTest {
                  "stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高",
                  "invalidationCondition":"1h收盘跌回98000下方"}""");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
 
         wake(trader(), 1785171600000L);
@@ -1020,7 +1024,7 @@ class TraderWakeupLoopTest {
                 .thenReturn(Map.of("balance", "10000", "frozenBalance", "0", "equity", "10000"))
                 .thenThrow(new RuntimeException("sim 502"));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1039,7 +1043,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(
                 Map.of("balance", "10000", "frozenBalance", "0", "equity", "10000"),
                 Map.of("balance", "9800", "frozenBalance", "0", "equity", "9800"));
-        when(modelFactory.modelFor(any())).thenThrow(new IllegalStateException("上游超时"));
+        when(modelFactory.roundModel(any())).thenThrow(new IllegalStateException("上游超时"));
 
         wake(trader(), 1785171600000L);
 
@@ -1058,7 +1062,7 @@ class TraderWakeupLoopTest {
     void decisionInsertedOnceWhenPostInsertDbFails() {
         stubHealthyAccount();
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         // 照搬 MP + 真库的行为：insert 成功回填自增 id，带着 id 再 insert 就是主键冲突
         when(decisionMapper.insert(any(AiTraderDecision.class))).thenAnswer(inv -> {
             AiTraderDecision d = inv.getArgument(0);
@@ -1086,7 +1090,7 @@ class TraderWakeupLoopTest {
                  "stopLossPrice":95000,"takeProfits":[{"price":110000,"percent":100}],
                  "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
                  "invalidationCondition":"1h收盘跌回前高98000下方"}""");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         when(simTradeClient.openPosition(eq(99L), any())).thenReturn(filledReceipt());
         when(planMapper.selectOne(any())).thenReturn(null);
 
@@ -1124,7 +1128,7 @@ class TraderWakeupLoopTest {
                 + "\"change\":\"66000→68000\",\"reason\":\"趋势加速看下一压力位\"}]");
         when(planMapper.selectList(any())).thenReturn(List.of(plan));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1166,7 +1170,7 @@ class TraderWakeupLoopTest {
         older.setActionsJson("[{\"tool\":\"klines\",\"args\":{}},{\"tool\":\"klines\",\"args\":{}}]");
         when(decisionMapper.selectList(any())).thenReturn(List.of(latest, older));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader fourCoins = trader();
         fourCoins.setSymbols("BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT");
 
@@ -1217,7 +1221,7 @@ class TraderWakeupLoopTest {
         when(decisionMapper.selectList(any())).thenAnswer(call -> bookOnly(call.getArgument(0))
                 ? List.of(book) : List.of(single, book));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader t = trader();
         t.setSymbols("BTCUSDT,SOLUSDT");
 
@@ -1250,7 +1254,7 @@ class TraderWakeupLoopTest {
         when(decisionMapper.selectList(any())).thenAnswer(call -> bookOnly(call.getArgument(0))
                 ? List.of() : List.of(single));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader t = trader();
         t.setSymbols("BTCUSDT,SOLUSDT");
 
@@ -1299,7 +1303,7 @@ class TraderWakeupLoopTest {
         closed.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(closed));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1357,7 +1361,7 @@ class TraderWakeupLoopTest {
         closed.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(older, closed));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1394,7 +1398,7 @@ class TraderWakeupLoopTest {
         closed.setClosedBy("STOP_LOSS");
         when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(closed));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1420,7 +1424,7 @@ class TraderWakeupLoopTest {
         prev.setReasoning("[本轮结论]\n[BTCUSDT]\n动作：HOLD\n等待：无");
         when(decisionMapper.selectList(any())).thenReturn(List.of(prev));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1446,7 +1450,7 @@ class TraderWakeupLoopTest {
         stale.setOpenedWakeTime(1785168000000L);
         when(planMapper.selectList(any())).thenReturn(List.of(stale));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1481,7 +1485,7 @@ class TraderWakeupLoopTest {
 
         wake(t, 1785171600000L);
 
-        verify(modelFactory, never()).modelFor(any());
+        verify(modelFactory, never()).roundModel(any());
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_SKIPPED);
@@ -1565,7 +1569,7 @@ class TraderWakeupLoopTest {
         when(model.stream(any(Prompt.class))).thenReturn(
                 frameOf(klinesCall),
                 frameOf(new AssistantMessage("看完K线，本轮 HOLD。")));
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -1582,7 +1586,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("1000", "-5")));
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9995", "frozenBalance", "0", "equity", "9990"));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         long triggeredAt = 1785171600000L + 600_000L; // 1h 边界后 10 分钟哨兵触发
         runner.nowMs = () -> triggeredAt;
 
@@ -1609,7 +1613,7 @@ class TraderWakeupLoopTest {
     void equityDropWakeIsAWholeBoardRoundWithoutTheOwnerNote() {
         stubHealthyAccount();
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         long at = 1785171600000L + 600_000L;
         runner.nowMs = () -> at;
         AiTrader t = trader();
@@ -1640,7 +1644,7 @@ class TraderWakeupLoopTest {
     @Test
     void failedEquityDropRoundIsReportedByTheNextWholeBoardRound() {
         stubHealthyAccount();
-        when(modelFactory.modelFor(any())).thenThrow(new IllegalStateException("上游 502"));
+        when(modelFactory.roundModel(any())).thenThrow(new IllegalStateException("上游 502"));
         long at = 1785171600000L + 600_000L;
         runner.nowMs = () -> at;
 
@@ -1650,7 +1654,7 @@ class TraderWakeupLoopTest {
         assertThat(stored.getUnreportedEvents()).contains("权益回落警报在").contains("没跑成");
 
         ChatModel ok = modelCheckingThenSummary();
-        org.mockito.Mockito.doReturn(ok).when(modelFactory).modelFor(any());
+        org.mockito.Mockito.doReturn(new TraderModelFactory.RoundModel(ok, false)).when(modelFactory).roundModel(any());
         runner.nowMs = () -> 1785175200000L + 1_000L;
         wake(trader(), 1785175200000L);
 
@@ -1668,7 +1672,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9987", "frozenBalance", "0", "equity", "9987"));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         long at = 1785171600000L + 600_000L; // 1h 边界后 10 分钟止损被打掉
         runner.nowMs = () -> at;
 
@@ -1699,7 +1703,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.getAllPositions(99L)).thenReturn(List.of());
         when(simTradeClient.getBalanceDetail(99L)).thenReturn(Map.of("balance", "9987", "frozenBalance", "0", "equity", "9987"));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         long at = 1785171600000L + 600_000L;
         runner.nowMs = () -> at;
         AiTraderWatch w = new AiTraderWatch();
@@ -1732,7 +1736,7 @@ class TraderWakeupLoopTest {
     void routineWakeReportsCloseHitsAtThisBoundary() {
         stubHealthyAccount();
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         when(watchMapper.selectList(any())).thenReturn(List.of(closeHit()));
 
         wake(trader(), 1785171600000L);
@@ -1851,7 +1855,7 @@ class TraderWakeupLoopTest {
     void watchHitAlreadyInOpeningIsNotInterjectedAgain() {
         stubHealthyAccount();
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         when(watchMapper.selectList(any())).thenReturn(List.of(closeHit()));
         WakeRound round = round(trader(), null);
         round.offer(new WatchTrigger(closeHit(), new BigDecimal("63120"), 1785171600000L));
@@ -1892,7 +1896,7 @@ class TraderWakeupLoopTest {
     void failedRoundLeavesWatchHitsUnreported() {
         stubHealthyAccount();
         ChatModel failing = modelFailing();
-        when(modelFactory.modelFor(any())).thenReturn(failing);
+        modelIs(failing);
         when(watchMapper.selectList(any())).thenReturn(List.of(closeHit()));
 
         wake(trader(), 1785171600000L);
@@ -1912,7 +1916,8 @@ class TraderWakeupLoopTest {
                 .when(planStore).reconcile(anyLong(), anyInt(), any(), any(), any(), any(), anyLong(), any());
         ChatModel failing = modelFailing();
         ChatModel ok = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(failing, ok);
+        when(modelFactory.roundModel(any())).thenReturn(new TraderModelFactory.RoundModel(failing, false),
+                new TraderModelFactory.RoundModel(ok, false));
         String line = prompts.get(AgentLang.ZH, "trader.wake.eventCancelled", Map.of("symbol", "BTCUSDT", "side", "LONG"));
 
         wake(trader(), 1785171600000L);
@@ -1977,7 +1982,7 @@ class TraderWakeupLoopTest {
                 frameOf(AssistantMessage.builder().content("").toolCalls(List.of(new AssistantMessage.ToolCall("c2", "function",
                         "close_position", "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}"))).build()),
                 frameOf(new AssistantMessage("平掉一部分，本轮结束。")));
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -2006,7 +2011,7 @@ class TraderWakeupLoopTest {
         });
         ChatModel model = modelCallingThenSummary("close_position",
                 "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader trader = trader();
 
         runner.doWake(trader, round(trader, null),1785171600000L, 2, TraderWakeupRunner.baseDecision(trader, 1785171600000L),
@@ -2039,7 +2044,7 @@ class TraderWakeupLoopTest {
         });
         ChatModel model = modelCallingThenSummary("close_position",
                 "{\"positionId\":349,\"quantity\":0.1,\"reason\":\"到目标位\"}");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader trader = trader();
         session.stopWait = Duration.ofMillis(200);
 
@@ -2080,7 +2085,7 @@ class TraderWakeupLoopTest {
         when(simTradeClient.closePosition(eq(99L), any())).thenReturn(filledReceipt());
         CountDownLatch secondCall = new CountDownLatch(1);
         ChatModel model = modelClosingThenHanging(secondCall);
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader trader = trader();
         trader.setConsecutiveFailures(4); // 要是记了连败，这次就是第 5 败、当场暂停
 
@@ -2119,7 +2124,7 @@ class TraderWakeupLoopTest {
             Thread.sleep(300);
             return frameOf(new AssistantMessage("持仓符合计划，本轮 HOLD。"));
         });
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         AiTrader trader = trader();
         org.springframework.beans.factory.support.DefaultListableBeanFactory beans =
                 new org.springframework.beans.factory.support.DefaultListableBeanFactory();
@@ -2159,7 +2164,7 @@ class TraderWakeupLoopTest {
     void recentDecisionsQueryExcludesReviewRows() {
         stubHealthyAccount();
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -2219,7 +2224,7 @@ class TraderWakeupLoopTest {
                 frameOf(check),
                 frameOf(new AssistantMessage("第一段：失效条件没触发，持仓维持。")),
                 frameOf(new AssistantMessage("第二段看完。[本轮结论]\n[BTCUSDT]\n判断：持有\n动作：HOLD\n等待：1h 收盘站上 102000")));
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         when(decisionMapper.insert(any(AiTraderDecision.class))).thenAnswer(inv -> {
             inv.<AiTraderDecision>getArgument(0).setId(1234L);
             return 1;
@@ -2262,7 +2267,7 @@ class TraderWakeupLoopTest {
     void quietWakeStaysSingleStage() {
         stubHealthyAccount();
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
         Frames owner = new Frames();
         hub.subscribeTrader(7L, owner);
 
@@ -2305,7 +2310,7 @@ class TraderWakeupLoopTest {
         prev.setReasoning("[本轮结论]\n[BTCUSDT]\n判断：震荡\n动作：HOLD\n等待：回踩 99000 做多");
         when(decisionMapper.selectList(any())).thenReturn(List.of(prev));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -2330,7 +2335,7 @@ class TraderWakeupLoopTest {
         prev.setReasoning("[本轮结论]\n[BTCUSDT]\n动作：HOLD\n等待：回踩 99000 做多");
         when(decisionMapper.selectList(any())).thenReturn(List.of(prev));
         ChatModel model = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 
@@ -2341,7 +2346,7 @@ class TraderWakeupLoopTest {
 
         prev.setReasoning("[本轮结论]\n[BTCUSDT]\n动作：HOLD\n等待：无。");
         ChatModel quiet = modelCheckingThenSummary();
-        when(modelFactory.modelFor(any())).thenReturn(quiet);
+        modelIs(quiet);
         wake(trader(), 1785171600000L);
         verify(quiet, times(2)).stream(any(Prompt.class));
     }
@@ -2360,7 +2365,7 @@ class TraderWakeupLoopTest {
                             .toolCalls(List.of(new AssistantMessage.ToolCall("c" + i, "function", "get_account", "{}"))).build())
                     : frameOf(new AssistantMessage("不查了。[本轮结论]\n[BTCUSDT]\n判断：持有\n动作：HOLD\n等待：无"));
         });
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        modelIs(model);
 
         wake(trader(), 1785171600000L);
 

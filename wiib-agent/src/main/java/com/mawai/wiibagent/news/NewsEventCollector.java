@@ -132,8 +132,12 @@ public class NewsEventCollector {
         AiAgentRuntime runtime;
         try {
             runtime = runtimeManager.current();
-        } catch (IllegalStateException e) {
-            log.warn("[NewsCollect] news-translation 功能位未配置，{} 条先存中文待译", pending.size());
+        } catch (Exception e) {
+            log.warn("[NewsCollect] 翻译模型取不到（{}），{} 条先存中文待译", e.getMessage(), pending.size());
+            return;
+        }
+        if (runtime.newsTranslation().isEmpty()) {
+            log.info("[NewsCollect] 快讯翻译没选 LLM，{} 条先存中文", pending.size());
             return;
         }
         Map<Long, NewsTranslator.Translated> translated = translator.translate(runtime.newsTranslation(), pending);
