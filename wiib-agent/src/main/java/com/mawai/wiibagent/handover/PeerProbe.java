@@ -8,12 +8,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 探活：上任后每 10 秒探一次对端的 /status。对端不在收尾了、或者连续 3 次没探到（旧实例没了），
- * 就把旧实例持有的 trader 和替它占着的复盘位全部当作放手，停止探活
+ * 探活：上任后每 10 秒探一次对端的 /status。对端还在收尾，就按它此刻导出的持有名单核对一遍，它已经不持有的当作放手；
+ * 对端不在收尾了、或者连续 3 次没探到（旧实例没了），就把旧实例持有的 trader 和替它占着的复盘位全部当作放手，停止探活
  */
 @Slf4j
 @Component
@@ -48,11 +49,9 @@ public class PeerProbe {
     private void loop() {
         int fails = 0;
         while (fails < MAX_FAILS) {
+            JsonNode status = null;
             try {
-                if (!"DRAINING".equals(client.status().path("role").asString(""))) {
-                    break;
-                }
-                peerDraining = true;
+                status = client.status();
                 fails = 0;
             } catch (Exception e) {
                 fails++;
@@ -62,6 +61,13 @@ public class PeerProbe {
                 } else {
                     log.debug("[PeerProbe] 第 {} 次没探到对端 msg={}", fails, e.toString());
                 }
+            }
+            if (status != null) {
+                if (!"DRAINING".equals(status.path("role").asString(""))) {
+                    break;
+                }
+                peerDraining = true;
+                releaseWhatPeerDropped(status.path("carried"));
             }
             try {
                 Thread.sleep(everyMs);
@@ -74,5 +80,15 @@ public class PeerProbe {
         log.info("[PeerProbe] 对端不在收尾了，旧实例持有的全部当作放手");
         scheduler.releaseAllHeldByOld();
         reviews.releaseAllHeldByOld();
+    }
+
+    /** 对端此刻已经不持有的，这边跟着放；出错只记日志，下一次探活再核对 */
+    private void releaseWhatPeerDropped(JsonNode carried) {
+        try {
+            scheduler.releaseNotHeldByOld(carried.path(scheduler.key()));
+            reviews.releaseNotHeldByOld(carried.path(reviews.key()));
+        } catch (Exception e) {
+            log.warn("[PeerProbe] 核对对端持有名单失败 msg={}", e.toString());
+        }
     }
 }

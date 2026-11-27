@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -157,6 +158,16 @@ public class ReviewScheduler implements Intake, InFlight, Carried {
     /** 新实例：旧实例没了（探活失败），替它占着的全部放掉 */
     public void releaseAllHeldByOld() {
         List.copyOf(heldForOld).forEach(this::releasedByOld);
+    }
+
+    /**
+     * 新实例：按旧实例此刻导出的这一格核对，替它占着、它已经不占了的放掉。
+     * 补的是放手通知在接手之前就到了（那时还没替它占，被忽略）或者丢了
+     */
+    public void releaseNotHeldByOld(JsonNode cell) {
+        Set<Long> stillHeld = new HashSet<>();
+        cell.path("held").forEach(n -> stillHeld.add(n.asLong()));
+        List.copyOf(heldForOld).stream().filter(id -> !stillHeld.contains(id)).forEach(this::releasedByOld);
     }
 
     /** 旧实例：关口时占着、还没放掉的复盘位数 */

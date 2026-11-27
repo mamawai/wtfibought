@@ -116,12 +116,24 @@ class MatchPriceRecoverTest {
 
     /** 交接上任：旧实例关口时刚把 last-tick 记成现在，空窗一两秒，不补漏 */
     @Test
-    void 开口空窗不到10秒不补漏() {
+    void 交接上任空窗不到10秒不补漏() {
         when(valueOps.get(LAST_TICK_KEY)).thenReturn(String.valueOf(System.currentTimeMillis() - 1_500L));
 
         consumer().open(Start.HANDOVER);
 
         verify(restClient, after(300).never()).markBars1m(any(), anyLong(), anyLong());
+    }
+
+    /** 冷启动（冷切、容器被快速拉起）：空窗再短也是没人盯着的一段，照样补 */
+    @Test
+    void 冷启动空窗不到10秒也补漏() {
+        long last = System.currentTimeMillis() - 8_000L;
+        when(props.getAllFuturesSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(valueOps.get(LAST_TICK_KEY)).thenReturn(String.valueOf(last));
+
+        consumer().open(Start.COLD);
+
+        verify(restClient, timeout(2000)).markBars1m(eq("BTCUSDT"), eq(last), longThat(to -> to >= last));
     }
 
     /** 关口时把 last-tick 记成现在，接手的实例据此算空窗 */

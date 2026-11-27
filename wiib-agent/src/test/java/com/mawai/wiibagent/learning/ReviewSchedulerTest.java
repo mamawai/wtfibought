@@ -283,6 +283,28 @@ class ReviewSchedulerTest {
         verify(reviewRunner, after(300).times(1)).review(any(), anyLong());
     }
 
+    /** 旧实例在交接单导出之后、新实例收下之前放掉了 7 号：按旧实例此刻导出的名单核对，7 号跟着放，还占着的 8 号照旧 */
+    @Test
+    void slotReleasedBeforeAcceptIsCaughtUpByPeerList() {
+        ReviewScheduler old = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        old.open(Start.COLD);
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        assertThat(old.tryOccupy(7L)).isTrue();
+        assertThat(old.tryOccupy(8L)).isTrue();
+        old.close();
+        var note = old.export();
+        old.release(7L);
+
+        neu.accept(note);
+        neu.open(Start.HANDOVER);
+        assertThat(neu.tryOccupy(7L)).isFalse();
+
+        neu.releaseNotHeldByOld(old.export());
+
+        assertThat(neu.tryOccupy(7L)).isTrue();
+        assertThat(neu.tryOccupy(8L)).isFalse();
+    }
+
     /** 旧实例没了：替它占着的复盘位全部放掉 */
     @Test
     void deadOldReleasesAllHeldReviewSlots() {

@@ -338,6 +338,24 @@ class TraderHandoverTest {
         hold.countDown();
     }
 
+    /** 旧实例在交接单导出之后、新实例收下之前就放手了：那条放手通知被忽略，按旧实例此刻导出的名单核对时补上 */
+    @Test
+    void releaseBeforeAcceptIsCaughtUpByPeerList() throws InterruptedException {
+        CountDownLatch hold = bookRoundOnOld(ArgumentCaptor.forClass(WakeRound.class));
+        old.scheduler.close();
+        var note = old.scheduler.export();
+        hold.countDown();
+        assertThat(nextReleasedByOld()).isEqualTo(7L);
+
+        neu.scheduler.accept(note);
+        neu.scheduler.open(Start.HANDOVER);
+        assertThat(neu.scheduler.tryOccupy(7L)).isFalse();
+
+        neu.scheduler.releaseNotHeldByOld(old.scheduler.export());
+
+        assertThat(neu.scheduler.tryOccupy(7L)).isTrue();
+    }
+
     /** A9：旧实例连不上，转过去的事停着；探活判它没了之后全部当放手，停着的分发 */
     @Test
     void deadOldReleasedByProbe() {

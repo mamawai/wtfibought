@@ -13,7 +13,7 @@ import org.springframework.web.servlet.function.ServerResponse;
 
 /**
  * 交接骨架的公共件，不是 {@code @Configuration}：服务在声明自己 {@link HandoverPolicy} 的配置类上
- * {@code @Import} 它才挂上，没 import 的服务（feed）不挂骨架
+ * {@code @Import} 它才挂上
  */
 public class HandoverConfig {
 

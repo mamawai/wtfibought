@@ -23,7 +23,9 @@ service_handover() {
   handoff_step 让位
   HANDOFF_NOTE=$note
   log "wiib-sim-$new 接手"
-  if ! handoff_post sim "$new" takeover 4 <<<"$note" >/dev/null; then
+  # 回包超时但新实例已经在任，算接手成功
+  if ! handoff_post sim "$new" takeover 4 <<<"$note" >/dev/null \
+    && [[ $(json_field role "$(handoff_status sim "$new" || true)") != ACTIVE ]]; then
     log "删掉 wiib-sim-$new"
     slot_stop sim "$new"
     unset 'PENDING[sim]'

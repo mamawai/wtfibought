@@ -21,8 +21,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -391,8 +393,18 @@ public class TraderScheduler implements Intake, InFlight, Carried {
         desks.heldByOld().forEach(this::releasedByOld);
     }
 
+    /**
+     * 新实例：按旧实例此刻导出的这一格核对，标着它持有、它已经不持有的当作放手。
+     * 补的是放手通知在接手之前就到了（那时还没标它持有，被忽略）或者丢了
+     */
+    public void releaseNotHeldByOld(JsonNode cell) {
+        Set<Long> stillHeld = new HashSet<>();
+        cell.path("held").forEach(n -> stillHeld.add(n.asLong()));
+        desks.heldByOld().stream().filter(id -> !stillHeld.contains(id)).forEach(this::releasedByOld);
+    }
+
     /** 旧实例：此刻还持有的 trader */
-    public java.util.Set<Long> heldHere() {
+    public Set<Long> heldHere() {
         return desks.heldHere();
     }
 

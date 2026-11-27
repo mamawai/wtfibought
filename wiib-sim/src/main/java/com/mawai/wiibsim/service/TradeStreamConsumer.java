@@ -56,7 +56,7 @@ import static com.mawai.wiibcommon.market.MarketStreamChannels.SPOT_TRADES_PREFI
 public class TradeStreamConsumer implements Intake {
 
     private static final String GROUP = "sim";
-    /** 单实例部署，消费者名固定：重启后读得回上次没 ACK 的那批 */
+    /** 消费者名固定：同一时刻只有一个实例在读（交接时旧实例停读了新实例才开读），换实例、重启都读得回上次没 ACK 的那批 */
     private static final String CONSUMER = "sim";
     private static final int BATCH = 200;
     /** 没新成交就歇一下再读：不带 BLOCK 的读走共享连接，带了每次都要单开一条连接 */
