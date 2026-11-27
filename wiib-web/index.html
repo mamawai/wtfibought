@@ -24,9 +24,9 @@
 
       #splash {
         position: fixed; inset: 0; z-index: 9999;
-        --bg: #ffffff; --fg: #0b0b0c; --pri: #f25f0a;
+        --bg: #ffffff; --fg: #0b0b0c; --pri: #f25f0a; --mut: #6e6e73;
       }
-      html.dark #splash { --bg: #0c0c0d; --fg: #f4f4f6; --pri: #f97316 }
+      html.dark #splash { --bg: #0c0c0d; --fg: #f4f4f6; --pri: #f97316; --mut: #9a9aa1 }
       #splash.out { pointer-events: none }
 
       /* 上下两块底色，接缝在 56% 处，那根线就画在接缝上 */
@@ -46,13 +46,22 @@
       #splash.go .sp-rule i { transform: translateX(-14%); transition: transform 4.5s cubic-bezier(.12, .7, .2, 1) }
       #splash.done .sp-rule i { transform: none; transition: transform .32s cubic-bezier(.77, 0, .175, 1) }
 
+      /* 数据来源署名：线下方居中，logo 快升完时淡入；放在下半屏里，退场跟着下半屏走。这时应用字体还没到，用系统等宽 */
+      .sp-src {
+        position: absolute; left: 0; right: 0; top: 18px; margin: 0; text-align: center;
+        font: 11px/1 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: .18em; text-transform: uppercase;
+        color: var(--mut); opacity: 0
+      }
+      #splash.go .sp-src { opacity: 1; transition: opacity .4s ease .6s }
+
       /* 退场：沿线上下裂开 */
       #splash.out .sp-top { transform: translateY(-100%); transition: transform .75s cubic-bezier(.77, 0, .175, 1) }
       #splash.out .sp-bot { transform: translateY(100%); transition: transform .75s cubic-bezier(.77, 0, .175, 1) }
 
-      /* 减弱动效：logo 不升、退场不裂，直接淡出 */
+      /* 减弱动效：logo 不升、署名不淡入、退场不裂，直接淡出 */
       @media (prefers-reduced-motion: reduce) {
         .sp-mark img { transform: none }
+        #splash.go .sp-src { transition: none }
         #splash.out { opacity: 0; transition: opacity .4s ease }
         #splash.out .sp-top, #splash.out .sp-bot { transform: none }
       }
@@ -85,7 +94,7 @@
         <div class="sp-mark"><img src="/logo.png" alt="" fetchpriority="high" /></div>
         <div class="sp-rule"><i></i></div>
       </div>
-      <div class="sp-bot"></div>
+      <div class="sp-bot"><p class="sp-src">Data via Binance</p></div>
     </div>
     <script>
       (function () {
