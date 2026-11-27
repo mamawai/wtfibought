@@ -92,6 +92,7 @@ error:
   promptGenNoSession: No conversation yet - press Start first
   promptGenVersionNotFound: That version is gone (only the latest 3 are kept)
   promptGenRunning: Prompt generation is in progress - try again when it finishes
+  chatServiceUpdating: The service is updating - try again shortly
 
   # Login-state failures: the various sa-token NotLoginException types, all returned as 401
   token:

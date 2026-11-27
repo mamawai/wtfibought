@@ -69,7 +69,7 @@ class FuturesLimitCloseFillTest {
                 mock(CrossLiquidationService.class), mock(FairLockRegistry.class),
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
                 mock(TradeEventPublisher.class), limitIndex,
-                new ClosedPositionCleanup(indexService, orderMapper, userMapper, limitIndex));
+                new ClosedPositionCleanup(indexService, orderMapper, userMapper, limitIndex), Thread::startVirtualThread);
     }
 
     /** 逐仓多原来 1 个，被止损平掉 0.5，剩 0.5 @100、保证金 5；挂着的平仓单 110 平 1 个 */

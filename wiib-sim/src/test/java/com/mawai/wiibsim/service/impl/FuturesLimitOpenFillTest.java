@@ -99,7 +99,8 @@ class FuturesLimitOpenFillTest {
                 mock(FuturesRiskService.class), crossMarginService,
                 mock(CrossLiquidationService.class), mock(FairLockRegistry.class),
                 new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))), eventPublisher,
-                limitIndex, new ClosedPositionCleanup(positionIndexService, orderMapper, userMapper, limitIndex));
+                limitIndex, new ClosedPositionCleanup(positionIndexService, orderMapper, userMapper, limitIndex),
+                Thread::startVirtualThread);
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,

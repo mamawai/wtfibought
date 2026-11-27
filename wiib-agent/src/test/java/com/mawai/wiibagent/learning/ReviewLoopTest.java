@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.llm.BoundedRuns;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderExperienceMapper;
 import com.mawai.wiibagent.mapper.AiTraderExperienceTradeMapper;
@@ -95,7 +96,8 @@ class ReviewLoopTest {
                     new PlayStatsAssembler(simTradeClient, planMapper, prompts, new CaseFileBuilder(historyStore)),
                     mock(TraderWatchStore.class), new DecisionText(prompts), new ExperienceOpParser(prompts),
                     mock(TradeRecordService.class)),
-            modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), planStore);
+            modelFactory, decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), planStore,
+            new BoundedRuns());
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);

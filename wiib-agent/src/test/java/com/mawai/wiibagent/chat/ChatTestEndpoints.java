@@ -3,6 +3,8 @@ package com.mawai.wiibagent.chat;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.Start;
+import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibagent.chat.gate.TraderPickRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
@@ -18,11 +20,22 @@ import com.mawai.wiibagent.trader.TraderChatService;
 import com.mawai.wiibagent.trader.TraderService;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 
+import java.time.Duration;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -41,6 +54,36 @@ public final class ChatTestEndpoints {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         return model;
+    }
+
+    /** 开着口的对话闸：进程启动时由编排开口 */
+    public static ChatConcurrencyGate openGate(int limit) {
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(userSlotRedis(), "", limit);
+        gate.open(Start.COLD);
+        return gate;
+    }
+
+    /** 对话闸存用户位的 Redis：内存里一张表，只认闸用到的几个调用；两个闸共用一个就是两个实例 */
+    @SuppressWarnings("unchecked")
+    public static StringRedisTemplate userSlotRedis() {
+        Map<String, String> store = new ConcurrentHashMap<>();
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> ops = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(ops);
+        when(ops.setIfAbsent(anyString(), anyString(), any(Duration.class)))
+                .thenAnswer(i -> store.putIfAbsent(i.getArgument(0), i.getArgument(1)) == null);
+        when(ops.get(anyString())).thenAnswer(i -> store.get(i.<String>getArgument(0)));
+        when(redis.hasKey(anyString())).thenAnswer(i -> store.containsKey(i.<String>getArgument(0)));
+        when(redis.execute(any(RedisScript.class), anyList(), any()))
+                .thenAnswer(i -> store.remove(i.<List<String>>getArgument(1).getFirst(), i.getArgument(2)) ? 1L : 0L);
+        when(redis.scan(any(ScanOptions.class))).thenAnswer(_ -> {
+            Iterator<String> keys = List.copyOf(store.keySet()).iterator();
+            Cursor<String> cursor = mock(Cursor.class);
+            when(cursor.hasNext()).thenAnswer(_ -> keys.hasNext());
+            when(cursor.next()).thenAnswer(_ -> keys.next());
+            return cursor;
+        });
+        return redis;
     }
 
     /** 恒中文的语言解析器：默认路径都按中文断言，验切语言的用例自己另造 */

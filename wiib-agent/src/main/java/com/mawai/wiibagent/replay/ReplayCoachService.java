@@ -4,6 +4,9 @@ import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.handover.InFlight;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibagent.chat.ChatModelFactory;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
@@ -18,11 +21,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -41,11 +45,14 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 与工作台对话的区别：不进会话历史、不记忆——纯一次性问答，所以不占 ChatConcurrencyGate
  * 的名额；只挡"同一用户上一次还没跑完又点"（{@link ErrorCode#REPLAY_AI_BUSY}）。
  * 断连即停：没有落库诉求，用户切走了就别再烧他的 token。
+ * 进活的口是"接新请求"：关着时直接拒，回"服务正在更新"。
+ * 在跑的请求是一份手上的活（coach）：提前收尾就是掐断模型调用，给前端发一帧"已中断"再把流收掉。
  */
 @Slf4j
 @Service
+@Order(80)
 @RequiredArgsConstructor
-public class ReplayCoachService {
+public class ReplayCoachService implements Intake, InFlight {
 
     /** 深模型带思考时几十秒不出字很正常；20s 一帧心跳喂饱 nginx 默认 60s 空闲计时器 */
     private static final long HEARTBEAT_SECONDS = 20;
@@ -66,14 +73,45 @@ public class ReplayCoachService {
                 t.setDaemon(true);
                 return t;
             });
-    /** 在跑中的用户：同一人一次只跑一个 */
-    private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+    /** 在跑中的用户 → 这次的掐断信号：同一人一次只跑一个 */
+    private final Map<Long, CompletableFuture<Void>> inFlight = new ConcurrentHashMap<>();
+    /** 接新请求的口 */
+    private volatile boolean open;
+    /** 提前收尾过了：之后收尾的流都是被掐断的 */
+    private volatile boolean cut;
 
     /** 上下文收尾：停掉心跳与流式线程 */
     @PreDestroy
     public void stop() {
         heartbeatScheduler.shutdownNow();
         streamExecutor.shutdownNow();
+    }
+
+    @Override
+    public void open(Start how) {
+        open = true;
+    }
+
+    @Override
+    public void close() {
+        open = false;
+    }
+
+    @Override
+    public String name() {
+        return "coach";
+    }
+
+    @Override
+    public int count() {
+        return inFlight.size();
+    }
+
+    /** 掐断在途的模型调用：流收尾时发"已中断"再完成 */
+    @Override
+    public void cut() {
+        cut = true;
+        inFlight.values().forEach(c -> c.complete(null));
     }
 
     /**
@@ -88,14 +126,19 @@ public class ReplayCoachService {
             throw new BizException(invalid);
         }
         ChatModel model = modelFor(userId, request);
-        if (!inFlight.add(userId)) {
+        // 断开、超时、出错、关停提前收尾：掐断在途的模型调用
+        CompletableFuture<Void> cancel = new CompletableFuture<>();
+        if (inFlight.putIfAbsent(userId, cancel) != null) {
             throw new BizException(ErrorCode.REPLAY_AI_BUSY);
+        }
+        // 先登记再看口：关口那边先关口再数在跑的，两边总有一边看得到对方
+        if (!open) {
+            inFlight.remove(userId);
+            throw new BizException(ErrorCode.CHAT_SERVICE_UPDATING);
         }
 
         SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS);
         SseChannel channel = new SseChannel(emitter);
-        // 断开、超时、出错：标关并掐断在途的模型调用
-        CompletableFuture<Void> cancel = new CompletableFuture<>();
         Runnable close = () -> {
             channel.markClosed();
             cancel.complete(null);
@@ -175,7 +218,10 @@ public class ReplayCoachService {
             if (channel.isClosed()) {
                 return;
             }
-            if (answer.isEmpty()) {
+            if (cut) {
+                channel.send("error", MAPPER.createObjectNode().put("message",
+                        prompts.get(lang, "coach.error.interrupted")));
+            } else if (answer.isEmpty()) {
                 channel.send("error", MAPPER.createObjectNode().put("message",
                         prompts.get(lang, "coach.error.emptyAnswer")));
             } else {

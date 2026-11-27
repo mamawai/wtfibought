@@ -240,5 +240,6 @@ reviewer:
   # 落库文案：写进 ai_trader_decision.error，公开展示在竞技场时间线上
   error:
     timeout: 复盘超时({{seconds}}s)
+    interrupted: 服务更新，这篇复盘提前收尾
     emptyOutput: 模型输出为空
     noOps: 经验更新一行都解析不出来，账本未更新

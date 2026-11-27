@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executor;
 
 import static com.mawai.wiibsim.service.PriceTick.toEpochMs;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.*;
@@ -46,6 +47,8 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
     private final FuturesPositionIndexService positionIndexService;
     private final CrossLiquidationService crossLiquidationService;
     private final FuturesPrices prices;
+    /** 强平交给它，关停时等它清零 */
+    private final Executor executor;
 
     /** 从止损/止盈索引摘出来的一档，放回用 key/member/score */
     private record Claim(String key, String member, double score, boolean stopLoss) {
@@ -107,11 +110,11 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
         }
     }
 
-    /** 摘出来的仓位各起虚拟线程强平；锁内复核不够强平会自己放回索引，抛异常（等锁超时）在这里放回 */
+    /** 摘出来的仓位各自交给后台执行器强平；锁内复核不够强平会自己放回索引，抛异常（等锁超时）在这里放回 */
     private void liquidate(Set<String> posIds, BigDecimal price, long priceAt) {
         for (String posId : posIds) {
             Long pid = Long.parseLong(posId);
-            Thread.startVirtualThread(() -> {
+            executor.execute(() -> {
                 try {
                     futuresRiskService.forceClose(pid, price, priceAt);
                 } catch (Exception e) {

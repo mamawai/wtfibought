@@ -125,7 +125,7 @@ class FuturesLiquidationFeeTest {
         crossLiquidation = new CrossLiquidationServiceImpl(crossMarginService, positionMapper, orderMapper,
                 tradingConfig, prices, lockRegistry, notification,
                 new CrossBandRegistry(), riskService, tx, filterRegistry, userMapper, bankruptcy, pricer,
-                limitIndex, cleanup);
+                limitIndex, cleanup, Thread::startVirtualThread);
         trading = new FuturesTradingServiceImpl(mock(UserService.class), userMapper, positionMapper, orderMapper,
                 tradingConfig, lockRegistry, cacheService, indexService, brackets, crossMarginService,
                 filterRegistry, new MessageCatalog(), ledgerTx, riskService, pricer, prices, limitIndex, cleanup);

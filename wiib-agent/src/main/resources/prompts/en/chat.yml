@@ -192,6 +192,7 @@ chat:
       disabled: The user has switched background worker agents off; do this part yourself with your own tools
       limit: "Already {{limit}} background tasks running, the limit; dispatch again once they finish"
       busy: Background tasks are at capacity on the server, try again later
+      updating: The service is updating; no more background tasks can be dispatched
     empty: (the worker produced nothing)
     # A report enters the context as a user-side message (a bare assistant message reads as "something I said"); the tag says whose report it is
     tag: "[Background task #{{id}} {{label}} {{status}}]"

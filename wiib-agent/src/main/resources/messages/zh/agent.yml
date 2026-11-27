@@ -45,9 +45,8 @@ agent:
     protocolUnsupported: 协议仅支持 openai / responses / anthropic / gemini
     configNotFound: 配置不存在
     configInUse: 该LLM配置正被功能位引用，无法删除
-    savedButRefreshFailed: 配置已保存，但AI运行时刷新失败（详见服务日志），当前沿用变更前模型运行
-    deletedButRefreshFailed: 已删除，但AI运行时刷新失败（详见服务日志），当前沿用变更前模型运行
-    assignedButRefreshFailed: 分配已保存，但AI运行时刷新失败（详见服务日志），当前沿用变更前模型运行
+    savedButTranslatorBroken: 配置已保存，但快讯翻译的模型组装不起来（详见服务日志），修好之前快讯只存中文、不翻译
+    assignedButTranslatorBroken: 分配已保存，但快讯翻译的模型组装不起来（详见服务日志），修好之前快讯只存中文、不翻译
     paramsIncomplete: "参数不完整: {{what}}"
     llmConfigNotFound: "LLM配置不存在(id={{id}})"
     llmConfigNoModel: "LLM配置'{{name}}'缺模型名，请先在「配置LLM」里补全"

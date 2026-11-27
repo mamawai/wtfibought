@@ -19,6 +19,8 @@ import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.run.WorkbenchPrefService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
+import com.mawai.wiibagent.handover.PeerFallback;
+import com.mawai.wiibagent.handover.PeerRelay;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.llm.ChatEndpoints;
@@ -31,6 +33,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,10 +45,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.web.util.UriUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Predicate;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -87,6 +94,11 @@ public class ChatWorkbenchController {
     private final UserLangResolver userLangResolver;
     /** 一轮对话跑在它上面（虚拟线程，见 {@code AgentExecutorConfig}）；名额泄漏那条钉子传一个已关的进来制造提交失败 */
     private final ExecutorService streamExecutor;
+    /** 交接期间删会话前问一下在收尾的对端 */
+    private final PeerRelay peerRelay;
+
+    private static final ParameterizedTypeReference<Result<SessionStatus>> STATUS = new ParameterizedTypeReference<>() {
+    };
 
     /** 单条用户消息字符上限（指令生成器的回复也用它）；文案见 error.chatMessageTooLong，改这里要一起改 */
     public static final int MAX_MESSAGE_CHARS = 10_000;
@@ -122,6 +134,15 @@ public class ChatWorkbenchController {
      * @param children 这个会话派过的后台子运行（结局与内部步骤），按派发先后；前端空闲时轮询它补过程轨，刷新后据它重建在跑的
      */
     public record SessionStatus(boolean running, boolean pending, List<ChildRun.View> children) {
+    }
+
+    /** 会话状态"本地没找到"：本地这个会话没轮在跑、没欠唤醒、也没派过子运行 */
+    public static final class UnknownHere implements Predicate<Object> {
+        @Override
+        public boolean test(Object returned) {
+            return returned instanceof Result<?> r && r.getData() instanceof SessionStatus s
+                    && !s.running() && !s.pending() && s.children().isEmpty();
+        }
     }
 
     /** 清空全部会话的结果：deleted=删掉几个，skipped=在跑被跳过几个 */
@@ -295,6 +316,7 @@ public class ChatWorkbenchController {
         return emitter;
     }
 
+    @PeerFallback
     @PostMapping("/cancel")
     @Operation(summary = "中断在跑的这一轮与它派出的后台子运行（轮跑到下一个检查点收尾，半截答案照落库）")
     public Result<Boolean> cancel(@CurrentUserId long userId, @RequestBody CancelRequest request) {
@@ -324,6 +346,7 @@ public class ChatWorkbenchController {
         return Result.ok(concurrencyGate.isBusy(userId));
     }
 
+    @PeerFallback(missing = UnknownHere.class)
     @GetMapping("/sessions/{sessionId}/status")
     @Operation(summary = "会话运行状态（切页/刷新回来判断 AI 是否还在后台跑、有没有欠着的唤醒、后台子运行各自的进展）")
     public Result<SessionStatus> sessionStatus(@CurrentUserId long userId, @PathVariable String sessionId) {
@@ -351,7 +374,7 @@ public class ChatWorkbenchController {
             return Result.fail(messages.get("agent.chat.sessionNotFound"));
         }
         // 与 /status 同一口径：这轮收尾落库还会往会话里写 assistant 行，先删掉它会以无标题空壳重新冒出来
-        if (runRegistry.isRunning(sessionId)) {
+        if (running(sessionId)) {
             return Result.fail(messages.get("agent.chat.sessionRunning"));
         }
         purgeSession(sessionId);
@@ -365,7 +388,7 @@ public class ChatWorkbenchController {
         int skipped = 0;
         for (String sessionId : chatHistoryService.sessionIds(userId)) {
             // 跳过规则与单删一致：这轮收尾落库还会往会话里写 assistant 行
-            if (runRegistry.isRunning(sessionId)) {
+            if (running(sessionId)) {
                 skipped++;
                 continue;
             }
@@ -373,6 +396,14 @@ public class ChatWorkbenchController {
             deleted++;
         }
         return Result.ok(new DeleteAllResult(deleted, skipped));
+    }
+
+    /** 这个会话有没有轮在跑：本地，或者在收尾的对端上 */
+    private boolean running(String sessionId) {
+        return runRegistry.isRunning(sessionId) || peerRelay.ask(HttpMethod.GET,
+                        "/api/ai/workbench/sessions/" + UriUtils.encodePathSegment(sessionId, StandardCharsets.UTF_8) + "/status",
+                        null, STATUS)
+                .map(r -> r.getData() != null && r.getData().running()).orElse(false);
     }
 
     /** 展示记录与续聊上下文是两套存储，删会话得都清；在跑的子运行停掉，挂着的确认卡/授权、记着的当前 trader 一并清 */
@@ -385,6 +416,7 @@ public class ChatWorkbenchController {
     }
 
     /** HITL 确认回执：approve 后前端自动补发"请继续执行深度研判"，agent 重调工具时闸门放行。 */
+    @PeerFallback
     @PostMapping("/approve")
     @Operation(summary = "贵操作确认（HITL）")
     public Result<Void> approve(@CurrentUserId long userId, @RequestBody ApprovalRequest request) {
@@ -402,6 +434,7 @@ public class ChatWorkbenchController {
     }
 
     /** 选 trader 的卡上点了一个：在等的查询工具拿到它接着跑，并记成本会话的当前 trader */
+    @PeerFallback
     @PostMapping("/pick-trader")
     @Operation(summary = "选择卡回执：这一轮要查的 trader")
     public Result<Void> pickTrader(@CurrentUserId long userId, @RequestBody PickTraderRequest request) {

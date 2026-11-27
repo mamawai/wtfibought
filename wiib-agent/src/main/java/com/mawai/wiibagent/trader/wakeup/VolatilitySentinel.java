@@ -2,6 +2,9 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.Carried;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -10,21 +13,28 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 波动哨兵（探测层）：feed markPrice tick（~1s）→ 每币 5 分钟滚动窗口振幅，超过
@@ -46,11 +56,15 @@ import java.util.concurrent.Executor;
  * SELECT symbol, percentile_cont(0.5) WITHIN GROUP (ORDER BY c) 平日,
  *        percentile_cont(0.95) WITHIN GROUP (ORDER BY c) 波动日 FROM daily GROUP BY symbol;
  * </pre>
+ * 进活的口是"报警"：关着时照常采样攒窗口，只是不报警；订阅不随口开关。
+ * 交接时带走的是"volatility"：进行中的每段行情里还没被叫过的 trader。新实例按它建这段行情的名单，叫过的不会再叫；
+ * 没出现的币就是没有进行中的行情。
  */
 @Slf4j
 @Component
+@Order(40)
 @RequiredArgsConstructor
-public class VolatilitySentinel implements MessageListener {
+public class VolatilitySentinel implements MessageListener, Intake, Carried {
 
     /** 每币基准阈值%（即平台下限，用户只能经灵敏度系数调高）；行尾是校准窗口里平日 / 波动日每天超线几根 */
     static final Map<String, BigDecimal> BASE_THRESHOLD_PCT = Map.of(
@@ -85,11 +99,49 @@ public class VolatilitySentinel implements MessageListener {
     private final Map<String, Long> lastSampleAt = new ConcurrentHashMap<>();
     /** 每币进行中的一段行情；振幅回落到基准线八成以下就摘掉 */
     private final Map<String, Incident> incidents = new ConcurrentHashMap<>();
+    /** 报警的口 */
+    private volatile boolean alerting;
 
     @PostConstruct
     public void init() {
         listenerContainer.addMessageListener(this, new ChannelTopic(MarketStreamChannels.PRICE));
         log.info("[Sentinel] 订阅 {} 启动(type=markprice) 基准={}", MarketStreamChannels.PRICE, BASE_THRESHOLD_PCT);
+    }
+
+    @Override
+    public void open(Start how) {
+        alerting = true;
+    }
+
+    @Override
+    public void close() {
+        alerting = false;
+    }
+
+    @Override
+    public String key() {
+        return "volatility";
+    }
+
+    /** 进行中的每段行情里还没被叫过的 trader */
+    @Override
+    public JsonNode export() {
+        ObjectNode pending = MAPPER.createObjectNode();
+        incidents.forEach((symbol, incident) -> incident.pendingIds().forEach(pending.putArray(symbol)::add));
+        ObjectNode out = MAPPER.createObjectNode();
+        out.set("pending", pending);
+        return out;
+    }
+
+    /** 按交来的名单重建每段行情：名单还是查库建，只留没被叫过的那几个 */
+    @Override
+    public void accept(JsonNode state) {
+        state.path("pending").properties().forEach(e -> {
+            Set<Long> ids = new HashSet<>();
+            e.getValue().forEach(n -> ids.add(n.asLong()));
+            Incident all = candidates(e.getKey());
+            incidents.put(e.getKey(), all.only(ids));
+        });
     }
 
     @Override
@@ -124,7 +176,7 @@ public class VolatilitySentinel implements MessageListener {
             incidents.remove(symbol);
             return;
         }
-        if (amp.compareTo(base) < 0) {
+        if (amp.compareTo(base) < 0 || !alerting) {
             return;
         }
         String direction = window.direction();
@@ -216,6 +268,16 @@ public class VolatilitySentinel implements MessageListener {
                 return true;
             });
             return out;
+        }
+
+        /** 还没被叫过的 trader id */
+        synchronized List<Long> pendingIds() {
+            return pending.stream().map(c -> c.trader().getId()).toList();
+        }
+
+        /** 只留这几个 trader */
+        synchronized Incident only(Set<Long> ids) {
+            return new Incident(pending.stream().filter(c -> ids.contains(c.trader().getId())).toList());
         }
     }
 

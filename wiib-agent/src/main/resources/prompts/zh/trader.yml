@@ -520,6 +520,7 @@ trader:
   error:
     lateTrigger: 触发过晚（K线信号迟到），距下一边界不足{{seconds}}s，放弃本轮
     wakeTimeout: 唤醒超时({{seconds}}s)
+    wakeInterrupted: 服务更新，这一轮提前收尾
     callLimit: 达单轮模型调用上限({{limit}})，提前收束
     liquidatedReasoning: 账户权益已低于爆仓终局线，本局结束。可在配置页重置开新一局。
     liquidatedReason: 爆仓终局：权益低于初始资金1%

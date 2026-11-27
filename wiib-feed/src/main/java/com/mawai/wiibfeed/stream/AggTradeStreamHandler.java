@@ -1,6 +1,7 @@
 package com.mawai.wiibfeed.stream;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibfeed.WsConnection;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,11 @@ public class AggTradeStreamHandler implements StreamHandler {
     @Override
     public String buildUrl() {
         return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getAllFuturesSymbols(), "aggTrade");
+    }
+
+    @Override
+    public void opening(Start how) {
+        tracker.skipFirstGap(how);
     }
 
     @Override

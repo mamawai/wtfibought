@@ -3,7 +3,6 @@ package com.mawai.wiibfeed.stream;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibfeed.WsConnection;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -43,14 +42,10 @@ public class TraderFuturesStreamHandler implements StreamHandler {
     @Override public long maxIdleSeconds() { return 90; }
     @Override public boolean dynamicSymbols() { return true; }
 
-    /** 进程起来先读一次集合，装配时按它拼地址 */
-    @PostConstruct
-    void init() {
-        symbols = readSymbols();
-    }
-
+    /** 装配时先读一次集合，建连时按它拼地址；之后轮询 */
     @Override
     public void bind(WsConnection conn) {
+        symbols = readSymbols();
         this.conn = conn;
         Thread.ofVirtual().name("trader-symbols-poll").start(this::poll);
     }

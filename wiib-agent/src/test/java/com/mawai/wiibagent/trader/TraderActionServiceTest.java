@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibagent.learning.DebriefRunner;
@@ -17,6 +18,7 @@ import com.mawai.wiibagent.trader.TraderActionService.ActionPanel;
 import com.mawai.wiibagent.trader.TraderActionService.ActionResult;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.wakeup.TraderPeer;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import com.mawai.wiibagent.toolkit.BeijingTime;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -86,10 +88,15 @@ class TraderActionServiceTest {
 
     /** 复盘位用真的：桩成固定 true/false 就测不出"占了之后第二次会被拦"这条 */
     private final ReviewScheduler reviewScheduler = new ReviewScheduler(
-            mock(AiTraderMapper.class), mock(DebriefRunner.class), mock(ReviewRunner.class));
+            mock(AiTraderMapper.class), mock(DebriefRunner.class), mock(ReviewRunner.class), TraderPeer.NONE);
 
     private final TraderActionService service = new TraderActionService(
             traderService, scheduler, reviewScheduler, reviewRunner, debriefRunner, traderMapper, decisionMapper, new MessageCatalog());
+
+    {
+        // 进程启动时由编排开口
+        reviewScheduler.open(Start.COLD);
+    }
 
     // ---------- 夹具 ----------
 

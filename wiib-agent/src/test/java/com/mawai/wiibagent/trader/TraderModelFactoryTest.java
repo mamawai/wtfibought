@@ -17,6 +17,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** BYOK 建模：构造期不许抛（纯本地构造，不发网络请求）；端点怎么选；端点换了要换模型，没端点要响亮失败。 */
@@ -101,6 +103,31 @@ class TraderModelFactoryTest {
         assertThat(f.modelFor(trader())).isNotSameAs(first);
     }
 
+    /** 同一条端点只换了 key 也要重建：key 是建模要素 */
+    @Test
+    void keyChangeRebuildsModel() {
+        TraderModelFactory f = factory();
+        UserLlmEndpoint a = endpoint(1, "openai", "deepseek-chat");
+        when(endpointService.defaultOf(9L)).thenReturn(a);
+        ChatModel first = f.modelFor(trader());
+
+        UserLlmEndpoint rekeyed = endpoint(1, "openai", "deepseek-chat");
+        rekeyed.setApiKeyEnc(crypto.encrypt("sk-another-key"));
+        when(endpointService.defaultOf(9L)).thenReturn(rekeyed);
+
+        assertThat(f.modelFor(trader())).isNotSameAs(first);
+    }
+
+    /** 一轮的模型和联网开关按同一次查到的端点定，端点只查一次 */
+    @Test
+    void roundModelLooksUpEndpointOnce() {
+        when(endpointService.defaultOf(9L)).thenReturn(endpoint(1, "responses", "grok-4"));
+
+        factory().roundModel(trader());
+
+        verify(endpointService, times(1)).defaultOf(9L);
+    }
+
     /** 联网搜索两道闸：主人开了开关、端点也开了才算开 */
     @Test
     void webSearchNeedsTraderSwitchAndEndpoint() {
@@ -110,11 +137,11 @@ class TraderModelFactoryTest {
         AiTrader switchedOn = trader();
         switchedOn.setWebSearchEnabled(true);
 
-        assertThat(factory().webSearchEnabled(switchedOn)).isTrue();
-        assertThat(factory().webSearchEnabled(trader())).isFalse();
+        assertThat(factory().roundModel(switchedOn).webSearch()).isTrue();
+        assertThat(factory().roundModel(trader()).webSearch()).isFalse();
 
         endpoint.setWebSearch(false);
-        assertThat(factory().webSearchEnabled(switchedOn)).isFalse();
+        assertThat(factory().roundModel(switchedOn).webSearch()).isFalse();
     }
 
     /** 用户把端点删光：抛异常让 runner 的失败处理接管，不能悄悄返回 null 让下游 NPE */

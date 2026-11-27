@@ -3,6 +3,7 @@ package com.mawai.wiibfeed.stream;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibfeed.WsConnection;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -52,6 +53,11 @@ public class FuturesStreamHandler implements StreamHandler {
     @Override
     public String buildUrl() {
         return StreamUrls.combinedUrl(props.getFuturesWsUrl(), "market", props.getAllFuturesSymbols(), "markPrice@1s");
+    }
+
+    @Override
+    public void opening(Start how) {
+        tracker.skipFirstGap(how);
     }
 
     @Override

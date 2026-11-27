@@ -26,6 +26,7 @@ import java.util.stream.IntStream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doAnswer;
@@ -120,6 +121,42 @@ class ChildRunRegistryTest {
         release.countDown();
         waitUntil(() -> spawn.run().status() == ChildRun.Status.DONE);
         assertThat(registry.state(SESSION).runs().getFirst().steps()).noneMatch(ChildRun.Step::active);
+    }
+
+    /** 服务关停提前收尾：各会话在跑的子运行全部停掉，不再算在跑，报告不回灌；之后再派的直接拒 */
+    @Test
+    void 关停提前收尾停掉全部在跑的子运行_之后不再派() {
+        ChildRunRegistry registry = registry(3, 3);
+        CountDownLatch release = new CountDownLatch(1);
+        ChildRunRegistry.Spawn a = registry.spawn(spec(SESSION), run -> {
+            await(release);
+            return "a";
+        });
+        ChildRunRegistry.Spawn b = registry.spawn(spec("wb-1-other"), run -> {
+            await(release);
+            return "b";
+        });
+        assertThat(registry.count()).isEqualTo(2);
+
+        registry.cut();
+
+        assertThat(registry.count()).isZero();
+        assertThat(a.run().status()).isEqualTo(ChildRun.Status.CANCELLED);
+        assertThat(b.run().status()).isEqualTo(ChildRun.Status.CANCELLED);
+        release.countDown();
+        verify(contextStore, after(300).never()).save(anyString(), anyLong(), any());
+
+        ChildRunRegistry.Spawn late = registry.spawn(spec(SESSION), run -> "c");
+        assertThat(late.started()).isFalse();
+        assertThat(late.refusal()).isEqualTo(ChatTestEndpoints.PROMPTS.get(AgentLang.ZH, "chat.childRun.refused.updating"));
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** 落库时上下文里原有的用量读数要加上报告这一截，前缀指纹照旧 */

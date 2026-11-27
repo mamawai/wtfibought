@@ -15,6 +15,7 @@ import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
+import com.mawai.wiibagent.handover.PeerRelay;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
@@ -221,12 +222,12 @@ class ChatWakeTest {
         ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
         when(agentFactory.leavesFor(any(), any()))
                 .thenReturn(new ChatAgentFactory.Leaves("x", model, null, null, AgentLang.ZH, 256_000));
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(10);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService, registry,
                 mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class), mock(WorkbenchRunRegistry.class),
                 childRuns, ChatTestEndpoints.prefs(), gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS,
-                ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());
+                ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor(), mock(PeerRelay.class));
         ChatWorkbenchController.WakeRequest request = new ChatWorkbenchController.WakeRequest();
         request.setSessionId(SESSION);
 

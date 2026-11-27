@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.llm.ChatEndpoints;
@@ -80,8 +81,6 @@ public class ChatModelFactory {
      * <b>用 SHA-256 而不是 {@code Objects.hash}</b>：这是跨用户的缓存主键，32 位 int 撞一次
      * 就是 B 的请求拿到 A 的 ChatModel——<b>烧的是 A 的 key</b>。概率低（生日界约 7.7 万份配置
      * 撞到 50%），但代价是"用别人的 key"，换 SHA-256 零成本。
-     *（{@code TraderModelFactory} 那个 {@code Objects.hash} 语义完全不同：它是同一个 traderId
-     * 槽位内的"变了没有"校验位，撞了只影响该不该重建自己那一个模型。）
      * <p>
      * 分隔符不能省：没有它 {@code ("ab","c")} 和 {@code ("a","bc")} 拼出同一个串。
      * 而且必须挑一个<b>字段值里不可能出现</b>的字符——model 是用户在前端自由输入的，

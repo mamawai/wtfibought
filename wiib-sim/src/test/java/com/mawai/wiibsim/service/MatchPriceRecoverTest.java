@@ -1,6 +1,7 @@
 package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.longThat;
 import static org.mockito.Mockito.after;
@@ -27,7 +29,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 空窗补漏按断的是哪条连接分：mark 拉 mark 1m K 线补逐仓强平和全仓精查，futures/spot（成交连接）交给成交消费者补。
- * 本进程启动只补标记价那段（按 last-tick 算），成交那段靠消费组接着读，last-tick 交给成交消费者给新建的组当起点。
+ * 本进程开口只补标记价那段（按 last-tick 算），成交那段靠消费组接着读（成交消费者开口时自己读同一个 last-tick）。
  */
 class MatchPriceRecoverTest {
 
@@ -48,12 +50,15 @@ class MatchPriceRecoverTest {
     private MatchPriceConsumer consumer() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         return new MatchPriceConsumer(mock(RedisMessageListenerContainer.class), redisTemplate,
-                liquidationService, crossLiq, tradeStreamConsumer, restClient, props);
+                liquidationService, crossLiq, tradeStreamConsumer, restClient, props, Thread::startVirtualThread);
     }
 
+    /** 开着口的消费者收到一条空窗事件；库里没 last-tick，开口本身不补漏 */
     private void gap(String kind, long from, long to) {
         String body = "{\"type\":\"gap\",\"kind\":\"" + kind + "\",\"from\":" + from + ",\"to\":" + to + "}";
-        consumer().onMessage(new DefaultMessage("ch".getBytes(StandardCharsets.UTF_8),
+        MatchPriceConsumer consumer = consumer();
+        consumer.open(Start.COLD);
+        consumer.onMessage(new DefaultMessage("ch".getBytes(StandardCharsets.UTF_8),
                 body.getBytes(StandardCharsets.UTF_8)), null);
     }
 
@@ -88,37 +93,68 @@ class MatchPriceRecoverTest {
     }
 
     @Test
-    void 启动有last_tick_成交消费者从它读起_标记价按它补漏() {
+    void 开口有last_tick_标记价按它补漏() {
         long last = System.currentTimeMillis() - 3 * 60_000L;
         when(props.getAllFuturesSymbols()).thenReturn(List.of("BTCUSDT"));
         when(valueOps.get(LAST_TICK_KEY)).thenReturn(String.valueOf(last));
 
-        consumer().init();
+        consumer().open(Start.COLD);
 
-        verify(tradeStreamConsumer).start(last);
         verify(restClient, timeout(2000)).markBars1m(eq("BTCUSDT"), eq(last), longThat(to -> to >= last));
         verify(restClient, never()).futuresBars1m(any(), anyLong(), anyLong());
         verify(restClient, never()).spotBars1m(any(), anyLong(), anyLong());
     }
 
     @Test
-    void 启动无last_tick不补漏() {
+    void 开口无last_tick不补漏() {
         when(valueOps.get(LAST_TICK_KEY)).thenReturn(null);
 
-        consumer().init();
+        consumer().open(Start.COLD);
 
-        verify(tradeStreamConsumer).start(0L);
         verify(restClient, after(300).never()).markBars1m(any(), anyLong(), anyLong());
     }
 
+    /** 交接上任：旧实例关口时刚把 last-tick 记成现在，空窗一两秒，不补漏 */
     @Test
-    void 启动空窗超1h当第一次启动不补漏() {
+    void 交接上任空窗不到10秒不补漏() {
+        when(valueOps.get(LAST_TICK_KEY)).thenReturn(String.valueOf(System.currentTimeMillis() - 1_500L));
+
+        consumer().open(Start.HANDOVER);
+
+        verify(restClient, after(300).never()).markBars1m(any(), anyLong(), anyLong());
+    }
+
+    /** 冷启动（冷切、容器被快速拉起）：空窗再短也是没人盯着的一段，照样补 */
+    @Test
+    void 冷启动空窗不到10秒也补漏() {
+        long last = System.currentTimeMillis() - 8_000L;
+        when(props.getAllFuturesSymbols()).thenReturn(List.of("BTCUSDT"));
+        when(valueOps.get(LAST_TICK_KEY)).thenReturn(String.valueOf(last));
+
+        consumer().open(Start.COLD);
+
+        verify(restClient, timeout(2000)).markBars1m(eq("BTCUSDT"), eq(last), longThat(to -> to >= last));
+    }
+
+    /** 关口时把 last-tick 记成现在，接手的实例据此算空窗 */
+    @Test
+    void 关口时记下last_tick() {
+        MatchPriceConsumer consumer = consumer();
+        consumer.open(Start.COLD);
+
+        consumer.close();
+
+        long before = System.currentTimeMillis() - 5_000L;
+        verify(valueOps).set(eq(LAST_TICK_KEY), argThat((String v) -> Long.parseLong(v) >= before));
+    }
+
+    @Test
+    void 开口空窗超1h当第一次启动不补漏() {
         long last = System.currentTimeMillis() - 2 * 3_600_000L;
         when(valueOps.get(LAST_TICK_KEY)).thenReturn(String.valueOf(last));
 
-        consumer().init();
+        consumer().open(Start.COLD);
 
-        verify(tradeStreamConsumer).start(last);
         verify(restClient, after(300).never()).markBars1m(any(), anyLong(), anyLong());
     }
 }

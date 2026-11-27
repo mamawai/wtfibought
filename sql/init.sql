@@ -1110,3 +1110,16 @@ COMMENT ON COLUMN prompt_gen_version.version_no IS '每个用户自己往上数�
 COMMENT ON COLUMN prompt_gen_version.is_final IS 'agent 认为没什么可问了，这是最终版';
 COMMENT ON COLUMN prompt_gen_version.output_lang IS '写这版时的正文语言，回退时连同对话一起恢复';
 COMMENT ON COLUMN prompt_gen_version.state IS '交稿那一刻的对话快照，回退到这版就用它替换当前对话';
+
+-- ============================================
+-- 40. 数据库迁移记录（部署脚本按它只跑没跑过的 sql/migrations；新库建完表，到这里为止的迁移都算跑过）
+-- ============================================
+CREATE TABLE IF NOT EXISTS schema_migration (
+    version    VARCHAR(64) PRIMARY KEY,
+    applied_at TIMESTAMP   NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE  schema_migration IS '跑过的数据库迁移，一个文件一行';
+COMMENT ON COLUMN schema_migration.version IS '迁移文件名去掉 .sql，如 0001_schema_migration';
+INSERT INTO schema_migration (version) VALUES
+    ('0001_schema_migration')
+ON CONFLICT DO NOTHING;

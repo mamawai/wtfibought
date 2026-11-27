@@ -48,7 +48,7 @@ class FuturesStopHitsTest {
     private final CrossLiquidationService crossLiquidation = mock(CrossLiquidationService.class);
     private final FuturesLiquidationServiceImpl service = new FuturesLiquidationServiceImpl(riskService, cacheService,
             mock(TraderSymbolService.class), positionMapper, mock(FuturesPositionIndexService.class), crossLiquidation,
-            new FuturesPrices(cacheService));
+            new FuturesPrices(cacheService), Thread::startVirtualThread);
 
     @BeforeEach
     void setUp() {

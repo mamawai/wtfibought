@@ -40,7 +40,6 @@ class TraderFuturesStreamHandlerTest {
         props.setFuturesWsUrl("wss://fstream.binance.com/ws");
         TraderFuturesStreamHandler h = new TraderFuturesStreamHandler(props, redisTemplate, cacheService,
                 new FundingRateWriter(cacheService));
-        h.init();
         h.bind(conn);
         h.setMiniTickConn(miniTickConn);
         return h;

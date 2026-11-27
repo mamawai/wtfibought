@@ -137,6 +137,7 @@ debrief:
   # Stored text: written to ai_trader_decision.error, shown publicly on the arena timeline
   error:
     timeout: Debrief timed out ({{seconds}}s)
+    interrupted: Service update - this debrief was cut short
     emptyOutput: The model returned nothing
     noClassify: "The output has no [SORTING] section, so this trade was not sorted"
     noClassifyRows: "No row under [SORTING] could be read, so this trade was not sorted"

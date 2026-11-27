@@ -115,7 +115,10 @@ To self-host:
    ```bash
    docker network create wiib-network
    cp .env.example .env           # or run with Docker Compose: it reads .env, not .env.local
-   docker compose up -d --build   # run the build above first — the Dockerfiles only COPY the jar
+   # run the build above first — the Dockerfiles only COPY the jar
+   for s in feed sim agent; do docker build -t wiib-$s:local wiib-$s; done
+   # each service has slots a / b behind a gateway; locally slot a is enough
+   docker compose up -d wiib-gateway wiib-feed-a wiib-sim-a wiib-agent-a
    ```
 
 For the full walkthrough — prerequisite checks, strategy configuration, BYOK secrets, environment variable reference — see [docs/deploy.md](docs/deploy.md).

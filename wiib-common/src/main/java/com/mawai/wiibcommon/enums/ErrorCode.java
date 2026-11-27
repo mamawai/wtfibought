@@ -117,7 +117,8 @@ public enum ErrorCode {
     CHAT_NOTHING_PENDING(2208, "error.chatNothingPending"),
     PROMPT_GEN_NO_SESSION(2209, "error.promptGenNoSession"),
     PROMPT_GEN_VERSION_NOT_FOUND(2210, "error.promptGenVersionNotFound"),
-    PROMPT_GEN_RUNNING(2211, "error.promptGenRunning");
+    PROMPT_GEN_RUNNING(2211, "error.promptGenRunning"),
+    CHAT_SERVICE_UPDATING(2212, "error.chatServiceUpdating");
 
     private final int code;
     /** 界面文案词表的 key，不是文案本身。渲染见 {@code GlobalExceptionHandler} */

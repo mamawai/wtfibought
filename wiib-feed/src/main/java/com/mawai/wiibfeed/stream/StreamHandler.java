@@ -1,5 +1,6 @@
 package com.mawai.wiibfeed.stream;
 
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibfeed.WsConnection;
 
 import java.net.http.WebSocket;
@@ -40,6 +41,9 @@ public interface StreamHandler {
      * 默认空——只有要读自身连接状态（填广播 ws 字段）、或要记空窗的价格流才重写。
      */
     default void bind(WsConnection conn) {}
+
+    /** 装配完、建连之前调，告诉 handler 这次是怎么上任的。默认空——记空窗的价格流重写：交接上任时第一次连上不发空窗 */
+    default void opening(Start how) {}
 
     /**
      * 订阅集合运行中会变的流（交易员的币）：集合为空也建好连接对象，连的时候地址为空就闲置，

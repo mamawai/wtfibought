@@ -137,6 +137,20 @@ class WhalePositionTaskTest {
         verify(positionMapper, never()).insert(any());
     }
 
+    /** 口关了：在途这一轮剩下的请求不再发，什么都不写 */
+    @Test
+    void 关口后这一轮不写() {
+        when(addressMapper.selectPoolAddresses()).thenReturn(List.of("0xa1"));
+        states.put("0xa1", state("BTC", "1", "80000", "80000"));
+        WhalePositionTask t = task();
+        t.close();
+
+        t.run();
+
+        verify(snapshotMapper, never()).insert(any());
+        verify(positionMapper, never()).insert(any());
+    }
+
     @Test
     void 池子为空_不写() {
         when(addressMapper.selectPoolAddresses()).thenReturn(List.of());

@@ -87,7 +87,8 @@ class LimitOrderHitsTest {
             mock(FuturesPositionIndexService.class),
             mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
             mock(FairLockRegistry.class), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))),
-            mock(TradeEventPublisher.class), new LimitOrderIndex(cacheService), mock(ClosedPositionCleanup.class));
+            mock(TradeEventPublisher.class), new LimitOrderIndex(cacheService), mock(ClosedPositionCleanup.class),
+            Thread::startVirtualThread);
 
     /** 开多挂单 50，挂在 createdAt */
     private FuturesOrder openLong(long createdAt) {

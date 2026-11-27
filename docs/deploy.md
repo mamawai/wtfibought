@@ -170,10 +170,12 @@ Docker Compose（三进程全编排；配置放同目录的 `.env`，与 `.env.e
 ```bash
 docker network create wiib-network
 mvn clean package -pl wiib-feed,wiib-agent,wiib-sim -am -DskipTests   # 必须先打包
-docker compose up -d --build
+for s in feed sim agent; do docker build -t wiib-$s:local wiib-$s; done
+docker compose up -d wiib-gateway wiib-feed-a wiib-sim-a wiib-agent-a
 ```
 
-> 三个 Dockerfile 都是 `COPY target/*.jar`，**不在容器里编译**，所以 compose 之前那次 mvn 不能省。
-> 端口均只绑 `127.0.0.1`（feed 8081 / sim 8080 / agent 宿主 18082，因为宿主 8082 常被占）。
+> 三个 Dockerfile 都是 `COPY target/*.jar`，**不在容器里编译**，所以打镜像之前那次 mvn 不能省。
+> 每个服务有 a / b 两个槽位容器（`wiib-<服务>-<槽位>`），前面的网关 `wiib-gateway` 占住 `wiib-feed` / `wiib-sim` / `wiib-agent` 这三个主机名和宿主端口；本地起 a 槽位就够。线上的部署和切换见 `deploy/`。
+> 端口均只绑 `127.0.0.1`（feed 8081 / sim 8080 / agent 宿主 18082，因为宿主 8082 常被占），由网关映射。
 > Redis 主从 + 哨兵栈可选 `docker compose -f redis-compose.yml up -d`。
-> Python 服务 wiib-alpha 单独一个 compose 项目，主文件的 `up -d --build` 不会碰它：`docker compose -f alpha-compose.yml up -d --build`。镜像在服务器上构建，源码用 `deploy_script.txt` 里的 tar 打包上传。
+> Python 服务 wiib-alpha 单独一个 compose 项目，主文件不会碰它：`docker compose -f alpha-compose.yml up -d --build`。镜像在服务器上构建，源码用 `deploy_script.txt` 里的 tar 打包上传。

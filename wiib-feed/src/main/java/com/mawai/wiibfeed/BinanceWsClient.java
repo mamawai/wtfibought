@@ -1,13 +1,13 @@
 package com.mawai.wiibfeed;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibfeed.health.StreamHealthPublisher;
 import com.mawai.wiibfeed.health.WsConnectionRegistry;
 import com.mawai.wiibfeed.stream.StreamHandler;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
 import java.net.http.HttpClient;
@@ -22,12 +22,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Binance 行情多路 WS 客户端：装配器。
  * 把每个 {@link StreamHandler}（现货/合约/深度/K线…）组装成一条 {@link WsConnection} 并启动——
  * handler 提供"URL 怎么拼、消息怎么解析"，WsConnection 管"连接/重连/看门狗"，二者组合。
- * 本类只负责装配 + 进程级启停。
+ * <p>
+ * 进活的口：开口是装配并建连（待命的实例不连币安），关口是断掉全部连接。
+ * {@link #ready()}：每条连接要么连上之后收到过业务帧、或者连上已经 5 秒（冷门流可以一直没帧），要么是闲置（按集合订的流集合为空）
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class BinanceWsClient implements SmartLifecycle {
+public class BinanceWsClient implements Intake {
+
+    /** 连上这么久还没帧的也算好了 */
+    private static final long QUIET_READY_MS = 5_000;
 
     private final BinanceProperties props;
     private final List<StreamHandler> handlers;
@@ -39,8 +44,8 @@ public class BinanceWsClient implements SmartLifecycle {
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private final List<WsConnection> connections = new ArrayList<>();
 
-    @PostConstruct
-    public void init() {
+    @Override
+    public void open(Start how) {
         if (props.getSymbols() == null || props.getSymbols().isEmpty()) {
             log.warn("binance.symbols未配置，跳过WS连接");
             return;
@@ -68,20 +73,32 @@ public class BinanceWsClient implements SmartLifecycle {
             conn.setOnDropped(h::onDropped);
             registry.register(conn);
             h.bind(conn);
+            h.opening(how);
             connections.add(conn);
         }
         connections.forEach(WsConnection::connect);
     }
 
     @Override
-    public void stop() {
+    public void close() {
         shutdown.set(true);
         connections.forEach(WsConnection::close);
         if (scheduler != null) scheduler.shutdownNow();
         if (httpClient != null) httpClient.close();
     }
 
-    @Override public boolean isRunning() { return !shutdown.get() && scheduler != null; }
-    @Override public int getPhase() { return 1; }
-    @Override public void start() { /* init via @PostConstruct */ }
+    @Override
+    public boolean ready() {
+        long now = System.currentTimeMillis();
+        return connections.stream().allMatch(c -> ready(c, now));
+    }
+
+    /** 一条连接好了没：闲置的算；连上的要收到过业务帧，或者已经连上 5 秒 */
+    static boolean ready(WsConnection c, long now) {
+        return switch (c.status()) {
+            case IDLE -> true;
+            case CONNECTED -> c.lastMessageAt() > c.connectedAt() || now - c.connectedAt() >= QUIET_READY_MS;
+            default -> false;
+        };
+    }
 }

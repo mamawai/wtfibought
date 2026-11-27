@@ -3,6 +3,10 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.handover.Carried;
+import com.mawai.wiibcommon.handover.InFlight;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibagent.trader.trade.TraderWatchStore;
@@ -11,16 +15,20 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * trader 调度器：5m K线收盘事件当唯一时钟，对齐到各 trader 的 interval 边界发例行唤醒；
@@ -29,7 +37,7 @@ import java.util.function.Consumer;
  * 一个 trader 可以同时跑几轮：一轮整盘的（例行、手动、不归某一个币的触发），外加每个可交易币各一轮只处理它的单币轮。
  * 一条触发交给谁：先交给正在处理这个币的单币轮（插进它的对话）；没有就交给正在跑的整盘轮；都没有，新起一个单币轮。
  * 例行到点时有整盘轮在跑就插进它，不另起第二轮整盘的；有单币轮在跑不影响，例行轮照常开始。
- * 一轮结束时没被读到的触发另起一轮，不丢。
+ * 一轮结束时没被读到的触发另起一轮，不丢。轮和占用的登记都在 {@link Desks}，这里收事件、查库、判唤醒时段、定去处。
  * <p>
  * 事件是 per-symbol 的，同一边界多币多次触发靠 firedBoundary 去重。
  * 不做兜底补漏：WS/事件断流丢的K线就丢了——陈旧信号唤醒没有意义。收盘超过 5 分钟的事件（停机后重放的积压）
@@ -38,16 +46,20 @@ import java.util.function.Consumer;
  * 边界撞上 High 级数据公布时刻，例行触发先过 {@link EconCalendarGate}（最多等 30s 拿实际值）再发。
  * <p>
  * 复盘不归这里管：单笔复盘和统一复盘有自己的调度和位子（{@code ReviewScheduler}），不占唤醒位，日线边界和别的边界一样只发例行唤醒。
+ * <p>
+ * 进活的口是"起新轮"：关着时不起新轮，到来的事交还给对端（交接时是新实例；冷切时没有对端，就丢了，
+ * 持仓事件和盯盘命中库里有，下一轮开场白照样报）。在跑的轮是一份手上的活（wake-rounds）。
+ * 交接时带走的是"trader-desks"：旧实例还持有的 trader（让位时有轮在跑、被占着或有预案在做），和每个 trader 最近发过的例行边界。
+ * 新实例上被旧实例持有的 trader：到来的事先转过去，没接就停着，旧实例放手后分发；旧实例上最后一轮跑完就放手、通知新实例
  */
 @Slf4j
 @Component
+@Order(60)
 @RequiredArgsConstructor
-public class TraderScheduler {
+public class TraderScheduler implements Intake, InFlight, Carried {
 
     /** 收盘超过这么久（一根 5m）的 K 线事件算旧事件 */
     static final long STALE_EVENT_MS = 300_000L;
-    /** 整盘轮在 {@link Desk#rounds} 里的键；单币轮的键是币码 */
-    private static final String BOOK = "*";
 
     private final AiTraderMapper traderMapper;
     private final TraderWakeupRunner runner;
@@ -58,27 +70,75 @@ public class TraderScheduler {
     private final WatchSentinel watchSentinel;
     /** 起新一轮之前，别的轮已经告诉过模型的盯盘命中不再单独叫 */
     private final TraderWatchStore watchStore;
+    private final Desks desks;
+    /** 交接期间的另一个实例 */
+    private final TraderPeer peer;
+    /** 旧实例放手前，等这个 trader 在途的预案做完 */
+    private final PresetExecutor presets;
+    /** 旧实例放手后，完成这个 trader 的实时页连接 */
+    private final TraderLiveHub liveHub;
 
-    /**
-     * 一个 trader 手上的几轮。读写都锁这个对象。
-     * rounds：正在跑的轮，整盘轮至多一轮，每个币的单币轮至多一轮；
-     * occupied：重置或删除占着，这期间不起新轮；parked：占着的时候来的触发，放手后再分发
-     */
-    private static final class Desk {
-        final Map<String, WakeRound> rounds = new HashMap<>();
-        final List<WakeTrigger> parked = new ArrayList<>();
-        boolean occupied;
-    }
-
-    private final Map<Long, Desk> desks = new ConcurrentHashMap<>();
     /** 每 trader 最近已触发的边界时刻：多个 watch 币在同一刻收盘会各发一次事件，靠它去重 */
     private final Map<Long, Long> firedBoundary = new ConcurrentHashMap<>();
+    /** 起新轮的口 */
+    private volatile boolean open;
 
     /** 墙钟注入点：手动唤醒的预算预检、休眠时段判断要可测 */
     java.util.function.LongSupplier nowMs = System::currentTimeMillis;
 
-    private Desk desk(long traderId) {
-        return desks.computeIfAbsent(traderId, _ -> new Desk());
+    /** 开口：不再替对端持有任何 trader；口关着时交还来、停着的事现在分发 */
+    @Override
+    public void open(Start how) {
+        open = true;
+        desks.clearHeldHere();
+        desks.drainParked().forEach(this::redispatch);
+    }
+
+    /** 关口：有轮在跑、被占着、有预案在做的 trader 记成"还持有"，只有预案在做的等预案做完就放手 */
+    @Override
+    public void close() {
+        open = false;
+        desks.markHeldHere(presets.busyTraders());
+        for (long id : desks.heldHere()) {
+            presets.whenIdle(id).thenRun(() -> releaseIfIdle(id));
+        }
+    }
+
+    @Override
+    public String name() {
+        return "wake-rounds";
+    }
+
+    /** 在跑的轮数 */
+    @Override
+    public int count() {
+        return desks.roundCount();
+    }
+
+    @Override
+    public String key() {
+        return "trader-desks";
+    }
+
+    /** 还持有的 trader，和每个 trader 最近发过的例行边界 */
+    @Override
+    public JsonNode export() {
+        ObjectNode out = MAPPER.createObjectNode();
+        desks.heldHere().forEach(out.putArray("held")::add);
+        ObjectNode fired = out.putObject("firedBoundary");
+        firedBoundary.forEach((id, b) -> fired.put(String.valueOf(id), b));
+        return out;
+    }
+
+    /** 持有名单里的标成旧实例持有；例行边界并进来，取大的，同一个边界不再发一遍 */
+    @Override
+    public void accept(JsonNode state) {
+        List<Long> held = new ArrayList<>();
+        state.path("held").forEach(n -> held.add(n.asLong()));
+        desks.markHeldByOld(held);
+        state.path("firedBoundary").properties().forEach(e ->
+                firedBoundary.merge(Long.parseLong(e.getKey()), e.getValue().asLong(), Math::max));
+        log.info("[TraderSched] 收下交接单：旧实例持有 {}", held);
     }
 
     /** 主触发：任意 watch 币的 5m 收盘都是一次时钟滴答。 */
@@ -121,35 +181,40 @@ public class TraderScheduler {
                 continue;
             }
             // 这里可能并发进来，同一边界只发一次
-            boolean[] won = new boolean[1];
-            firedBoundary.compute(trader.getId(), (_, prev) -> {
-                if (prev == null || prev < boundary) {
-                    won[0] = true;
-                    return boundary;
-                }
-                return prev;
-            });
-            if (won[0]) {
-                fireRoutine(trader, boundary);
+            if (claim(trader.getId(), boundary)) {
+                fireRoutine(trader, boundary, true);
             }
         }
     }
 
-    /** 例行到点：有整盘轮在跑就插进它，没有就起一轮；重置或删除占着的时候这根不发 */
-    private void fireRoutine(AiTrader trader, long boundary) {
-        Desk desk = desk(trader.getId());
-        synchronized (desk) {
-            if (desk.occupied) {
-                log.info("[TraderSched] 重置或删除进行中，这根例行不发 traderId={} boundary={}", trader.getId(), boundary);
-                return;
+    /** 占下这个 trader 的这根例行边界：没发过这根或更晚的才占得上 */
+    private boolean claim(long traderId, long boundary) {
+        boolean[] won = new boolean[1];
+        firedBoundary.compute(traderId, (_, prev) -> {
+            if (prev == null || prev < boundary) {
+                won[0] = true;
+                return boundary;
             }
-            WakeRound book = desk.rounds.get(BOOK);
-            if (book != null) {
-                book.offerRoutine(boundary);
-                log.info("[TraderSched] 整盘轮在跑，例行插进去 traderId={} boundary={}", trader.getId(), boundary);
-                return;
-            }
-            start(desk, trader, WakeScope.book(trader), round -> runner.wake(trader, boundary, round));
+            return prev;
+        });
+        return won[0];
+    }
+
+    /**
+     * 例行到点：有整盘轮在跑就插进它，没有就起一轮；重置或删除占着的时候这根不发；旧实例持有的转过去。
+     * fresh：这根是这里到点发的，不是没读到重发的
+     */
+    private void fireRoutine(AiTrader trader, long boundary, boolean fresh) {
+        long id = trader.getId();
+        Desks.Placement p = desks.routine(id, WakeScope.book(trader), boundary, () -> open, nowMs.getAsLong());
+        switch (p.place()) {
+            case STARTED -> run(trader, p, round -> runner.wake(trader, boundary, round));
+            case TAKEN -> log.info("[TraderSched] 整盘轮在跑，例行插进去 traderId={} boundary={}", id, boundary);
+            case DROPPED -> log.info("[TraderSched] 重置或删除进行中，这根例行不发 traderId={} boundary={}", id, boundary);
+            case CLOSED -> handBack(id, new Arrival.Routine(boundary), fresh);
+            // 收盘事件线程上逐个 trader 发例行，调对端不占它
+            case HELD_BY_OLD -> Thread.startVirtualThread(() -> toOld(id, new Arrival.Routine(boundary)));
+            default -> throw new IllegalStateException("例行不会落到 " + p.place());
         }
     }
 
@@ -193,76 +258,179 @@ public class TraderScheduler {
             return;
         }
         WakeScope scope = WakeScope.of(trader, trigger.symbol());
-        Desk desk = desk(traderId);
-        synchronized (desk) {
-            if (desk.occupied) {
-                desk.parked.add(trigger);
-                return;
+        // 别的轮已经把这条盯盘命中告诉过模型的，不再单独叫
+        Desks.Placement p = desks.trigger(traderId, scope, trigger, () -> open,
+                t -> t instanceof WatchTrigger hit && !watchStore.wokenIds(List.of(hit.watch().getId())).isEmpty(),
+                nowMs.getAsLong());
+        switch (p.place()) {
+            case STARTED -> {
+                log.info("[TraderSched] 非例行唤醒 traderId={} 范围={} {}", traderId, scope.single() ? scope.symbol() : "整盘", trigger);
+                run(trader, p, round -> runner.wakeTriggered(trader, List.of(trigger), round));
             }
-            WakeRound own = scope.single() ? desk.rounds.get(scope.symbol()) : null;
-            WakeRound taker = own != null ? own : desk.rounds.get(BOOK);
-            if (taker != null) {
-                taker.offer(trigger);
-                log.info("[TraderSched] 触发插进在跑的{}轮 traderId={} {}", own != null ? "单币" : "整盘", traderId, trigger);
-                return;
+            case TAKEN -> log.info("[TraderSched] 触发插进在跑的轮 traderId={} {}", traderId, trigger);
+            case CLOSED -> handBack(traderId, new Arrival.Trigger(trigger), false);
+            // 分发可能在收盘事件线程上，调对端不占它
+            case HELD_BY_OLD -> Thread.startVirtualThread(() -> toOld(traderId, new Arrival.Trigger(trigger)));
+            default -> {
+                // PARKED：占着的时候停着，放手后分发；SKIPPED：别的轮已经告诉过模型
             }
-            // 别的轮已经把这条盯盘命中告诉过模型的，不再单独叫
-            if (trigger instanceof WatchTrigger hit && !watchStore.wokenIds(List.of(hit.watch().getId())).isEmpty()) {
-                return;
-            }
-            log.info("[TraderSched] 非例行唤醒 traderId={} 范围={} {}", traderId, scope.single() ? scope.symbol() : "整盘", trigger);
-            start(desk, trader, scope, round -> runner.wakeTriggered(trader, List.of(trigger), round));
         }
     }
 
     /**
-     * 登记一轮并起虚拟线程跑；跑完摘掉登记，没被读到的触发和例行另行处理。调用方已经锁着 desk。
+     * 起登记好的那一轮的线程；跑完摘掉登记，没被读到的例行重新发、触发重新分发，旧实例上再看能不能放手这个 trader。
      * 漏了摘登记这个范围就再也起不了轮，所以只写这一处
      */
-    private void start(Desk desk, AiTrader trader, WakeScope scope, Consumer<WakeRound> work) {
-        String key = scope.single() ? scope.symbol() : BOOK;
-        WakeRound round = new WakeRound(scope, () -> singleSymbols(desk), nowMs.getAsLong());
-        desk.rounds.put(key, round);
+    private void run(AiTrader trader, Desks.Placement placement, Consumer<WakeRound> work) {
+        long id = trader.getId();
         Thread.startVirtualThread(() -> {
             try {
-                work.accept(round);
+                work.accept(placement.round());
             } finally {
-                WakeRound.Arrivals unread;
-                synchronized (desk) {
-                    desk.rounds.remove(key);
-                    unread = round.take();
-                }
+                WakeRound.Arrivals unread = desks.finish(id, placement.key(), placement.round());
                 // 这一轮已经在写结论、没再调模型，插进去的它读不到：例行重新发，触发重新分发
                 if (unread.routineBoundary() != null) {
-                    AiTrader now = traderMapper.selectById(trader.getId());
-                    if (now != null && AiTrader.STATUS_RUNNING.equals(now.getStatus())) {
-                        fireRoutine(now, unread.routineBoundary());
-                    }
+                    redispatch(id, new Arrival.Routine(unread.routineBoundary()));
                 }
-                unread.triggers().forEach(t -> dispatch(trader.getId(), t));
+                unread.triggers().forEach(t -> dispatch(id, t));
+                releaseIfIdle(id);
             }
         });
     }
 
-    /**
-     * 有没有 atMs 那一刻就在跑、到现在还没跑完、看得到这个币的轮：整盘轮，或者只处理这个币的单币轮。
-     * 立即复盘用：平掉这笔的那一轮在平仓那一刻就在跑，它的决策行要整轮跑完才落库
-     */
-    public boolean runningAt(long traderId, String symbol, long atMs) {
-        Desk desk = desk(traderId);
-        synchronized (desk) {
-            return desk.rounds.entrySet().stream()
-                    .anyMatch(e -> (BOOK.equals(e.getKey()) || e.getKey().equals(symbol)) && e.getValue().startedAt() <= atMs);
+    /** 起新轮的口关着：交还给对端（旧实例收尾时交给新实例；冷切没有对端，就丢了） */
+    private void handBack(long traderId, Arrival arrival, boolean fresh) {
+        log.info("[TraderSched] 起新轮的口关着，交还对端 traderId={} {}", traderId, arrival);
+        try {
+            peer.handBack(traderId, arrival, fresh);
+        } catch (Exception e) {
+            log.warn("[TraderSched] 交还对端失败 traderId={} {} msg={}", traderId, arrival, e.toString());
         }
     }
 
-    /** 此刻有单币轮在处理的币 */
-    private static Set<String> singleSymbols(Desk desk) {
-        synchronized (desk) {
-            Set<String> out = new TreeSet<>(desk.rounds.keySet());
-            out.remove(BOOK);
-            return out;
+    /** 新实例：旧实例持有的 trader，到来的事转过去；接了就结束，没接或调不通就停着，已不持有就本地处理 */
+    private void toOld(long traderId, Arrival arrival) {
+        Offer offer;
+        try {
+            offer = peer.offer(traderId, arrival);
+        } catch (Exception e) {
+            log.warn("[TraderSched] 转给旧实例失败，先停着 traderId={} {} msg={}", traderId, arrival, e.toString());
+            offer = Offer.NOT_TAKEN;
         }
+        switch (offer) {
+            case TAKEN -> log.info("[TraderSched] 旧实例接了 traderId={} {}", traderId, arrival);
+            case NOT_TAKEN -> {
+                if (desks.parkWhileHeld(traderId, arrival)) {
+                    log.info("[TraderSched] 旧实例没接，停着等它放手 traderId={} {}", traderId, arrival);
+                } else {
+                    redispatch(traderId, arrival);
+                }
+            }
+            case NOT_HELD -> {
+                releasedByOld(traderId);
+                redispatch(traderId, arrival);
+            }
+        }
+    }
+
+    /** 按平时规则重新处理一件事：例行重新读一遍 trader、还在运行才发；触发重新分发 */
+    private void redispatch(long traderId, Arrival arrival) {
+        switch (arrival) {
+            case Arrival.Routine r -> {
+                AiTrader now = traderMapper.selectById(traderId);
+                if (now != null && AiTrader.STATUS_RUNNING.equals(now.getStatus())) {
+                    fireRoutine(now, r.boundary(), false);
+                }
+            }
+            case Arrival.Trigger t -> dispatch(traderId, t.trigger());
+        }
+    }
+
+    private void redispatch(long traderId, Desks.Parked parked) {
+        if (parked.routine() != null) {
+            redispatch(traderId, new Arrival.Routine(parked.routine()));
+        }
+        parked.triggers().forEach(t -> dispatch(traderId, t));
+    }
+
+    // ---------- 对端打进来的 ----------
+
+    /** 旧实例：新实例转来的事，交给在跑的轮 */
+    public Offer offerFromNew(long traderId, Arrival arrival) {
+        AiTrader trader = traderMapper.selectById(traderId);
+        if (trader == null) {
+            return Offer.NOT_HELD;
+        }
+        WakeScope scope = arrival instanceof Arrival.Trigger t ? WakeScope.of(trader, t.trigger().symbol()) : WakeScope.book(trader);
+        return desks.offer(traderId, scope, arrival);
+    }
+
+    /**
+     * 新实例：旧实例交还来的。fresh 的例行（旧实例关口后才到点发的）先占边界，这里已经发过这根就不要了；
+     * 还被持有或还没开口就停着，否则按平时规则
+     */
+    public void handedBack(long traderId, Arrival arrival, boolean fresh) {
+        if (fresh && arrival instanceof Arrival.Routine r && !claim(traderId, r.boundary())) {
+            log.info("[TraderSched] 交还来的例行这里已经发过 traderId={} boundary={}", traderId, r.boundary());
+            return;
+        }
+        if (!desks.parkHandedBack(traderId, arrival, () -> open)) {
+            redispatch(traderId, arrival);
+        }
+    }
+
+    /** 新实例：旧实例放手了这个 trader，停着的例行和触发现在分发；重复收到或本来就不被持有忽略 */
+    public void releasedByOld(long traderId) {
+        Desks.Parked parked = desks.releaseFromOld(traderId);
+        if (parked != null) {
+            log.info("[TraderSched] 旧实例放手 traderId={}，分发停着的 {}", traderId, parked);
+            redispatch(traderId, parked);
+        }
+    }
+
+    /** 新实例：旧实例没了（探活失败），持有的全部当作放手 */
+    public void releaseAllHeldByOld() {
+        desks.heldByOld().forEach(this::releasedByOld);
+    }
+
+    /**
+     * 新实例：按旧实例此刻导出的这一格核对，标着它持有、它已经不持有的当作放手。
+     * 补的是放手通知在接手之前就到了（那时还没标它持有，被忽略）或者丢了
+     */
+    public void releaseNotHeldByOld(JsonNode cell) {
+        Set<Long> stillHeld = new HashSet<>();
+        cell.path("held").forEach(n -> stillHeld.add(n.asLong()));
+        desks.heldByOld().stream().filter(id -> !stillHeld.contains(id)).forEach(this::releasedByOld);
+    }
+
+    /** 旧实例：此刻还持有的 trader */
+    public Set<Long> heldHere() {
+        return desks.heldHere();
+    }
+
+    /**
+     * 旧实例：这个 trader 没有轮、没被占着、没有预案在做了就放手——摘出持有名单（之后对端转来的回"已不持有"），
+     * 通知新实例，完成它的实时页连接
+     */
+    public void releaseIfIdle(long traderId) {
+        if (!desks.releaseHere(traderId, id -> !presets.busy(id))) {
+            return;
+        }
+        log.info("[TraderSched] 放手 traderId={}", traderId);
+        Thread.startVirtualThread(() -> {
+            peer.released(traderId, TraderPeer.Held.WAKE);
+            liveHub.completeFor(traderId);
+        });
+    }
+
+    // ---------- 动作面板 ----------
+
+    /**
+     * 有没有 atMs 那一刻就在跑、到现在还没跑完、看得到这个币的轮：整盘轮，或者只处理这个币的单币轮。
+     * 立即复盘用：平掉这笔的那一轮在平仓那一刻就在跑，它的决策行要整轮跑完才落库。旧实例持有的当作有
+     */
+    public boolean runningAt(long traderId, String symbol, long atMs) {
+        return desks.runningAt(traderId, symbol, atMs);
     }
 
     /**
@@ -286,43 +454,27 @@ public class TraderScheduler {
             return messages.get(lang, "trader.wake.budgetTooTight",
                     Map.of("seconds", TraderWakeupRunner.MIN_WAKE_SECONDS));
         }
-        Desk desk = desk(trader.getId());
-        synchronized (desk) {
-            return desk.occupied || desk.rounds.containsKey(BOOK) ? messages.get(lang, "trader.wake.busy") : null;
-        }
+        return desks.manualBlocked(trader.getId(), () -> open) ? messages.get(lang, "trader.wake.busy") : null;
     }
 
     /**
-     * 占住这个 trader——重置和删除走这里，占着的时候它起不了新轮。有任何一轮在跑就占不上。
+     * 占住这个 trader——重置和删除走这里，占着的时候它起不了新轮。有任何一轮在跑、或被旧实例持有就占不上。
      * 占上必须在 finally 里 {@link #release}，否则这个 trader 从此醒不过来。
      */
     public boolean tryOccupy(long traderId) {
-        Desk desk = desk(traderId);
-        synchronized (desk) {
-            if (desk.occupied || !desk.rounds.isEmpty()) {
-                return false;
-            }
-            desk.occupied = true;
-            return true;
-        }
+        return desks.tryOccupy(traderId);
     }
 
-    /** 放手：占着的时候来的触发现在分发 */
+    /** 放手：占着的时候来的触发现在分发；旧实例上再看能不能放手这个 trader */
     public void release(long traderId) {
-        Desk desk = desk(traderId);
-        List<WakeTrigger> parked;
-        synchronized (desk) {
-            desk.occupied = false;
-            parked = List.copyOf(desk.parked);
-            desk.parked.clear();
-        }
-        parked.forEach(t -> dispatch(traderId, t));
+        desks.releaseOccupied(traderId).forEach(t -> dispatch(traderId, t));
+        releaseIfIdle(traderId);
     }
 
     /** trader 已删：摘掉两份 traderId 记账。删除那边全程 {@link #tryOccupy} 占着，删完在 finally 里 {@link #release} */
     public void forget(long traderId) {
         firedBoundary.remove(traderId);
-        desks.remove(traderId);
+        desks.forget(traderId);
     }
 
     /**
@@ -363,14 +515,12 @@ public class TraderScheduler {
         }
         long intervalMs = WakeIntervals.MS.get(trader.getIntervalCode());
         long boundary = WakeIntervals.align(nowMs.getAsLong(), intervalMs);
-        Desk desk = desk(trader.getId());
-        synchronized (desk) {
-            // 预检只是"看一眼"不占位；预检到现在之间可能有别的整盘轮先起来了
-            if (desk.occupied || desk.rounds.containsKey(BOOK)) {
-                return messages.get("trader.wake.busy");
-            }
-            start(desk, trader, WakeScope.book(trader), round -> runner.wakeManual(trader, boundary, round));
+        // 预检只是"看一眼"不占位；预检到现在之间可能有别的整盘轮先起来了，起新轮的口也可能刚关上
+        Desks.Placement p = desks.manual(trader.getId(), WakeScope.book(trader), () -> open, nowMs.getAsLong());
+        if (p.place() != Desks.Place.STARTED) {
+            return messages.get("trader.wake.busy");
         }
+        run(trader, p, round -> runner.wakeManual(trader, boundary, round));
         log.info("[TraderSched] 手动唤醒 traderId={} boundary={}", trader.getId(), boundary);
         return null;
     }

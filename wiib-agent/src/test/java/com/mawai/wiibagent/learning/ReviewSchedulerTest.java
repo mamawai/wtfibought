@@ -3,9 +3,11 @@ package com.mawai.wiibagent.learning;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.wakeup.TraderPeer;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
@@ -46,8 +49,13 @@ class ReviewSchedulerTest {
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final DebriefRunner debriefRunner = mock(DebriefRunner.class);
     private final ReviewRunner reviewRunner = mock(ReviewRunner.class);
-    private final ReviewScheduler scheduler = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner);
+    private final ReviewScheduler scheduler = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
     private final DebriefRunner.Due due = new DebriefRunner.Due(new FuturesPositionDTO(), new AiTraderPlan());
+
+    {
+        // 进程启动时由编排开口
+        scheduler.open(Start.COLD);
+    }
 
     private AiTrader running() {
         AiTrader t = new AiTrader();
@@ -162,6 +170,16 @@ class ReviewSchedulerTest {
         assertThat(scheduler.isBusy(7L)).isFalse();
     }
 
+    /** 起新复盘的口关着（服务关停中）：复盘位抢不到，面板预检也报忙，和点下去的结果对得上；不留下占着的位 */
+    @Test
+    void closedIntakeRefusesTheSlotAndReportsBusy() {
+        scheduler.close();
+
+        assertThat(scheduler.tryOccupy(7L)).isFalse();
+        assertThat(scheduler.isBusy(7L)).isTrue();
+        assertThat(scheduler.count()).isZero();
+    }
+
     /** 复盘位被占着：单笔复盘这一根就算了；统一复盘等着，位子一放就跑 */
     @Test
     void debriefGivesUpWhenSlotIsTakenButUnifiedReviewWaits() {
@@ -191,6 +209,113 @@ class ReviewSchedulerTest {
         verify(debriefRunner, timeout(2_000)).debrief(t, due);
         verify(debriefRunner, after(300).times(1)).debrief(any(), any());
         assertThat(scheduler.isBusy(7L)).isFalse();
+    }
+
+    /** A8：交接时有复盘在跑：新实例替旧实例占着这个位，点播回忙；旧实例复盘完通知放手，新实例跟着放 */
+    @Test
+    void reviewSlotHeldAcrossHandover() {
+        TraderPeer toNew = mock(TraderPeer.class);
+        ReviewScheduler old = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, toNew);
+        old.open(Start.COLD);
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        assertThat(old.tryOccupy(7L)).isTrue();
+
+        old.close();
+        neu.accept(old.export());
+        neu.open(Start.HANDOVER);
+
+        assertThat(old.heldHereCount()).isEqualTo(1);
+        assertThat(neu.tryOccupy(7L)).isFalse();
+        assertThat(neu.count()).isZero();
+
+        old.release(7L);
+        verify(toNew, timeout(2_000)).released(7L, TraderPeer.Held.REVIEW);
+        assertThat(old.heldHereCount()).isZero();
+        neu.releasedByOld(7L);
+        assertThat(neu.tryOccupy(7L)).isTrue();
+    }
+
+    /** 旧实例：7 号的复盘位被占着，日线边界的统一复盘排在后面等；等它排上了再返回 */
+    private ReviewScheduler oldWithUnifiedReviewQueued(AiTrader t) throws InterruptedException {
+        inDb(t);
+        ReviewScheduler old = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, mock(TraderPeer.class));
+        old.open(Start.COLD);
+        assertThat(old.tryOccupy(7L)).isTrue();
+        old.nowMs = () -> DAY_BOUNDARY;
+        old.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
+        long deadline = System.currentTimeMillis() + 2_000;
+        while (!old.export().path("queued").has("7") && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        return old;
+    }
+
+    /** 交接时统一复盘正排着队：旧实例放位后轮到它也不跑，带给新实例，新实例等旧实例放了位再跑这一篇 */
+    @Test
+    void queuedUnifiedReviewMovesToTheNewInstance() throws InterruptedException {
+        AiTrader t = running();
+        ReviewScheduler old = oldWithUnifiedReviewQueued(t);
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+
+        old.close();
+        neu.accept(old.export());
+        neu.open(Start.HANDOVER);
+        old.release(7L);
+
+        verify(reviewRunner, after(300).never()).review(any(), anyLong());
+        neu.releasedByOld(7L);
+        verify(reviewRunner, timeout(2_000)).review(t, DAY_BOUNDARY);
+        verify(reviewRunner, after(300).times(1)).review(any(), anyLong());
+    }
+
+    /** 让位后又恢复在任：口关着时轮到没跑的那篇统一复盘，开口后补上，只跑一遍 */
+    @Test
+    void queuedUnifiedReviewRunsAfterResume() throws InterruptedException {
+        AiTrader t = running();
+        ReviewScheduler old = oldWithUnifiedReviewQueued(t);
+
+        old.close();
+        old.release(7L);
+        verify(reviewRunner, after(300).never()).review(any(), anyLong());
+        old.open(Start.HANDOVER);
+
+        verify(reviewRunner, timeout(2_000)).review(t, DAY_BOUNDARY);
+        verify(reviewRunner, after(300).times(1)).review(any(), anyLong());
+    }
+
+    /** 旧实例在交接单导出之后、新实例收下之前放掉了 7 号：按旧实例此刻导出的名单核对，7 号跟着放，还占着的 8 号照旧 */
+    @Test
+    void slotReleasedBeforeAcceptIsCaughtUpByPeerList() {
+        ReviewScheduler old = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        old.open(Start.COLD);
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        assertThat(old.tryOccupy(7L)).isTrue();
+        assertThat(old.tryOccupy(8L)).isTrue();
+        old.close();
+        var note = old.export();
+        old.release(7L);
+
+        neu.accept(note);
+        neu.open(Start.HANDOVER);
+        assertThat(neu.tryOccupy(7L)).isFalse();
+
+        neu.releaseNotHeldByOld(old.export());
+
+        assertThat(neu.tryOccupy(7L)).isTrue();
+        assertThat(neu.tryOccupy(8L)).isFalse();
+    }
+
+    /** 旧实例没了：替它占着的复盘位全部放掉 */
+    @Test
+    void deadOldReleasesAllHeldReviewSlots() {
+        ReviewScheduler neu = new ReviewScheduler(traderMapper, debriefRunner, reviewRunner, TraderPeer.NONE);
+        neu.accept(MAPPER.readTree("{\"held\":[7,8],\"lastBoundary\":1}"));
+        neu.open(Start.HANDOVER);
+
+        neu.releaseAllHeldByOld();
+
+        assertThat(neu.tryOccupy(7L)).isTrue();
+        assertThat(neu.tryOccupy(8L)).isTrue();
     }
 
     /** 停机后重放的旧事件、不是 5m 的事件：不处理 */

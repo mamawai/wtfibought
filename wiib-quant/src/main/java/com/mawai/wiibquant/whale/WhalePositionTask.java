@@ -11,8 +11,11 @@ import com.mawai.wiibquant.mapper.WhalePositionMapper.Latest;
 import com.mawai.wiibquant.mapper.WhaleSnapshotMapper;
 import com.mawai.wiibquant.whale.WhaleAggregator.CoinSnapshot;
 import com.mawai.wiibquant.whale.WhaleAggregator.Side;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -37,11 +40,14 @@ import java.util.function.LongSupplier;
  * 失败语义：metaAndAssetCtxs 失败本轮什么都不写（没有快照价与分母）；单地址失败跳过，它的基线不动、不算已平；
  * 成功率不足 50% 本轮什么都不写只记 warn。observed_at 取本轮所在的整 10 分钟槽，与 5m K 线边界重合。
  * 基线放进程内存，首轮从表里加载每个 (address, coin) 的最近一行。
+ * <p>
+ * 进活的口是一个停止标志：关口（让位、关停）时置上，在途的这一轮还没发的请求不再发，这一轮不写。
  */
 @Slf4j
 @Component
+@Order(45)
 @RequiredArgsConstructor
-public class WhalePositionTask {
+public class WhalePositionTask implements Intake {
 
     /** 一轮一个槽；改 whale.poll.cron 周期要同步改它 */
     static final long SLOT_MS = 600_000;
@@ -58,8 +64,20 @@ public class WhalePositionTask {
     private final AtomicBoolean running = new AtomicBoolean();
     /** (address|coin) → 基线；null=还没从表加载 */
     private Map<String, Baseline> baseline;
+    /** 关口时置上 */
+    private volatile boolean stopped;
 
     LongSupplier nowMs = System::currentTimeMillis;
+
+    @Override
+    public void open(Start how) {
+        stopped = false;
+    }
+
+    @Override
+    public void close() {
+        stopped = true;
+    }
 
     @Scheduled(cron = "${whale.poll.cron:0 */10 * * * *}", zone = "Asia/Singapore")
     public void poll() {
@@ -113,6 +131,9 @@ public class WhalePositionTask {
         try (ExecutorService pool = Executors.newFixedThreadPool(props.getMaxInFlight(), Thread.ofVirtual().factory())) {
             for (String a : addresses) {
                 pool.submit(() -> {
+                    if (stopped) {
+                        return;
+                    }
                     try {
                         states.put(a, client.clearinghouseState(a, Bucket.POLL));
                     } catch (Exception e) {
@@ -120,6 +141,10 @@ public class WhalePositionTask {
                     }
                 });
             }
+        }
+        if (stopped) {
+            log.info("[WhalePosition] 口关了，本轮不写");
+            return;
         }
         if (states.size() * 2 < addresses.size()) {
             log.warn("[WhalePosition] 成功 {}/{} 不足一半，本轮不写快照", states.size(), addresses.size());

@@ -1,8 +1,12 @@
 package com.mawai.wiibagent.chat.gate;
 
+import com.mawai.wiibagent.chat.ChatTestEndpoints;
 import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.handover.Start;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -13,12 +17,100 @@ import static com.mawai.wiibagent.chat.gate.ChatConcurrencyGate.Owner.PROMPT_GEN
 import static com.mawai.wiibagent.chat.gate.ChatConcurrencyGate.Owner.WORKBENCH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 /**
  * 行情配额按 IP 算，BYOK 分摊得了 LLM 成本、分摊不了它。闸门是把并发夹死的唯一手段，
  * 也是全套设计里唯一"泄漏就不可恢复"的组件——漏满名额，服务对所有人永久拒绝。
  */
 class ChatConcurrencyGateTest {
+
+    /** 开着口的闸：进程启动时由编排开口 */
+    private static ChatConcurrencyGate opened(int limit) {
+        return ChatTestEndpoints.openGate(limit);
+    }
+
+    /** Redis 一时出错：这次照样报错，但本实例的用户位不能就此卡死，好了之后能接着占 */
+    @Test
+    void Redis出错不留下占着的用户位() {
+        StringRedisTemplate redis = ChatTestEndpoints.userSlotRedis();
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(redis, "", 10);
+        gate.open(Start.COLD);
+        when(redis.opsForValue().setIfAbsent(anyString(), anyString(), any(Duration.class)))
+                .thenThrow(new IllegalStateException("连不上 Redis"))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> gate.tryAcquire(1L, WORKBENCH)).isInstanceOf(IllegalStateException.class);
+        assertThat(gate.count()).isZero();
+        assertThat(gate.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
+    }
+
+    /** 进程被杀掉没还的用户位：这个槽位下一个进程启动时清掉，另一个槽位占着的不动 */
+    @Test
+    void 启动时清掉本槽位上一个进程留下的用户位() {
+        StringRedisTemplate redis = ChatTestEndpoints.userSlotRedis();
+        ChatConcurrencyGate killed = new ChatConcurrencyGate(redis, "a", 10);
+        ChatConcurrencyGate other = new ChatConcurrencyGate(redis, "b", 10);
+        killed.open(Start.COLD);
+        other.open(Start.COLD);
+        killed.tryAcquire(1L, WORKBENCH);
+        other.tryAcquire(2L, PROMPT_GEN);
+
+        ChatConcurrencyGate restarted = new ChatConcurrencyGate(redis, "a", 10);
+        restarted.clearLeftovers();
+
+        assertThat(restarted.isBusy(1L)).isFalse();
+        assertThat(restarted.isBusy(2L)).isTrue();
+    }
+
+    /** 交接期间两个实例共用 Redis 里的用户位：一边占着，另一边这个用户也算占线、发不了；谁占着决定拒绝码 */
+    @Test
+    void 另一个实例占着也算占线() {
+        StringRedisTemplate redis = ChatTestEndpoints.userSlotRedis();
+        ChatConcurrencyGate a = new ChatConcurrencyGate(redis, "a", 10);
+        ChatConcurrencyGate b = new ChatConcurrencyGate(redis, "b", 10);
+        a.open(Start.COLD);
+        b.open(Start.HANDOVER);
+
+        assertThat(a.tryAcquire(1L, PROMPT_GEN)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
+        assertThat(b.isBusy(1L)).isTrue();
+        assertThatThrownBy(() -> b.acquireOrThrow(1L, WORKBENCH))
+                .hasFieldOrPropertyWithValue("code", ErrorCode.PROMPT_GEN_RUNNING.getCode());
+        assertThat(b.count()).isZero();
+
+        b.release(1L);
+        assertThat(a.isBusy(1L)).isTrue();
+        a.release(1L);
+        assertThat(b.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
+    }
+
+    /** 接新对话的口关着（服务关停中）：新的一轮直接拒，给"服务正在更新"的码，不占用户位 */
+    @Test
+    void 口关着新的一轮直接拒() {
+        ChatConcurrencyGate gate = opened(10);
+        gate.close();
+
+        assertThat(gate.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.CLOSED);
+        assertThat(gate.isBusy(1L)).isFalse();
+        assertThatThrownBy(() -> gate.acquireOrThrow(1L, PROMPT_GEN))
+                .hasFieldOrPropertyWithValue("code", ErrorCode.CHAT_SERVICE_UPDATING.getCode());
+    }
+
+    /** 占着的名额算手上的活：占到就算一份，还了就清零；没占到的不算 */
+    @Test
+    void 占着的名额算手上的活() {
+        ChatConcurrencyGate gate = opened(1);
+        assertThat(gate.count()).isZero();
+
+        gate.tryAcquire(1L, WORKBENCH);
+        gate.tryAcquire(2L, WORKBENCH);
+        assertThat(gate.count()).isEqualTo(1);
+
+        gate.release(1L);
+        assertThat(gate.count()).isZero();
+    }
 
     /**
      * 同一用户同时只能跑一轮：开十个标签页也占不满全局名额。
@@ -30,7 +122,7 @@ class ChatConcurrencyGateTest {
      */
     @Test
     void 同一用户只能占一个名额() {
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        ChatConcurrencyGate gate = opened(1);
 
         assertThat(gate.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
         assertThat(gate.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.USER_BUSY);
@@ -45,7 +137,7 @@ class ChatConcurrencyGateTest {
      */
     @Test
     void 占线状态跟着名额走() {
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        ChatConcurrencyGate gate = opened(1);
         assertThat(gate.isBusy(1L)).isFalse();
 
         gate.tryAcquire(1L, WORKBENCH);
@@ -62,7 +154,7 @@ class ChatConcurrencyGateTest {
     /** 用户位被提示词生成占着时给单独的码，工作台据此说"提示词生成中"；被工作台占着还是原来的码 */
     @Test
     void 占着用户位的是谁决定拒绝码() {
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
+        ChatConcurrencyGate gate = opened(10);
         gate.tryAcquire(1L, PROMPT_GEN);
         gate.tryAcquire(2L, WORKBENCH);
 
@@ -75,7 +167,7 @@ class ChatConcurrencyGateTest {
     /** 全局满了就拒绝，不排队——排队会让 SSE 连接挂着等，还要额外处理超时 */
     @Test
     void 全局满了拒绝新用户() {
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(2);
+        ChatConcurrencyGate gate = opened(2);
 
         assertThat(gate.tryAcquire(1L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
         assertThat(gate.tryAcquire(2L, WORKBENCH)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
@@ -88,7 +180,7 @@ class ChatConcurrencyGateTest {
     /** 释放没占过的名额不能把额度凭空变多——否则一次误调用就击穿了上限 */
     @Test
     void 重复释放不会凭空多出名额() {
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        ChatConcurrencyGate gate = opened(1);
         gate.tryAcquire(1L, WORKBENCH);
 
         gate.release(1L);
@@ -103,7 +195,7 @@ class ChatConcurrencyGateTest {
     @Test
     void 并发抢占不超过上限() throws Exception {
         int limit = 4;
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(limit);
+        ChatConcurrencyGate gate = opened(limit);
         int threads = 32;
         AtomicInteger acquired = new AtomicInteger();
         CountDownLatch start = new CountDownLatch(1);

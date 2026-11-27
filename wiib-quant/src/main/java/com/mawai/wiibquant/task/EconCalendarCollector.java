@@ -1,5 +1,6 @@
 package com.mawai.wiibquant.task;
 
+import com.mawai.wiibcommon.handover.Paced;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -72,8 +73,9 @@ public class EconCalendarCollector {
     /** 时钟注入点：测试换假时钟 */
     LongSupplier nowMs = System::currentTimeMillis;
 
-    /** 周期见 econ.calendar.interval-ms（缺省 4h）。initialDelay 让开启动高峰 */
-    @Scheduled(fixedDelayString = "${econ.calendar.interval-ms:14400000}", initialDelay = 30_000)
+    /** 每分钟看一眼，离上次跑完满 econ.calendar.interval-ms（缺省 4h）才跑。initialDelay 让开启动高峰 */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)
+    @Paced(key = "agent:econ-calendar", every = "${econ.calendar.interval-ms:14400000}")
     @Transactional
     public void collect() {
         if (!enabled) {

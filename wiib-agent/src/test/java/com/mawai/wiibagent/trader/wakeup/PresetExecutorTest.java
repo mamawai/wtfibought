@@ -27,7 +27,9 @@ import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -39,6 +41,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -58,8 +61,10 @@ class PresetExecutorTest {
     private final TraderPlanStore planStore = mock(TraderPlanStore.class);
     private final TraderWatchStore watchStore = mock(TraderWatchStore.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
+    private final Desks desks = new Desks();
+    private final TraderPeer peer = mock(TraderPeer.class);
     private final PresetExecutor executor = new PresetExecutor(sim, traderMapper, decisionMapper, planStore, watchStore,
-            langResolver, new PromptCatalog(), new MessageCatalog(), new AccountGates());
+            langResolver, new PromptCatalog(), new MessageCatalog(), new AccountGates(), desks, peer);
 
     {
         AiTrader t = new AiTrader();
@@ -75,6 +80,8 @@ class PresetExecutorTest {
         when(planStore.liveFor(7L, 1, "BTCUSDT", "LONG")).thenReturn(plan);
         executor.nowMs = () -> DONE;
     }
+
+    private static final String CANCEL = "{\"type\":\"CANCEL_ORDER\",\"orderId\":600,\"symbol\":\"BTCUSDT\",\"side\":\"OPEN_LONG\"}";
 
     /** ETH 跌破 1900 这条条件，带一个动作 */
     private static AiTraderWatch watch(String actionJson) {
@@ -275,5 +282,69 @@ class PresetExecutorTest {
 
         assertThat(wake).isCompletedWithValue(false);
         verify(sim).setStopLoss(eq(99L), any());
+    }
+
+    /** 做完那一刻挂在 whenIdle 后面的事看到的 busy 已经是 false（旧实例靠它放手） */
+    @Test
+    void notBusyAnymoreWhenIdleFires() throws InterruptedException {
+        CountDownLatch hold = new CountDownLatch(1);
+        when(sim.cancelOrder(99L, 600L)).thenAnswer(inv -> {
+            hold.await();
+            return new FuturesOrderResponse();
+        });
+        executor.submit(watch(CANCEL), new BigDecimal("1899"), AT);
+        assertThat(executor.busyTraders()).containsExactly(7L);
+
+        CompletableFuture<Boolean> busyAtIdle = executor.whenIdle(7L).thenApply(_ -> executor.busy(7L));
+        hold.countDown();
+
+        assertThat(busyAtIdle.join()).isFalse();
+    }
+
+    /** 新实例上被旧实例持有的 trader：预案转给旧实例，用它回的"要不要叫醒"，本地不做；旧实例记在库里的结果读回到这条条件上 */
+    @Test
+    void heldByOldIsForwarded() {
+        desks.markHeldByOld(List.of(7L));
+        when(peer.preset(7L, 31L, new BigDecimal("1899"), AT)).thenReturn(new TraderPeer.PresetReply(true, false));
+        AiTraderWatch doneByOld = watch(CANCEL);
+        doneByOld.setActionOk(true);
+        doneByOld.setActionResult("BTCUSDT OPEN_LONG 挂单 600 已撤");
+        when(watchStore.byId(31L)).thenReturn(doneByOld);
+        AiTraderWatch w = watch(CANCEL);
+
+        assertThat(executor.submit(w, new BigDecimal("1899"), AT).join()).isFalse();
+
+        verify(sim, never()).cancelOrder(anyLong(), anyLong());
+        assertThat(w.getActionOk()).isTrue();
+        assertThat(w.getActionResult()).isEqualTo("BTCUSDT OPEN_LONG 挂单 600 已撤");
+    }
+
+    /** 旧实例回"已不持有"就本地做；调不通当结果未知，叫醒 */
+    @Test
+    void forwardFallsBackWhenOldNoLongerHoldsOrIsUnreachable() {
+        desks.markHeldByOld(List.of(7L));
+        when(sim.cancelOrder(99L, 600L)).thenReturn(new FuturesOrderResponse());
+        when(peer.preset(anyLong(), anyLong(), any(), anyLong())).thenReturn(new TraderPeer.PresetReply(false, false));
+
+        assertThat(executor.submit(watch(CANCEL), new BigDecimal("1899"), AT).join()).isFalse();
+        verify(sim).cancelOrder(99L, 600L);
+
+        when(peer.preset(anyLong(), anyLong(), any(), anyLong())).thenThrow(new IllegalStateException("连不上"));
+        assertThat(executor.submit(watch(CANCEL), new BigDecimal("1899"), AT).join()).isTrue();
+        verify(sim, times(1)).cancelOrder(99L, 600L);
+    }
+
+    /** 旧实例：还持有才执行转来的预案，做完回"要不要叫醒"；不持有回"已不持有"，不做 */
+    @Test
+    void oldRunsForwardedPresetOnlyWhileHolding() {
+        when(watchStore.byId(31L)).thenReturn(watch(CANCEL));
+        when(sim.cancelOrder(99L, 600L)).thenReturn(new FuturesOrderResponse());
+
+        assertThat(executor.runForPeer(31L, new BigDecimal("1899"), AT)).isEqualTo(new TraderPeer.PresetReply(false, false));
+        verify(sim, never()).cancelOrder(anyLong(), anyLong());
+
+        desks.markHeldHere(Set.of(7L));
+        assertThat(executor.runForPeer(31L, new BigDecimal("1899"), AT)).isEqualTo(new TraderPeer.PresetReply(true, false));
+        verify(sim).cancelOrder(99L, 600L);
     }
 }

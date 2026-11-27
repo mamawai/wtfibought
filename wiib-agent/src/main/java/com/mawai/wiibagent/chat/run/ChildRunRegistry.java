@@ -6,6 +6,7 @@ import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
+import com.mawai.wiibcommon.handover.InFlight;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -42,10 +43,11 @@ import java.util.function.Function;
  * {@link #state} 报每个的结局与内部步骤，前端本地空闲时轮询它补过程轨、见 pending 发唤醒。
  * <p>
  * 进程内存级，与 {@link WorkbenchRunRegistry} 同哲学：重启丢在跑的子运行与 pending 标记，已落库的报告还在上下文里。
+ * 在跑的子运行是一份手上的活（child-runs），提前收尾就是全部停掉，之后不再派。
  */
 @Slf4j
 @Component
-public class ChildRunRegistry {
+public class ChildRunRegistry implements InFlight {
 
     /** 派发请求 */
     public record Spec(String sessionId, long userId, ChildRun.Kind kind, String label, String brief, AgentLang lang) {
@@ -89,6 +91,8 @@ public class ChildRunRegistry {
     private final int reportMaxChars;
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     private final AtomicLong seq = new AtomicLong();
+    /** 提前收尾过了，之后不再派。和登记在同一把锁（this）里读写 */
+    private boolean cut;
 
     public ChildRunRegistry(ChatContextStore contextStore, WorkbenchRunRegistry runRegistry,
                             WorkbenchPrefService prefs, PromptCatalog prompts,
@@ -119,6 +123,9 @@ public class ChildRunRegistry {
         ChildRun run;
         // 数在跑的和登记一气做完：同一批 tool_call 并发派几个，不然都数到旧值一起过闸
         synchronized (this) {
+            if (cut) {
+                return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.updating"));
+            }
             if (runningOf(spec.userId()) >= userPrefs.subAgentLimit()) {
                 return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.limit",
                         Map.of("limit", userPrefs.subAgentLimit())));
@@ -226,6 +233,34 @@ public class ChildRunRegistry {
     public void purge(String sessionId) {
         cancelAll(sessionId);
         sessions.remove(sessionId);
+    }
+
+    @Override
+    public String name() {
+        return "child-runs";
+    }
+
+    /** 全站在跑的子运行数 */
+    @Override
+    public int count() {
+        int n = 0;
+        for (Session session : sessions.values()) {
+            for (ChildRun run : session.runs) {
+                if (run.status() == ChildRun.Status.RUNNING) {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    /** 停掉全部在跑的，之后来派的一律拒 */
+    @Override
+    public void cut() {
+        synchronized (this) {
+            cut = true;
+        }
+        sessions.keySet().forEach(this::cancelAll);
     }
 
     /** 不拿会话锁：会话锁里有落库，一个会话的慢保存不该卡住全站的派发。正赶上结束的多数一个无妨 */

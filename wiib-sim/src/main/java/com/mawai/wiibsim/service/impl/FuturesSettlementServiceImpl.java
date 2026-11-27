@@ -29,7 +29,9 @@ import com.mawai.wiibsim.service.TradeEventPublisher;
 import com.mawai.wiibsim.service.TradeHit;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
-import jakarta.annotation.PostConstruct;
+import com.mawai.wiibcommon.handover.RoleChanged;
+import com.mawai.wiibcommon.handover.Start;
+import org.springframework.context.event.EventListener;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -37,6 +39,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.concurrent.Executor;
 import java.util.concurrent.locks.Lock;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.*;
@@ -66,13 +69,18 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final TradeEventPublisher eventPublisher;
     private final LimitOrderIndex limitIndex;
     private final ClosedPositionCleanup closedPositionCleanup;
+    /** 补处理孤儿单交给它，关停时等它清零 */
+    private final Executor executor;
 
     record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
-    @PostConstruct
-    void init() {
-        // 启动重建与每小时对账是同一件事：按 DB 的 PENDING 单把索引补回去（ZADD 同 member 覆盖 score）
-        reconcileLimitOrderIndex();
+    /** 冷启动上任时重建索引；交接上任不做，旧实例一直维护着 */
+    @EventListener
+    public void rebuildOnColdStart(RoleChanged changed) {
+        // 重建与每小时对账是同一件事：按 DB 的 PENDING 单把索引补回去（ZADD 同 member 覆盖 score）
+        if (changed.how() == Start.COLD) {
+            reconcileLimitOrderIndex();
+        }
     }
 
     // ==================== 限价单触发 ====================
@@ -475,7 +483,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (triggeredOrders.isEmpty()) return;
 
         for (FuturesOrder order : triggeredOrders) {
-            Thread.startVirtualThread(() -> {
+            executor.execute(() -> {
                 try {
                     processTriggeredOrder(order);
                 } catch (Exception e) {

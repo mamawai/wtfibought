@@ -11,22 +11,21 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.data.redis.connection.DefaultMessage;
-import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,11 +38,13 @@ class TradeEventListenerTest {
     private final SimTradeClient sim = mock(SimTradeClient.class);
     private final UnreportedEvents unreported = mock(UnreportedEvents.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
-    private final TradeEventListener listener = new TradeEventListener(mock(RedisMessageListenerContainer.class),
-            traderMapper, events, sim, unreported, langResolver, new PromptCatalog());
+    private final TradeEventListener listener = new TradeEventListener(mock(StringRedisTemplate.class),
+            mock(RedisConnectionFactory.class), traderMapper, events, sim, unreported, langResolver, new PromptCatalog());
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
+        // 事件发生后 10 秒读到
+        listener.nowMs = () -> 1_786_200_010_000L;
     }
 
     private static TradeEvent event() {
@@ -119,17 +120,32 @@ class TradeEventListenerTest {
         verify(events, never()).publishEvent(any(Object.class));
     }
 
-    /** Redis 消息体原样读回成 TradeEvent；坏消息只丢本条 */
+    /** Stream 记录的 json 字段原样读回成 TradeEvent；坏消息只丢本条 */
     @Test
-    void decodesRedisMessageAndDropsGarbage() throws Exception {
-        AiTrader t = trader();
-        when(traderMapper.selectList(any())).thenReturn(List.of(t));
-        byte[] channel = TradeEvent.CHANNEL.getBytes(StandardCharsets.UTF_8);
+    void decodesStreamRecordAndDropsGarbage() {
+        when(traderMapper.selectList(any())).thenReturn(List.of(trader()));
 
-        listener.onMessage(new DefaultMessage(channel, "not json".getBytes(StandardCharsets.UTF_8)), null);
-        listener.onMessage(new DefaultMessage(channel, MAPPER.writeValueAsBytes(event())), null);
+        listener.onRecord(StreamRecords.newRecord().in(TradeEvent.STREAM).ofMap(Map.of("json", "not json")));
+        listener.onRecord(StreamRecords.newRecord().in(TradeEvent.STREAM)
+                .ofMap(Map.of("json", MAPPER.writeValueAsString(event()))));
 
-        verify(events, timeout(2_000)).publishEvent(new TriggerFired(7L, new EventTrigger(event())));
-        verify(events, after(300).times(1)).publishEvent(any(Object.class));
+        verify(events, times(1)).publishEvent(new TriggerFired(7L, new EventTrigger(event())));
+        verify(events, times(1)).publishEvent(any(Object.class));
+    }
+
+    /** 发生超过 5 分钟的事件（换实例时积压的、第一次建组从头读到的）不叫醒；止盈平掉一部分的照样记一行 */
+    @Test
+    void staleEventsDoNotWakeButTakeProfitIsStillNoted() {
+        when(traderMapper.selectList(any())).thenReturn(List.of(trader()));
+        FuturesPositionDTO remaining = new FuturesPositionDTO();
+        remaining.setId(9L);
+        when(sim.getAllPositions(42L)).thenReturn(List.of(remaining));
+        listener.nowMs = () -> 1_786_200_000_000L + TradeEventListener.STALE_MS + 1;
+
+        listener.onEvent(event());
+        listener.onEvent(takeProfit());
+
+        verify(events, never()).publishEvent(any(Object.class));
+        verify(unreported).add(eq(7L), any());
     }
 }

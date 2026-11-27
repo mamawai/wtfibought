@@ -69,6 +69,8 @@ coach:
     tradesTooMany: too many fills (limit {{limit}})
     # The stream finished without a single character: this is for the user, not the model
     emptyAnswer: The model returned nothing, please try again
+    # Cut short by a service update: what has streamed so far is only part of the answer
+    interrupted: Service update - this answer was cut short, please try again shortly
 
   # Labels used to stitch the user message: leave them behind and the English system prompt gets a whole Chinese table in it
   label:

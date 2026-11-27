@@ -31,32 +31,32 @@ class PredictionRoundConsumerTest {
     @Test
     void lockUsesWindowStartFromEvent() {
         // lock 必须用事件里的旧窗口，不能用消费时刻的当前窗口
-        consumer().onMessage(record(Map.of("type", "lock", "windowStart", "1700000000")));
+        consumer().onRecord(record(Map.of("type", "lock", "windowStart", "1700000000")));
         verify(predictionService).lockRound(1700000000L);
     }
 
     @Test
     void createTriggersCreateNewRound() {
-        consumer().onMessage(record(Map.of("type", "create", "windowStart", "1700000300")));
+        consumer().onRecord(record(Map.of("type", "create", "windowStart", "1700000300")));
         verify(predictionService).createNewRound();
     }
 
     @Test
     void syncopenTriggersSyncOpenPrice() {
-        consumer().onMessage(record(Map.of("type", "syncopen", "windowStart", "1700000300")));
+        consumer().onRecord(record(Map.of("type", "syncopen", "windowStart", "1700000300")));
         verify(predictionService).syncOpenPrice();
     }
 
     @Test
     void settleUsesWindowStartFromEvent() {
         // settle 结算的是事件里那个旧窗口，不是消费时刻算出来的上一窗口
-        consumer().onMessage(record(Map.of("type", "settle", "windowStart", "1700000000")));
+        consumer().onRecord(record(Map.of("type", "settle", "windowStart", "1700000000")));
         verify(predictionService).settleRound(1700000000L);
     }
 
     @Test
     void unknownTypeIsIgnored() {
-        consumer().onMessage(record(Map.of("type", "bogus", "windowStart", "1")));
+        consumer().onRecord(record(Map.of("type", "bogus", "windowStart", "1")));
         verifyNoInteractions(predictionService);
     }
 }

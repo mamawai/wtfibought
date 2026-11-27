@@ -229,9 +229,6 @@ public class TraderService {
             upd.set(AiTrader::getEquityPeak, null).set(AiTrader::getEquityPeakAt, null);
         }
         traderMapper.update(null, upd);
-        if (modelChanged) {
-            modelFactory.evict(t.getId());
-        }
         return null;
     }
 

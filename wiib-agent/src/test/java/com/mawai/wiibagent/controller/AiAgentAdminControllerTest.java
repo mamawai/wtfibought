@@ -68,7 +68,7 @@ class AiAgentAdminControllerTest {
     @Test
     void 改配置key留空沿用已存的_回执只给尾4位() {
         when(configMapper.selectById(1L)).thenReturn(saved());
-        when(runtime.refresh()).thenReturn(true);
+        when(runtime.check()).thenReturn(true);
 
         assertThat(controller.saveKey(req(1L, "http://cliproxyapi:8317/", "")).getData().apiKeyTail()).isEqualTo("1234");
 
@@ -76,6 +76,14 @@ class AiAgentAdminControllerTest {
         verify(configMapper).updateById(cap.capture());
         assertThat(cap.getValue().getApiKey()).isEqualTo("sk-platform-1234");
         assertThat(cap.getValue().getModel()).isEqualTo("m2");
+    }
+
+    @Test
+    void 保存配置后快讯翻译组装不起来时报错() {
+        when(configMapper.selectById(1L)).thenReturn(saved());
+        when(runtime.check()).thenReturn(false);
+
+        assertThat(controller.saveKey(req(1L, "http://cliproxyapi:8317", "")).getMsg()).contains("快讯翻译");
     }
 
     @Test

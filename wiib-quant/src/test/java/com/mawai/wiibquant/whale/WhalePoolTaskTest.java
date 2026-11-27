@@ -1,5 +1,7 @@
 package com.mawai.wiibquant.whale;
 
+import com.mawai.wiibcommon.handover.RoleChanged;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibquant.external.hyperliquid.FakeHyperliquid;
 import com.mawai.wiibquant.external.hyperliquid.HyperliquidClient;
 import com.mawai.wiibquant.mapper.WhaleAddressMapper;
@@ -35,6 +37,8 @@ import static org.mockito.Mockito.when;
 class WhalePoolTaskTest {
 
     private static final String EMPTY_STATE = "{\"marginSummary\":{\"accountValue\":\"0.0\"},\"assetPositions\":[]}";
+    /** 冷启动上任 */
+    private static final RoleChanged COLD = new RoleChanged(null, null, Start.COLD);
 
     private final WhaleAddressMapper mapper = mock(WhaleAddressMapper.class);
     private final WhaleProperties props = new WhaleProperties();
@@ -326,25 +330,50 @@ class WhalePoolTaskTest {
     }
 
     @Test
-    void 启动时表空才补跑() throws Exception {
+    void 冷启动上任时表空才补跑() throws Exception {
         when(mapper.count()).thenReturn(0);
 
-        task().bootstrap();
+        task().bootstrap(COLD);
 
         verify(mapper, timeout(5_000)).selectKnown();
 
         WhaleAddressMapper filled = mock(WhaleAddressMapper.class);
         when(filled.count()).thenReturn(12);
-        new WhalePoolTask(client(), filled, props).bootstrap();
+        new WhalePoolTask(client(), filled, props).bootstrap(COLD);
         Thread.sleep(100);
         verify(filled, never()).selectKnown();
 
-        // 表还没建：查表抛异常只记 warn，不能把 ApplicationReadyEvent 炸掉拖垮启动
+        // 表还没建：查表抛异常只记 warn，不能把上任事件炸掉拖垮启动
         WhaleAddressMapper broken = mock(WhaleAddressMapper.class);
         when(broken.count()).thenThrow(new IllegalStateException("relation whale_address does not exist"));
-        new WhalePoolTask(client(), broken, props).bootstrap();
+        new WhalePoolTask(client(), broken, props).bootstrap(COLD);
         Thread.sleep(100);
         verify(broken, never()).selectKnown();
+    }
+
+    /** 交接上任不补跑：旧实例跑过了，表不空 */
+    @Test
+    void 交接上任不补跑() throws Exception {
+        when(mapper.count()).thenReturn(0);
+
+        task().bootstrap(new RoleChanged(null, null, Start.HANDOVER));
+
+        Thread.sleep(100);
+        verify(mapper, never()).count();
+    }
+
+    /** 口关了：在途这一轮剩下的请求不再发，不落库 */
+    @Test
+    void 关口后这一轮不落库() {
+        leaderboard = leaderboard("0xm2", "2000000");
+        states.put("0xm2", state("3000000", "ETH", "150000", "SOL", "20000"));
+        WhalePoolTask t = task();
+        t.close();
+
+        t.refresh();
+
+        assertThat(count("clearinghouseState 0xm2")).isZero();
+        verify(mapper, never()).upsert(any());
     }
 
     @Test
@@ -353,7 +382,7 @@ class WhalePoolTaskTest {
 
         WhalePoolTask t = task();
         t.daily();
-        t.bootstrap();
+        t.bootstrap(COLD);
 
         verify(mapper, never()).selectKnown();
         verify(mapper, never()).upsert(any());

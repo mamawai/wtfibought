@@ -2,14 +2,15 @@ package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.TradeRecord;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.ContextClosedEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.core.NestedExceptionUtils;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.Limit;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -29,7 +30,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 import static com.mawai.wiibcommon.market.MarketStreamChannels.FUTURES_TRADES_PREFIX;
 import static com.mawai.wiibcommon.market.MarketStreamChannels.SPOT_TRADES_PREFIX;
@@ -43,14 +46,17 @@ import static com.mawai.wiibcommon.market.MarketStreamChannels.SPOT_TRADES_PREFI
  *
  * <p>Stream 里缺的那段拉 1m K 线补：feed 成交连接断过（gap 事件，见 {@link #recoverGap}），
  * 或 sim 停太久、没读的被裁掉了（启动时比消费组读到的位置和 Stream 最早一条）。</p>
+ *
+ * <p>进活的口：开口是开始读，关口是停读并等读循环退出；在处理的批次由后台执行器数着，ACK 完才算做完。</p>
  */
 @Slf4j
 @Component
+@Order(20)
 @RequiredArgsConstructor
-public class TradeStreamConsumer {
+public class TradeStreamConsumer implements Intake {
 
     private static final String GROUP = "sim";
-    /** 单实例部署，消费者名固定：重启后读得回上次没 ACK 的那批 */
+    /** 消费者名固定：同一时刻只有一个实例在读（交接时旧实例停读了新实例才开读），换实例、重启都读得回上次没 ACK 的那批 */
     private static final String CONSUMER = "sim";
     private static final int BATCH = 200;
     /** 没新成交就歇一下再读：不带 BLOCK 的读走共享连接，带了每次都要单开一条连接 */
@@ -67,27 +73,38 @@ public class TradeStreamConsumer {
     private final FuturesLiquidationService liquidationService;
     private final CryptoOrderService cryptoOrderService;
     private final TraderSymbolService traderSymbolService;
+    /** 读线程和每一批的处理都交给它，关停时等它清零 */
+    private final Executor executor;
 
     /** 正在处理一批的 key */
     private final Set<String> busy = ConcurrentHashMap.newKeySet();
-    private volatile boolean running = true;
+    private volatile boolean running;
     private List<String> keys = List.of();
     /** 新建消费组从哪读起 */
     private ReadOffset groupFrom = ReadOffset.latest();
+    /** 读线程：启动补漏、重放，然后一直读；关口时等它退出 */
+    private CompletableFuture<Void> loop = CompletableFuture.completedFuture(null);
+
+    /** 开口：按 sim 上次活着的时刻接着读。标记价的口开在这之后，last-tick 这时还没被新 tick 刷掉 */
+    @Override
+    public void open(Start how) {
+        start(MatchPriceConsumer.lastAlive(redisTemplate));
+    }
 
     /**
      * 建好消费组、补上被裁掉的那段、重放没 ACK 的，然后一直读。
      * lastAliveMs 是 sim 上次活着的时刻：1 小时内就接着读（新建的组从它读起）；
      * 没有或超过 1 小时当第一次启动，从现在读起、停机那段不补，跟标记价补漏一个口径
      */
-    public void start(long lastAliveMs) {
+    void start(long lastAliveMs) {
         List<String> all = new ArrayList<>();
         props.getAllFuturesSymbols().forEach(s -> all.add(FUTURES_TRADES_PREFIX + s));
         props.getAllSpotSymbols().forEach(s -> all.add(SPOT_TRADES_PREFIX + s));
         keys = all;
         boolean resume = lastAliveMs > 0 && System.currentTimeMillis() - lastAliveMs <= MAX_GAP_MS;
         groupFrom = resume ? ReadOffset.from(lastAliveMs + "-0") : ReadOffset.latest();
-        Thread.ofVirtual().name("trade-stream").start(() -> {
+        running = true;
+        loop = CompletableFuture.runAsync(() -> {
             for (String key : keys) {
                 boolean existed = ensureGroup(key);
                 if (resume) recoverTrimmed(key);
@@ -95,15 +112,16 @@ public class TradeStreamConsumer {
             }
             replayPending();
             readLoop();
-        });
+        }, executor);
         log.info("[TradeStream] 读 {} 条成交 Stream，{}", keys.size(),
                 resume ? "接着上次读，新建的组从 " + groupFrom.getOffset() + " 读起" : "停机超过 1 小时或不知道停了多久，从现在读起");
     }
 
-    /** 停机先停读：连接工厂关掉之后再读只会刷报错 */
-    @EventListener(ContextClosedEvent.class)
-    public void stop() {
+    /** 关口：停读，等读线程退出。已经交出去的批次由后台执行器数着，ACK 完才算做完 */
+    @Override
+    public void close() {
         running = false;
+        loop.join();
     }
 
     /** 建消费组；返回组是不是早就有了 */
@@ -202,7 +220,7 @@ public class TradeStreamConsumer {
             }
             byKey(records).forEach((key, batch) -> {
                 busy.add(key);
-                Thread.startVirtualThread(() -> {
+                executor.execute(() -> {
                     try {
                         processAndAck(key, batch);
                     } finally {

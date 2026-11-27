@@ -643,9 +643,9 @@ class TraderServiceTest {
         assertThat(cap.getValue().getParamNameValuePairs()).doesNotContainValue(5L);
     }
 
-    /** 换到另一条端点：先测连通，通过后把端点 id 写进行里并逐出模型缓存 */
+    /** 换到另一条端点：先测连通，通过后把端点 id 写进行里 */
     @Test
-    void updateConfigWithNewEndpointTestsAndEvicts() {
+    void updateConfigWithNewEndpointTestsConnection() {
         AiTrader t = named(7L, "小虎");
         when(traderMapper.selectById(7L)).thenReturn(t);
         when(binanceProperties.getAllCryptoSymbols()).thenReturn(List.of("BTCUSDT"));
@@ -663,7 +663,6 @@ class TraderServiceTest {
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
         verify(traderMapper).update(isNull(), cap.capture());
         assertThat(cap.getValue().getParamNameValuePairs()).containsValue(6L);
-        verify(modelFactory).evict(7L);
     }
 
     /** 改名撞上名下别的 trader 同样拒（不分大小写） */

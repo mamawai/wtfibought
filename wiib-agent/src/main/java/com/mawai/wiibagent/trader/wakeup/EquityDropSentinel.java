@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.Carried;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import lombok.RequiredArgsConstructor;
@@ -11,12 +12,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 权益回落哨兵：主人给 trader 设了比例的，每根 5m K 线收盘查一次它的权益。
@@ -25,11 +29,12 @@ import java.util.function.LongSupplier;
  * <p>
  * 只叫醒，不平仓，不限制开仓。休眠时段里不报，参照点也不重新记：回到时段内权益还在比例以下，照样报。
  * 两次例行轮之间只有单币轮在跑，没有哪一轮看整个账户，它补的是这一块。
+ * 交接时带走的是"equity-drop"：查到哪根收盘，新实例取大的，同一根不再查一遍。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class EquityDropSentinel {
+public class EquityDropSentinel implements Carried {
 
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
@@ -44,6 +49,21 @@ public class EquityDropSentinel {
 
     /** 已经查过的最近一根收盘时刻：每个币的 5m 收盘各来一次事件，同一刻只查一遍 */
     private final AtomicLong checkedCloseTime = new AtomicLong();
+
+    @Override
+    public String key() {
+        return "equity-drop";
+    }
+
+    @Override
+    public JsonNode export() {
+        return MAPPER.createObjectNode().put("checkedCloseTime", checkedCloseTime.get());
+    }
+
+    @Override
+    public void accept(JsonNode state) {
+        checkedCloseTime.accumulateAndGet(state.path("checkedCloseTime").asLong(), Math::max);
+    }
 
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {

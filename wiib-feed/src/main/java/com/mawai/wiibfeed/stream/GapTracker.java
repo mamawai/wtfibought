@@ -1,5 +1,6 @@
 package com.mawai.wiibfeed.stream;
 
+import com.mawai.wiibcommon.handover.Start;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -21,6 +22,8 @@ final class GapTracker {
 
     private volatile long lastMs;
     private volatile long lastRedisWriteMs;
+    /** 下一次连上不发空窗（交接上任时） */
+    private volatile boolean skipNextGap;
 
     GapTracker(String name, String kind, StringRedisTemplate redisTemplate, MatchPricePublisher publisher) {
         this.name = name;
@@ -37,8 +40,17 @@ final class GapTracker {
         redisTemplate.opsForValue().set(LAST_MSG_KEY_PREFIX + name, String.valueOf(receivedAt));
     }
 
+    /** 交接上任：第一次连上不发空窗 */
+    void skipFirstGap(Start how) {
+        skipNextGap = how == Start.HANDOVER;
+    }
+
     /** 连上时调用。from 取最后一帧时间，内存没有（进程刚起）读 Redis，都没有不发 */
     void publishGap() {
+        if (skipNextGap) {
+            skipNextGap = false;
+            return;
+        }
         long from = lastMs;
         if (from == 0L) from = readLastMs();
         if (from == 0L) return;

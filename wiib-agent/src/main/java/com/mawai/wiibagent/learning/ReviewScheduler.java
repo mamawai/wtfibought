@@ -2,20 +2,32 @@ package com.mawai.wiibagent.learning;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.wakeup.TraderPeer;
 import com.mawai.wiibagent.trader.wakeup.WakeIntervals;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.handover.Carried;
+import com.mawai.wiibcommon.handover.InFlight;
+import com.mawai.wiibcommon.handover.Intake;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 复盘的调度：5m K 线收盘当时钟。每根收盘给每个交易员扫一次到期的单笔复盘；
@@ -25,11 +37,17 @@ import java.util.function.LongSupplier;
  * 复盘位：每个交易员一个，单笔复盘、统一复盘、点播复盘、交易卡上的立即复盘共用，一次只跑一个。它和唤醒位是两回事，复盘不挡唤醒。
  * 到期的单笔复盘抢不到就等下一根 5m；08:00 的统一复盘抢不到就等占着的那一篇跑完；点播复盘和立即复盘抢不到当场回绝。
  * 重置和删除要同时拿到唤醒位和这里的复盘位。
+ * <p>
+ * 进活的口是"起新复盘"：关着时 {@link #tryOccupy} 一律抢不到（点播复盘、立即复盘也从这里占位），
+ * 统一复盘等到位子也不跑。占着的复盘位是一份手上的活（reviews）。
+ * 交接时带走的是"review-slots"：旧实例让位时占着的复盘位、处理到哪根、排着队还没轮到的统一复盘。
+ * 新实例接手时替旧实例把这些位占上，旧实例放掉一个就通知新实例，新实例跟着放；排着队的那几篇由新实例接着排
  */
 @Slf4j
 @Component
+@Order(50)
 @RequiredArgsConstructor
-public class ReviewScheduler {
+public class ReviewScheduler implements Intake, InFlight, Carried {
 
     /** 收盘超过这么久（一根 5m）的 K 线事件算旧事件，不扫 */
     static final long STALE_EVENT_MS = 300_000L;
@@ -39,14 +57,123 @@ public class ReviewScheduler {
     private final AiTraderMapper traderMapper;
     private final DebriefRunner debriefRunner;
     private final ReviewRunner reviewRunner;
+    private final TraderPeer peer;
 
     /** 复盘位，每个交易员一把 */
     private final Map<Long, Semaphore> slots = new ConcurrentHashMap<>();
     /** 最近处理过的 5m 边界：每个币的收盘各发一次事件，一根只处理一次 */
     private final AtomicLong lastBoundary = new AtomicLong(-1);
+    /** 起新复盘的口 */
+    private volatile boolean open;
+    /** 旧实例：关口时占着的复盘位，放掉时通知对端 */
+    private final Set<Long> heldAtClose = ConcurrentHashMap.newKeySet();
+    /** 新实例：替旧实例占着的复盘位 */
+    private final Set<Long> heldForOld = ConcurrentHashMap.newKeySet();
+    /**
+     * 排着队等复盘位的统一复盘：交易员 → 这一篇的边界。轮到时口开着就摘掉、开跑；口关着就不跑、留在这里，
+     * 开口时（恢复在任，或者带给了接手的实例）重新排。开关口和"轮到时看口"都锁它
+     */
+    private final Map<Long, Long> queuedUnified = new ConcurrentHashMap<>();
 
     /** 墙钟注入点 */
     LongSupplier nowMs = System::currentTimeMillis;
+
+    /** 开口：不再替对端记占着的位；口关着时没跑成的统一复盘重新排上 */
+    @Override
+    public void open(Start how) {
+        synchronized (queuedUnified) {
+            open = true;
+        }
+        heldAtClose.clear();
+        Map.copyOf(queuedUnified).forEach((id, boundary) ->
+                Thread.startVirtualThread(() -> runQueuedUnified(id, boundary)));
+    }
+
+    /** 关口：此刻自己占着的复盘位记下来，放掉时通知对端 */
+    @Override
+    public void close() {
+        synchronized (queuedUnified) {
+            open = false;
+        }
+        slots.forEach((id, s) -> {
+            if (s.availablePermits() == 0 && !heldForOld.contains(id)) {
+                heldAtClose.add(id);
+                // 记上的同时被放掉了（release 那边没摘到）：摘掉
+                if (s.availablePermits() > 0) {
+                    heldAtClose.remove(id);
+                }
+            }
+        });
+    }
+
+    @Override
+    public String name() {
+        return "reviews";
+    }
+
+    /** 自己占着的复盘位数（替旧实例占着的不算） */
+    @Override
+    public int count() {
+        return (int) slots.entrySet().stream()
+                .filter(e -> e.getValue().availablePermits() == 0 && !heldForOld.contains(e.getKey())).count();
+    }
+
+    @Override
+    public String key() {
+        return "review-slots";
+    }
+
+    /** 还占着的复盘位、处理到哪根、排着队没跑成的统一复盘 */
+    @Override
+    public JsonNode export() {
+        ObjectNode out = MAPPER.createObjectNode();
+        heldAtClose.forEach(out.putArray("held")::add);
+        out.put("lastBoundary", lastBoundary.get());
+        ObjectNode queued = out.putObject("queued");
+        queuedUnified.forEach((id, boundary) -> queued.put(String.valueOf(id), boundary));
+        return out;
+    }
+
+    /** 替旧实例把它占着的复盘位占上；处理到哪根取大的；它排着队的统一复盘记下来，开口时接着排 */
+    @Override
+    public void accept(JsonNode state) {
+        lastBoundary.accumulateAndGet(state.path("lastBoundary").asLong(-1), Math::max);
+        state.path("held").forEach(n -> {
+            long id = n.asLong();
+            if (slot(id).tryAcquire()) {
+                heldForOld.add(id);
+            }
+        });
+        state.path("queued").properties().forEach(e -> queuedUnified.put(Long.parseLong(e.getKey()), e.getValue().asLong()));
+        log.info("[ReviewSched] 收下交接单：替旧实例占着复盘位 {}，排着队的统一复盘 {}", heldForOld, queuedUnified.keySet());
+    }
+
+    /** 新实例：旧实例放掉了这个复盘位，替它占着的跟着放 */
+    public void releasedByOld(long traderId) {
+        if (heldForOld.remove(traderId)) {
+            slot(traderId).release();
+        }
+    }
+
+    /** 新实例：旧实例没了（探活失败），替它占着的全部放掉 */
+    public void releaseAllHeldByOld() {
+        List.copyOf(heldForOld).forEach(this::releasedByOld);
+    }
+
+    /**
+     * 新实例：按旧实例此刻导出的这一格核对，替它占着、它已经不占了的放掉。
+     * 补的是放手通知在接手之前就到了（那时还没替它占，被忽略）或者丢了
+     */
+    public void releaseNotHeldByOld(JsonNode cell) {
+        Set<Long> stillHeld = new HashSet<>();
+        cell.path("held").forEach(n -> stillHeld.add(n.asLong()));
+        List.copyOf(heldForOld).stream().filter(id -> !stillHeld.contains(id)).forEach(this::releasedByOld);
+    }
+
+    /** 旧实例：关口时占着、还没放掉的复盘位数 */
+    public int heldHereCount() {
+        return heldAtClose.size();
+    }
 
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
@@ -96,10 +223,22 @@ public class ReviewScheduler {
         }
     }
 
-    /** 日线边界的统一复盘：复盘位被占着就等它放出来 */
+    /** 日线边界的统一复盘：记进排队名单，等复盘位 */
     private void unifiedReview(long traderId, long boundary) {
+        queuedUnified.put(traderId, boundary);
+        runQueuedUnified(traderId, boundary);
+    }
+
+    /** 排队名单里的一篇统一复盘：复盘位被占着就等它放出来，轮到时从名单里摘掉再跑；同一篇有两个线程在等，只有摘到的那个跑 */
+    private void runQueuedUnified(long traderId, long boundary) {
         slot(traderId).acquireUninterruptibly();
         try {
+            // 等位子的时候起新复盘的口关上了，就不跑，留在排队名单里
+            synchronized (queuedUnified) {
+                if (!open || !queuedUnified.remove(traderId, boundary)) {
+                    return;
+                }
+            }
             AiTrader trader = eligible(traderId);
             if (trader != null) {
                 reviewRunner.review(trader, boundary);
@@ -123,17 +262,29 @@ public class ReviewScheduler {
         return slots.computeIfAbsent(traderId, _ -> new Semaphore(1));
     }
 
-    /** 这个交易员是不是正在复盘。只查不占 */
+    /** 这个交易员现在起不了复盘：正在复盘，或者起新复盘的口关着。只查不占 */
     public boolean isBusy(long traderId) {
-        return slot(traderId).availablePermits() == 0;
+        return !open || slot(traderId).availablePermits() == 0;
     }
 
-    /** 抢复盘位（点播复盘、立即复盘、重置、删除）；抢到必须在 finally 里 {@link #release} */
+    /** 抢复盘位（到期的单笔复盘、点播复盘、立即复盘、重置、删除）；口关着一律抢不到。抢到必须在 finally 里 {@link #release} */
     public boolean tryOccupy(long traderId) {
-        return slot(traderId).tryAcquire();
+        if (!slot(traderId).tryAcquire()) {
+            return false;
+        }
+        // 占上了再看口：关口那边先关口再数占着的，两边总有一边看得到对方
+        if (!open) {
+            release(traderId);
+            return false;
+        }
+        return true;
     }
 
+    /** 放掉复盘位；关口时就占着的（旧实例收尾中），通知对端 */
     public void release(long traderId) {
         slot(traderId).release();
+        if (heldAtClose.remove(traderId)) {
+            Thread.startVirtualThread(() -> peer.released(traderId, TraderPeer.Held.REVIEW));
+        }
     }
 }

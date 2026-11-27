@@ -8,7 +8,9 @@ import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
+import com.mawai.wiibagent.handover.PeerRelay;
 import com.mawai.wiibagent.llm.ChatEndpoints;
+import com.mawai.wiibcommon.handover.Start;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibcommon.exception.BizException;
@@ -63,7 +65,7 @@ class ChatWorkbenchAdmissionTest {
                 mock(TraderPickRegistry.class), mock(TraderService.class),
                 history, contextStore, streamer, mock(ChatTurnRewinder.class),
                 runRegistry, ChatTestEndpoints.childRuns(contextStore), ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
-                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor);
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor, mock(PeerRelay.class));
     }
 
     private static void chat(ChatWorkbenchController controller, long userId) {
@@ -87,7 +89,7 @@ class ChatWorkbenchAdmissionTest {
     @Test
     void 没配置端点时拒绝并给出配置缺失码() {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(null);
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(1);
 
         assertRejectedWithCode(2201, () -> chat(controller(gate), 1L));
 
@@ -99,7 +101,7 @@ class ChatWorkbenchAdmissionTest {
     void 建不出模型时拒绝并给出配置无效码() {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
         when(factory.leavesFor(any(), any())).thenThrow(new IllegalStateException("对话叶子构建失败"));
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(1);
 
         assertRejectedWithCode(2202, () -> chat(controller(gate), 1L));
 
@@ -110,7 +112,7 @@ class ChatWorkbenchAdmissionTest {
     @Test
     void 本人已有一轮在跑时拒绝() {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(10);
         gate.tryAcquire(1L, ChatConcurrencyGate.Owner.WORKBENCH); // 这个用户自己的上一轮还占着名额
 
         assertRejectedWithCode(2203, () -> chat(controller(gate), 1L));
@@ -119,7 +121,7 @@ class ChatWorkbenchAdmissionTest {
     @Test
     void 全局名额满时拒绝() {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(1);
         gate.tryAcquire(2L, ChatConcurrencyGate.Owner.WORKBENCH); // 唯一的名额被别人占着
 
         assertRejectedWithCode(2204, () -> chat(controller(gate), 1L));
@@ -133,7 +135,7 @@ class ChatWorkbenchAdmissionTest {
     void 任务提交失败时当场还回名额() {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
         when(factory.leavesFor(any(), any())).thenReturn(null); // 跑不到用它的那一步
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        ChatConcurrencyGate gate = ChatTestEndpoints.openGate(1);
         ExecutorService closed = Executors.newVirtualThreadPerTaskExecutor();
         closed.shutdown(); // 关掉的执行器 execute 必被拒
         ChatWorkbenchController controller = controller(gate, closed);
@@ -149,13 +151,14 @@ class ChatWorkbenchAdmissionTest {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
         when(factory.leavesFor(any(), any())).thenReturn(null);   // runner 是 mock，一帧不吐就返回
         CountDownLatch released = new CountDownLatch(1);
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(1) {
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(ChatTestEndpoints.userSlotRedis(), "", 1) {
             @Override
             public void release(long userId) {
                 super.release(userId);
                 released.countDown();
             }
         };
+        gate.open(Start.COLD);
 
         chat(controller(gate), 1L);
 
